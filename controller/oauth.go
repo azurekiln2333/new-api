@@ -1,6 +1,10 @@
 package controller
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -30,11 +34,13 @@ type oauthStateRequest struct {
 }
 
 type oauthFlowPayload struct {
-	AffiliateCode   string                         `json:"affiliate_code,omitempty"`
-	Verification    *service.OAuthVerificationFlow `json:"verification,omitempty"`
-	Telegram        *oauth.TelegramOAuthFlow       `json:"telegram,omitempty"`
-	SessionIdentity *service.AuthIdentity          `json:"session_identity,omitempty"`
-	Authorization   *model.AuthFlowAuthorization   `json:"authorization,omitempty"`
+	RedirectURI        string                         `json:"redirect_uri,omitempty"`
+	BrowserBindingHash string                         `json:"browser_binding_hash,omitempty"`
+	AffiliateCode      string                         `json:"affiliate_code,omitempty"`
+	Verification       *service.OAuthVerificationFlow `json:"verification,omitempty"`
+	Telegram           *oauth.TelegramOAuthFlow       `json:"telegram,omitempty"`
+	SessionIdentity    *service.AuthIdentity          `json:"session_identity,omitempty"`
+	Authorization      *model.AuthFlowAuthorization   `json:"authorization,omitempty"`
 }
 
 // providerParams returns the params of messages that name the OAuth provider.
@@ -63,6 +69,20 @@ func GenerateOAuthCode(c *gin.Context) {
 	userID := 0
 	sessionID := ""
 	flowPayload := oauthFlowPayload{AffiliateCode: request.Aff}
+	browserBinding := ""
+	if oauth.UsesBrowserCallback(oauth.GetProvider(request.Provider)) {
+		redirectURI, err := oauth.NewBrowserCallbackURI(c.Request, request.Provider)
+		if err != nil {
+			writeAccountStatusError(c, http.StatusForbidden, "Callback URL configuration error")
+			return
+		}
+		flowPayload.RedirectURI = redirectURI
+		if request.Intent == model.AuthFlowIntentLogin {
+			browserBinding = rand.Text()
+			digest := sha256.Sum256([]byte(browserBinding))
+			flowPayload.BrowserBindingHash = hex.EncodeToString(digest[:])
+		}
+	}
 	bindingStarted := false
 	if request.Provider == "telegram" {
 		telegramFlow, err := oauth.NewTelegramOAuthFlow()
@@ -131,6 +151,9 @@ func GenerateOAuthCode(c *gin.Context) {
 		return
 	}
 	bindingStarted = request.Intent == model.AuthFlowIntentBind
+	if browserBinding != "" {
+		http.SetCookie(c.Writer, oauth.BrowserFlowCookie(state, flowPayload.RedirectURI, browserBinding, int(oauthAuthFlowTTL.Seconds())))
+	}
 	data := gin.H{"flow_token": state, "expires_at": expiresAt.Unix()}
 	if flowPayload.Telegram != nil {
 		data["authorization_url"] = flowPayload.Telegram.AuthorizationURL(state)
@@ -166,6 +189,29 @@ func HandleOAuth(c *gin.Context) {
 		Purpose:  model.AuthFlowPurposeOAuth,
 		Provider: providerName,
 		Intent:   pendingFlow.Intent,
+	}
+	var callbackPayload oauthFlowPayload
+	if oauth.UsesBrowserCallback(provider) {
+		if err := common.UnmarshalJsonStr(pendingFlow.Payload, &callbackPayload); err != nil {
+			writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
+			return
+		}
+		if callbackPayload.RedirectURI != "" {
+			if pendingFlow.Intent == model.AuthFlowIntentLogin {
+				cookie := oauth.BrowserFlowCookie(state, callbackPayload.RedirectURI, "", -1)
+				bindings := c.Request.CookiesNamed(cookie.Name)
+				if len(bindings) != 1 {
+					writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
+					return
+				}
+				digest := sha256.Sum256([]byte(bindings[0].Value))
+				if bindings[0].Value == "" || subtle.ConstantTimeCompare([]byte(hex.EncodeToString(digest[:])), []byte(callbackPayload.BrowserBindingHash)) != 1 {
+					writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
+					return
+				}
+			}
+			c.Set(oauth.CallbackURIContextKey, callbackPayload.RedirectURI)
+		}
 	}
 	bindSucceeded, notificationFailed := false, false
 	if pendingFlow.Intent == model.AuthFlowIntentBind {
@@ -239,6 +285,9 @@ func HandleOAuth(c *gin.Context) {
 			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
 			return
 		}
+		if callbackPayload.BrowserBindingHash != "" {
+			http.SetCookie(c.Writer, oauth.BrowserFlowCookie(state, callbackPayload.RedirectURI, "", -1))
+		}
 		errorDescription := c.Query("error_description")
 		if errorDescription == "" {
 			errorDescription = errorCode
@@ -279,6 +328,9 @@ func HandleOAuth(c *gin.Context) {
 	if err != nil {
 		writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
 		return
+	}
+	if callbackPayload.BrowserBindingHash != "" {
+		http.SetCookie(c.Writer, oauth.BrowserFlowCookie(state, callbackPayload.RedirectURI, "", -1))
 	}
 
 	switch flow.Intent {

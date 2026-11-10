@@ -21,6 +21,7 @@ import { createSectionRegistry } from '../utils/section-registry'
 import { BasicAuthSection } from './basic-auth-section'
 import { BotProtectionSection } from './bot-protection-section'
 import { CustomOAuthSection } from './custom-oauth/custom-oauth-section'
+import { OAuthDomainsSection } from './oauth-domains-section'
 import { OAuthSection } from './oauth-section'
 import { PasskeySection } from './passkey-section'
 
@@ -112,6 +113,16 @@ const AUTH_SECTIONS = [
           TurnstileSiteKey: settings.TurnstileSiteKey,
           TurnstileSecretKey: settings.TurnstileSecretKey,
         }}
+      />
+    ),
+  },
+  {
+    id: 'oauth-domains',
+    titleKey: 'OAuth login domains',
+    build: (settings: AuthSettings) => (
+      <OAuthDomainsSection
+        allowedOrigins={settings['oauth.allowed_origins']}
+        serverAddress={settings.ServerAddress}
       />
     ),
   },

@@ -102,6 +102,10 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 		if err == nil {
 			_ = connection.Close()
 		}
+		logConnection, err := logDB.DB()
+		if err == nil {
+			_ = logConnection.Close()
+		}
 	})
 	password, err := common.Password2Hash("enrollment-password")
 	require.NoError(t, err)
@@ -1569,6 +1573,10 @@ func TestSecurityEnrollmentOAuthQueriesReachHandlerWithoutLeakingToAccessLogs(t 
 
 func TestSecurityEnrollmentCustomOAuthUsesExistingBinding(t *testing.T) {
 	user, identity := setupSecurityEnrollmentTest(t)
+	previousAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://main.example.com"
+	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
+	setOAuthAllowedOrigins(t, "https://second.example.com")
 	require.NoError(t, model.DB.Model(user).Update("password", "").Error)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1576,6 +1584,7 @@ func TestSecurityEnrollmentCustomOAuthUsesExistingBinding(t *testing.T) {
 		case "/token":
 			assert.NoError(t, r.ParseForm())
 			assert.Equal(t, "custom-code", r.Form.Get("code"))
+			assert.Equal(t, "https://second.example.com/oauth/enrollment-custom", r.Form.Get("redirect_uri"))
 			_, _ = w.Write([]byte(`{"access_token":"provider-access-token","token_type":"Bearer"}`))
 		case "/userinfo":
 			assert.Equal(t, "Bearer provider-access-token", r.Header.Get("Authorization"))
@@ -1596,7 +1605,10 @@ func TestSecurityEnrollmentCustomOAuthUsesExistingBinding(t *testing.T) {
 	response := securityEnrollmentRequest("GET", "/api/verify/methods?scope=2fa.setup", "", "", identity, GetVerificationMethods)
 	assert.Contains(t, response.Body.String(), "enrollment-custom")
 	assert.NotContains(t, response.Body.String(), "custom-user")
-	response = securityEnrollmentRequest("POST", "/api/oauth/state", `{"provider":"enrollment-custom","intent":"verify","scope":"2fa.setup"}`, "", identity, GenerateOAuthCode)
+	response = securityEnrollmentRequest("POST", "/api/oauth/state", `{"provider":"enrollment-custom","intent":"verify","scope":"2fa.setup"}`, "", identity, func(c *gin.Context) {
+		c.Request.Header.Set("Origin", "https://second.example.com")
+		GenerateOAuthCode(c)
+	})
 	var body securityEnrollmentResponse
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 	require.True(t, body.Success, body.Message)

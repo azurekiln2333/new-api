@@ -11,15 +11,18 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/gin-gonic/gin"
@@ -671,6 +674,495 @@ func setupAuthFlowControllerTest(t *testing.T) *authFlowTestOAuthProvider {
 		common.SetMainDatabaseType(previousType)
 	})
 	return provider
+}
+
+func setOAuthAllowedOrigins(t *testing.T, value string) {
+	t.Helper()
+	previous := system_setting.OAuthSettingsSnapshot().AllowedOrigins
+	common.OptionMapRWMutex.Lock()
+	err := config.GlobalConfig.LoadFromDB(map[string]string{system_setting.OAuthAllowedOriginsOption: value})
+	common.OptionMapRWMutex.Unlock()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		defer common.OptionMapRWMutex.Unlock()
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{system_setting.OAuthAllowedOriginsOption: previous}))
+	})
+}
+
+func TestOAuthDomainPanelSettings(t *testing.T) {
+	_, identity := setupSecurityEnrollmentTest(t)
+	setOAuthAllowedOrigins(t, "")
+	previousAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://main.example.com"
+	previousSecure, previousTrusted := common.SessionCookieSecure, common.SessionCookieTrustedURLs
+	common.SessionCookieSecure, common.SessionCookieTrustedURLs = true, nil
+	common.OptionMapRWMutex.Lock()
+	previousOptions := common.OptionMap
+	common.OptionMap = make(map[string]string)
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		system_setting.ServerAddress = previousAddress
+		common.SessionCookieSecure, common.SessionCookieTrustedURLs = previousSecure, previousTrusted
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptions
+		common.OptionMapRWMutex.Unlock()
+	})
+	const domains = "https://second.example.com\nhttps://third.example.net:8443"
+	body, err := common.Marshal(OptionUpdateRequest{Key: system_setting.OAuthAllowedOriginsOption, Value: domains})
+	require.NoError(t, err)
+	for range 2 {
+		response := securityEnrollmentRequest(http.MethodPut, "/api/option/", string(body), "", identity, UpdateOption)
+		require.Contains(t, response.Body.String(), `"success":true`)
+	}
+	var stored model.Option
+	require.NoError(t, model.DB.Where(&model.Option{Key: system_setting.OAuthAllowedOriginsOption}).First(&stored).Error)
+	assert.Equal(t, domains, stored.Value)
+	assert.Equal(t, domains, system_setting.OAuthSettingsSnapshot().AllowedOrigins)
+	// Simulate another node loading the persisted configuration.
+	setOAuthAllowedOrigins(t, "")
+	require.False(t, system_setting.IsOAuthOriginAllowed("https://second.example.com"))
+	common.OptionMapRWMutex.Lock()
+	err = config.GlobalConfig.LoadFromDB(map[string]string{stored.Key: stored.Value})
+	common.OptionMapRWMutex.Unlock()
+	require.NoError(t, err)
+	assert.True(t, system_setting.IsOAuthOriginAllowed("https://second.example.com"))
+	for _, path := range []string{"/api/user/auth/refresh", "/api/user/auth/logout"} {
+		router := gin.New()
+		router.POST(path, middleware.SessionCookieOriginGuard(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		for _, origin := range []string{"https://second.example.com", "https://second.example.com.evil.test"} {
+			request := httptest.NewRequest(http.MethodPost, "http://internal:3000"+path, nil)
+			request.Header.Set("Origin", origin)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			want := http.StatusForbidden
+			if origin == "https://second.example.com" {
+				want = http.StatusNoContent
+			}
+			assert.Equal(t, want, response.Code)
+			assert.Empty(t, response.Header().Get("Access-Control-Allow-Origin"))
+		}
+	}
+	for _, invalid := range []string{"https://*.example.com", "https://second.example.com/path", "http://public.example.com"} {
+		body, err := common.Marshal(OptionUpdateRequest{Key: system_setting.OAuthAllowedOriginsOption, Value: invalid})
+		require.NoError(t, err)
+		response := securityEnrollmentRequest(http.MethodPut, "/api/option/", string(body), "", identity, UpdateOption)
+		assert.Contains(t, response.Body.String(), `"success":false`)
+		assert.Equal(t, domains, system_setting.OAuthSettingsSnapshot().AllowedOrigins)
+		require.NoError(t, model.DB.Where(&model.Option{Key: stored.Key}).First(&stored).Error)
+		assert.Equal(t, domains, stored.Value)
+	}
+	require.NoError(t, model.UpdateOption(system_setting.OAuthAllowedOriginsOption, ""))
+	assert.False(t, system_setting.IsOAuthOriginAllowed("https://second.example.com"))
+	assert.True(t, system_setting.IsOAuthOriginAllowed("https://main.example.com"))
+	// A failed write must not apply the requested list in memory.
+	require.NoError(t, model.DB.Migrator().DropTable(&model.Option{}))
+	require.Error(t, model.UpdateOption(system_setting.OAuthAllowedOriginsOption, domains))
+	assert.Empty(t, system_setting.OAuthSettingsSnapshot().AllowedOrigins)
+}
+
+func TestOAuthMultiDomainLogin(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	previousAddress := system_setting.ServerAddress
+	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
+	setOAuthAllowedOrigins(t, "https://second.example.com,https://third.example.net:8443")
+	const slug = "multi-domain-sso"
+	var expectedRedirect string
+	var tokenCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/token":
+			tokenCalls++
+			if r.ParseForm() != nil || r.Form.Get("redirect_uri") != expectedRedirect {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_redirect_uri"}`))
+				return
+			}
+			assert.Equal(t, "client", r.Form.Get("client_id"))
+			assert.Equal(t, "secret", r.Form.Get("client_secret"))
+			_, _ = w.Write([]byte(`{"access_token":"test-upstream-token","token_type":"Bearer"}`))
+		case "/userinfo":
+			assert.Equal(t, "Bearer test-upstream-token", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"sub":"existing-sso-user"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(upstream.Close)
+	require.NoError(t, oauth.RegisterCustom(slug, oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{
+		Id: 42, Slug: slug, Name: "Multi domain SSO", Enabled: true,
+		ClientId: "client", ClientSecret: "secret", UserIdField: "sub",
+		TokenEndpoint: upstream.URL + "/token", UserInfoEndpoint: upstream.URL + "/userinfo",
+	})))
+	t.Cleanup(func() { oauth.Unregister(slug) })
+	require.NoError(t, model.DB.Create(&model.UserOAuthBinding{UserId: user.Id, ProviderId: 42, ProviderUserId: "existing-sso-user"}).Error)
+	router := gin.New()
+	router.POST("/api/oauth/state", GenerateOAuthCode)
+	router.GET("/api/oauth/:provider", HandleOAuth)
+	for _, origin := range []string{"https://main.example.com", "https://second.example.com", "https://third.example.net:8443"} {
+		t.Run(origin, func(t *testing.T) {
+			system_setting.ServerAddress = "https://main.example.com"
+			expectedRedirect = origin + "/oauth/" + slug
+			request := httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"`+slug+`","intent":"login"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", origin)
+			started := httptest.NewRecorder()
+			router.ServeHTTP(started, request)
+			var start struct {
+				Success bool `json:"success"`
+				Data    struct {
+					FlowToken string `json:"flow_token"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(started.Body.Bytes(), &start))
+			require.True(t, start.Success, started.Body.String())
+			require.NotEmpty(t, start.Data.FlowToken)
+			cookies := started.Result().Cookies()
+			require.Len(t, cookies, 1)
+			assert.True(t, cookies[0].HttpOnly)
+			assert.True(t, cookies[0].Secure)
+			assert.Empty(t, cookies[0].Domain)
+			assert.Equal(t, http.SameSiteLaxMode, cookies[0].SameSite)
+			assert.Equal(t, 600, cookies[0].MaxAge)
+			assert.Equal(t, "/", cookies[0].Path)
+			assert.True(t, strings.HasPrefix(cookies[0].Name, "__Host-"))
+			assert.NotContains(t, started.Body.String(), cookies[0].Value)
+			pending, err := model.GetAuthFlow(start.Data.FlowToken, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeOAuth})
+			require.NoError(t, err)
+			assert.NotContains(t, pending.Payload, cookies[0].Value, "the database stores only the browser binding hash")
+			// Configuration changes and callback headers/parameters cannot rewrite
+			// the redirect URI used when this authorization was started.
+			system_setting.ServerAddress = "https://changed.example.com"
+			callback := httptest.NewRequest(http.MethodGet, "/api/oauth/"+slug+"?state="+start.Data.FlowToken+"&code=test-code&redirect_uri="+url.QueryEscape("https://attacker.example/oauth/"+slug), nil)
+			callback.Host = "internal-proxy:3000"
+			callback.Header.Set("X-Forwarded-Host", "attacker.example")
+			callback.Header.Set("X-Forwarded-Proto", "http")
+			before := tokenCalls
+			for _, binding := range []string{"", "another-browser-secret"} {
+				unbound := callback.Clone(callback.Context())
+				if binding != "" {
+					unbound.AddCookie(&http.Cookie{Name: cookies[0].Name, Value: binding})
+				}
+				denied := httptest.NewRecorder()
+				router.ServeHTTP(denied, unbound)
+				assert.Equal(t, http.StatusForbidden, denied.Code)
+				assert.Equal(t, before, tokenCalls, "reject before contacting the SSO")
+			}
+			callback.AddCookie(cookies[0])
+			duplicate := callback.Clone(callback.Context())
+			duplicate.AddCookie(cookies[0])
+			ambiguous := httptest.NewRecorder()
+			router.ServeHTTP(ambiguous, duplicate)
+			assert.Equal(t, http.StatusForbidden, ambiguous.Code)
+			assert.Equal(t, before, tokenCalls)
+			wrongProvider := callback.Clone(callback.Context())
+			wrongProvider.URL.Path = "/api/oauth/oidc"
+			denied := httptest.NewRecorder()
+			router.ServeHTTP(denied, wrongProvider)
+			assert.Equal(t, http.StatusForbidden, denied.Code)
+			assert.Equal(t, before, tokenCalls)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, callback)
+			var result struct {
+				Success bool `json:"success"`
+				Data    struct {
+					AccessToken string `json:"access_token"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.True(t, result.Success, response.Body.String())
+			require.NotEmpty(t, result.Data.AccessToken)
+			identity, err := service.ParseAccessToken(result.Data.AccessToken)
+			require.NoError(t, err)
+			assert.Equal(t, user.Id, identity.UserID)
+			assert.Equal(t, before+1, tokenCalls)
+			var cleared bool
+			for _, cookie := range response.Result().Cookies() {
+				if cookie.Name == cookies[0].Name {
+					cleared = cookie.MaxAge == -1
+				}
+			}
+			assert.True(t, cleared, "completed login clears its flow cookie")
+			_, err = model.GetAuthFlow(start.Data.FlowToken, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeOAuth})
+			assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
+			replay := httptest.NewRecorder()
+			router.ServeHTTP(replay, callback)
+			assert.Equal(t, http.StatusForbidden, replay.Code)
+			assert.Equal(t, before+1, tokenCalls)
+		})
+	}
+}
+
+func TestOAuthMultiDomainRejectsUntrustedOrigins(t *testing.T) {
+	setupAuthFlowControllerTest(t)
+	previousAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://main.example.com"
+	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
+	setOAuthAllowedOrigins(t, "https://second.example.com")
+	require.NoError(t, oauth.RegisterCustom("origin-sso", oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{Slug: "origin-sso", Enabled: true})))
+	t.Cleanup(func() { oauth.Unregister("origin-sso") })
+	for _, origin := range []string{
+		"https://unknown.example", "https://second.example.com.evil.test", "https://sub.second.example.com",
+		"http://second.example.com", "https://second.example.com:8443", "null", "https://*.example.com",
+		"https://second.example.com/path", "https://second.example.com?x=y", "https://second.example.com#fragment", "https://second.example.com?", "https://second.example.com#",
+		"https://user@second.example.com", "https://second.example.com,https://main.example.com", "https://second.example.com https://main.example.com",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"origin-sso","intent":"login"}`))
+			c.Request.Header.Set("Origin", origin)
+			c.Request.Host = "second.example.com"
+			c.Request.Header.Set("X-Forwarded-Host", "second.example.com")
+			GenerateOAuthCode(c)
+			assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+			assert.Empty(t, response.Result().Cookies())
+		})
+	}
+	t.Run("multiple Origin headers", func(t *testing.T) {
+		response := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(response)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"origin-sso","intent":"login"}`))
+		c.Request.Header.Add("Origin", "https://main.example.com")
+		c.Request.Header.Add("Origin", "https://second.example.com")
+		GenerateOAuthCode(c)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+	})
+	var count int64
+	require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+func TestOAuthMultiDomainFlowFailures(t *testing.T) {
+	setupAuthFlowControllerTest(t)
+	previousAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://main.example.com"
+	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
+	setOAuthAllowedOrigins(t, "https://second.example.com")
+	var tokenCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenCalls++
+		assert.NoError(t, r.ParseForm())
+		assert.Equal(t, "https://second.example.com/oauth/failure-sso", r.Form.Get("redirect_uri"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+	}))
+	t.Cleanup(upstream.Close)
+	require.NoError(t, oauth.RegisterCustom("failure-sso", oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{
+		Slug: "failure-sso", Name: "Failure SSO", Enabled: true, TokenEndpoint: upstream.URL,
+	})))
+	t.Cleanup(func() { oauth.Unregister("failure-sso") })
+	router := gin.New()
+	router.POST("/api/oauth/state", GenerateOAuthCode)
+	router.GET("/api/oauth/:provider", HandleOAuth)
+	var previousCookie *http.Cookie
+	for _, scenario := range []string{"token failure", "provider error", "expired"} {
+		t.Run(scenario, func(t *testing.T) {
+			started := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"failure-sso","intent":"login"}`))
+			request.Header.Set("Origin", "https://second.example.com")
+			router.ServeHTTP(started, request)
+			var start struct {
+				Data struct {
+					FlowToken string `json:"flow_token"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(started.Body.Bytes(), &start))
+			require.NotEmpty(t, start.Data.FlowToken)
+			flow, err := model.GetAuthFlow(start.Data.FlowToken, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeOAuth})
+			require.NoError(t, err)
+			cookies := started.Result().Cookies()
+			require.Len(t, cookies, 1)
+			callback := httptest.NewRequest(http.MethodGet, "/api/oauth/failure-sso?code=test&state="+start.Data.FlowToken, nil)
+			before := tokenCalls
+			if previousCookie != nil {
+				crossFlow := callback.Clone(callback.Context())
+				crossFlow.AddCookie(previousCookie)
+				denied := httptest.NewRecorder()
+				router.ServeHTTP(denied, crossFlow)
+				assert.Equal(t, http.StatusForbidden, denied.Code)
+				assert.Equal(t, before, tokenCalls)
+			}
+			previousCookie = cookies[0]
+			callback.AddCookie(cookies[0])
+			if scenario == "provider error" {
+				callback.URL.RawQuery += "&error=access_denied"
+			}
+			if scenario == "expired" {
+				require.NoError(t, model.DB.Model(flow).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+			}
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, callback)
+			_, err = model.GetAuthFlow(start.Data.FlowToken, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeOAuth})
+			switch scenario {
+			case "token failure":
+				require.NoError(t, err, "upstream failure preserves the flow for retry")
+				assert.Equal(t, before+1, tokenCalls)
+				assert.Contains(t, response.Body.String(), `"success":false`)
+				assert.Empty(t, response.Result().Cookies())
+			case "provider error":
+				assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
+				assert.Equal(t, before, tokenCalls)
+				require.Len(t, response.Result().Cookies(), 1)
+				assert.Equal(t, -1, response.Result().Cookies()[0].MaxAge)
+			case "expired":
+				assert.ErrorIs(t, err, model.ErrAuthFlowExpired)
+				assert.Equal(t, http.StatusForbidden, response.Code)
+				assert.Equal(t, before, tokenCalls)
+			}
+		})
+	}
+}
+
+func TestOAuthMultiDomainBindingRequiresOriginalSession(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	previousAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://main.example.com"
+	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
+	setOAuthAllowedOrigins(t, "https://second.example.com")
+	var tokenCalls int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/token" {
+			tokenCalls++
+			assert.NoError(t, r.ParseForm())
+			assert.Equal(t, "https://second.example.com/oauth/bind-sso", r.Form.Get("redirect_uri"))
+			_, _ = w.Write([]byte(`{"access_token":"test-token"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"sub":"bound-user"}`))
+	}))
+	t.Cleanup(upstream.Close)
+	require.NoError(t, oauth.RegisterCustom("bind-sso", oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{
+		Id: 51, Slug: "bind-sso", Name: "Binding SSO", Enabled: true, UserIdField: "sub",
+		TokenEndpoint: upstream.URL + "/token", UserInfoEndpoint: upstream.URL + "/userinfo",
+	})))
+	t.Cleanup(func() { oauth.Unregister("bind-sso") })
+	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeAccountBind, Context: []byte(`{"provider":"bind-sso"}`)}, service.VerificationMethodPassword)
+	started := securityEnrollmentRequest(http.MethodPost, "/api/oauth/state", `{"provider":"bind-sso","intent":"bind"}`, proof, identity, func(c *gin.Context) {
+		c.Request.Header.Set("Origin", "https://second.example.com")
+		GenerateOAuthCode(c)
+	})
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			FlowToken string `json:"flow_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(started.Body.Bytes(), &result))
+	require.True(t, result.Success, started.Body.String())
+	path := "/api/oauth/bind-sso?state=" + result.Data.FlowToken + "&code=test"
+	handler := func(c *gin.Context) {
+		c.Params = gin.Params{{Key: "provider", Value: "bind-sso"}}
+		HandleOAuth(c)
+	}
+	wrongSession := identity
+	wrongSession.SessionID = "another-session"
+	denied := securityEnrollmentRequest(http.MethodGet, path, "", "", wrongSession, handler)
+	assert.Equal(t, http.StatusForbidden, denied.Code)
+	assert.Zero(t, tokenCalls)
+	bound := securityEnrollmentRequest(http.MethodGet, path, "", "", identity, handler)
+	require.NoError(t, common.Unmarshal(bound.Body.Bytes(), &result))
+	require.True(t, result.Success, bound.Body.String())
+	bindings, err := model.GetUserOAuthBindingsByUserId(user.Id)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
+	assert.Equal(t, "bound-user", bindings[0].ProviderUserId)
+	replay := securityEnrollmentRequest(http.MethodGet, path, "", "", identity, handler)
+	assert.Equal(t, http.StatusForbidden, replay.Code)
+	assert.Equal(t, 1, tokenCalls)
+}
+
+func TestOAuthMultiDomainCallbackConfiguration(t *testing.T) {
+	previousAddress := system_setting.ServerAddress
+	t.Cleanup(func() { system_setting.ServerAddress = previousAddress })
+	tests := []struct {
+		name, canonical, allowlist, origin, want string
+		noOrigin                                 bool
+	}{
+		{name: "canonical origin", canonical: "https://main.example.com/", origin: "https://main.example.com", want: "https://main.example.com/oauth/test"},
+		{name: "default port", canonical: "https://main.example.com", allowlist: "https://SECOND.example.com:443/", origin: "https://second.example.com", want: "https://second.example.com/oauth/test"},
+		{name: "canonical fallback", canonical: "https://main.example.com", noOrigin: true, want: "https://main.example.com/oauth/test"},
+		{name: "empty Origin", canonical: "https://main.example.com"},
+		{name: "allowlist with whitespace", canonical: "https://main.example.com", allowlist: " https://second.example.com , https://third.example.com ", origin: "https://second.example.com", want: "https://second.example.com/oauth/test"},
+		{name: "wildcard configuration", canonical: "https://main.example.com", allowlist: "https://*.example.com", origin: "https://main.example.com"},
+		{name: "empty allowlist entry", canonical: "https://main.example.com", allowlist: "https://second.example.com,", origin: "https://main.example.com"},
+		{name: "query in configuration", canonical: "https://main.example.com", allowlist: "https://second.example.com?", origin: "https://second.example.com"},
+		{name: "public HTTP canonical", canonical: "http://main.example.com", origin: "http://main.example.com"},
+		{name: "public HTTP additional", canonical: "https://main.example.com", allowlist: "http://second.example.com", origin: "http://second.example.com"},
+		{name: "localhost development", canonical: "http://localhost:3000", origin: "http://localhost:3000", want: "http://localhost:3000/oauth/test"},
+		{name: "IPv4 loopback development", canonical: "https://main.example.com", allowlist: "http://127.0.0.1:3000", origin: "http://127.0.0.1:3000", want: "http://127.0.0.1:3000/oauth/test"},
+		{name: "IPv6 loopback development", canonical: "https://main.example.com", allowlist: "http://[::1]:3000", origin: "http://[::1]:3000", want: "http://[::1]:3000/oauth/test"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			system_setting.ServerAddress = test.canonical
+			setOAuthAllowedOrigins(t, test.allowlist)
+			request := httptest.NewRequest(http.MethodPost, "/api/oauth/state", nil)
+			if !test.noOrigin {
+				request.Header.Set("Origin", test.origin)
+			}
+			uri, err := oauth.NewBrowserCallbackURI(request, "test")
+			if test.want == "" {
+				require.Error(t, err)
+				assert.Empty(t, uri)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.want, uri)
+		})
+	}
+}
+
+type oauthCallbackTransport func(*http.Request) (*http.Response, error)
+
+func (transport oauthCallbackTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+func TestOAuthCallbackTokenExchange(t *testing.T) {
+	previousTransport, previousAddress := http.DefaultTransport, system_setting.ServerAddress
+	previousEndpoint := system_setting.GetOIDCSettings().TokenEndpoint
+	system_setting.GetOIDCSettings().TokenEndpoint = "https://sso.example.com/token"
+	t.Cleanup(func() { system_setting.GetOIDCSettings().TokenEndpoint = previousEndpoint })
+	system_setting.ServerAddress = "https://main.example.com/"
+	t.Cleanup(func() { http.DefaultTransport, system_setting.ServerAddress = previousTransport, previousAddress })
+	providers := []struct {
+		slug     string
+		provider oauth.Provider
+	}{
+		{"custom", oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{Slug: "custom", TokenEndpoint: "https://sso.example.com/token"})},
+		{"oidc", &oauth.OIDCProvider{}},
+		{"discord", &oauth.DiscordProvider{}},
+	}
+	for _, provider := range providers {
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/legacy=%t", provider.slug, legacy), func(t *testing.T) {
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				expected := "https://main.example.com/oauth/" + provider.slug
+				if !legacy {
+					expected = "https://second.example.com/oauth/" + provider.slug
+					c.Set(oauth.CallbackURIContextKey, expected)
+				}
+				calls := 0
+				http.DefaultTransport = oauthCallbackTransport(func(request *http.Request) (*http.Response, error) {
+					calls++
+					require.NoError(t, request.ParseForm())
+					assert.Equal(t, expected, request.Form.Get("redirect_uri"))
+					assert.Equal(t, "test-code", request.Form.Get("code"))
+					response := httptest.NewRecorder()
+					_, _ = response.WriteString(`{"access_token":"test-access-token"}`)
+					return response.Result(), nil
+				})
+				token, err := provider.provider.ExchangeToken(context.Background(), "test-code", c)
+				require.NoError(t, err)
+				assert.Equal(t, "test-access-token", token.AccessToken)
+				assert.Equal(t, 1, calls)
+			})
+		}
+	}
 }
 
 func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {

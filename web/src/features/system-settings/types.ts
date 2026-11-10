@@ -157,6 +157,7 @@ export type SiteSettings = {
 }
 
 export type AuthSettings = {
+  'oauth.allowed_origins': string
   PasswordLoginEnabled: boolean
   PasswordRegisterEnabled: boolean
   EmailVerificationEnabled: boolean

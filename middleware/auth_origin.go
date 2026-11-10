@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -72,5 +73,7 @@ func isAllowedSessionOrigin(request *http.Request, origin string) bool {
 			return true
 		}
 	}
-	return false
+	// Domains managed by the root administrator also need to refresh/logout
+	// after OAuth login, including when HTTPS terminates at a reverse proxy.
+	return strings.HasPrefix(origin, "https://") && system_setting.IsOAuthOriginAllowed(origin)
 }

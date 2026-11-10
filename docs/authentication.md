@@ -125,6 +125,44 @@ SESSION_COOKIE_TRUSTED_URL=https://panel.example.com,https://admin.example.com
 
 该开关只控制面板 Refresh Cookie 和 refresh/logout 的 OriginGuard，不会修改 relay、旧 billing dashboard、`/api/usage/token` 或 `/api/log/token` 的 CORS 行为。
 
+## 多域名 OAuth 登录
+
+自定义 OAuth 提供商、内置 OIDC 和 Discord 支持从多个站点域名分别发起授权并返回原域名。后台的“服务器地址”作为默认允许的 Origin；超级管理员在“系统设置 → 身份验证 → OAuth 登录域名”（`/system-settings/auth/oauth-domains`）中添加额外站点，每行一个完整网站地址，例如：
+
+```text
+https://panel.example.com
+https://panel.example.net
+```
+
+域名列表保存到共享数据库的 `oauth.allowed_origins` 选项，当前节点立即生效；其他节点按 `SYNC_FREQUENCY` 自动读取，默认每 60 秒同步。保存失败不会应用新列表；清空后仅保留默认服务器地址。无需设置 `OAUTH_ALLOWED_ORIGINS` 环境变量。多个节点使用同一主数据库、相同的 `SESSION_SECRET`。每个域名都需要将前端页面及 `/api/` 转发到这些节点，并配置有效的 HTTPS 证书。
+
+HTTPS 部署仍需一次性启用 `SESSION_COOKIE_SECURE=true`，并在 `SESSION_COOKIE_TRUSTED_URL` 中至少配置主站 HTTPS 地址；Docker Compose 应将这些变量传入容器。面板中的域名列表也参与 HTTPS refresh/logout 来源校验，后续添加域名无需再次修改这些环境变量。该列表不改变 relay CORS。
+
+SSO 客户端也必须逐一登记完整回调地址。例如自定义提供商的标识（slug）为 `my-sso`，则登记：
+
+```text
+https://panel.example.com/oauth/my-sso
+https://panel.example.net/oauth/my-sso
+```
+
+内置 OIDC 的回调路径是 `/oauth/oidc`，Discord 是 `/oauth/discord`。SSO 仍须精确校验回调 URL，授权和换 token 请求中的 `redirect_uri` 必须相同。该功能不会改变 GitHub、LinuxDO 或 Telegram 的固定回调配置；如果这些平台作为自建 SSO 的上游，它们仍回调自建 SSO，由自建 SSO 返回对应的 new-api 域名。
+
+服务端在 `POST /api/oauth/state` 时校验浏览器 `Origin`，将该 Origin 下的 `/oauth/<provider>` 保存到一次性 AuthFlow，换 token 时只使用保存的回调地址。允许列表精确匹配协议、主机和有效端口，不支持通配符、域名后缀、路径、用户信息、查询参数或片段。公网只允许 HTTPS；本地开发可显式配置 `http://localhost:<port>` 或回环 IP。缺少 `Origin` 的自建客户端只使用“服务器地址”，必须保存响应 Cookie 并在回调 API 请求时带回；不会根据 `Host`、转发头或 `redirect_uri` 请求参数选择额外域名。配置错误的来源在发起授权时返回 `403` 和 `Callback URL configuration error`。
+
+新的登录 AuthFlow 同时绑定一个仅该域名可用的 HttpOnly、SameSite=Lax Cookie，HTTPS 使用 Secure 和 `__Host-` 前缀。每个流程使用独立 Cookie，可并行打开多个登录窗口；数据库只保存随机 Cookie 值的 SHA-256 摘要。回调必须通过浏览器绑定校验，且通过既有 state 的 provider、有效期、一次性消费校验后才能完成登录。账号绑定和二次验证继续绑定原登录会话和对应的安全凭据，不会因为增加域名而绕过这些检查。不同域名各自建立登录会话，浏览器 Cookie 不跨域共享。
+
+升级前已创建、没有回调快照的 AuthFlow 在其剩余有效期内沿用原“服务器地址”。新流程的回调快照在十分钟有效期内保持不变；修改域名配置仅影响后续创建的流程。滚动升级期间旧节点不识别新快照，应先升级所有节点，再启用额外域名。部署必须使用包含此修改的自建镜像；直接拉取官方镜像不会包含本地修改。
+
+安全设计参考 OWASP ASVS 5.0.0 的 10.1.2、10.2.1、10.2.2，以及 Authentication、Session Management、OAuth2 和 CSRF Prevention Cheat Sheets：本次验证范围为回调来源、事务与浏览器/会话绑定、过期和重放防护，不代表对所有 OAuth/OIDC 能力的完整 ASVS 合规认证。现有自定义 OAuth 和内置 OIDC 授权请求不发送 PKCE 参数；SSO 客户端若强制 PKCE，需另行实现对应支持，不能仅靠添加域名解决。
+
+本次验证记录（2026-11-10，Windows，Go 1.26.10、Bun 1.4.4）：
+
+- SQLite 3.50.4、MySQL 8.4.7、PostgreSQL 15.15 均在真实、隔离的本地数据库运行 `go test -p 1 -ldflags=-w ./controller -run '^TestOAuthDomainPanelSettings$|^TestOAuthMultiDomain' -count=1 -v` 并通过。分别设置 `TEST_SECURITY_DIALECT=sqlite/mysql/postgres`；MySQL 使用 `TEST_MYSQL_DSN=root@tcp(127.0.0.1:23316)/?parseTime=true`，PostgreSQL 使用 `TEST_POSTGRES_DSN=postgresql://oauth_test@127.0.0.1:25432/postgres?sslmode=disable`。覆盖重复保存、数据库重载、非法列表拒绝、写入失败保持原设置，以及登录、会话绑定、过期和重放；本次没有修改数据库结构。
+- `go test -p 1 -ldflags=-w ./controller ./oauth ./middleware -run 'OAuth|SecurityEnrollment|SecurityAccount|SessionCookieOriginGuard' -count=1` 和 `go test -p 1 -ldflags=-w ./oauth -count=1` 通过。为适应本机可用内存，运行时设置 `GOMAXPROCS=1`、`GOGC=20`、`GOMEMLIMIT=768MiB`。
+- 在 `web/` 运行 `bun run test src/features/system-settings/auth/__tests__/oauth-domains.test.tsx --maxWorkers=1`，5 个用例通过：保存、非法输入、失败保留编辑、清空、提交中禁用及重置。`bun check -b`、变更文件的 `oxlint -c .oxlintrc.json`、格式检查和 `git diff --check` 通过。复用 `SettingsSection`、`SettingsForm`、`SettingsPageFormActions`、共享表单控件及 `useUpdateOption`，没有新增通用控件。
+- `bun run build` 成功；构建后的文件体积统计因本机内存不足产生警告，产物已生成。全库 lint 存在本次未改动文件的既有错误，变更文件 lint 无错误。七种语言已通过 `bun run i18n:sync` 同步。
+- SSO token/userinfo 端点在回归测试中由本地 HTTP fixture 模拟，尚未针对用户真实 SSO、域名和反向代理进行部署验收。
+
 ## 可信代理与 IP 限流
 
 Gin 默认会信任所有代理提供的客户端 IP 请求头。本项目改为兼顾常见反代拓扑和公网直连安全的三态配置：
