@@ -65,6 +65,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    labels:
+      - com.centurylinklabs.watchtower.enable=true # 允许 Watchtower 自动更新此容器 (Allow Watchtower to auto-update this container)
 
   redis:
     image: redis:latest
@@ -119,6 +121,20 @@ services:
 #    ports:
 #      - "8123:8123"  # HTTP interface, uncomment if you need external access
 #      - "9000:9000"  # Native interface used by the LOG_SQL_DSN example above
+
+  watchtower:
+    image: nickfedor/watchtower:latest # 维护中的分支；原版 containrrr/watchtower 已归档，不兼容 Docker 29+ (Maintained fork; the original containrrr/watchtower is archived and incompatible with Docker 29+)
+    container_name: watchtower
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=Asia/Shanghai
+      - WATCHTOWER_LABEL_ENABLE=true # 只更新带 watchtower.enable=true 标签的容器 (Only update containers labeled watchtower.enable=true)
+      - WATCHTOWER_CLEANUP=true # 更新后删除旧镜像 (Remove old images after updating)
+      - WATCHTOWER_POLL_INTERVAL=3600 # 检查更新间隔，单位秒 (Update check interval in seconds)
+    networks:
+      - new-api-network
 
 volumes:
   pg_data:
