@@ -1,4 +1,4 @@
-name: Build and publish fork image
+name: Build fork image and release
 
 on:
   push:
@@ -16,8 +16,24 @@ env:
   IMAGE: ghcr.io/azurekiln2333/new-api
 
 jobs:
-  build:
+  prepare:
     if: github.repository == 'azurekiln2333/new-api' && github.ref == 'refs/heads/main'
+    name: Prepare version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Determine custom version
+        id: version
+        shell: bash
+        run: |
+          COMMIT_DATE=$(git show -s --format=%cs HEAD | tr -d '-')
+          echo "version=custom-${COMMIT_DATE}-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
     name: Build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -37,10 +53,11 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Identify custom build
+        env:
+          CUSTOM_VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
         run: |
-          VERSION=$(tr -d '\r\n' < VERSION)
-          printf '%s-custom-%s\n' "$VERSION" "${GITHUB_SHA:0:7}" > VERSION
+          printf '%s\n' "$CUSTOM_VERSION" > VERSION
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -69,7 +86,7 @@ jobs:
 
   publish:
     name: Publish multi-platform image
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -86,11 +103,77 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish latest and commit tags
+        env:
+          CUSTOM_VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
         run: |
           docker buildx imagetools create \
             --tag "$IMAGE:latest" \
             --tag "$IMAGE:sha-$GITHUB_SHA" \
+            --tag "$IMAGE:$CUSTOM_VERSION" \
             "$IMAGE:sha-$GITHUB_SHA-amd64" \
             "$IMAGE:sha-$GITHUB_SHA-arm64"
           docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  draft_release:
+    name: Prepare draft release
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      published: ${{ steps.draft.outputs.published }}
+    steps:
+      - name: Create release for this commit
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOM_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          if RELEASE=$(gh release view "$CUSTOM_VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft); then
+            PUBLISHED=$(jq -r '.isDraft | not' <<< "$RELEASE")
+            echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NOTES="$RUNNER_TEMP/fork-release-notes.md"
+          printf 'Automated custom build of new-api.\n\nCommit: `%s`\n\nDocker image (Linux AMD64 / ARM64):\n```text\n%s:%s\n```\n\nLinux, macOS, and Windows binaries and SHA-256 checksums are attached.\n' \
+            "$GITHUB_SHA" "$IMAGE" "$CUSTOM_VERSION" > "$NOTES"
+          gh release create "$CUSTOM_VERSION" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --draft --title "new-api $CUSTOM_VERSION" --notes-file "$NOTES"
+          echo 'published=false' >> "$GITHUB_OUTPUT"
+
+  release_binaries:
+    name: Build release downloads
+    needs: [prepare, draft_release]
+    if: needs.draft_release.outputs.published != 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      version_tag: ${{ needs.prepare.outputs.version }}
+
+  publish_release:
+    name: Publish release with downloads
+    needs: [prepare, release_binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Verify downloads and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOM_VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          ASSETS=$(gh release view "$CUSTOM_VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          for ASSET in "new-api-$CUSTOM_VERSION" "new-api-arm64-$CUSTOM_VERSION" \
+            "new-api-macos-$CUSTOM_VERSION" "new-api-$CUSTOM_VERSION.exe" \
+            checksums-linux.txt checksums-macos.txt checksums-windows.txt; do
+            if ! grep -Fxq "$ASSET" <<< "$ASSETS"; then
+              echo "::error::Missing release asset: $ASSET"
+              exit 1
+            fi
+          done
+          gh release edit "$CUSTOM_VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release view "$CUSTOM_VERSION" --repo "$GITHUB_REPOSITORY" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"

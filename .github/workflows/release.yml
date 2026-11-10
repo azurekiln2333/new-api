@@ -3,6 +3,12 @@ permissions:
   contents: write
 
 on:
+  workflow_call:
+    inputs:
+      version_tag:
+        description: 'Custom version to build and attach to an existing draft release'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       name:
@@ -23,8 +29,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Determine Version
+        env:
+          CUSTOM_VERSION: ${{ inputs.version_tag }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          if [ -n "$CUSTOM_VERSION" ]; then
+            VERSION=$CUSTOM_VERSION
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
           else
             VERSION=$(git describe --tags --match 'v[0-9]*')
@@ -59,8 +69,12 @@ jobs:
 
       - name: Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.version_tag != ''
         with:
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ inputs.version_tag != '' }}
+          fail_on_unmatched_files: true
           files: |
             new-api-*
             checksums-linux.txt
@@ -76,8 +90,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Determine Version
+        env:
+          CUSTOM_VERSION: ${{ inputs.version_tag }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          if [ -n "$CUSTOM_VERSION" ]; then
+            VERSION=$CUSTOM_VERSION
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
           else
             VERSION=$(git describe --tags --match 'v[0-9]*')
@@ -108,8 +126,12 @@ jobs:
 
       - name: Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.version_tag != ''
         with:
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ inputs.version_tag != '' }}
+          fail_on_unmatched_files: true
           files: |
             new-api-macos-*
             checksums-macos.txt
@@ -128,8 +150,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Determine Version
+        env:
+          CUSTOM_VERSION: ${{ inputs.version_tag }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          if [ -n "$CUSTOM_VERSION" ]; then
+            VERSION=$CUSTOM_VERSION
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
           else
             VERSION=$(git describe --tags --match 'v[0-9]*')
@@ -159,8 +185,12 @@ jobs:
 
       - name: Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.version_tag != ''
         with:
+          tag_name: ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ inputs.version_tag != '' }}
+          fail_on_unmatched_files: true
           files: |
             new-api-*.exe
             checksums-windows.txt
