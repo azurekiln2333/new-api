@@ -25,7 +25,13 @@ import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
 import { formatTokens } from '../lib/format'
-import type { ModelHistorySeries, ModelRanking, RankingPeriod } from '../types'
+import type {
+  ModelHistorySeries,
+  ModelRanking,
+  RankingPeriod,
+  RankingTokenTotals,
+} from '../types'
+import { CacheTokenDetails } from './cache-token-details'
 import { ModelLeaderboard } from './model-leaderboard'
 
 const PERIOD_DESCRIPTIONS: Record<RankingPeriod, string> = {
@@ -41,6 +47,7 @@ type ModelsSectionProps = {
   history: ModelHistorySeries
   rows: ModelRanking[]
   period: RankingPeriod
+  totals: RankingTokenTotals
 }
 
 /**
@@ -71,11 +78,6 @@ export function ModelsSection(props: ModelsSectionProps) {
       return (order.get(a.model) ?? 999) - (order.get(b.model) ?? 999)
     })
   }, [props.history])
-
-  const totalTokens = useMemo(
-    () => props.rows.reduce((s, r) => s + r.total_tokens, 0),
-    [props.rows]
-  )
 
   const spec = useMemo(() => {
     if (orderedPoints.length === 0) return null
@@ -166,7 +168,7 @@ export function ModelsSection(props: ModelsSectionProps) {
   return (
     <section className='bg-card overflow-hidden rounded-lg border'>
       {/* Chart block ----------------------------------------------------- */}
-      <header className='flex items-start justify-between gap-4 px-5 py-4'>
+      <header className='flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-start sm:justify-between'>
         <div className='min-w-0 flex-1'>
           <h2 className='text-foreground inline-flex items-center gap-2 text-base font-semibold'>
             <BarChart3 className='text-primary size-4' />
@@ -176,15 +178,24 @@ export function ModelsSection(props: ModelsSectionProps) {
             {t(PERIOD_DESCRIPTIONS[props.period])}
           </p>
         </div>
-        <div className='shrink-0 text-right'>
+        <div className='max-w-full shrink-0 self-end text-right sm:max-w-[50%] sm:self-auto'>
           <div className='text-foreground font-mono text-2xl font-semibold tabular-nums'>
-            {formatTokens(totalTokens)}
+            {formatTokens(props.totals.total_tokens)}
           </div>
           <div className='text-muted-foreground/80 text-[10px] font-medium tracking-widest uppercase'>
             {t('tokens')}
           </div>
+          <CacheTokenDetails
+            cache_read_tokens={props.totals.cache_read_tokens}
+            cache_creation_tokens={props.totals.cache_creation_tokens}
+          />
         </div>
       </header>
+      <p className='text-muted-foreground px-5 pb-4 text-xs'>
+        {t(
+          'New requests count cached tokens once in totals. Historical totals may exclude cached tokens.'
+        )}
+      </p>
 
       <div className='px-5 pb-5'>
         <div className='h-60 sm:h-72'>

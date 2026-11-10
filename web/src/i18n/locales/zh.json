@@ -3977,6 +3977,7 @@
     "New priority: {{priority}}": "新优先级：{{priority}}",
     "New priority: {{priority}} · {{count}} channels affected": "新优先级：{{priority}} · 影响 {{count}} 个渠道",
     "New records include the fields below. Existing fields are kept unless explicitly selected.": "新增记录将包含下列字段；已有记录仅覆盖明确勾选的字段。",
+    "New requests count cached tokens once in totals. Historical totals may exclude cached tokens.": "新请求的总量包含缓存 Token，且不重复计算。历史总量可能未包含缓存 Token。",
     "New User Quota": "新用户配额",
     "New user registration has been disabled by administrator": "管理员关闭了新用户注册",
     "New user sign-up bonus {{quota}}": "新用户注册赠送 {{quota}}",

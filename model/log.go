@@ -387,11 +387,18 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	if common.DataExportEnabled {
 		var cacheReadTokens, cacheCreationTokens int
+		tokenUsed := params.PromptTokens + params.CompletionTokens
 		if other != nil {
 			cacheReadTokens, _ = other.public["cache_tokens"].(int)
 			// The settlement path already normalizes the cache creation total.
 			// Do not add the 5m/1h breakdown again or infer tokens from prices.
 			cacheCreationTokens, _ = other.public["cache_write_tokens"].(int)
+			// Anthropic prompt tokens exclude both cache categories. OpenAI
+			// prompt tokens already include them, including converted responses.
+			// Use settlement semantics, never the model name or request endpoint.
+			if other.public["usage_semantic"] == "anthropic" {
+				tokenUsed += max(0, cacheReadTokens) + max(0, cacheCreationTokens)
+			}
 		}
 		LogQuotaData(QuotaDataLogParams{
 			UserID:              userId,
@@ -399,7 +406,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			ModelName:           params.ModelName,
 			Quota:               params.Quota,
 			CreatedAt:           createdAt,
-			TokenUsed:           params.PromptTokens + params.CompletionTokens,
+			TokenUsed:           tokenUsed,
 			CacheReadTokens:     int64(cacheReadTokens),
 			CacheCreationTokens: int64(cacheCreationTokens),
 			UseGroup:            params.Group,

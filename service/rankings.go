@@ -22,6 +22,7 @@ const (
 )
 
 type RankingsResponse struct {
+	Totals             RankingTokenTotals `json:"totals"`
 	Models             []RankedModel      `json:"models"`
 	Vendors            []RankedVendor     `json:"vendors"`
 	TopMovers          []RankingMover     `json:"top_movers"`
@@ -30,27 +31,37 @@ type RankingsResponse struct {
 	VendorShareHistory VendorShareSeries  `json:"vendor_share_history"`
 }
 
+type RankingTokenTotals struct {
+	TotalTokens         int64 `json:"total_tokens"`
+	CacheReadTokens     int64 `json:"cache_read_tokens"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+}
+
 type RankedModel struct {
-	Rank         int     `json:"rank"`
-	PreviousRank *int    `json:"previous_rank,omitempty"`
-	ModelName    string  `json:"model_name"`
-	Vendor       string  `json:"vendor"`
-	VendorIcon   string  `json:"vendor_icon,omitempty"`
-	Category     string  `json:"category"`
-	TotalTokens  int64   `json:"total_tokens"`
-	Share        float64 `json:"share"`
-	GrowthPct    float64 `json:"growth_pct"`
+	Rank                int     `json:"rank"`
+	PreviousRank        *int    `json:"previous_rank,omitempty"`
+	ModelName           string  `json:"model_name"`
+	Vendor              string  `json:"vendor"`
+	VendorIcon          string  `json:"vendor_icon,omitempty"`
+	Category            string  `json:"category"`
+	TotalTokens         int64   `json:"total_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	Share               float64 `json:"share"`
+	GrowthPct           float64 `json:"growth_pct"`
 }
 
 type RankedVendor struct {
-	Rank        int     `json:"rank"`
-	Vendor      string  `json:"vendor"`
-	VendorIcon  string  `json:"vendor_icon,omitempty"`
-	TotalTokens int64   `json:"total_tokens"`
-	Share       float64 `json:"share"`
-	GrowthPct   float64 `json:"growth_pct"`
-	ModelsCount int     `json:"models_count"`
-	TopModel    string  `json:"top_model"`
+	Rank                int     `json:"rank"`
+	Vendor              string  `json:"vendor"`
+	VendorIcon          string  `json:"vendor_icon,omitempty"`
+	TotalTokens         int64   `json:"total_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	Share               float64 `json:"share"`
+	GrowthPct           float64 `json:"growth_pct"`
+	ModelsCount         int     `json:"models_count"`
+	TopModel            string  `json:"top_model"`
 }
 
 type RankingMover struct {
@@ -121,13 +132,15 @@ type rankingModelMeta struct {
 }
 
 type vendorAggregate struct {
-	name           string
-	icon           string
-	totalTokens    int64
-	previousTokens int64
-	models         map[string]struct{}
-	topModel       string
-	topModelTokens int64
+	name                string
+	icon                string
+	totalTokens         int64
+	cacheReadTokens     int64
+	cacheCreationTokens int64
+	previousTokens      int64
+	models              map[string]struct{}
+	topModel            string
+	topModelTokens      int64
 }
 
 var (
@@ -200,7 +213,8 @@ func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*Rankings
 	}
 
 	meta := buildRankingModelMeta()
-	totalTokens := sumRankingTokens(currentTotals)
+	totals := sumRankingTokens(currentTotals)
+	totalTokens := totals.TotalTokens
 	previousRankByModel := rankingRankMap(previousTotals)
 	previousTokensByModel := rankingTokenMap(previousTotals)
 
@@ -211,6 +225,7 @@ func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*Rankings
 	movers, droppers := buildRankingMovers(rankedModels)
 
 	return &RankingsResponse{
+		Totals:             totals,
 		Models:             limitRankedModels(rankedModels, rankingLeaderboardLimit),
 		Vendors:            vendors,
 		TopMovers:          movers,
@@ -275,15 +290,17 @@ func buildRankedModels(totals []model.RankingQuotaTotal, totalTokens int64, prev
 			growth = rankingGrowthPct(item.TotalTokens, previousTokens[item.ModelName])
 		}
 		rows = append(rows, RankedModel{
-			Rank:         idx + 1,
-			PreviousRank: previousRank,
-			ModelName:    item.ModelName,
-			Vendor:       modelMeta.vendor,
-			VendorIcon:   modelMeta.vendorIcon,
-			Category:     "all",
-			TotalTokens:  item.TotalTokens,
-			Share:        rankingShare(item.TotalTokens, totalTokens),
-			GrowthPct:    growth,
+			Rank:                idx + 1,
+			PreviousRank:        previousRank,
+			ModelName:           item.ModelName,
+			Vendor:              modelMeta.vendor,
+			VendorIcon:          modelMeta.vendorIcon,
+			Category:            "all",
+			TotalTokens:         item.TotalTokens,
+			CacheReadTokens:     item.CacheReadTokens,
+			CacheCreationTokens: item.CacheCreationTokens,
+			Share:               rankingShare(item.TotalTokens, totalTokens),
+			GrowthPct:           growth,
 		})
 	}
 	return rows
@@ -295,6 +312,8 @@ func buildRankedVendors(currentTotals []model.RankingQuotaTotal, previousTotals 
 		modelMeta := modelMeta(item.ModelName, meta)
 		agg := ensureVendorAggregate(aggregates, modelMeta)
 		agg.totalTokens += item.TotalTokens
+		agg.cacheReadTokens += item.CacheReadTokens
+		agg.cacheCreationTokens += item.CacheCreationTokens
 		agg.models[item.ModelName] = struct{}{}
 		if item.TotalTokens > agg.topModelTokens {
 			agg.topModel = item.ModelName
@@ -317,13 +336,15 @@ func buildRankedVendors(currentTotals []model.RankingQuotaTotal, previousTotals 
 			growth = rankingGrowthPct(agg.totalTokens, agg.previousTokens)
 		}
 		rows = append(rows, RankedVendor{
-			Vendor:      agg.name,
-			VendorIcon:  agg.icon,
-			TotalTokens: agg.totalTokens,
-			Share:       rankingShare(agg.totalTokens, totalTokens),
-			GrowthPct:   growth,
-			ModelsCount: len(agg.models),
-			TopModel:    agg.topModel,
+			Vendor:              agg.name,
+			VendorIcon:          agg.icon,
+			TotalTokens:         agg.totalTokens,
+			CacheReadTokens:     agg.cacheReadTokens,
+			CacheCreationTokens: agg.cacheCreationTokens,
+			Share:               rankingShare(agg.totalTokens, totalTokens),
+			GrowthPct:           growth,
+			ModelsCount:         len(agg.models),
+			TopModel:            agg.topModel,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -545,10 +566,12 @@ func rankingTokenMap(totals []model.RankingQuotaTotal) map[string]int64 {
 	return tokens
 }
 
-func sumRankingTokens(totals []model.RankingQuotaTotal) int64 {
-	total := int64(0)
+func sumRankingTokens(totals []model.RankingQuotaTotal) RankingTokenTotals {
+	var total RankingTokenTotals
 	for _, item := range totals {
-		total += item.TotalTokens
+		total.TotalTokens += item.TotalTokens
+		total.CacheReadTokens += item.CacheReadTokens
+		total.CacheCreationTokens += item.CacheCreationTokens
 	}
 	return total
 }

@@ -8,8 +8,10 @@ import (
 )
 
 type RankingQuotaTotal struct {
-	ModelName   string `json:"model_name"`
-	TotalTokens int64  `json:"total_tokens"`
+	ModelName           string `json:"model_name"`
+	TotalTokens         int64  `json:"total_tokens"`
+	CacheReadTokens     int64  `json:"cache_read_tokens"`
+	CacheCreationTokens int64  `json:"cache_creation_tokens"`
 }
 
 type RankingQuotaBucket struct {
@@ -21,7 +23,7 @@ type RankingQuotaBucket struct {
 func GetRankingQuotaTotals(startTime int64, endTime int64) ([]RankingQuotaTotal, error) {
 	var rows []RankingQuotaTotal
 	query := DB.Table("quota_data").
-		Select("model_name, sum(token_used) as total_tokens").
+		Select("model_name, sum(token_used) as total_tokens, sum(cache_read_tokens) as cache_read_tokens, sum(cache_creation_tokens) as cache_creation_tokens").
 		Where("model_name <> ''").
 		Group("model_name").
 		Having("sum(token_used) > 0").

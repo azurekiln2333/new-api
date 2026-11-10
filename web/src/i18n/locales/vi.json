@@ -3977,6 +3977,7 @@
     "New priority: {{priority}}": "Mức ưu tiên mới: {{priority}}",
     "New priority: {{priority}} · {{count}} channels affected": "Độ ưu tiên mới: {{priority}} · ảnh hưởng {{count}} kênh",
     "New records include the fields below. Existing fields are kept unless explicitly selected.": "Bản ghi mới bao gồm các trường bên dưới. Trường hiện có được giữ nguyên trừ khi được chọn rõ ràng.",
+    "New requests count cached tokens once in totals. Historical totals may exclude cached tokens.": "Tổng của các yêu cầu mới tính token bộ nhớ đệm đúng một lần. Tổng trước đây có thể chưa bao gồm token bộ nhớ đệm.",
     "New User Quota": "Hạn mức người dùng mới",
     "New user registration has been disabled by administrator": "Quản trị viên đã tắt đăng ký người dùng mới",
     "New user sign-up bonus {{quota}}": "Thưởng đăng ký người dùng mới {{quota}}",

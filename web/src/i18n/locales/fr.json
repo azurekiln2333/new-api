@@ -3977,6 +3977,7 @@
     "New priority: {{priority}}": "Nouvelle priorité : {{priority}}",
     "New priority: {{priority}} · {{count}} channels affected": "Nouvelle priorité : {{priority}} · {{count}} canaux concernés",
     "New records include the fields below. Existing fields are kept unless explicitly selected.": "Les nouveaux enregistrements incluent les champs ci-dessous. Les champs existants sont conservés sauf sélection explicite.",
+    "New requests count cached tokens once in totals. Historical totals may exclude cached tokens.": "Les nouvelles requêtes comptent les tokens en cache une seule fois dans le total. Les totaux historiques peuvent les exclure.",
     "New User Quota": "Quota nouvel utilisateur",
     "New user registration has been disabled by administrator": "L’inscription de nouveaux utilisateurs a été désactivée par l’administrateur",
     "New user sign-up bonus {{quota}}": "Bonus d'inscription {{quota}}",

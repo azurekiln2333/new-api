@@ -22,6 +22,7 @@ import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { formatTokens } from '../lib/format'
 import type { ModelRanking } from '../types'
+import { CacheTokenDetails } from './cache-token-details'
 import { ModelLink, VendorLink } from './entity-links'
 import { GrowthText } from './growth-text'
 
@@ -109,7 +110,7 @@ function ModelList(props: {
               </VendorLink>
             </p>
           </div>
-          <div className='shrink-0 text-right'>
+          <div className='max-w-[55%] shrink-0 text-right'>
             <div
               className={
                 compact
@@ -130,6 +131,10 @@ function ModelList(props: {
             <GrowthText
               value={row.growth_pct}
               className={compact ? 'text-[10px]' : 'text-[11px]'}
+            />
+            <CacheTokenDetails
+              cache_read_tokens={row.cache_read_tokens}
+              cache_creation_tokens={row.cache_creation_tokens}
             />
           </div>
         </li>

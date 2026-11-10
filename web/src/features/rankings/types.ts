@@ -38,6 +38,12 @@ export type RankingCategoryId =
   | 'productivity'
   | 'multimodal'
 
+export type RankingTokenTotals = {
+  total_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
+}
+
 export type ModelRanking = {
   rank: number
   /** Previous rank in the same period; undefined means "new". */
@@ -48,6 +54,8 @@ export type ModelRanking = {
   category: RankingCategoryId
   /** Total tokens routed through this model in the period. */
   total_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
   /** Share of all tokens served (0..1). */
   share: number
   /** Period-over-period change in token volume (%). */
@@ -59,6 +67,8 @@ export type VendorRanking = {
   vendor: string
   vendor_icon?: string
   total_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
   share: number
   growth_pct: number
   /** Number of distinct models from this vendor with traffic. */
@@ -124,6 +134,7 @@ export type VendorShareSeries = {
 }
 
 export type RankingsSnapshot = {
+  totals: RankingTokenTotals
   // Overall (all categories) ------------------------------------------------
   models: ModelRanking[]
   vendors: VendorRanking[]

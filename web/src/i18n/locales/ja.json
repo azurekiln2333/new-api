@@ -3977,6 +3977,7 @@
     "New priority: {{priority}}": "新しい優先度：{{priority}}",
     "New priority: {{priority}} · {{count}} channels affected": "新しい優先度：{{priority}} · {{count}} チャンネルに影響",
     "New records include the fields below. Existing fields are kept unless explicitly selected.": "新規レコードには以下の項目が含まれます。既存の項目は明示的に選択しない限り保持されます。",
+    "New requests count cached tokens once in totals. Historical totals may exclude cached tokens.": "新しいリクエストではキャッシュトークンを合計に一度だけ計上します。過去の合計には含まれていない場合があります。",
     "New User Quota": "新しいユーザー割り当て",
     "New user registration has been disabled by administrator": "管理者により新規ユーザー登録が無効化されています",
     "New user sign-up bonus {{quota}}": "新規登録ボーナス {{quota}}",

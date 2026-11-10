@@ -26,6 +26,7 @@ import { VCHART_OPTION } from '@/lib/vchart'
 
 import { formatShare, formatTokens } from '../lib/format'
 import type { RankingPeriod, VendorRanking, VendorShareSeries } from '../types'
+import { CacheTokenDetails } from './cache-token-details'
 import { VendorLink } from './entity-links'
 
 const PERIOD_DESCRIPTIONS: Record<RankingPeriod, string> = {
@@ -295,13 +296,17 @@ function VendorList(props: {
           >
             {vendor.vendor}
           </VendorLink>
-          <div className='shrink-0 text-right'>
+          <div className='max-w-[55%] shrink-0 text-right'>
             <div className='text-foreground font-mono text-sm font-semibold tabular-nums'>
               {formatTokens(vendor.total_tokens)}
             </div>
             <div className='text-muted-foreground/80 font-mono text-[11px] tabular-nums'>
               {formatShare(vendor.share)}
             </div>
+            <CacheTokenDetails
+              cache_read_tokens={vendor.cache_read_tokens}
+              cache_creation_tokens={vendor.cache_creation_tokens}
+            />
           </div>
         </li>
       ))}

@@ -3977,6 +3977,7 @@
     "New priority: {{priority}}": "Новый приоритет: {{priority}}",
     "New priority: {{priority}} · {{count}} channels affected": "Новый приоритет: {{priority}} · затронуто каналов: {{count}}",
     "New records include the fields below. Existing fields are kept unless explicitly selected.": "Новые записи включают перечисленные поля. Существующие поля сохраняются, если не выбраны явно.",
+    "New requests count cached tokens once in totals. Historical totals may exclude cached tokens.": "В новых запросах токены кэша учитываются в общем количестве один раз. Исторические итоги могут не включать их.",
     "New User Quota": "Новая квота пользователя",
     "New user registration has been disabled by administrator": "Администратор отключил регистрацию новых пользователей",
     "New user sign-up bonus {{quota}}": "Бонус за регистрацию {{quota}}",
