@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +23,230 @@ import (
 	"gorm.io/gorm"
 )
 
+// Redemption schema from v1.0.0-rc.49, the latest release when this migration
+// was introduced. Keep this fixture independent of the current model.
+type legacyBatchRedemption struct {
+	Id           int
+	UserId       int
+	Key          string `gorm:"type:char(32);uniqueIndex"`
+	Status       int    `gorm:"default:1"`
+	Name         string `gorm:"index"`
+	Quota        int    `gorm:"default:100"`
+	CreatedTime  int64  `gorm:"bigint"`
+	RedeemedTime int64  `gorm:"bigint"`
+	UsedUserId   int
+	DeletedAt    gorm.DeletedAt `gorm:"index"`
+	ExpiredTime  int64          `gorm:"bigint"`
+}
+
+func (legacyBatchRedemption) TableName() string { return "redemptions" }
+
+func TestRedemptionBatchLimit(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		for _, upgrade := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/upgrade=%t", dialect, upgrade), func(t *testing.T) {
+				var driver gorm.Dialector
+				dbType := common.DatabaseTypeSQLite
+				switch dialect {
+				case "sqlite":
+					driver = sqlite.Open(filepath.Join(t.TempDir(), "batch.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+				case "mysql":
+					dsn := os.Getenv("TEST_MYSQL_DSN")
+					if dsn == "" {
+						t.Skip("TEST_MYSQL_DSN is not configured")
+					}
+					driver, dbType = mysql.Open(dsn), common.DatabaseTypeMySQL
+				case "postgres":
+					dsn := os.Getenv("TEST_POSTGRES_DSN")
+					if dsn == "" {
+						t.Skip("TEST_POSTGRES_DSN is not configured")
+					}
+					driver, dbType = postgres.Open(dsn), common.DatabaseTypePostgreSQL
+				}
+				db, err := gorm.Open(driver, &gorm.Config{})
+				require.NoError(t, err)
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(4)
+				t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+				var version string
+				query := "SELECT version()"
+				if dialect == "sqlite" {
+					query = "SELECT sqlite_version()"
+				}
+				require.NoError(t, db.Raw(query).Scan(&version).Error)
+				t.Logf("database: %s", version)
+				previousDB, previousLogDB := model.DB, model.LOG_DB
+				previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+				previousRedis := common.RedisEnabled
+				model.DB, model.LOG_DB = db, db
+				common.SetDatabaseTypes(dbType, dbType)
+				common.RedisEnabled = false
+				t.Cleanup(func() {
+					model.DB, model.LOG_DB = previousDB, previousLogDB
+					common.SetDatabaseTypes(previousMain, previousLog)
+					common.RedisEnabled = previousRedis
+				})
+				for _, table := range []any{&model.User{}, &model.Redemption{}, &model.RedemptionBatchClaim{}, &model.Log{}, &model.AuditLog{}} {
+					require.False(t, db.Migrator().HasTable(table), "use an empty test database")
+					t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
+				}
+				legacy := []legacyBatchRedemption{
+					{Key: "00000000000000000000000000000001", Name: "legacy", Quota: 100, Status: common.RedemptionCodeStatusEnabled},
+					{Key: "00000000000000000000000000000002", Name: "legacy", Quota: 200, Status: common.RedemptionCodeStatusUsed, UsedUserId: 99, CreatedTime: 100, RedeemedTime: 200, ExpiredTime: 300},
+				}
+				if upgrade {
+					require.NoError(t, db.AutoMigrate(&legacyBatchRedemption{}))
+					require.NoError(t, db.Create(&legacy).Error)
+				}
+				for range 2 {
+					require.NoError(t, db.AutoMigrate(&model.User{}, &model.Redemption{}, &model.RedemptionBatchClaim{}, &model.Log{}, &model.AuditLog{}))
+				}
+				if upgrade {
+					var preserved []legacyBatchRedemption
+					require.NoError(t, db.Order("id").Find(&preserved).Error)
+					assert.Equal(t, legacy, preserved)
+					duplicate := model.Redemption{Key: legacy[0].Key, Name: "duplicate", Quota: 100}
+					require.Error(t, duplicate.Insert(), "legacy code uniqueness must survive migration")
+				}
+				user := model.User{Username: "batch-user", AffCode: "batch-u", Quota: 0}
+				other := model.User{Username: "batch-other", AffCode: "batch-o", Quota: 0}
+				require.NoError(t, db.Create(&user).Error)
+				require.NoError(t, db.Create(&other).Error)
+				router := gin.New()
+				router.Use(func(c *gin.Context) {
+					c.Set("id", user.Id)
+					c.Set("role", common.RoleAdminUser)
+					c.Set("username", user.Username)
+				})
+				router.POST("/", AddRedemption)
+				router.PUT("/", UpdateRedemption)
+				// Every generation has its own server-selected batch, even if the
+				// name or a client-supplied batch ID is reused.
+				var batches [][]model.Redemption
+				for _, limited := range []bool{true, true, false} {
+					body, err := common.Marshal(map[string]any{"name": "campaign", "count": 4, "quota": 100, "limit_per_user": limited, "batch_id": "untrusted"})
+					require.NoError(t, err)
+					response := httptest.NewRecorder()
+					router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+					var result struct {
+						Success bool
+						Data    []string
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+					require.True(t, result.Success, response.Body.String())
+					require.Len(t, result.Data, 4)
+					var codes []model.Redemption
+					require.NoError(t, db.Order("id desc").Limit(4).Find(&codes).Error)
+					for _, code := range codes {
+						assert.Equal(t, codes[0].BatchId, code.BatchId)
+						assert.NotEqual(t, "untrusted", code.BatchId)
+						assert.Equal(t, limited, code.BatchId != "")
+					}
+					batches = append(batches, codes)
+				}
+				assert.NotEqual(t, batches[0][0].BatchId, batches[1][0].BatchId)
+				codes := batches[0]
+				quota, err := model.Redeem(codes[0].Key, user.Id)
+				require.NoError(t, err)
+				assert.Equal(t, 100, quota)
+				_, err = model.Redeem(codes[1].Key, user.Id)
+				require.ErrorIs(t, err, model.ErrRedeemFailed)
+				var available model.Redemption
+				require.NoError(t, db.First(&available, codes[1].Id).Error)
+				assert.Equal(t, common.RedemptionCodeStatusEnabled, available.Status)
+				assert.Zero(t, available.UsedUserId)
+				_, err = model.Redeem(codes[1].Key, other.Id)
+				require.NoError(t, err, "another user can redeem the same batch")
+				_, err = model.Redeem(codes[1].Key, other.Id)
+				require.ErrorIs(t, err, model.ErrRedeemFailed, "each code remains single-use")
+				_, err = model.Redeem(batches[1][0].Key, user.Id)
+				require.NoError(t, err, "same user can redeem another batch")
+				for _, code := range batches[2][:2] {
+					_, err = model.Redeem(code.Key, user.Id)
+					require.NoError(t, err, "unrestricted codes retain existing behavior")
+				}
+				if upgrade {
+					_, err = model.Redeem(legacy[0].Key, user.Id)
+					require.NoError(t, err, "old codes remain unrestricted")
+				}
+				// Editing/renaming and deleting a consumed code cannot reset a batch.
+				body, err := common.Marshal(map[string]any{"id": codes[2].Id, "name": "renamed", "quota": 100, "batch_id": "", "limit_per_user": false})
+				require.NoError(t, err)
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body)))
+				var updated struct {
+					Success bool
+					Data    model.Redemption
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &updated))
+				require.True(t, updated.Success)
+				assert.Equal(t, codes[2].BatchId, updated.Data.BatchId)
+				require.NoError(t, model.DeleteRedemptionById(codes[0].Id))
+				_, err = model.Redeem(codes[2].Key, user.Id)
+				require.ErrorIs(t, err, model.ErrRedeemFailed)
+				// Failed quota credit must roll back both the claim and code.
+				full := model.User{Username: "batch-full", AffCode: "batch-f", Quota: common.MaxWalletQuota - 50}
+				require.NoError(t, db.Create(&full).Error)
+				_, err = model.Redeem(codes[2].Key, full.Id)
+				require.ErrorIs(t, err, model.ErrRedeemFailed)
+				var claims int64
+				require.NoError(t, db.Model(&model.RedemptionBatchClaim{}).Where("user_id = ?", full.Id).Count(&claims).Error)
+				assert.Zero(t, claims)
+				require.NoError(t, db.Model(&full).Update("quota", 0).Error)
+				_, err = model.Redeem(codes[2].Key, full.Id)
+				require.NoError(t, err)
+				// Independent calls on separate connections simulate gateway nodes;
+				// different codes from the same batch may credit only once.
+				racer := model.User{Username: "batch-concurrent", AffCode: "batch-c", Quota: 0}
+				require.NoError(t, db.Create(&racer).Error)
+				// Expired codes must not consume the user's allowance.
+				expired := batches[1][3]
+				require.NoError(t, db.Model(&expired).Update("expired_time", common.GetTimestamp()-1).Error)
+				_, err = model.Redeem(expired.Key, racer.Id)
+				require.ErrorIs(t, err, model.ErrRedeemFailed)
+				require.NoError(t, db.Model(&model.RedemptionBatchClaim{}).Where("user_id = ?", racer.Id).Count(&claims).Error)
+				assert.Zero(t, claims)
+				start := make(chan struct{})
+				results := make(chan error, 2)
+				var wg sync.WaitGroup
+				for _, code := range batches[1][1:3] {
+					wg.Go(func() {
+						<-start
+						_, redeemErr := model.Redeem(code.Key, racer.Id)
+						results <- redeemErr
+					})
+				}
+				close(start)
+				wg.Wait()
+				close(results)
+				successes := 0
+				for redeemErr := range results {
+					if redeemErr == nil {
+						successes++
+					} else {
+						assert.ErrorIs(t, redeemErr, model.ErrRedeemFailed)
+					}
+				}
+				assert.Equal(t, 1, successes)
+				require.NoError(t, db.First(&racer, racer.Id).Error)
+				assert.Equal(t, 100, racer.Quota)
+				require.NoError(t, db.Model(&model.RedemptionBatchClaim{}).Where("user_id = ?", racer.Id).Count(&claims).Error)
+				assert.EqualValues(t, 1, claims)
+				// A subsequent startup must preserve already claimed allowances.
+				require.NoError(t, db.AutoMigrate(&model.Redemption{}, &model.RedemptionBatchClaim{}))
+				duplicateClaim := model.RedemptionBatchClaim{BatchId: batches[1][0].BatchId, UserId: racer.Id}
+				require.Error(t, db.Create(&duplicateClaim).Error, "unique claim must be enforced by the database")
+			})
+		}
+	}
+}
+
 func TestDeleteRedemptionBatch(t *testing.T) {
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = true
+	t.Cleanup(func() { common.IsMasterNode = previousMaster })
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			var driver, logDriver gorm.Dialector
@@ -85,11 +311,15 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				common.SetDatabaseTypes(previousMain, previousLog)
 				common.RedisEnabled = previousRedis
 			})
-			for _, table := range []any{&model.User{}, &model.Redemption{}} {
+			for _, table := range []any{&model.User{}, &model.Redemption{}, &model.Option{}, &model.CasbinRule{}, &model.AuthzRole{}} {
 				require.False(t, db.Migrator().HasTable(table), "use an empty test database")
 				require.NoError(t, db.AutoMigrate(table))
 				t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
 			}
+			// Initialize the same token transition and authorization state as
+			// startup so this test does not depend on other tests running first.
+			require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()))
+			require.NoError(t, authz.Init(db))
 			require.False(t, logDB.Migrator().HasTable(&model.AuditLog{}), "use an empty test log database")
 			require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
 			t.Cleanup(func() { require.NoError(t, logDB.Migrator().DropTable(&model.AuditLog{})) })

@@ -52,11 +52,11 @@ function captureDownloads() {
       revokeObjectURL: vi.fn(),
     })
   )
-  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
-    function (this: HTMLAnchorElement) {
-      downloads.push({ filename: this.download, blob: currentBlob })
-    }
-  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement
+  ) {
+    downloads.push({ filename: this.download, blob: currentBlob })
+  })
   return downloads
 }
 
@@ -213,6 +213,10 @@ test('successful batch creation opens export with returned codes and the configu
   expect(exportDialog).toHaveTextContent(
     'Successfully created 2 redemption codes'
   )
+  expect(api.post).toHaveBeenCalledWith(
+    '/api/redemption/',
+    expect.objectContaining({ count: 2, limit_per_user: true })
+  )
   await waitFor(() =>
     expect(
       screen.queryByRole('dialog', { name: 'Create Redemption Code' })
@@ -233,6 +237,31 @@ test('successful batch creation opens export with returned codes and the configu
   )
   expect(await readDownload(downloads[0])).toBe(
     'batch\tcreatedA\t¥2,000\nbatch\tcreatedB\t¥2,000\n'
+  )
+})
+
+test('batch limit can be disabled using the keyboard before creation', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true, data: ['unrestricted'] },
+  })
+  render(<CreateDrawer />)
+  const toggle = screen.getByRole('switch', {
+    name: 'One redemption per user per batch',
+  })
+  expect(toggle).toBeChecked()
+  toggle.focus()
+  await user.keyboard(' ')
+  expect(toggle).not.toBeChecked()
+  fireEvent.change(screen.getByLabelText('Name'), {
+    target: { value: 'unlimited' },
+  })
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/redemption/',
+      expect.objectContaining({ limit_per_user: false })
+    )
   )
 })
 

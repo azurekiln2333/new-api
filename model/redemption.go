@@ -23,6 +23,18 @@ type Redemption struct {
 	UsedUserId   int            `json:"used_user_id"`
 	DeletedAt    gorm.DeletedAt `gorm:"index"`
 	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
+	BatchId      string         `json:"batch_id" gorm:"type:varchar(32);default:'';<-:create"`
+	LimitPerUser bool           `json:"limit_per_user,omitempty" gorm:"-:all"` // creation request only
+}
+
+// RedemptionBatchClaim survives code deletion so a user's batch allowance
+// cannot be reset. The unique index enforces the limit across gateway nodes.
+type RedemptionBatchClaim struct {
+	Id           int
+	BatchId      string `gorm:"type:varchar(32);not null;uniqueIndex:idx_redemption_batch_user"`
+	UserId       int    `gorm:"not null;uniqueIndex:idx_redemption_batch_user"`
+	RedemptionId int
+	CreatedTime  int64 `gorm:"bigint"`
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {
@@ -157,6 +169,19 @@ func Redeem(key string, userId int) (quota int, err error) {
 		}
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
 			return errors.New("redemption code expired")
+		}
+		if redemption.BatchId != "" {
+			claim := RedemptionBatchClaim{
+				BatchId:      redemption.BatchId,
+				UserId:       userId,
+				RedemptionId: redemption.Id,
+				CreatedTime:  common.GetTimestamp(),
+			}
+			// Insert, code consumption, and quota credit commit together. A
+			// duplicate claim or failed credit leaves the code available.
+			if err := tx.Create(&claim).Error; err != nil {
+				return err
+			}
 		}
 		// Compare-and-swap on status: only the transaction that flips
 		// enabled -> used may credit quota, so a concurrent redeem of the

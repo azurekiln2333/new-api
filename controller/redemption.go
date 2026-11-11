@@ -96,8 +96,12 @@ func AddRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	batchId := ""
+	if redemption.LimitPerUser {
+		batchId = common.GetUUID()
+	}
 	var keys []string
-	for i := 0; i < redemption.Count; i++ {
+	for range redemption.Count {
 		key := common.GetUUID()
 		cleanRedemption := model.Redemption{
 			UserId:      c.GetInt("id"),
@@ -106,6 +110,7 @@ func AddRedemption(c *gin.Context) {
 			CreatedTime: common.GetTimestamp(),
 			Quota:       redemption.Quota,
 			ExpiredTime: redemption.ExpiredTime,
+			BatchId:     batchId,
 		}
 		err = cleanRedemption.Insert()
 		if err != nil {
@@ -116,9 +121,11 @@ func AddRedemption(c *gin.Context) {
 		keys = append(keys, key)
 	}
 	recordManageAudit(c, "redemption.create", map[string]any{
-		"name":  redemption.Name,
-		"count": redemption.Count,
-		"quota": logger.FormatQuota(redemption.Quota),
+		"name":           redemption.Name,
+		"count":          redemption.Count,
+		"quota":          logger.FormatQuota(redemption.Quota),
+		"batch_id":       batchId,
+		"limit_per_user": redemption.LimitPerUser,
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

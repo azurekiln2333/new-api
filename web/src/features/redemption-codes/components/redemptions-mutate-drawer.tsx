@@ -29,6 +29,7 @@ import {
   sideDrawerFooterClassName,
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
+  sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,6 +51,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
 import {
   formatQuotaWithCurrency,
   getCurrencyDisplay,
@@ -426,6 +428,45 @@ export function RedemptionsMutateDrawer({
                         </FormItem>
                       )}
                     />
+                  )}
+                  <FormField
+                    control={form.control}
+                    name='limit_per_user'
+                    render={({ field }) => (
+                      <FormItem className={sideDrawerSwitchItemClassName()}>
+                        <div className='flex flex-col gap-0.5'>
+                          <FormLabel className='text-sm'>
+                            {t('One redemption per user per batch')}
+                          </FormLabel>
+                          <FormDescription className='text-xs'>
+                            {isUpdate
+                              ? t(
+                                  'Batch restrictions cannot be changed after creation.'
+                                )
+                              : t(
+                                  'Each user can redeem only one code from this generation. Separate generations are separate batches.'
+                                )}
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            disabled={isUpdate}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  {isUpdate && loadedRedemption?.batch_id && (
+                    <div className='space-y-1 text-sm'>
+                      <p className='text-muted-foreground'>
+                        {t('Redemption batch ID')}
+                      </p>
+                      <p className='font-mono break-all'>
+                        {loadedRedemption.batch_id}
+                      </p>
+                    </div>
                   )}
                 </SideDrawerSection>
               </fieldset>

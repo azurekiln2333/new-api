@@ -143,6 +143,21 @@ function getSaveButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: 'Save changes' })
 }
 
+test('existing batch membership is visible and cannot be changed', async () => {
+  const code = { ...redemption(81), batch_id: 'fixed-batch-81' }
+  apiClient.get = async () => ({ data: { success: true, data: code } })
+  await renderDrawer(code)
+  await waitFor(() => expect(getSaveButton()).toBeEnabled())
+  const toggle = screen.getByRole('switch', {
+    name: 'One redemption per user per batch',
+  })
+  expect(toggle).toBeChecked()
+  expect(toggle).toHaveAttribute('aria-disabled', 'true')
+  fireEvent.click(toggle)
+  expect(toggle).toBeChecked()
+  expect(screen.getByText('fixed-batch-81')).toBeVisible()
+})
+
 function getControlByLabel(labelText: 'Name'): HTMLInputElement
 function getControlByLabel(labelText: 'Quota (CNY)'): HTMLInputElement
 function getControlByLabel(labelText: 'Quota (USD)'): HTMLInputElement
