@@ -56,6 +56,7 @@ import {
   LogsFilterInput,
   LogsFilterToolbar,
 } from './logs-filter-toolbar'
+import { LogsMatchModeToggle } from './logs-match-mode-toggle'
 import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -94,6 +95,7 @@ function buildSearchSourceKey(values: {
   username?: unknown
   requestId?: unknown
   upstreamRequestId?: unknown
+  match?: unknown
   type?: unknown
 }) {
   return [
@@ -106,6 +108,7 @@ function buildSearchSourceKey(values: {
     values.username,
     values.requestId,
     values.upstreamRequestId,
+    values.match,
     Array.isArray(values.type) ? values.type.join(',') : values.type,
   ]
     .map((value) => String(value ?? ''))
@@ -158,6 +161,7 @@ export function CommonLogsFilterBar<TData>(
       username: searchParams.username,
       requestId: searchParams.requestId,
       upstreamRequestId: searchParams.upstreamRequestId,
+      match: searchParams.match,
       type: searchParams.type,
     }
     const filters: CommonLogFilters = {
@@ -172,6 +176,7 @@ export function CommonLogsFilterBar<TData>(
       username: searchParams.username || undefined,
       requestId: searchParams.requestId || undefined,
       upstreamRequestId: searchParams.upstreamRequestId || undefined,
+      match: searchParams.match === 'exact' ? 'exact' : 'fuzzy',
     }
     return {
       sourceKey: buildSearchSourceKey(sourceValues),
@@ -188,6 +193,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.username,
     searchParams.requestId,
     searchParams.upstreamRequestId,
+    searchParams.match,
     searchParams.type,
   ])
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
@@ -270,8 +276,13 @@ export function CommonLogsFilterBar<TData>(
     !!filters.upstreamRequestId
 
   const hasTypeFilter = logType !== LOG_TYPE_ALL_VALUE
+  const hasExactMatch = filters.match === 'exact'
   const hasAdditionalFilters =
-    !!filters.model || !!filters.group || hasTypeFilter || hasExpandedFilters
+    !!filters.model ||
+    !!filters.group ||
+    hasTypeFilter ||
+    hasExactMatch ||
+    hasExpandedFilters
 
   const expandedFilterCount = [
     filters.token,
@@ -484,6 +495,16 @@ export function CommonLogsFilterBar<TData>(
     </>
   )
 
+  const matchModeFilter = (
+    <LogsFilterField>
+      <LogsMatchModeToggle
+        value={hasExactMatch ? 'exact' : 'fuzzy'}
+        onChange={(mode) => handleChange('match', mode)}
+        className='h-8'
+      />
+    </LogsFilterField>
+  )
+
   return (
     <LogsFilterToolbar
       table={props.table}
@@ -497,6 +518,7 @@ export function CommonLogsFilterBar<TData>(
           {modelFilter}
           {groupFilter}
           {typeFilter}
+          {matchModeFilter}
         </>
       }
       advancedFilters={advancedFilters}
@@ -506,6 +528,7 @@ export function CommonLogsFilterBar<TData>(
           {modelFilter}
           {groupFilter}
           {typeFilter}
+          {matchModeFilter}
           {advancedFilters}
         </>
       }

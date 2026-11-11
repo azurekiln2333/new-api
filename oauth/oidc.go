@@ -152,7 +152,14 @@ func (p *OIDCProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*OAu
 		Username:       oidcUser.PreferredUsername,
 		DisplayName:    oidcUser.Name,
 		Email:          oidcUser.Email,
+		AvatarURL:      oidcUser.Picture,
 	}, nil
+}
+
+// SupportsAvatar reports that the userinfo response carries the standard OIDC
+// "picture" claim, which the login flow stores as the account avatar.
+func (p *OIDCProvider) SupportsAvatar() bool {
+	return true
 }
 
 func (p *OIDCProvider) IsUserIDTaken(providerUserID string) bool {

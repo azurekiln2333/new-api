@@ -185,6 +185,11 @@ func GetRandomSatisfiedChannel(
 		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
 	}
 
+	return chooseWeightedChannel(targetChannels, sumWeight)
+}
+
+// chooseWeightedChannel preserves the existing weight smoothing for routing.
+func chooseWeightedChannel(targetChannels []*Channel, sumWeight int) (*Channel, error) {
 	// smoothing factor and adjustment
 	smoothingFactor := 1
 	smoothingAdjustment := 0

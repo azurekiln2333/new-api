@@ -24,7 +24,43 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func channelRoutingTestDB(t *testing.T, kind, dsn string) *gorm.DB {
+	t.Helper()
+	db, _ := newAuditTestDatabase(t, kind, dsn)
+	connection, err := db.DB()
+	require.NoError(t, err)
+	connection.SetMaxOpenConns(1)
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	previousMaster, previousRedis, previousMemory := common.IsMasterNode, common.RedisEnabled, common.MemoryCacheEnabled
+	previousGroups := ratio_setting.GroupRatio2JSONString()
+	t.Setenv("LOG_SQL_DSN", "")
+	model.DB = db
+	common.SetMainDatabaseType(common.DatabaseType(kind))
+	common.IsMasterNode, common.RedisEnabled = false, false
+	// Initialize dialect quoting without opening a second SQLite connection.
+	require.NoError(t, model.InitLogDB())
+	common.IsMasterNode = previousMaster
+	t.Cleanup(func() {
+		require.NoError(t, connection.Close())
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups))
+		model.DB = previousDB
+		common.SetMainDatabaseType(previousMain)
+		common.IsMasterNode = false
+		require.NoError(t, model.InitLogDB())
+		model.LOG_DB = previousLogDB
+		common.SetLogDatabaseType(previousLog)
+		common.IsMasterNode, common.RedisEnabled, common.MemoryCacheEnabled = previousMaster, previousRedis, previousMemory
+		if previousDB != nil && previousMemory {
+			model.InitChannelCache()
+		}
+	})
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	return db
+}
 
 func TestShouldRetryHonorsPinRetryMode(t *testing.T) {
 	openaiErr := types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusInternalServerError)
@@ -132,7 +168,7 @@ func TestChannelAffinityRetryPriorities(t *testing.T) {
 					t.Skipf("%s not configured", dialect.env)
 				}
 			}
-			db := modelManagementDB(t, dialect.kind, dsn)
+			db := channelRoutingTestDB(t, dialect.kind, dsn)
 			previousRetryTimes := common.RetryTimes
 			previousGroups := setting.UserUsableGroups2JSONString()
 			previousMaxGroups := setting.GetMaxTokenAutoGroups()
@@ -248,7 +284,7 @@ func TestRequestPolicyRoutingDatabaseMatrix(t *testing.T) {
 					t.Skipf("%s not configured", dialect.env)
 				}
 			}
-			db := modelManagementDB(t, dialect.kind, dsn)
+			db := channelRoutingTestDB(t, dialect.kind, dsn)
 			previousGroups := setting.UserUsableGroups2JSONString()
 			previousRatios, err := common.Marshal(ratio_setting.GetGroupRatioCopy())
 			require.NoError(t, err)
@@ -327,6 +363,86 @@ func TestRequestPolicyRoutingDatabaseMatrix(t *testing.T) {
 							assert.Equal(t, 2, bound, "a successful fallback rebinds the session")
 						})
 					}
+				}
+			}
+		})
+	}
+}
+
+func TestAffinityFailoverDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		t.Run(dialect.kind, func(t *testing.T) {
+			dsn := os.Getenv(dialect.env)
+			if dialect.env != "" && dsn == "" {
+				t.Skip(dialect.env + " not configured")
+			}
+			db := channelRoutingTestDB(t, dialect.kind, dsn)
+			affinity := operation_setting.GetChannelAffinitySetting()
+			saved := *affinity
+			previousCache := common.MemoryCacheEnabled
+			t.Cleanup(func() { *affinity = saved; common.MemoryCacheEnabled = previousCache })
+			for _, spec := range []struct {
+				id       int
+				priority int64
+			}{{81, 10}, {82, 10}, {83, 5}} {
+				channel := model.Channel{Id: spec.id, Name: fmt.Sprint(spec.id), Type: constant.ChannelTypeOpenAI, Key: "test-only", Status: common.ChannelStatusEnabled, Models: "failover", Group: "default", Priority: common.GetPointer(spec.priority), Weight: common.GetPointer(uint(1)), Setting: common.GetPointer(`{"responses_websocket_enabled":true}`)}
+				require.NoError(t, db.Create(&channel).Error)
+				require.NoError(t, channel.AddAbilities(db))
+			}
+			for _, cached := range []bool{false, true} {
+				for _, path := range []string{"http", "task", "websocket"} {
+					t.Run(fmt.Sprintf("cached=%t/%s", cached, path), func(t *testing.T) {
+						common.MemoryCacheEnabled = cached
+						model.InitChannelCache()
+						*affinity = operation_setting.ChannelAffinitySetting{Enabled: true, SwitchOnSuccess: true, FailureThreshold: 1, RetryAvoidFailedChannels: true, DefaultTTLSeconds: 60, Rules: []operation_setting.ChannelAffinityRule{{Name: t.Name(), ModelRegex: []string{".*"}, SessionMode: "strict", KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Session"}}}}}
+						seed := newPinRetryContext()
+						seed.Request.Header.Set("X-Session", t.Name())
+						service.GetPreferredChannelByAffinity(seed, "failover", "default")
+						service.RecordChannelAffinity(seed, 81)
+						t.Cleanup(func() { service.ClearCurrentChannelAffinityCache(seed) })
+						ctx := newPinRetryContext()
+						ctx.Request.Header.Set("X-Session", t.Name())
+						if path == "websocket" {
+							service.GetChannelConstraints(ctx).AddFilter(dto.ChannelFilter{Kind: dto.FilterResponsesWebSocket})
+						}
+						retry := &service.RetryParam{Ctx: ctx, TokenGroup: "default", ModelName: "failover"}
+						channel, _, selectErr := service.SelectChannelForRequest(ctx, "failover", retry)
+						require.Nil(t, selectErr)
+						require.Equal(t, 81, channel.Id)
+						state := service.RequestPolicy(ctx)
+						state.BeginAttempt(channel, "default")
+						upstream := types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, 500)
+						var decision service.PolicyDecision
+						if path == "task" {
+							decision = decideTaskRetry(ctx, &dto.TaskError{StatusCode: 500}, 2)
+						} else {
+							decision = service.DecideRelayRetry(ctx, upstream, 2)
+						}
+						require.Equal(t, "retry", decision.Action)
+						retry.IncreaseRetry()
+						channel, _, err := service.CacheGetRandomSatisfiedChannel(retry)
+						require.NoError(t, err)
+						require.NotNil(t, channel)
+						assert.Equal(t, 82, channel.Id, "same-priority peer precedes lower priority and failed binding")
+						state.BeginAttempt(channel, "default")
+						ctx.Set("channel_id", 82)
+						service.MarkRequestPolicySuccess(ctx, nil)
+						service.RecordChannelAffinity(ctx, 81)
+						next := newPinRetryContext()
+						next.Request.Header.Set("X-Session", t.Name())
+						bound, found := service.GetPreferredChannelByAffinity(next, "failover", "default")
+						require.True(t, found)
+						assert.Equal(t, 82, bound)
+						assert.True(t, slices.ContainsFunc(state.Events(), func(e service.PolicyEvent) bool { return e.Decision.Reason == "session_failure_threshold" }))
+						assert.True(t, slices.ContainsFunc(state.Events(), func(e service.PolicyEvent) bool { return e.Decision.Reason == "avoid_failed_channels" }))
+						state.BeginAttempt(channel, "default")
+						service.RecordChannelFailure(ctx)
+						retry.IncreaseRetry()
+						channel, _, err = service.CacheGetRandomSatisfiedChannel(retry)
+						require.NoError(t, err)
+						require.NotNil(t, channel)
+						assert.Equal(t, 83, channel.Id, "all untried peers precede repeats")
+					})
 				}
 			}
 		})

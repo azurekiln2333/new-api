@@ -85,6 +85,9 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
+		if model.IsLoginVerificationUserOption(k) {
+			continue
+		}
 		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" {
 			continue
 		}
@@ -198,6 +201,14 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
+	}
+	if (option.Key == "InviteRegisterEnabled" || option.Key == "LoginVerificationRequiredEnabled") && option.Value != "true" && option.Value != "false" {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if model.IsLoginVerificationUserOption(option.Key) {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
 	}
 	switch option.Key {
 	case "QuotaForInviter", "QuotaForInvitee":

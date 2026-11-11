@@ -856,6 +856,9 @@ func taskSubmissionAPIError(taskErr *taskdto.TaskError) *types.NewAPIError {
 // decideTaskRetry is the single retry decision for task submissions. The
 // reason is recorded in the request policy decision events of the log details.
 func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int) service.PolicyDecision {
+	if taskErr != nil && !taskErr.LocalError && !taskErr.NoRetry {
+		service.RecordChannelFailure(c)
+	}
 	stop := service.PolicyDecision{Action: "stop", Source: "system"}
 	retry := service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "system"}
 	switch {
@@ -863,6 +866,8 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		stop.Reason = "request_completed"
 	case taskErr.NoRetry:
 		stop.Reason = "task_accepted"
+	case c != nil && c.Writer != nil && c.Writer.Written():
+		stop.Reason = "response_started"
 	case service.ShouldSkipRetryAfterChannelAffinityFailure(c):
 		stop.Reason, stop.Source = "strict_session", "session_rule"
 		if source := service.RequestPolicy(c).SessionModeSource; source != "" {

@@ -215,6 +215,22 @@ export function ChannelAffinitySection(props: Props) {
             <div className='flex flex-wrap items-center gap-2'>
               <Button
                 variant='outline'
+                disabled={editMode === 'json' || rules.length === 0}
+                onClick={() =>
+                  props.onRulesChange(
+                    serializeRules(
+                      rules.map((rule) => ({
+                        ...rule,
+                        session_mode: 'inherit',
+                      }))
+                    )
+                  )
+                }
+              >
+                {t('Set all rules to inherit defaults')}
+              </Button>
+              <Button
+                variant='outline'
                 onClick={handleFillTemplates}
                 disabled={editMode === 'json'}
               >

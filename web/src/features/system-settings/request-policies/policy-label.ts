@@ -5,6 +5,12 @@ import type { TFunction } from 'i18next'
 // sources reported by the channel operations summary.
 export function policyLabel(t: TFunction, value: string): string {
   switch (value) {
+    case 'response_started':
+      return t('Response output already started')
+    case 'session_failure_threshold':
+      return t('Session binding removed after repeated failures')
+    case 'avoid_failed_channels':
+      return t('Skipped channels that already failed')
     case 'upstream_failure':
       return t('Upstream request failed')
     case 'request_failed':

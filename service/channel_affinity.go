@@ -1,9 +1,11 @@
 package service
 
 import (
+	"context"
 	"hash/fnv"
 	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/samber/hot"
 )
 
@@ -33,8 +36,10 @@ const (
 )
 
 var (
-	channelAffinityCacheOnce sync.Once
-	channelAffinityCache     *cachex.HybridCache[int]
+	channelAffinityCacheOnce    sync.Once
+	channelAffinityCache        *cachex.HybridCache[int]
+	channelAffinityFailureCache *cachex.HybridCache[int]
+	channelAffinityFailureLocks [64]sync.Mutex
 
 	channelAffinityUsageCacheStatsOnce  sync.Once
 	channelAffinityUsageCacheStatsCache *cachex.HybridCache[ChannelAffinityUsageCacheCounters]
@@ -104,6 +109,16 @@ func getChannelAffinityCache() *cachex.HybridCache[int] {
 					WithTTL(time.Duration(defaultTTLSeconds) * time.Second).
 					WithJanitor().
 					Build()
+			},
+		})
+		channelAffinityFailureCache = cachex.NewHybridCache[int](cachex.HybridCacheConfig[int]{
+			Namespace:    "new-api:channel_affinity_failures:v1",
+			Redis:        common.RDB,
+			RedisEnabled: func() bool { return common.RedisEnabled && common.RDB != nil },
+			RedisCodec:   cachex.IntCodec{},
+			Memory: func() *hot.HotCache[string, int] {
+				return hot.NewHotCache[string, int](hot.LRU, capacity).
+					WithTTL(time.Duration(defaultTTLSeconds) * time.Second).WithJanitor().Build()
 			},
 		})
 	})
@@ -648,6 +663,92 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	return meta.SkipRetry
 }
 
+// RecordChannelFailure is shared by HTTP, task submission and WebSocket
+// attempts. Counters belong to the current binding, never to a stale channel.
+func RecordChannelFailure(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	state := RequestPolicy(c)
+	if state.FailureRecorded {
+		return
+	}
+	channelID := state.CurrentChannelID
+	if channelID <= 0 {
+		channelID = c.GetInt("channel_id")
+	}
+	if channelID <= 0 {
+		return
+	}
+	state.FailureRecorded = true
+	if !slices.Contains(state.FailedChannelIDs, channelID) {
+		state.FailedChannelIDs = append(state.FailedChannelIDs, channelID)
+	}
+	setting := operation_setting.GetChannelAffinitySetting()
+	cacheKey, ttlSeconds, ok := getChannelAffinityContext(c)
+	if !ok || !setting.Enabled || setting.FailureThreshold <= 0 {
+		return
+	}
+	if ttlSeconds <= 0 {
+		ttlSeconds = setting.DefaultTTLSeconds
+	}
+	if ttlSeconds <= 0 {
+		ttlSeconds = 3600
+	}
+	cache := getChannelAffinityCache()
+	counterKey := cacheKey + ":" + strconv.Itoa(channelID)
+	count := 0
+	var err error
+	if common.RedisEnabled && common.RDB != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		// Compare, increment, expire and unbind atomically across gateway nodes.
+		count, err = channelAffinityFailureScript.Run(ctx, common.RDB,
+			[]string{cache.FullKey(cacheKey), channelAffinityFailureCache.FullKey(counterKey)},
+			channelID, ttlSeconds, setting.FailureThreshold).Int()
+	} else {
+		lock := channelAffinityFailureLock(cacheKey)
+		lock.Lock()
+		defer lock.Unlock()
+		bound, found, readErr := cache.Get(cacheKey)
+		if readErr != nil || !found || bound != channelID {
+			return
+		}
+		count, _, err = channelAffinityFailureCache.Get(counterKey)
+		if err == nil {
+			count++
+			err = channelAffinityFailureCache.SetWithTTL(counterKey, count, time.Duration(ttlSeconds)*time.Second)
+		}
+		if err == nil && count >= setting.FailureThreshold {
+			_, err = cache.DeleteMany([]string{cacheKey})
+			_, _ = channelAffinityFailureCache.DeleteMany([]string{counterKey})
+		}
+	}
+	if err != nil {
+		common.SysError(common.LogText("channel affinity failure tracking failed: err=%v", err))
+		return
+	}
+	if count >= setting.FailureThreshold {
+		state.AffinityReleased = true
+		c.Set(ginKeyChannelAffinitySkipRetry, false)
+		state.AddEvent(PolicyEvent{ChannelID: channelID, Decision: PolicyDecision{Action: "unbind", Reason: "session_failure_threshold", Source: "global"}})
+	}
+}
+
+var channelAffinityFailureScript = redis.NewScript(`
+if tonumber(redis.call('GET', KEYS[1])) ~= tonumber(ARGV[1]) then return 0 end
+local count = redis.call('INCR', KEYS[2])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+if count >= tonumber(ARGV[3]) then redis.call('DEL', KEYS[1], KEYS[2]) end
+return count
+`)
+
+func channelAffinityFailureLock(key string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return &channelAffinityFailureLocks[h.Sum32()%uint32(len(channelAffinityFailureLocks))]
+}
+
 func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	if c == nil {
 		return false
@@ -727,20 +828,33 @@ func AppendChannelAffinityAdminInfo(c *gin.Context, other *model.LogOther) {
 }
 
 func RecordChannelAffinity(c *gin.Context, channelID int) {
-	if channelID <= 0 {
+	if c == nil || channelID <= 0 {
 		return
 	}
 	setting := operation_setting.GetChannelAffinitySetting()
-	if RequestPolicy(c).SessionMode == "off" {
-		return
-	}
 	if setting == nil || !setting.Enabled {
 		return
 	}
-	if setting.SwitchOnSuccess && c != nil {
-		if successChannelID := c.GetInt("channel_id"); successChannelID > 0 {
-			channelID = successChannelID
-		}
+	state := RequestPolicy(c)
+	if state.OutcomeRecorded && !state.Successful || state.FailureRecorded {
+		return
+	}
+	// A released binding must never be restored to the original failed channel.
+	if state.AffinityReleased && !setting.SwitchOnSuccess {
+		return
+	}
+	if state.SessionMode == "off" {
+		return
+	}
+	successChannelID := state.CurrentChannelID
+	if successChannelID <= 0 {
+		successChannelID = c.GetInt("channel_id")
+	}
+	if successChannelID <= 0 {
+		successChannelID = channelID
+	}
+	if setting.SwitchOnSuccess {
+		channelID = successChannelID
 	}
 	cacheKey, ttlSeconds, ok := getChannelAffinityContext(c)
 	if !ok {
@@ -753,10 +867,35 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 		ttlSeconds = 3600
 	}
 	cache := getChannelAffinityCache()
+	lock := channelAffinityFailureLock(cacheKey)
+	lock.Lock()
+	defer lock.Unlock()
+	if common.RedisEnabled && common.RDB != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		err := channelAffinitySuccessScript.Run(ctx, common.RDB,
+			[]string{cache.FullKey(cacheKey), channelAffinityFailureCache.FullKey(cacheKey + ":" + strconv.Itoa(channelID))},
+			channelID, ttlSeconds, successChannelID).Err()
+		if err != nil {
+			common.SysError(common.LogText("channel affinity binding failed: err=%v", err))
+		}
+		return
+	}
+	// A successful fallback must not reset the original channel's failures
+	// when the administrator has disabled switching the session binding.
+	if channelID == successChannelID {
+		_, _ = channelAffinityFailureCache.DeleteMany([]string{cacheKey + ":" + strconv.Itoa(channelID)})
+	}
 	if err := cache.SetWithTTL(cacheKey, channelID, time.Duration(ttlSeconds)*time.Second); err != nil {
 		common.SysError(common.LogText("channel affinity cache set failed: key=%s, err=%v", cacheKey, err))
 	}
 }
+
+var channelAffinitySuccessScript = redis.NewScript(`
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+if ARGV[1] == ARGV[3] then redis.call('DEL', KEYS[2]) end
+return 1
+`)
 
 type ChannelAffinityUsageCacheStats struct {
 	RuleName            string `json:"rule_name"`

@@ -41,6 +41,15 @@ type Provider interface {
 	ProviderUserIDColumn() string
 }
 
+// AvatarProvider is implemented by providers whose user info carries a profile
+// picture. Only these providers take part in the login avatar sync: for the
+// others an absent picture is not evidence that the stored avatar is gone.
+type AvatarProvider interface {
+	// SupportsAvatar reports whether OAuthUser.AvatarURL reflects a picture claim
+	// the provider actually looks for.
+	SupportsAvatar() bool
+}
+
 // VerifiedEmailProvider is implemented by providers that can list the email
 // addresses they have confirmed for the signed-in account. The login flow uses
 // it to match a provider account against an existing account's email.

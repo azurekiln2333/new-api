@@ -85,6 +85,8 @@ export interface UserProfile {
   telegram_id?: string
   /** LinuxDO ID (OAuth) */
   linux_do_id?: string
+  /** Provider avatar address synced on OAuth/OIDC login */
+  avatar_url?: string
 }
 
 /**

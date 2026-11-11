@@ -165,6 +165,9 @@ export function SessionRulesTable(props: SessionRulesTableProps) {
               rule.session_mode ||
               (rule.skip_retry_on_failure ? 'strict' : 'prefer')
             let source = t('Rule override')
+            if (!rule.session_mode && rule.skip_retry_on_failure) {
+              source = t('Legacy strict mode')
+            }
             if (mode === 'inherit') {
               mode = props.globalSessionMode || 'prefer'
               source = t('Inherit global default')

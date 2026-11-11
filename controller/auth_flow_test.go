@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1169,7 +1170,7 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 	setupAuthFlowControllerTest(t)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"auth-flow-test","intent":"login","aff":"invite-code"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"auth-flow-test","intent":"login","aff":"invite-code","invitation_code":"single-use-invitation"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	GenerateOAuthCode(c)
@@ -1190,8 +1191,222 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 	var payload oauthFlowPayload
 	require.NoError(t, common.UnmarshalJsonStr(flow.Payload, &payload))
 	assert.Equal(t, "invite-code", payload.AffiliateCode)
+	assert.Equal(t, "single-use-invitation", payload.InvitationCode)
 	assert.Zero(t, flow.UserId)
 	assert.Empty(t, flow.SessionId)
+}
+
+func TestSecurityLoginOptionalVerification(t *testing.T) {
+	for _, transport := range []string{"password", "oauth"} {
+		for _, policy := range []string{"default", "personal", "global"} {
+			t.Run(transport+"/"+policy, func(t *testing.T) {
+				user, identity := setupSecurityEnrollmentTest(t)
+				common.LoginVerificationRequiredEnabled = policy == "global"
+				newSecurityLoginPasskey(t, user.Id)
+				if policy == "personal" {
+					require.NoError(t, model.UpdateLoginVerificationPreference(identity, true))
+				}
+				previousPassword := common.PasswordLoginEnabled
+				common.PasswordLoginEnabled = true
+				t.Cleanup(func() { common.PasswordLoginEnabled = previousPassword })
+				var response *httptest.ResponseRecorder
+				if transport == "password" {
+					response = securityEnrollmentRequest("POST", "/api/user/login", `{"username":"enrollment-user","password":"enrollment-password"}`, "", service.AuthIdentity{}, Login)
+				} else {
+					const slug = "optional-login-test"
+					oauth.Register(slug, &boundLoginOAuthProvider{userID: user.Id})
+					t.Cleanup(func() { oauth.Unregister(slug) })
+					token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{Purpose: model.AuthFlowPurposeOAuth, Provider: slug, Intent: model.AuthFlowIntentLogin, Payload: `{}`, ExpiresAt: time.Now().Add(time.Minute)})
+					require.NoError(t, err)
+					router := gin.New()
+					router.GET("/api/oauth/:provider", HandleOAuth)
+					response = httptest.NewRecorder()
+					router.ServeHTTP(response, httptest.NewRequest("GET", "/api/oauth/"+slug+"?state="+token+"&code=provider-code", nil))
+				}
+				var result struct {
+					Success bool `json:"success"`
+					Data    struct {
+						RequireVerification bool   `json:"require_verification"`
+						AccessToken         string `json:"access_token"`
+						FlowToken           string `json:"flow_token"`
+					} `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				require.True(t, result.Success, response.Body.String())
+				assert.Equal(t, policy != "default", result.Data.RequireVerification)
+				if policy == "default" {
+					assert.NotEmpty(t, result.Data.AccessToken)
+					assert.Empty(t, result.Data.FlowToken)
+				} else {
+					assert.Empty(t, result.Data.AccessToken)
+					assert.NotEmpty(t, result.Data.FlowToken)
+				}
+			})
+		}
+	}
+}
+
+func TestSecurityLoginPreferenceRequiresEnrolledFactor(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	common.LoginVerificationRequiredEnabled = false
+	response := securityEnrollmentRequest("PUT", "/api/user/login-verification", `{"required":true}`, "", identity, UpdateLoginVerificationPreference)
+	result := decodeSecurityEnrollmentResponse(t, response)
+	assert.False(t, result.Success)
+	required, err := model.GetLoginVerificationPreference(model.DB, user.Id)
+	require.NoError(t, err)
+	assert.False(t, required)
+	newSecurityLoginPasskey(t, user.Id)
+	response = securityEnrollmentRequest("PUT", "/api/user/login-verification", `{"required":true}`, "", identity, UpdateLoginVerificationPreference)
+	result = decodeSecurityEnrollmentResponse(t, response)
+	require.True(t, result.Success, response.Body.String())
+	var bundle service.AuthBundle
+	require.NoError(t, common.Unmarshal(result.Data, &bundle))
+	updated, err := service.ParseAccessToken(bundle.AccessToken)
+	require.NoError(t, err)
+	assert.Greater(t, updated.UserAuthVersion, identity.UserAuthVersion)
+	assert.Error(t, service.ValidateStepUpIdentity(identity))
+	requirements, err := service.GetVerificationRequirements(updated, service.VerificationScopePasswordChange)
+	require.NoError(t, err)
+	assert.Equal(t, []service.VerificationMethodOption{{Method: "passkey", Available: true}}, requirements.Methods)
+}
+
+func TestSecurityLoginPreferenceNotification(t *testing.T) {
+	for _, required := range []bool{true, false} {
+		for _, status := range []int{http.StatusOK, http.StatusInternalServerError} {
+			t.Run(fmt.Sprintf("required=%v/status=%d", required, status), func(t *testing.T) {
+				user, identity := setupSecurityEnrollmentTest(t)
+				newSecurityLoginPasskey(t, user.Id)
+				require.NoError(t, model.DB.Model(user).Updates(map[string]any{"email": "owner@example.com", "setting": `{"language":"en"}`}).Error)
+				proof := ""
+				if !required {
+					require.NoError(t, model.UpdateLoginVerificationPreference(identity, true))
+					bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "test_preference_enabled")
+					require.NoError(t, err)
+					identity, err = service.ParseAccessToken(bundle.AccessToken)
+					require.NoError(t, err)
+					proof = issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeLoginPreferenceDisable}, service.VerificationMethodPasskey)
+				}
+				configureEmailDelivery(t, map[string]string{"EmailProvider": "resend", "ResendApiKey": "test-key", "ResendFrom": "sender@example.com"})
+				calls := 0
+				http.DefaultTransport = emailHTTPTransport(func(request *http.Request) (*http.Response, error) {
+					calls++
+					var email struct {
+						To   []string `json:"to"`
+						HTML string   `json:"html"`
+					}
+					require.NoError(t, common.DecodeJson(request.Body, &email))
+					assert.Equal(t, []string{"owner@example.com"}, email.To)
+					event := "Additional login verification disabled"
+					if required {
+						event = "Additional login verification enabled"
+					}
+					assert.Contains(t, email.HTML, event)
+					assert.NotContains(t, email.HTML, "enrollment-password")
+					assert.NotContains(t, email.HTML, "proof_token")
+					return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"notice"}`))}, nil
+				})
+				response := securityEnrollmentRequest("PUT", "/api/user/login-verification", fmt.Sprintf(`{"required":%v}`, required), proof, identity, UpdateLoginVerificationPreference)
+				result := decodeSecurityEnrollmentResponse(t, response)
+				require.True(t, result.Success, response.Body.String())
+				var data struct {
+					NotificationWarning bool `json:"notification_warning"`
+				}
+				require.NoError(t, common.Unmarshal(result.Data, &data))
+				assert.Equal(t, status != http.StatusOK, data.NotificationWarning)
+				assert.Equal(t, 1, calls)
+				saved, err := model.GetLoginVerificationPreference(model.DB, user.Id)
+				require.NoError(t, err)
+				assert.Equal(t, required, saved, "delivery failure does not undo the committed security preference")
+			})
+		}
+	}
+}
+
+func TestUserSettingsPreserveProviderAvatar(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.Model(user).Update("setting", `{"language":"en","avatar_url":"https://provider.example/avatar.png"}`).Error)
+	for _, body := range []string{`{"notify_type":"email"}`, `{"notify_type":"email","avatar_url":"https://untrusted.example/avatar.png"}`} {
+		response := securityEnrollmentRequest("PUT", "/api/user/setting", body, "", identity, UpdateUserSetting)
+		require.True(t, decodeSecurityEnrollmentResponse(t, response).Success, response.Body.String())
+		updated, err := model.GetSelfUserById(user.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "https://provider.example/avatar.png", updated.GetSetting().AvatarUrl)
+		assert.Equal(t, "en", updated.GetSetting().Language)
+		assert.Equal(t, "https://provider.example/avatar.png", buildSelfUserData(updated)["avatar_url"])
+	}
+}
+
+func TestRegistrationAndLoginPoliciesPersistBeforeTakingEffect(t *testing.T) {
+	setupSecurityEnrollmentTest(t)
+	previousInvite := common.InviteRegisterEnabled
+	previousOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	common.InviteRegisterEnabled, common.LoginVerificationRequiredEnabled = false, false
+	t.Cleanup(func() { common.InviteRegisterEnabled, common.OptionMap = previousInvite, previousOptions })
+	for _, key := range []string{"InviteRegisterEnabled", "LoginVerificationRequiredEnabled"} {
+		require.NoError(t, model.UpdateOption(key, "true"))
+		var option model.Option
+		require.NoError(t, model.DB.Where(&model.Option{Key: key}).Take(&option).Error)
+		assert.Equal(t, "true", option.Value)
+		assert.Error(t, model.UpdateOption(key, "invalid"))
+	}
+	assert.True(t, common.InviteRegisterEnabled)
+	assert.True(t, common.LoginVerificationRequiredEnabled)
+	require.NoError(t, model.DB.Migrator().DropTable(&model.Option{}))
+	for _, key := range []string{"InviteRegisterEnabled", "LoginVerificationRequiredEnabled"} {
+		assert.Error(t, model.UpdateOption(key, "false"))
+	}
+	assert.True(t, common.InviteRegisterEnabled, "storage failure cannot silently relax registration")
+	assert.True(t, common.LoginVerificationRequiredEnabled, "storage failure cannot silently relax login policy")
+}
+
+func TestSecurityLoginPreferenceDisableProof(t *testing.T) {
+	for _, proofCase := range []string{"missing", "wrong scope", "expired", "other session", "valid and replay"} {
+		t.Run(proofCase, func(t *testing.T) {
+			user, identity := setupSecurityEnrollmentTest(t)
+			common.LoginVerificationRequiredEnabled = false
+			newSecurityLoginPasskey(t, user.Id)
+			require.NoError(t, model.UpdateLoginVerificationPreference(identity, true))
+			bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "test_preference_enabled")
+			require.NoError(t, err)
+			identity, err = service.ParseAccessToken(bundle.AccessToken)
+			require.NoError(t, err)
+			operation := service.VerificationOperation{Scope: service.VerificationScopeLoginPreferenceDisable}
+			proofIdentity := identity
+			if proofCase == "wrong scope" {
+				operation.Scope = service.VerificationScopePasswordChange
+			}
+			if proofCase == "other session" {
+				other, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "another browser")
+				require.NoError(t, err)
+				proofIdentity, err = service.ParseAccessToken(other.AccessToken)
+				require.NoError(t, err)
+			}
+			proof := ""
+			if proofCase != "missing" {
+				proof = issueSecurityEnrollmentProof(t, proofIdentity, operation, service.VerificationMethodPasskey)
+			}
+			if proofCase == "expired" {
+				require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("purpose = ?", model.AuthFlowPurposeSecurityProof).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+			}
+			response := securityEnrollmentRequest("PUT", "/api/user/login-verification", `{"required":false}`, proof, identity, UpdateLoginVerificationPreference)
+			result := decodeSecurityEnrollmentResponse(t, response)
+			valid := proofCase == "valid and replay"
+			assert.Equal(t, valid, result.Success, response.Body.String())
+			required, err := model.GetLoginVerificationPreference(model.DB, user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, !valid, required)
+			if valid {
+				var rotated service.AuthBundle
+				require.NoError(t, common.Unmarshal(result.Data, &rotated))
+				current, err := service.ParseAccessToken(rotated.AccessToken)
+				require.NoError(t, err)
+				assert.Greater(t, current.UserAuthVersion, identity.UserAuthVersion)
+				replay := securityEnrollmentRequest("PUT", "/api/user/login-verification", `{"required":false}`, proof, current, UpdateLoginVerificationPreference)
+				assert.False(t, decodeSecurityEnrollmentResponse(t, replay).Success)
+			}
+		})
+	}
 }
 
 func TestGenerateOAuthCodeBindsFlowToAuthenticatedSession(t *testing.T) {
@@ -1484,6 +1699,7 @@ func TestOAuthLoginLegacyGitHubBindingMigratesAfterLoginVerification(t *testing.
 	for _, interference := range []string{"none", "pending id claimed by another account", "binding relinked meanwhile"} {
 		t.Run(interference, func(t *testing.T) {
 			setupSecurityEnrollmentTest(t)
+			common.LoginVerificationRequiredEnabled = false
 			existing := &model.User{Username: "legacy-github", Email: "legacy-github@example.com", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "legacy-github", AuthVersion: 1, GitHubId: "octocat-legacy"}
 			require.NoError(t, model.DB.Create(existing).Error)
 			factor := &model.TwoFA{UserId: existing.Id, Secret: "JBSWY3DPEHPK3PXP", IsEnabled: true}

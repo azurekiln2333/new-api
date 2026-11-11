@@ -140,12 +140,22 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 			assert.Empty(t, own[1]["channel_name"])
 			assert.NotContains(t, own[1]["other"], "admin_info")
 
-			all := callLogHandler(t, ExportAllLogs, 3, common.RoleAdminUser, query+"&model_name=gpt-%25")
+			all := callLogHandler(t, ExportAllLogs, 3, common.RoleAdminUser, query+"&model_name=gpt-%25&match_mode=exact")
 			require.Len(t, all, 4)
 			assert.Equal(t, []any{"a-2", "b-1", "a-1"}, exportedRequestIds(all))
 			assert.Equal(t, "primary", all[2]["channel_name"])
 			assert.Contains(t, all[2]["other"], "admin_info")
 			assert.Equal(t, true, all[3]["success"])
+
+			// The default match mode keeps rows containing the value, and LIKE
+			// wildcards typed into the value stay literal text.
+			fuzzy := callLogHandler(t, ExportAllLogs, 3, common.RoleAdminUser, query+"&model_name=b")
+			require.Len(t, fuzzy, 2)
+			assert.Equal(t, []any{"b-1"}, exportedRequestIds(fuzzy))
+			literal := callLogHandler(t, ExportAllLogs, 3, common.RoleAdminUser, query+"&model_name=%25")
+			require.Len(t, literal, 1)
+			assert.Equal(t, true, literal[0]["success"])
+			assert.EqualValues(t, 0, literal[0]["data"].(map[string]any)["count"])
 		})
 	}
 }

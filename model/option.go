@@ -48,6 +48,8 @@ func InitOptionMap() {
 	common.OptionMap["WeChatAuthEnabled"] = strconv.FormatBool(common.WeChatAuthEnabled)
 	common.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(common.TurnstileCheckEnabled)
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
+	common.OptionMap["InviteRegisterEnabled"] = strconv.FormatBool(common.InviteRegisterEnabled)
+	common.OptionMap["LoginVerificationRequiredEnabled"] = strconv.FormatBool(common.LoginVerificationRequiredEnabled)
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
@@ -153,6 +155,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelRequestRateLimitDurationMinutes"] = strconv.Itoa(setting.ModelRequestRateLimitDurationMinutes)
 	common.OptionMap["ModelRequestRateLimitSuccessCount"] = strconv.Itoa(setting.ModelRequestRateLimitSuccessCount)
 	common.OptionMap["ModelRequestRateLimitGroup"] = setting.ModelRequestRateLimitGroup2JSONString()
+	common.OptionMap["ModelRequestRateLimitUser"] = setting.ModelRequestRateLimitUser2JSONString()
 	common.OptionMap["ModelRatio"] = ratio_setting.ModelRatio2JSONString()
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
@@ -160,6 +163,7 @@ func InitOptionMap() {
 	common.OptionMap["GroupRatio"] = ratio_setting.GroupRatio2JSONString()
 	common.OptionMap["GroupGroupRatio"] = ratio_setting.GroupGroupRatio2JSONString()
 	common.OptionMap["UserUsableGroups"] = setting.UserUsableGroups2JSONString()
+	common.OptionMap["GroupLevels"] = setting.GroupLevels2JSONString()
 	common.OptionMap["CompletionRatio"] = ratio_setting.CompletionRatio2JSONString()
 	common.OptionMap["ImageRatio"] = ratio_setting.ImageRatio2JSONString()
 	common.OptionMap["AudioRatio"] = ratio_setting.AudioRatio2JSONString()
@@ -232,6 +236,10 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == "GroupLevels" {
+		_, err := setting.ParseGroupLevels(value)
+		return err
+	}
 	if key == system_setting.OAuthAllowedOriginsOption {
 		_, err := system_setting.ParseOAuthAllowedOrigins(value)
 		return err
@@ -275,10 +283,22 @@ func validateOptionValue(key string, value string) error {
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}
+	if key == "ModelRequestRateLimitUser" {
+		return setting.CheckModelRequestRateLimitUser(value)
+	}
 	return nil
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "InviteRegisterEnabled" || key == "LoginVerificationRequiredEnabled" {
+		if value != "true" && value != "false" {
+			return common.NewMessage("Invalid parameters")
+		}
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
+	if key == "GroupLevels" {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if key == system_setting.OAuthAllowedOriginsOption {
 		// Preserve the last working domain list when persistence fails.
 		return UpdateOptionsBulk(map[string]string{key: value})
@@ -429,6 +449,10 @@ func updateOptionMap(key string, value string) (err error) {
 			common.TurnstileCheckEnabled = boolValue
 		case "RegisterEnabled":
 			common.RegisterEnabled = boolValue
+		case "InviteRegisterEnabled":
+			common.InviteRegisterEnabled = boolValue
+		case "LoginVerificationRequiredEnabled":
+			common.LoginVerificationRequiredEnabled = boolValue
 		case "EmailDomainRestrictionEnabled":
 			common.EmailDomainRestrictionEnabled = boolValue
 		case "EmailAliasRestrictionEnabled":
@@ -661,6 +685,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.ModelRequestRateLimitSuccessCount, _ = strconv.Atoi(value)
 	case "ModelRequestRateLimitGroup":
 		err = setting.UpdateModelRequestRateLimitGroupByJSONString(value)
+	case "ModelRequestRateLimitUser":
+		err = setting.UpdateModelRequestRateLimitUserByJSONString(value)
 	case "RetryTimes":
 		common.RetryTimes, _ = strconv.Atoi(value)
 	case "DataExportInterval":
@@ -675,6 +701,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = ratio_setting.UpdateGroupGroupRatioByJSONString(value)
 	case "UserUsableGroups":
 		err = setting.UpdateUserUsableGroupsByJSONString(value)
+	case "GroupLevels":
+		err = setting.UpdateGroupLevelsByJSONString(value)
 	case "CompletionRatio":
 		err = ratio_setting.UpdateCompletionRatioByJSONString(value)
 	case "ModelPrice":

@@ -45,6 +45,9 @@ const usageLogsSearchSchema = z.object({
   username: z.string().optional().catch(''),
   requestId: z.string().optional().catch(''),
   upstreamRequestId: z.string().optional().catch(''),
+  // Text match mode: missing means fuzzy (contains), the historical default
+  // behavior of the log search is "exact".
+  match: z.enum(['fuzzy', 'exact']).optional().catch(undefined),
   startTime: z.number().optional(),
   endTime: z.number().optional(),
 })

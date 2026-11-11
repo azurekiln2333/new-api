@@ -68,6 +68,8 @@ email.security_event.email_confirmed: "電子郵件地址已確認"
 email.security_event.login_linked: "已綁定登入帳號 {{.Provider}}"
 email.security_event.login_unlinked: "已解綁登入帳號"
 email.security_event.wechat_linked: "已綁定微信帳號"
+email.security_event.login_verification_enabled: "已開啟登入二次驗證"
+email.security_event.login_verification_disabled: "已關閉登入二次驗證"
 
 # Low-quota notices
 notify.quota_low_title: "您的額度即將用盡"

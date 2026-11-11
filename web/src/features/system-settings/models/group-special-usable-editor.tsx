@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMutation } from '@tanstack/react-query'
 import {
   AlertTriangle,
   ChevronDown,
@@ -27,6 +28,8 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -43,6 +46,7 @@ import {
 } from '@/components/ui/collapsible'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -51,9 +55,190 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
+
+import { useSystemOptions } from '../hooks/use-system-options'
+import { useUpdateOption } from '../hooks/use-update-option'
 
 const sectionCardClassName = 'min-w-0 shadow-none'
 const sectionHeaderClassName = 'gap-2 border-b'
+
+export function GroupLevelsEditor(props: {
+  groupOptions: string[]
+  userUsableGroups: string
+  specialGroups: string
+}) {
+  const { t } = useTranslation()
+  const query = useSystemOptions()
+  const save = useUpdateOption()
+  const [draft, setDraft] = useState<Record<string, string> | null>(null)
+  const [previewGroup, setPreviewGroup] = useState<string | null>(null)
+  const preview = useMutation({
+    mutationFn: async (request: {
+      user_group: string
+      levels: Record<string, number>
+      usable_groups: unknown
+      special_groups: unknown
+    }) => {
+      const response = await api.post<{ success: boolean; data: string[] }>(
+        '/api/group/preview',
+        request
+      )
+      return requireServerSuccess(response.data).data
+    },
+  })
+  if (query.isPending) return <LoadingState />
+  if (query.isError) {
+    return (
+      <ErrorState
+        title={t('Failed to load settings')}
+        onRetry={() => void query.refetch()}
+      />
+    )
+  }
+  let saved: Record<string, number>
+  try {
+    saved = JSON.parse(
+      query.data.data?.find((option) => option.key === 'GroupLevels')?.value ||
+        '{}'
+    )
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) {
+      throw new Error('Invalid group levels')
+    }
+  } catch {
+    return (
+      <ErrorState
+        title={t('Failed to load settings')}
+        onRetry={() => void query.refetch()}
+      />
+    )
+  }
+  const values =
+    draft ??
+    Object.fromEntries(
+      Object.entries(saved).map(([name, value]) => [name, String(value)])
+    )
+  const groups = [
+    ...new Set([...props.groupOptions, ...Object.keys(values)]),
+  ].filter((group) => group !== 'auto')
+  const invalid = Object.values(values).some(
+    (value) =>
+      value !== '' &&
+      (!/^-?\d+$/.test(value) ||
+        Number(value) < -2147483648 ||
+        Number(value) > 2147483647)
+  )
+  let manual: unknown
+  let special: unknown
+  let invalidVisibility = false
+  try {
+    manual = JSON.parse(props.userUsableGroups || '{}')
+    special = JSON.parse(props.specialGroups || '{}')
+  } catch {
+    invalidVisibility = true
+  }
+  const levels = Object.fromEntries(
+    Object.entries(values)
+      .filter(([, value]) => value !== '')
+      .map(([name, value]) => [name, Number(value)])
+  )
+  const dirty =
+    Object.keys(saved).length !== Object.keys(levels).length ||
+    Object.entries(levels).some(([name, value]) => saved[name] !== value)
+  const previewRequest = {
+    user_group: previewGroup ?? '',
+    levels,
+    usable_groups: manual,
+    special_groups: special,
+  }
+  const previewCurrent =
+    !invalid &&
+    !invalidVisibility &&
+    JSON.stringify(preview.variables) === JSON.stringify(previewRequest)
+  return (
+    <Card className={sectionCardClassName}>
+      <CardHeader className={sectionHeaderClassName}>
+        <CardTitle>{t('Group levels')}</CardTitle>
+        <CardDescription>
+          {t(
+            'Higher levels include all lower levels. Leave blank to keep manual visibility only. Manual grants are always included.'
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className='space-y-4'>
+        {groups.map((group) => (
+          <div key={group} className='grid min-w-0 gap-2 sm:grid-cols-2'>
+            <Label htmlFor={`group-level-${group}`} className='break-all'>
+              {group}
+            </Label>
+            <Input
+              id={`group-level-${group}`}
+              aria-label={t('Level for {{group}}', { group })}
+              type='number'
+              step={1}
+              min={-2147483648}
+              max={2147483647}
+              value={values[group] ?? ''}
+              disabled={save.isPending}
+              onChange={(event) => {
+                setDraft({ ...values, [group]: event.target.value })
+                preview.reset()
+              }}
+            />
+          </div>
+        ))}
+        {invalid && (
+          <p role='alert' className='text-destructive text-sm'>
+            {t('Group levels must map group names to integers')}
+          </p>
+        )}
+        <Button
+          disabled={invalid || save.isPending || !dirty}
+          onClick={() =>
+            save.mutate({ key: 'GroupLevels', value: JSON.stringify(levels) })
+          }
+        >
+          {t('Save group levels')}
+        </Button>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Combobox
+            aria-label={t('Select user group to preview')}
+            options={groups.map((group) => ({ value: group, label: group }))}
+            value={previewGroup}
+            onValueChange={(value) => {
+              setPreviewGroup(value)
+              preview.reset()
+            }}
+            placeholder={t('Select user group to preview')}
+          />
+          <Button
+            variant='outline'
+            disabled={
+              invalid || invalidVisibility || !previewGroup || preview.isPending
+            }
+            onClick={() => {
+              if (!previewGroup) return
+              preview.mutate(previewRequest)
+            }}
+          >
+            {t('Preview visible groups')}
+          </Button>
+        </div>
+        {previewCurrent && preview.isError && (
+          <p role='alert' className='text-destructive text-sm'>
+            {t('Failed to load groups')}
+          </p>
+        )}
+        {previewCurrent && preview.isSuccess && (
+          <p role='status' className='text-sm break-words'>
+            {preview.data.join(', ') || t('No groups available')}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
 
 type Rule = {
   _id: string

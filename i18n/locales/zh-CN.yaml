@@ -68,6 +68,8 @@ email.security_event.email_confirmed: "邮箱地址已确认"
 email.security_event.login_linked: "已绑定登录账号 {{.Provider}}"
 email.security_event.login_unlinked: "已解绑登录账号"
 email.security_event.wechat_linked: "已绑定微信账号"
+email.security_event.login_verification_enabled: "已开启登录二次验证"
+email.security_event.login_verification_disabled: "已关闭登录二次验证"
 
 # Low-quota notices
 notify.quota_low_title: "您的额度即将用尽"

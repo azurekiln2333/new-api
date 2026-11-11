@@ -12,10 +12,14 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/cachex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+	"github.com/samber/hot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -463,5 +467,119 @@ func TestSessionRulesInheritOrOverrideGlobalDefault(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestChannelAffinityConsecutiveFailures(t *testing.T) {
+	getChannelAffinityCache()
+	savedCache, savedFailures := channelAffinityCache, channelAffinityFailureCache
+	savedRedis, savedRedisEnabled := common.RDB, common.RedisEnabled
+	setting := operation_setting.GetChannelAffinitySetting()
+	savedSetting := *setting
+	t.Cleanup(func() {
+		channelAffinityCache, channelAffinityFailureCache = savedCache, savedFailures
+		common.RDB, common.RedisEnabled = savedRedis, savedRedisEnabled
+		*setting = savedSetting
+	})
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			server := miniredis.RunT(t)
+			common.RDB = redis.NewClient(&redis.Options{Addr: server.Addr()})
+			t.Cleanup(func() { require.NoError(t, common.RDB.Close()) })
+			common.RedisEnabled = redisEnabled
+			channelAffinityCache = cachex.NewHybridCache[int](cachex.HybridCacheConfig[int]{Namespace: cachex.Namespace(channelAffinityCacheNamespace), Redis: common.RDB, RedisCodec: cachex.IntCodec{}, RedisEnabled: func() bool { return redisEnabled }, Memory: func() *hot.HotCache[string, int] { return hot.NewHotCache[string, int](hot.LRU, 100).Build() }})
+			channelAffinityFailureCache = cachex.NewHybridCache[int](cachex.HybridCacheConfig[int]{Namespace: "new-api:channel_affinity_failures:v1", Redis: common.RDB, RedisCodec: cachex.IntCodec{}, RedisEnabled: func() bool { return redisEnabled }, Memory: func() *hot.HotCache[string, int] { return hot.NewHotCache[string, int](hot.LRU, 100).Build() }})
+			for _, threshold := range []int{0, 1, 2} {
+				t.Run(fmt.Sprint(threshold), func(t *testing.T) {
+					*setting = operation_setting.ChannelAffinitySetting{Enabled: true, SwitchOnSuccess: true, DefaultTTLSeconds: 60, FailureThreshold: threshold}
+					meta := channelAffinityMeta{CacheKey: fmt.Sprintf("failover-%d", threshold), TTLSeconds: 60, SkipRetry: true}
+					seed := buildChannelAffinityTemplateContextForTest(meta)
+					RecordChannelAffinity(seed, 11)
+					upstream := types.NewOpenAIError(errors.New("upstream failure"), types.ErrorCodeBadResponseStatusCode, http.StatusInternalServerError)
+					for attempt := range max(threshold, 2) {
+						ctx := buildChannelAffinityTemplateContextForTest(meta)
+						ctx.Set("channel_id", 11)
+						RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 11}, "default")
+						decision := DecideRelayRetry(ctx, upstream, 1)
+						assert.Equal(t, decision, DecideRelayRetry(ctx, upstream, 1), "checking twice must not count twice")
+						released := threshold > 0 && attempt+1 >= threshold
+						assert.Equal(t, released, decision.Action == "retry")
+						_, found, err := channelAffinityCache.Get(meta.CacheKey)
+						require.NoError(t, err)
+						assert.Equal(t, !released, found)
+						if released {
+							RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 12}, "default")
+							ctx.Set("channel_id", 12)
+							MarkRequestPolicySuccess(ctx, nil)
+							RecordChannelAffinity(ctx, 11)
+							bound, found, err := channelAffinityCache.Get(meta.CacheKey)
+							require.NoError(t, err)
+							require.True(t, found)
+							assert.Equal(t, 12, bound, "successful fallback must become the next binding")
+							break
+						}
+					}
+				})
+			}
+			// Local validation leaves the binding intact; a gateway-wrapped
+			// upstream decode failure releases it without replaying the request.
+			*setting = operation_setting.ChannelAffinitySetting{Enabled: true, SwitchOnSuccess: true, DefaultTTLSeconds: 60, FailureThreshold: 1}
+			classified := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{CacheKey: "failure-sources", TTLSeconds: 60, SkipRetry: true})
+			RecordChannelAffinity(classified, 11)
+			RequestPolicy(classified).BeginAttempt(&model.Channel{Id: 11}, "default")
+			local := types.NewError(errors.New("invalid request"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+			assert.Equal(t, "stop", DecideRelayRetry(classified, local, 1).Action)
+			assert.Empty(t, RequestPolicy(classified).FailedChannelIDs)
+			upstreamDecode := types.NewError(errors.New("invalid upstream response"), types.ErrorCodeBadResponseBody)
+			assert.Equal(t, PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}, DecideRelayRetry(classified, upstreamDecode, 1))
+			assert.Equal(t, []int{11}, RequestPolicy(classified).FailedChannelIDs)
+			assert.True(t, RequestPolicy(classified).AffinityReleased)
+			// A successful request resets the consecutive counter, including Redis.
+			*setting = operation_setting.ChannelAffinitySetting{Enabled: true, SwitchOnSuccess: true, DefaultTTLSeconds: 60, FailureThreshold: 2}
+			meta := channelAffinityMeta{CacheKey: "success-resets", TTLSeconds: 60, SkipRetry: true}
+			ctx := buildChannelAffinityTemplateContextForTest(meta)
+			RecordChannelAffinity(ctx, 11)
+			RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 11}, "default")
+			RecordChannelFailure(ctx)
+			RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 11}, "default")
+			ctx.Set("channel_id", 11)
+			MarkRequestPolicySuccess(ctx, nil)
+			RecordChannelAffinity(ctx, 11)
+			RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 11}, "default")
+			RecordChannelFailure(ctx)
+			_, found, err := channelAffinityCache.Get(meta.CacheKey)
+			require.NoError(t, err)
+			assert.True(t, found)
+			// With switching disabled, B succeeding does not erase A's failure.
+			setting.SwitchOnSuccess = false
+			RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 12}, "default")
+			ctx.Set("channel_id", 12)
+			MarkRequestPolicySuccess(ctx, nil)
+			RecordChannelAffinity(ctx, 11)
+			RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 11}, "default")
+			RecordChannelFailure(ctx)
+			_, found, err = channelAffinityCache.Get(meta.CacheKey)
+			require.NoError(t, err)
+			assert.False(t, found, "the original channel reached its consecutive failure threshold")
+			RequestPolicy(ctx).BeginAttempt(&model.Channel{Id: 12}, "default")
+			MarkRequestPolicySuccess(ctx, nil)
+			RecordChannelAffinity(ctx, 11)
+			_, found, err = channelAffinityCache.Get(meta.CacheKey)
+			require.NoError(t, err)
+			assert.False(t, found, "switching disabled must not restore a released binding")
+			if redisEnabled {
+				fresh := buildChannelAffinityTemplateContextForTest(meta)
+				RecordChannelAffinity(fresh, 11)
+				RequestPolicy(fresh).BeginAttempt(&model.Channel{Id: 11}, "default")
+				RecordChannelFailure(fresh)
+				server.FastForward(61 * time.Second)
+				_, found, err = channelAffinityCache.Get(meta.CacheKey)
+				require.NoError(t, err)
+				assert.False(t, found)
+				_, found, err = channelAffinityFailureCache.Get(meta.CacheKey + ":11")
+				require.NoError(t, err)
+				assert.False(t, found, "failure counters expire with the session")
+			}
+		})
 	}
 }

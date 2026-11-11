@@ -50,6 +50,9 @@ export function buildSearchParams(
       const commonFilters = filters as CommonLogFilters
       return {
         ...baseParams,
+        // Fuzzy matching is the backend default, so the URL only records the
+        // explicit mode and a missing value keeps meaning fuzzy.
+        ...(commonFilters.match === 'exact' && { match: 'exact' }),
         ...(commonFilters.model && { model: commonFilters.model }),
         ...(commonFilters.token && { token: commonFilters.token }),
         ...(commonFilters.group && { group: commonFilters.group }),

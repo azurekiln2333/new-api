@@ -60,6 +60,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 
 	// router/api-router.go: /api/user (self)
 	"GET /api/user/sessions":                       accessTokenSessionRule,
+	"GET /api/user/login-verification":             accessTokenSessionRule,
+	"PUT /api/user/login-verification":             accessTokenSessionRule,
 	"DELETE /api/user/sessions/:sid":               accessTokenSessionRule,
 	"POST /api/user/sessions/revoke-others":        accessTokenSessionRule,
 	"GET /api/user/self/groups":                    accessTokenScopeRule("profile:read"),
@@ -114,6 +116,10 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/user/:id/oauth/bindings/:provider_id": accessTokenScopeRule("user:write"),
 	"DELETE /api/user/:id/bindings/:binding_type":      accessTokenScopeRule("user:write"),
 	"GET /api/user/:id":                                accessTokenScopeRule("user:read"),
+	"GET /api/user/:id/rate_limit":                     accessTokenScopeRule("user:read"),
+	"PUT /api/user/:id/rate_limit":                     accessTokenScopeRule("user:write"),
+	"DELETE /api/user/:id/rate_limit":                  accessTokenScopeRule("user:write"),
+	"POST /api/user/rate_limit/clear_group":            accessTokenScopeRule("user:write"),
 	"POST /api/user/":                                  accessTokenScopeRule("user:write"),
 	"POST /api/user/manage":                            accessTokenScopeRule("user:write"),
 	"PUT /api/user/":                                   accessTokenScopeRule("user:write"),
@@ -252,6 +258,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 
 	// router/api-router.go: /api/group, /api/prefill_group
 	"GET /api/group/":               accessTokenScopeRule("group:read"),
+	"POST /api/group/preview":       accessTokenScopeRule("group:read"),
 	"GET /api/prefill_group/":       accessTokenScopeRule("group:read"),
 	"POST /api/prefill_group/":      accessTokenScopeRule("group:write"),
 	"PUT /api/prefill_group/":       accessTokenScopeRule("group:write"),

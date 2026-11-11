@@ -30,6 +30,7 @@ import {
 import { Input } from '@/components/ui/input'
 
 import { SettingsCard } from '../components/settings-card'
+import { SettingsSwitchField } from '../components/settings-form-layout'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import type { RoutingPolicyFormValues } from './routing-form'
 
@@ -39,6 +40,21 @@ export function RetrySection() {
   return (
     <SettingsCard title={t('Retry budget')} className='shadow-none'>
       <div className='space-y-4'>
+        <FormField
+          control={form.control}
+          name='channel_affinity_setting.retry_avoid_failed_channels'
+          render={({ field }) => (
+            <SettingsSwitchField
+              controlId='channel_affinity_setting.retry_avoid_failed_channels'
+              checked={field.value}
+              onCheckedChange={field.onChange}
+              label={t('Avoid failed channels on retry')}
+              description={t(
+                'Try unused channels at the same priority before lower priorities. Repeat only after all eligible channels have failed.'
+              )}
+            />
+          )}
+        />
         <FormField
           control={form.control}
           name='RetryTimes'

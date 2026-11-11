@@ -15,11 +15,36 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// IsChannelFailure includes upstream response errors wrapped by the gateway,
+// while excluding local validation, pricing and quota rejections.
+func IsChannelFailure(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	if types.IsChannelError(err) || err.GetErrorType() != types.ErrorTypeNewAPIError {
+		return true
+	}
+	switch err.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed, types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponseStatusCode, types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody, types.ErrorCodeEmptyResponse, types.ErrorCodeAwsInvokeError:
+		return true
+	default:
+		return false
+	}
+}
+
 // DecideRelayRetry is the single retry decision for relay attempts. The reason
 // is recorded in the request policy decision events of the log details.
 func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) PolicyDecision {
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
+	}
+	if IsChannelFailure(err) {
+		RecordChannelFailure(c)
+	}
+	if c != nil && c.Writer != nil && c.Writer.Written() {
+		return PolicyDecision{Action: "stop", Reason: "response_started", Source: "system"}
 	}
 	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		source := RequestPolicy(c).SessionModeSource

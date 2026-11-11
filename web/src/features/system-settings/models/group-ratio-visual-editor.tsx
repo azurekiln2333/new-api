@@ -83,7 +83,10 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
 import { safeJsonParse } from '../utils/json-parser'
-import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
+import {
+  GroupLevelsEditor,
+  GroupSpecialUsableRulesEditor,
+} from './group-special-usable-editor'
 
 export type GroupSettingsSection =
   | 'pricing'
@@ -382,6 +385,11 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
         />
       </TabsContent>
       <TabsContent value='visibility' keepMounted>
+        <GroupLevelsEditor
+          groupOptions={registryNames}
+          userUsableGroups={userUsableGroups}
+          specialGroups={groupSpecialUsableGroup}
+        />
         <GroupSpecialUsableRulesEditor
           value={groupSpecialUsableGroup}
           groupOptions={registryNames}

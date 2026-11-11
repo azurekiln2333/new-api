@@ -2,10 +2,12 @@ package controller
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	passkeysvc "github.com/QuantumNous/new-api/service/passkey"
@@ -167,4 +169,72 @@ func completeVerifiedLoginResponse(c *gin.Context, bundle *service.AuthBundle, m
 		})
 	}
 	writeLoginResponse(c, user, bundle)
+}
+
+func init() {
+	auditContentTemplates["user.login_verification_update"] = "Login verification preference update"
+}
+
+func GetLoginVerificationPreference(c *gin.Context) {
+	state, err := model.GetUserVerificationState(c.GetInt("id"))
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	required, err := model.GetLoginVerificationPreference(model.DB, state.UserID)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"required": required, "enrolled": state.HasTwoFA || state.HasPasskey, "policy_required": common.LoginVerificationRequiredEnabled})
+}
+
+func UpdateLoginVerificationPreference(c *gin.Context) {
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
+	var request struct {
+		Required *bool `json:"required"`
+	}
+	if common.DecodeJson(c.Request.Body, &request) != nil || request.Required == nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	succeeded := false
+	notificationFailed := false
+	defer func() {
+		recordUserSecurityAudit(c, identity.UserID, "user.login_verification_update", map[string]any{"required": *request.Required, "success": succeeded, "notification_failed": notificationFailed})
+	}()
+	if !*request.Required && middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeLoginPreferenceDisable}) == nil {
+		return
+	}
+	if err := model.UpdateLoginVerificationPreference(identity, *request.Required); err != nil {
+		if errors.Is(err, model.ErrLoginVerificationFactorRequired) {
+			common.ApiErrorT(c, "Enroll two-factor authentication or a Passkey first")
+		} else {
+			writeSecurityOperationError(c, err)
+		}
+		return
+	}
+	succeeded = true
+	user, err := model.GetSelfUserById(identity.UserID)
+	if err != nil {
+		notificationFailed = true
+	} else {
+		event := i18n.MsgSecurityEventLoginVerificationDisabled
+		if *request.Required {
+			event = i18n.MsgSecurityEventLoginVerificationEnabled
+		}
+		notificationFailed = service.NotifyAccountSecurityChange(service.AccountMailLanguage(c, user.Id), user.Email, event) != nil
+	}
+	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "login_verification_preference_changed")
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	data := authRotationData(bundle)
+	data["notification_warning"] = notificationFailed
+	common.ApiSuccess(c, data)
 }

@@ -218,6 +218,10 @@ func TestDecideRelayRetryReasons(t *testing.T) {
 			RequestPolicy(c).SessionModeSource = "global"
 		}, want: PolicyDecision{Action: "stop", Reason: "strict_session", Source: "global"}},
 		{name: "nil error", retries: 1, want: PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}},
+		{name: "response already started", err: upstream(http.StatusBadGateway), retries: 1, setup: func(c *gin.Context) {
+			_, err := c.Writer.WriteString("data: started\n\n")
+			require.NoError(t, err)
+		}, want: PolicyDecision{Action: "stop", Reason: "response_started", Source: "system"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())

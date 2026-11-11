@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils'
 
 import { getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
+import { formatCacheHitRate } from '../lib/format'
 import { buildApiParams } from '../lib/utils'
 import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
@@ -82,6 +83,7 @@ export function CommonLogsStats() {
         <Skeleton className='h-7 w-[150px] rounded-md' />
         <Skeleton className='h-7 w-[100px] rounded-md' />
         <Skeleton className='h-7 w-[120px] rounded-md' />
+        <Skeleton className='h-7 w-[130px] rounded-md' />
       </div>
     )
   }
@@ -102,6 +104,14 @@ export function CommonLogsStats() {
         label={t('TPM')}
         value={stats?.tpm || 0}
         accent='bg-slate-400/70'
+      />
+      <StatBadge
+        label={t('Cache Hit Rate')}
+        value={formatCacheHitRate(
+          stats?.cache_read_tokens,
+          stats?.input_tokens
+        )}
+        accent='bg-emerald-500/70'
       />
     </div>
   )

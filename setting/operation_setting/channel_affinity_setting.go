@@ -33,12 +33,14 @@ type ChannelAffinityRule struct {
 type ChannelAffinitySetting struct {
 	Enabled bool `json:"enabled"`
 	// Default for rules with SessionMode "inherit". Empty defaults to "prefer".
-	SessionMode           string                `json:"session_mode"`
-	SwitchOnSuccess       bool                  `json:"switch_on_success"`
-	KeepOnChannelDisabled bool                  `json:"keep_on_channel_disabled"`
-	MaxEntries            int                   `json:"max_entries"`
-	DefaultTTLSeconds     int                   `json:"default_ttl_seconds"`
-	Rules                 []ChannelAffinityRule `json:"rules"`
+	SessionMode              string                `json:"session_mode"`
+	RetryAvoidFailedChannels bool                  `json:"retry_avoid_failed_channels"`
+	FailureThreshold         int                   `json:"failure_threshold"`
+	SwitchOnSuccess          bool                  `json:"switch_on_success"`
+	KeepOnChannelDisabled    bool                  `json:"keep_on_channel_disabled"`
+	MaxEntries               int                   `json:"max_entries"`
+	DefaultTTLSeconds        int                   `json:"default_ttl_seconds"`
+	Rules                    []ChannelAffinityRule `json:"rules"`
 }
 
 // Keep Codex CLI passthrough aligned with upstream. Codex uses lower-case
@@ -115,11 +117,13 @@ func buildCodexPassHeaderTemplate() map[string]any {
 }
 
 var channelAffinitySetting = ChannelAffinitySetting{
-	Enabled:               true,
-	SwitchOnSuccess:       true,
-	KeepOnChannelDisabled: false,
-	MaxEntries:            100_000,
-	DefaultTTLSeconds:     3600,
+	Enabled:                  true,
+	RetryAvoidFailedChannels: true,
+	FailureThreshold:         1,
+	SwitchOnSuccess:          true,
+	KeepOnChannelDisabled:    false,
+	MaxEntries:               100_000,
+	DefaultTTLSeconds:        3600,
 	Rules: []ChannelAffinityRule{
 		{
 			Name:       "codex cli trace",
@@ -132,6 +136,7 @@ var channelAffinitySetting = ChannelAffinitySetting{
 			TTLSeconds:            0,
 			ParamOverrideTemplate: buildCodexPassHeaderTemplate(),
 			SkipRetryOnFailure:    true,
+			SessionMode:           "inherit",
 			IncludeUsingGroup:     true,
 			IncludeRuleName:       true,
 			UserAgentInclude:      nil,
@@ -147,6 +152,7 @@ var channelAffinitySetting = ChannelAffinitySetting{
 			TTLSeconds:            0,
 			ParamOverrideTemplate: buildPassHeaderTemplate(claudeCliPassThroughHeaders),
 			SkipRetryOnFailure:    true,
+			SessionMode:           "inherit",
 			IncludeUsingGroup:     true,
 			IncludeRuleName:       true,
 			UserAgentInclude:      nil,

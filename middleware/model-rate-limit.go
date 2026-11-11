@@ -189,11 +189,15 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 		}
 
-		// 获取分组的限流配置。配置了独立限流的分组按用户和分组单独计数，
-		// 其余分组共用该用户的全局计数
-		subject := strconv.Itoa(c.GetInt("id"))
-		groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(group)
-		if found {
+		// 计算计数主体：配置了独立限流的分组按用户和分组单独计数，其余分组共用该用户的
+		// 全局计数；用户级覆盖优先于分组设置，单独计数，清除覆盖后回到分组口径
+		userId := c.GetInt("id")
+		subject := strconv.Itoa(userId)
+		if userTotalCount, userSuccessCount, userOverride := setting.GetUserRateLimit(userId); userOverride {
+			totalMaxCount = userTotalCount
+			successMaxCount = userSuccessCount
+			subject += ":user"
+		} else if groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(group); found {
 			totalMaxCount = groupTotalCount
 			successMaxCount = groupSuccessCount
 			subject += ":" + group

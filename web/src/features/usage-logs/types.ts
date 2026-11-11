@@ -55,6 +55,7 @@ export interface CommonLogFilters extends CommonFilters {
   username?: string
   requestId?: string
   upstreamRequestId?: string
+  match?: LogTextMatchMode
 }
 
 /**
@@ -70,6 +71,12 @@ export interface DrawingLogFilters extends CommonFilters {
 export interface TaskLogFilters extends CommonFilters {
   taskId?: string
 }
+
+/**
+ * How the usage-log text filters compare stored values. Fuzzy (contains) is the
+ * default; exact only matches the whole value.
+ */
+export type LogTextMatchMode = 'fuzzy' | 'exact'
 
 /**
  * Union type for all log filters
@@ -287,6 +294,10 @@ export interface LogStatistics {
   quota: number
   rpm: number
   tpm: number
+  // Cache-read tokens and the total input tokens under settlement semantics.
+  // The header card derives the cache hit rate from these two totals.
+  cache_read_tokens?: number
+  input_tokens?: number
 }
 
 // ============================================================================
@@ -439,6 +450,7 @@ export interface GetLogsParams {
   group?: string
   request_id?: string
   upstream_request_id?: string
+  match_mode?: LogTextMatchMode
 }
 
 export interface GetLogsResponse {
@@ -463,6 +475,7 @@ export interface GetLogStatsParams {
   group?: string
   request_id?: string
   upstream_request_id?: string
+  match_mode?: LogTextMatchMode
 }
 
 export interface GetLogStatsResponse {

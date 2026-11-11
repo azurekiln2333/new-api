@@ -4,6 +4,9 @@ import { z } from 'zod'
 import { parseHttpStatusCodeRules } from '@/lib/http-status-code-rules'
 
 export function createRoutingPolicySchema(t: TFunction) {
+  const failureThresholdMessage = t(
+    'affinity failure threshold must be an integer between 0 and 1000000'
+  )
   return z.object({
     RetryTimes: z.number().int().min(0).max(99),
     AutomaticRetryStatusCodes: z
@@ -14,6 +17,12 @@ export function createRoutingPolicySchema(t: TFunction) {
       ),
     channel_affinity_setting: z.object({
       enabled: z.boolean(),
+      retry_avoid_failed_channels: z.boolean(),
+      failure_threshold: z
+        .number({ error: failureThresholdMessage })
+        .int(failureThresholdMessage)
+        .min(0, failureThresholdMessage)
+        .max(1000000, failureThresholdMessage),
       session_mode: z.enum(['', 'off', 'prefer', 'strict']),
       switch_on_success: z.boolean(),
       keep_on_channel_disabled: z.boolean(),
@@ -51,6 +60,12 @@ export function routingPolicyFormValues(
     AutomaticRetryStatusCodes: options.AutomaticRetryStatusCodes,
     channel_affinity_setting: {
       enabled: options['channel_affinity_setting.enabled'] === 'true',
+      retry_avoid_failed_channels:
+        options['channel_affinity_setting.retry_avoid_failed_channels'] !==
+        'false',
+      failure_threshold: Number(
+        options['channel_affinity_setting.failure_threshold'] ?? '1'
+      ),
       session_mode: (options['channel_affinity_setting.session_mode'] ||
         '') as RoutingPolicyFormValues['channel_affinity_setting']['session_mode'],
       switch_on_success:

@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -135,6 +136,29 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				startGroupIndex = idx
 			}
 		}
+		// Cross-group retries also prefer an untried channel in a later group
+		// over repeating a failed channel in the current group.
+		state := RequestPolicy(param.Ctx)
+		if crossGroupRetry && operation_setting.GetChannelAffinitySetting().RetryAvoidFailedChannels && len(state.FailedChannelIDs) > 0 {
+			for i := startGroupIndex; i < len(autoGroups); i++ {
+				candidate, candidateErr := model.GetUntriedSatisfiedChannel(autoGroups[i], param.ModelName, state.FailedChannelIDs, filters)
+				if candidateErr != nil {
+					return nil, autoGroups[i], candidateErr
+				}
+				if candidate == nil {
+					continue
+				}
+				channel = candidate
+				if i > startGroupIndex {
+					param.SetRetry(0)
+					affinityRetryOffset = 0
+					param.Ctx.Set(ginKeyChannelAffinityRetryOffset, 0)
+				}
+				startGroupIndex = i
+				state.AddEvent(PolicyEvent{ChannelID: channel.Id, Group: autoGroups[i], Decision: PolicyDecision{Action: "select", Reason: "avoid_failed_channels", Source: "routing"}})
+				break
+			}
+		}
 
 		for i := startGroupIndex; i < len(autoGroups); i++ {
 			autoGroup := autoGroups[i]
@@ -148,12 +172,17 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			priorityRetry := max(groupRetry-affinityRetryOffset, 0)
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(
-				autoGroup,
-				param.ModelName,
-				priorityRetry,
-				filters,
-			)
+			if channel == nil {
+				channel, err = selectRetryChannel(param.Ctx,
+					autoGroup,
+					param.ModelName,
+					priorityRetry,
+					filters,
+				)
+			}
+			if err != nil {
+				return nil, autoGroup, err
+			}
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -194,7 +223,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(
+		channel, err = selectRetryChannel(param.Ctx,
 			param.TokenGroup,
 			param.ModelName,
 			max(param.GetRetry()-affinityRetryOffset, 0),
@@ -205,6 +234,21 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+func selectRetryChannel(c *gin.Context, group, modelName string, retry int, filters []dto.ChannelFilter) (*model.Channel, error) {
+	state := RequestPolicy(c)
+	if operation_setting.GetChannelAffinitySetting().RetryAvoidFailedChannels && len(state.FailedChannelIDs) > 0 {
+		channel, err := model.GetUntriedSatisfiedChannel(group, modelName, state.FailedChannelIDs, filters)
+		if err != nil {
+			return nil, err
+		}
+		if channel != nil {
+			state.AddEvent(PolicyEvent{ChannelID: channel.Id, Group: group, Decision: PolicyDecision{Action: "select", Reason: "avoid_failed_channels", Source: "routing"}})
+			return channel, nil
+		}
+	}
+	return model.GetRandomSatisfiedChannel(group, modelName, retry, filters)
 }
 
 func pinnedTaskPluginIdentities(c *gin.Context, expected string) ([]int, []string) {
@@ -329,7 +373,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	usingGroup := retry.TokenGroup
 	var channel *model.Channel
 	var selectGroup string
-	if retry.GetRetry() == 0 {
+	if retry.GetRetry() == 0 && len(RequestPolicy(c).FailedChannelIDs) == 0 {
 		if preferredChannelID, found := GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
 			affinityUsable := false
 			preferred, err := model.CacheGetChannel(preferredChannelID)

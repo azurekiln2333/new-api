@@ -145,6 +145,32 @@ export interface ManageUserQuotaPayload {
   value: number
 }
 
+/** A user's own model request rate limit; the time window stays global. */
+export interface UserRateLimitOverride {
+  total_count: number
+  success_count: number
+}
+
+/**
+ * Effective rate limit state of one user: the group limit that applies when the
+ * user has no override, plus the manual override when it exists.
+ */
+export interface UserRateLimitState {
+  user_id: number
+  group: string
+  enabled: boolean
+  total_count: number
+  success_count: number
+  group_configured: boolean
+  group_total_count: number
+  group_success_count: number
+}
+
+export interface ClearGroupUserRateLimitResult {
+  group: string
+  cleared: number
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

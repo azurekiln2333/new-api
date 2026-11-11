@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -45,6 +46,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			sqlDB.SetMaxOpenConns(1)
 			previousDB, previousType, previousSnapshot := DB, common.MainDatabaseType(), CurrentRequestPolicy()
+			previousLevels := setting.GroupLevels2JSONString()
 			common.OptionMapRWMutex.Lock()
 			previousOptions := maps.Clone(common.OptionMap)
 			common.OptionMap = maps.Clone(previousSnapshot.Options)
@@ -53,6 +55,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			common.SetMainDatabaseType(common.DatabaseType(dialect))
 			initCol()
 			t.Cleanup(func() {
+				require.NoError(t, setting.UpdateGroupLevelsByJSONString(previousLevels))
 				require.NoError(t, db.Migrator().DropTable(&Option{}))
 				for k, v := range previousSnapshot.Options {
 					require.NoError(t, updateOptionMap(k, v))
@@ -75,7 +78,8 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Logf("database version: %s", version)
 			rules := `[{"name":"session","model_regex":[".*"],"key_sources":[{"type":"request_header","key":"X-Session"}],"ttl_seconds":0,"skip_retry_on_failure":false,"include_using_group":false,"param_override_template":{"temperature":0},"future_field":{"enabled":false}}]`
-			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"RetryTimes": "2", "channel_affinity_setting.rules": rules}))
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"RetryTimes": "2", "channel_affinity_setting.rules": rules, "channel_affinity_setting.failure_threshold": "3", "channel_affinity_setting.retry_avoid_failed_channels": "false"}))
+			require.NoError(t, UpdateOption("GroupLevels", `{"default":0,"vip":1}`))
 			assert.Equal(t, 2, CurrentRequestPolicy().RetryTimes)
 			assert.Equal(t, 2, common.RetryTimes, "the runtime global follows the same write")
 			require.NoError(t, UpdateOption("AutomaticRetryStatusCodes", "429,500-503"))
@@ -86,6 +90,11 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, rules, CurrentRequestPolicy().Options["channel_affinity_setting.rules"])
 			loadOptionsFromDatabase()
 			loadOptionsFromDatabase()
+			assert.Equal(t, 3, CurrentRequestPolicy().Affinity.FailureThreshold)
+			assert.False(t, CurrentRequestPolicy().Affinity.RetryAvoidFailedChannels)
+			assert.Equal(t, map[string]int{"default": 0, "vip": 1}, setting.GetGroupLevelsCopy())
+			assert.Error(t, UpdateOption("GroupLevels", `{"vip":1.5}`))
+			assert.Equal(t, map[string]int{"default": 0, "vip": 1}, setting.GetGroupLevelsCopy())
 			assert.Equal(t, rules, CurrentRequestPolicy().Options["channel_affinity_setting.rules"], "legacy rule JSON survives reloads without dropping extension fields")
 			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"channel_affinity_setting.session_mode": "strict"}))
 			loadOptionsFromDatabase()
@@ -110,6 +119,8 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 				}
 			}))
 			assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"RetryTimes": "8", "channel_affinity_setting.session_mode": "off"}))
+			assert.Error(t, UpdateOption("GroupLevels", `{"default":0,"vip":99}`))
+			assert.Equal(t, map[string]int{"default": 0, "vip": 1}, setting.GetGroupLevelsCopy(), "a failed save cannot change permissions")
 			assert.Same(t, snapshot, CurrentRequestPolicy())
 			require.NoError(t, db.Callback().Update().Remove("policy_fail"))
 			option = Option{}
@@ -117,6 +128,26 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "2", option.Value)
 			loadOptionsFromDatabase()
 			assert.Equal(t, "strict", CurrentRequestPolicy().Affinity.SessionMode, "a failed save keeps the persisted global mode")
+			assert.Equal(t, map[string]int{"default": 0, "vip": 1}, setting.GetGroupLevelsCopy())
 		})
 	}
+}
+
+func TestRequestPolicyFailoverSettings(t *testing.T) {
+	defaults, err := BuildRequestPolicy(nil)
+	require.NoError(t, err)
+	assert.True(t, defaults.Affinity.RetryAvoidFailedChannels)
+	assert.Equal(t, 1, defaults.Affinity.FailureThreshold)
+	for _, rule := range defaults.Affinity.Rules {
+		assert.Equal(t, "inherit", rule.SessionMode)
+	}
+	for _, value := range []string{"-1", "1.5", "1000001", "true"} {
+		_, err := BuildRequestPolicy(map[string]string{"channel_affinity_setting.failure_threshold": value})
+		assert.Error(t, err)
+	}
+	snapshot, err := BuildRequestPolicy(map[string]string{"channel_affinity_setting.failure_threshold": "0", "channel_affinity_setting.retry_avoid_failed_channels": "false", "channel_affinity_setting.rules": `[{"name":"legacy","skip_retry_on_failure":true}]`})
+	require.NoError(t, err)
+	assert.Zero(t, snapshot.Affinity.FailureThreshold)
+	assert.False(t, snapshot.Affinity.RetryAvoidFailedChannels)
+	assert.Empty(t, snapshot.Affinity.Rules[0].SessionMode)
 }

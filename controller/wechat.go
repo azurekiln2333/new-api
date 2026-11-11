@@ -62,6 +62,18 @@ func WeChatAuth(c *gin.Context) {
 		return
 	}
 	code := c.Query("code")
+	invitationCode := ""
+	if c.Request.Method == http.MethodPost {
+		var request struct {
+			Code           string `json:"code"`
+			InvitationCode string `json:"invitation_code"`
+		}
+		if common.DecodeJson(c.Request.Body, &request) != nil || len(request.InvitationCode) > 64 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		code, invitationCode = request.Code, request.InvitationCode
+	}
 	wechatId, err := getWeChatIdByCode(code)
 	if err != nil {
 		common.ApiError(c, err)
@@ -81,16 +93,23 @@ func WeChatAuth(c *gin.Context) {
 			return
 		}
 	} else {
-		if common.RegisterEnabled {
+		if common.RegisterEnabled || common.InviteRegisterEnabled {
 			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
-			if err := user.Insert(0); err != nil {
-				common.ApiError(c, err)
+			if err := model.DB.Transaction(func(tx *gorm.DB) error {
+				return model.InsertUserWithInvitation(tx, &user, 0, invitationCode)
+			}); err != nil {
+				if errors.Is(err, model.ErrInvitationInvalid) {
+					common.ApiErrorT(c, "Invitation code is invalid or unavailable")
+					return
+				}
+				common.ApiErrorT(c, "Database error, please contact the administrator")
 				return
 			}
+			user.FinishInsert(0)
 		} else {
 			common.ApiErrorT(c, "New user registration has been disabled by administrator")
 			return

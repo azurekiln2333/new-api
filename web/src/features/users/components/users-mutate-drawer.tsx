@@ -97,6 +97,7 @@ import {
 } from '../lib'
 import type { User } from '../types'
 import { UserQuotaDialog } from './user-quota-dialog'
+import { UserRateLimitSection } from './user-rate-limit-section'
 import { useUsers } from './users-provider'
 
 type UsersMutateDrawerProps = {
@@ -496,6 +497,14 @@ export function UsersMutateDrawer({
                       </FormItem>
                     )}
                   />
+                </SideDrawerSection>
+              )}
+
+              {/* Rate limiting (update only) */}
+              {isUpdate && currentRow && (
+                <SideDrawerSection>
+                  <h3 className='text-sm font-medium'>{t('Rate Limiting')}</h3>
+                  <UserRateLimitSection userId={currentRow.id} />
                 </SideDrawerSection>
               )}
 

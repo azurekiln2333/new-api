@@ -53,6 +53,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/oauth/email/bind", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), middleware.DisableCache(), controller.EmailBind)
 		// WeChat uses its existing authorization-code service.
 		apiRouter.GET("/oauth/wechat", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.WeChatAuth)
+		apiRouter.POST("/oauth/wechat", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, middleware.DisableCache(), controller.WeChatAuth)
 		apiRouter.POST("/oauth/wechat/bind", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.WeChatBind)
 		apiRouter.GET("/oauth/telegram/login", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.TelegramLegacyAuth)
 		apiRouter.POST("/oauth/telegram/bind/start", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.TelegramLegacyAuth)
@@ -112,6 +113,8 @@ func SetApiRouter(router *gin.Engine) {
 					accessTokenRoute.DELETE("/:id", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("access-token"), controller.DeleteAccessToken)
 					accessTokenRoute.DELETE("/legacy", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("access-token"), controller.RevokeLegacyAccessToken)
 				}
+				selfRoute.GET("/login-verification", controller.GetLoginVerificationPreference)
+				selfRoute.PUT("/login-verification", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("security-verification"), controller.UpdateLoginVerificationPreference)
 				selfRoute.GET("/passkey", controller.PasskeyStatus)
 				selfRoute.POST("/passkey/register/begin", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyRegisterBegin)
 				selfRoute.POST("/passkey/register/finish", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyRegisterFinish)
@@ -166,6 +169,10 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.PUT("/", controller.UpdateUser)
 				adminRoute.DELETE("/:id", controller.DeleteUser)
 				adminRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)
+				adminRoute.GET("/:id/rate_limit", controller.GetUserRateLimit)
+				adminRoute.PUT("/:id/rate_limit", controller.UpdateUserRateLimit)
+				adminRoute.DELETE("/:id/rate_limit", controller.DeleteUserRateLimit)
+				adminRoute.POST("/rate_limit/clear_group", controller.ClearGroupUserRateLimits)
 
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
@@ -306,6 +313,18 @@ func SetApiRouter(router *gin.Engine) {
 			}
 		}
 
+		invitationRoute := apiRouter.Group("/invitation")
+		invitationRoute.Use(middleware.AdminAuth(), middleware.DisableCache())
+		{
+			read := authz.Permission{Resource: "invitation", Action: authz.ActionRead}
+			write := authz.Permission{Resource: "invitation", Action: authz.ActionWrite}
+			handlePermissionRoute(invitationRoute, http.MethodGet, "/", read, controller.ListInvitations)
+			handlePermissionRoute(invitationRoute, http.MethodPost, "/", write, middleware.CriticalRateLimit(), controller.AddInvitations)
+			handlePermissionRoute(invitationRoute, http.MethodPut, "/", write, controller.UpdateInvitation)
+			handlePermissionRoute(invitationRoute, http.MethodPost, "/batch", write, controller.DeleteInvitationBatch)
+			handlePermissionRoute(invitationRoute, http.MethodDelete, "/invalid", write, controller.DeleteInvalidInvitations)
+			handlePermissionRoute(invitationRoute, http.MethodDelete, "/:id", write, controller.DeleteInvitation)
+		}
 		redemptionRoute := apiRouter.Group("/redemption")
 		redemptionRoute.Use(middleware.AdminAuth())
 		{
@@ -363,6 +382,7 @@ func SetApiRouter(router *gin.Engine) {
 		groupRoute.Use(middleware.AdminAuth())
 		{
 			groupRoute.GET("/", controller.GetGroups)
+			groupRoute.POST("/preview", controller.PreviewGroupVisibility)
 		}
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")

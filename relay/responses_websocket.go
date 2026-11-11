@@ -253,6 +253,12 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			info = &relaycommon.RelayInfo{OriginModelName: modelName, UsingGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), StartTime: started}
 		}
 		perfmetrics.RecordRelayResult(c.Request.Context(), info, apiErr)
+		if policy.CurrentChannelID > 0 && service.IsChannelFailure(apiErr) {
+			service.RecordChannelFailure(c)
+		}
+		if policy.Successful {
+			service.RecordChannelAffinity(c, s.lockedChannelID)
+		}
 		// Settlement already marks the request policy successful, and nothing
 		// reads a termination decision after this point on the WebSocket path,
 		// so neither policy record belongs here.
@@ -274,6 +280,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	service.GetChannelConstraints(c).AddFilter(appdto.ChannelFilter{Kind: appdto.FilterRequestPath, RequestPath: c.Request.URL.Path})
 
 	if s.lockedChannelID != 0 {
+		service.GetPreferredChannelByAffinity(c, modelName, common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup))
 		if apiErr = s.restoreConnectionContext(c, modelName); apiErr != nil {
 			return apiErr
 		}
@@ -461,10 +468,6 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					return rejected
 				}
 				if strings.HasPrefix(event.Type, "response.") {
-					if !accepted {
-						// Like HTTP, bind the session only once upstream accepted the request.
-						service.RecordChannelAffinity(c, s.lockedChannelID)
-					}
 					accepted = true
 					if event.Response != nil && event.Response.ID != "" {
 						responseID = event.Response.ID

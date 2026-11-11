@@ -3,8 +3,10 @@ package model
 import (
 	"slices"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 var filterEvalOrder = []dto.ChannelFilterKind{
@@ -12,6 +14,73 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterTaskPluginEndpoint,
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
+}
+
+// GetUntriedSatisfiedChannel applies the ordinary request filters before
+// excluding failed channels. Retry priority is the highest remaining tier,
+// so peers are exhausted before a lower priority is considered.
+func GetUntriedSatisfiedChannel(group, modelName string, failed []int, filters []dto.ChannelFilter) (*Channel, error) {
+	var candidates []*Channel
+	if common.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		defer channelSyncLock.RUnlock()
+		ids, _ := filterCandidateIDs(group2model2channels[group][modelName], modelName, filters)
+		if len(ids) == 0 {
+			ids, _ = filterCandidateIDs(group2model2channels[group][ratio_setting.RoutingMatchModelName(modelName)], modelName, filters)
+		}
+		for _, id := range ids {
+			if !slices.Contains(failed, id) && channelsIDM[id] != nil {
+				candidates = append(candidates, channelsIDM[id])
+			}
+		}
+	} else {
+		// The database path uses exactly the same eligibility predicate as
+		// GetChannel, including path, plugin identity and WebSocket filters.
+		for _, name := range []string{modelName, ratio_setting.RoutingMatchModelName(modelName)} {
+			var abilities []Ability
+			if err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, name, true).Find(&abilities).Error; err != nil {
+				return nil, err
+			}
+			ids := make([]int, 0, len(abilities))
+			for _, ability := range abilities {
+				ids = append(ids, ability.ChannelId)
+			}
+			var channels []*Channel
+			if len(ids) > 0 {
+				if err := DB.Where("id IN ?", ids).Find(&channels).Error; err != nil {
+					return nil, err
+				}
+			}
+			eligible := false
+			for _, channel := range channels {
+				if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters); ok && channel.Status == common.ChannelStatusEnabled {
+					eligible = true
+					if !slices.Contains(failed, channel.Id) {
+						candidates = append(candidates, channel)
+					}
+				}
+			}
+			if eligible || ratio_setting.RoutingMatchModelName(modelName) == modelName {
+				break
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	priority := candidates[0].GetPriority()
+	for _, channel := range candidates {
+		priority = max(priority, channel.GetPriority())
+	}
+	targets := make([]*Channel, 0, len(candidates))
+	weight := 0
+	for _, channel := range candidates {
+		if channel.GetPriority() == priority {
+			targets = append(targets, channel)
+			weight += channel.GetWeight()
+		}
+	}
+	return chooseWeightedChannel(targets, weight)
 }
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.

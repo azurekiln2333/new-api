@@ -28,6 +28,34 @@ func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm
 	return tx.Where(column+" = ?", value), nil
 }
 
+// LogMatchMode selects how the usage-log text filters compare stored values.
+type LogMatchMode string
+
+const (
+	// LogMatchFuzzy keeps rows whose text column contains the filter value.
+	LogMatchFuzzy LogMatchMode = "fuzzy"
+	// LogMatchExact compares text columns for equality, which is how the log
+	// search behaved before the match mode existed.
+	LogMatchExact LogMatchMode = "exact"
+)
+
+// buildLogContainsCondition builds a literal substring match for one column.
+// LIKE metacharacters in the value are escaped so a search for "50%" finds that
+// text instead of matching everything.
+func buildLogContainsCondition(column string, value string) (string, string) {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		// ClickHouse LIKE escapes with a backslash and has no ESCAPE clause.
+		value = strings.ReplaceAll(value, `\`, `\\`)
+		value = strings.ReplaceAll(value, `%`, `\%`)
+		value = strings.ReplaceAll(value, `_`, `\_`)
+		return column + " LIKE ?", "%" + value + "%"
+	}
+	value = strings.ReplaceAll(value, "!", "!!")
+	value = strings.ReplaceAll(value, "%", "!%")
+	value = strings.ReplaceAll(value, "_", "!_")
+	return column + " LIKE ? ESCAPE '!'", "%" + value + "%"
+}
+
 func buildLogLikeCondition(column string, value string) (string, string, error) {
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		pattern, err := sanitizeClickHouseLikePattern(value)
@@ -480,9 +508,11 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-// LogFilter is the usage-log search shared by the log list and the log export.
-// Username and Channel are administrator filters.
+// LogFilter is the usage-log search shared by the log list, the log export and
+// the log statistics. Username and Channel are administrator filters. UserId
+// scopes the search to a single user and stays zero for every user.
 type LogFilter struct {
+	UserId            int
 	Type              int
 	StartTimestamp    int64
 	EndTimestamp      int64
@@ -493,27 +523,53 @@ type LogFilter struct {
 	Group             string
 	RequestId         string
 	UpstreamRequestId string
+	MatchMode         LogMatchMode
+}
+
+// logTextFilter is one text column the search filters on. legacyPattern keeps
+// the historical exact-mode rule where a % in the model or username field is a
+// wildcard pattern instead of literal text.
+type logTextFilter struct {
+	column        string
+	value         string
+	legacyPattern bool
+}
+
+func (f LogFilter) textFilters() []logTextFilter {
+	return []logTextFilter{
+		{column: "logs.model_name", value: f.ModelName, legacyPattern: true},
+		{column: "logs.username", value: f.Username, legacyPattern: true},
+		{column: "logs.token_name", value: f.TokenName},
+		{column: "logs.request_id", value: f.RequestId},
+		{column: "logs.upstream_request_id", value: f.UpstreamRequestId},
+		{column: "logs." + logGroupCol, value: f.Group},
+	}
 }
 
 func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	var err error
+	if f.UserId != 0 {
+		tx = tx.Where("logs.user_id = ?", f.UserId)
+	}
 	if f.Type != LogTypeUnknown {
 		tx = tx.Where("logs.type = ?", f.Type)
 	}
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", f.ModelName); err != nil {
-		return nil, err
-	}
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", f.Username); err != nil {
-		return nil, err
-	}
-	if f.TokenName != "" {
-		tx = tx.Where("logs.token_name = ?", f.TokenName)
-	}
-	if f.RequestId != "" {
-		tx = tx.Where("logs.request_id = ?", f.RequestId)
-	}
-	if f.UpstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", f.UpstreamRequestId)
+	for _, textFilter := range f.textFilters() {
+		if textFilter.value == "" {
+			continue
+		}
+		if f.MatchMode != LogMatchExact {
+			condition, pattern := buildLogContainsCondition(textFilter.column, textFilter.value)
+			tx = tx.Where(condition, pattern)
+			continue
+		}
+		if textFilter.legacyPattern {
+			if tx, err = applyExplicitLogTextFilter(tx, textFilter.column, textFilter.value); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		tx = tx.Where(textFilter.column+" = ?", textFilter.value)
 	}
 	if f.StartTimestamp != 0 {
 		tx = tx.Where("logs.created_at >= ?", f.StartTimestamp)
@@ -523,9 +579,6 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	}
 	if f.Channel != 0 {
 		tx = tx.Where("logs.channel_id = ?", f.Channel)
-	}
-	if f.Group != "" {
-		tx = tx.Where("logs."+logGroupCol+" = ?", f.Group)
 	}
 	return tx, nil
 }
@@ -597,7 +650,8 @@ func GetAllLogs(filter LogFilter, startIdx int, num int) (logs []*Log, total int
 const logSearchCountLimit = 10000
 
 func GetUserLogs(userId int, filter LogFilter, startIdx int, num int) (logs []*Log, total int64, err error) {
-	tx, err := filter.apply(LOG_DB.Where("logs.user_id = ?", userId))
+	filter.UserId = userId
+	tx, err := filter.apply(LOG_DB)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -652,7 +706,8 @@ func StreamAllLogs(ctx context.Context, filter LogFilter, role int, fn func(*Log
 // StreamUserLogs is StreamAllLogs for one user's own logs, shaped like the
 // user log list.
 func StreamUserLogs(ctx context.Context, userId int, filter LogFilter, fn func(*Log) error) error {
-	tx, err := filter.apply(LOG_DB.WithContext(ctx).Where("logs.user_id = ?", userId))
+	filter.UserId = userId
+	tx, err := filter.apply(LOG_DB.WithContext(ctx))
 	if err != nil {
 		return err
 	}
@@ -687,54 +742,39 @@ func streamLogs(tx *gorm.DB, order string, fn func(*Log) error) error {
 	return rows.Err()
 }
 
+// Stat is the usage-log summary behind the log header cards. CacheReadTokens
+// and InputTokens feed the cache hit rate card; InputTokens is the total input
+// under settlement semantics (see logCacheTokenSelect).
 type Stat struct {
-	Quota int `json:"quota"`
-	Rpm   int `json:"rpm"`
-	Tpm   int `json:"tpm"`
+	Quota           int   `json:"quota"`
+	Rpm             int   `json:"rpm"`
+	Tpm             int   `json:"tpm"`
+	CacheReadTokens int64 `json:"cache_read_tokens"`
+	InputTokens     int64 `json:"input_tokens"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
+// SumUsedQuota summarizes the consume logs matching filter.
+func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
+	// The summary always covers consume logs, whatever log type the list is
+	// filtered by.
+	filter.Type = LogTypeUnknown
+
+	tx, err := filter.apply(LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota"))
+	if err != nil {
+		return stat, err
+	}
 
 	// 为rpm和tpm创建单独的查询
-	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
-
-	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
+	rpmTpmQuery, err := filter.apply(LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm"))
+	if err != nil {
 		return stat, err
-	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
-		return stat, err
-	}
-	if tokenName != "" {
-		tx = tx.Where("token_name = ?", tokenName)
-		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
-	}
-	if startTimestamp != 0 {
-		tx = tx.Where("created_at >= ?", startTimestamp)
-	}
-	if endTimestamp != 0 {
-		tx = tx.Where("created_at <= ?", endTimestamp)
-	}
-	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
-		return stat, err
-	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName); err != nil {
-		return stat, err
-	}
-	if channel != 0 {
-		tx = tx.Where("channel_id = ?", channel)
-		rpmTpmQuery = rpmTpmQuery.Where("channel_id = ?", channel)
-	}
-	if group != "" {
-		tx = tx.Where(logGroupCol+" = ?", group)
-		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
 	}
 
-	tx = tx.Where("type = ?", LogTypeConsume)
-	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
+	tx = tx.Where("logs.type = ?", LogTypeConsume)
+	rpmTpmQuery = rpmTpmQuery.Where("logs.type = ?", LogTypeConsume)
 
 	// 只统计最近60秒的rpm和tpm
-	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
+	rpmTpmQuery = rpmTpmQuery.Where("logs.created_at >= ?", time.Now().Add(-60*time.Second).Unix())
 
 	// 执行查询
 	if err := tx.Scan(&stat).Error; err != nil {
@@ -752,7 +792,63 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	stat.Rpm = rateStat.Rpm
 	stat.Tpm = rateStat.Tpm
 
+	// Cache usage is a best-effort card: a log database that cannot read the
+	// metadata must not take the usage cards down with it.
+	cacheQuery, err := filter.apply(LOG_DB.Table("logs").Select(logCacheTokenSelect()))
+	if err != nil {
+		return stat, err
+	}
+	var cacheStat struct {
+		CacheReadTokens int64
+		InputTokens     int64
+	}
+	if err := cacheQuery.Where("logs.type = ?", LogTypeConsume).Scan(&cacheStat).Error; err != nil {
+		common.SysError(common.LogText("failed to query log cache stat: %s", err.Error()))
+		return stat, nil
+	}
+	stat.CacheReadTokens = cacheStat.CacheReadTokens
+	stat.InputTokens = cacheStat.InputTokens
+
 	return stat, nil
+}
+
+// logCacheTokenSelect returns the aggregate behind the cache hit rate: the
+// cache-read token total and the total input tokens under settlement
+// semantics. Anthropic prompt tokens exclude both cache categories, so reads
+// and writes are added back; OpenAI prompt tokens already include them,
+// including converted responses. The rule matches the token accounting in
+// RecordConsumeLog and never looks at the model name or the request endpoint.
+//
+// SQLite, MySQL and ClickHouse parse the other column with native JSON
+// functions guarded so a non-JSON row counts as zero. PostgreSQL extracts the
+// fields with a regular expression instead: casting legacy malformed text to
+// json would fail the whole aggregate.
+func logCacheTokenSelect() string {
+	var (
+		cacheRead  string
+		cacheWrite string
+		semantic   string
+	)
+	switch common.LogDatabaseType() {
+	case common.DatabaseTypeMySQL:
+		cacheRead = "CASE WHEN JSON_VALID(other) THEN GREATEST(0, COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(other, '$.cache_tokens')) AS SIGNED), 0)) ELSE 0 END"
+		cacheWrite = "CASE WHEN JSON_VALID(other) THEN GREATEST(0, COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(other, '$.cache_write_tokens')) AS SIGNED), 0)) ELSE 0 END"
+		semantic = "CASE WHEN JSON_VALID(other) THEN JSON_UNQUOTE(JSON_EXTRACT(other, '$.usage_semantic')) END"
+	case common.DatabaseTypePostgreSQL:
+		cacheRead = `GREATEST(0, COALESCE(substring(other from '"cache_tokens"[[:space:]]*:[[:space:]]*(-?[0-9]+)')::bigint, 0))`
+		cacheWrite = `GREATEST(0, COALESCE(substring(other from '"cache_write_tokens"[[:space:]]*:[[:space:]]*(-?[0-9]+)')::bigint, 0))`
+		semantic = `substring(other from '"usage_semantic"[[:space:]]*:[[:space:]]*"([a-z]+)"')`
+	case common.DatabaseTypeClickHouse:
+		cacheRead = "greatest(0, JSONExtractInt(other, 'cache_tokens'))"
+		cacheWrite = "greatest(0, JSONExtractInt(other, 'cache_write_tokens'))"
+		semantic = "JSONExtractString(other, 'usage_semantic')"
+	default:
+		cacheRead = "CASE WHEN json_valid(other) THEN MAX(0, COALESCE(CAST(json_extract(other, '$.cache_tokens') AS INTEGER), 0)) ELSE 0 END"
+		cacheWrite = "CASE WHEN json_valid(other) THEN MAX(0, COALESCE(CAST(json_extract(other, '$.cache_write_tokens') AS INTEGER), 0)) ELSE 0 END"
+		semantic = "CASE WHEN json_valid(other) THEN json_extract(other, '$.usage_semantic') END"
+	}
+	return "COALESCE(SUM(" + cacheRead + "), 0) AS cache_read_tokens, " +
+		"COALESCE(SUM(prompt_tokens + CASE WHEN " + semantic + " = 'anthropic' THEN " + cacheRead + " + " + cacheWrite + " ELSE 0 END), 0) AS input_tokens"
 }
 
 func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string) (token int) {

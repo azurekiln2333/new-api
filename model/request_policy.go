@@ -102,12 +102,22 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 	for key, value := range raw {
 		if field, ok := strings.CutPrefix(key, "channel_affinity_setting."); ok {
 			switch field {
-			case "enabled", "session_mode", "switch_on_success", "keep_on_channel_disabled", "max_entries", "default_ttl_seconds", "rules":
+			case "enabled", "session_mode", "retry_avoid_failed_channels", "failure_threshold", "switch_on_success", "keep_on_channel_disabled", "max_entries", "default_ttl_seconds", "rules":
 			default:
 				return nil, fmt.Errorf("unknown affinity option: %s", key)
 			}
 			affinityFields[field] = value
 		}
+	}
+	threshold, err := strconv.Atoi(raw["channel_affinity_setting.failure_threshold"])
+	if err != nil {
+		return nil, common.NewMessage("invalid affinity failure threshold")
+	}
+	if threshold < 0 || threshold > 1_000_000 {
+		return nil, common.NewMessage("affinity failure threshold must be an integer between 0 and 1000000")
+	}
+	if value := raw["channel_affinity_setting.retry_avoid_failed_channels"]; value != "true" && value != "false" {
+		return nil, common.NewMessage("invalid failed-channel retry switch")
 	}
 	// Decode through JSON so malformed scalar/array values cannot be silently ignored.
 	affinityJSON := map[string]json.RawMessage{}

@@ -17,13 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -34,6 +36,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
 const rateLimitDialogSchema = z.object({
   groupName: z.string().min(1, 'Group name is required'),
@@ -57,21 +60,29 @@ export type RateLimitEntryData = {
   maxSuccess: number
 }
 
+export type RateLimitDialogResult = RateLimitEntryData & {
+  /**
+   * When editing an existing group limit, also remove the manual limits that
+   * users of this group were given, so they follow the group again.
+   */
+  overwriteUserOverrides: boolean
+}
+
 type RateLimitDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: (data: RateLimitEntryData) => void
+  onSave: (data: RateLimitDialogResult) => Promise<void> | void
   editData?: RateLimitEntryData | null
+  /** Groups defined in the group settings; the only choices when adding an entry. */
+  groups: readonly string[]
+  /** Kept entries may name a group that no longer exists; the dialog says so. */
+  isGroupMissing?: boolean
 }
 
-export function RateLimitDialog({
-  open,
-  onOpenChange,
-  onSave,
-  editData,
-}: RateLimitDialogProps) {
+export function RateLimitDialog(props: RateLimitDialogProps) {
   const { t } = useTranslation()
-  const isEditMode = !!editData
+  const isEditMode = !!props.editData
+  const [overwriteUserOverrides, setOverwriteUserOverrides] = useState(false)
 
   const form = useForm<RateLimitDialogFormValues>({
     resolver: zodResolver(rateLimitDialogSchema),
@@ -83,8 +94,8 @@ export function RateLimitDialog({
   })
 
   useEffect(() => {
-    if (editData) {
-      form.reset(editData)
+    if (props.editData) {
+      form.reset(props.editData)
     } else {
       form.reset({
         groupName: '',
@@ -92,18 +103,24 @@ export function RateLimitDialog({
         maxSuccess: 1,
       })
     }
-  }, [editData, form, open])
+    setOverwriteUserOverrides(false)
+  }, [props.editData, form, props.open])
 
-  const handleSubmit = (values: RateLimitDialogFormValues) => {
-    onSave(values)
+  const handleSubmit = async (values: RateLimitDialogFormValues) => {
+    await props.onSave({ ...values, overwriteUserOverrides })
     form.reset()
-    onOpenChange(false)
+    props.onOpenChange(false)
   }
+
+  const groupOptions = props.groups.map((group) => ({
+    value: group,
+    label: group,
+  }))
 
   return (
     <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
+      open={props.open}
+      onOpenChange={props.onOpenChange}
       title={
         isEditMode ? t('Edit group rate limit') : t('Add group rate limit')
       }
@@ -118,7 +135,7 @@ export function RateLimitDialog({
           <Button
             type='button'
             variant='outline'
-            onClick={() => onOpenChange(false)}
+            onClick={() => props.onOpenChange(false)}
           >
             {t('Cancel')}
           </Button>
@@ -141,21 +158,40 @@ export function RateLimitDialog({
               <FormItem>
                 <FormLabel>{t('Group Name')}</FormLabel>
                 <FormControl>
-                  <Input
-                    placeholder={t('e.g., default, vip, premium')}
-                    {...field}
-                    disabled={isEditMode}
-                  />
+                  {isEditMode ? (
+                    <Input {...field} disabled />
+                  ) : (
+                    <Combobox
+                      options={groupOptions}
+                      value={field.value}
+                      onValueChange={(value) => field.onChange(value ?? '')}
+                      placeholder={t('Select a group')}
+                      searchPlaceholder={t('Search groups...')}
+                      emptyText={t('No groups found')}
+                      className='w-full'
+                      aria-invalid={Boolean(form.formState.errors.groupName)}
+                    />
+                  )}
                 </FormControl>
                 <FormDescription>
                   {isEditMode
                     ? t('Group name cannot be changed when editing.')
-                    : t('Unique identifier for this group.')}
+                    : t(
+                        'Choose one of the groups defined in the group settings.'
+                      )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
           />
+
+          {props.isGroupMissing && (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'This group no longer exists in the group settings. The entry is kept until you delete it.'
+              )}
+            </p>
+          )}
 
           <FormField
             control={form.control}
@@ -172,7 +208,7 @@ export function RateLimitDialog({
                       step={1}
                       {...field}
                       onChange={(e) =>
-                        field.onChange(parseInt(e.target.value) || 0)
+                        field.onChange(Number.parseInt(e.target.value) || 0)
                       }
                     />
                     <span className='text-muted-foreground text-sm'>
@@ -203,7 +239,7 @@ export function RateLimitDialog({
                       step={1}
                       {...field}
                       onChange={(e) =>
-                        field.onChange(parseInt(e.target.value) || 1)
+                        field.onChange(Number.parseInt(e.target.value) || 1)
                       }
                     />
                     <span className='text-muted-foreground text-sm'>
@@ -218,6 +254,31 @@ export function RateLimitDialog({
               </FormItem>
             )}
           />
+
+          {isEditMode && (
+            <div className='flex items-start gap-2'>
+              <Checkbox
+                id='overwrite-user-overrides'
+                checked={overwriteUserOverrides}
+                onCheckedChange={(checked) =>
+                  setOverwriteUserOverrides(checked === true)
+                }
+              />
+              <div className='space-y-1'>
+                <Label
+                  htmlFor='overwrite-user-overrides'
+                  className='font-normal'
+                >
+                  {t('Also clear the manual limits of users in this group')}
+                </Label>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Users in this group who were given their own rate limit fall back to the group limit.'
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
         </form>
       </Form>
     </Dialog>

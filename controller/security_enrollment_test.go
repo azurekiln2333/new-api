@@ -43,6 +43,9 @@ import (
 
 func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentity) {
 	t.Helper()
+	previousLoginPolicy := common.LoginVerificationRequiredEnabled
+	common.LoginVerificationRequiredEnabled = true
+	t.Cleanup(func() { common.LoginVerificationRequiredEnabled = previousLoginPolicy })
 	require.NoError(t, i18n.Init())
 	gin.SetMode(gin.TestMode)
 	previousDB, previousLogDB := model.DB, model.LOG_DB

@@ -25,6 +25,7 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  | 'auth.login_verification.disable'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'

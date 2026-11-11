@@ -16,44 +16,60 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Plus, Search } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { getGroups } from '@/features/users/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { safeJsonParseWithValidation } from '../utils/json-parser'
 import { isObjectRecord } from '../utils/json-validators'
-import { RateLimitDialog, type RateLimitEntryData } from './rate-limit-dialog'
+import {
+  RateLimitDialog,
+  type RateLimitDialogResult,
+  type RateLimitEntryData,
+} from './rate-limit-dialog'
 
 type RateLimitVisualEditorProps = {
   value: string
   onChange: (value: string) => void
+  onClearUserOverrides?: (group: string, clear: boolean) => void
 }
 
 type RateLimitEntry = RateLimitEntryData
 
-export function RateLimitVisualEditor({
-  value,
-  onChange,
-}: RateLimitVisualEditorProps) {
+export function RateLimitVisualEditor(props: RateLimitVisualEditorProps) {
   const { t } = useTranslation()
   const [searchText, setSearchText] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editData, setEditData] = useState<RateLimitEntry | null>(null)
 
-  const rateLimits = useMemo(() => {
-    if (!value || value.trim() === '') return []
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: async () => requireServerSuccess(await getGroups()),
+    staleTime: 5 * 60 * 1000,
+  })
+  const groups = useMemo(() => groupsData?.data ?? [], [groupsData])
 
-    const parsed = safeJsonParseWithValidation<Record<string, unknown>>(value, {
-      fallback: {},
-      validator: isObjectRecord,
-      validatorMessage: 'Rate limits must be a JSON object',
-      context: 'rate limits',
-    })
+  const rateLimits = useMemo(() => {
+    if (!props.value || props.value.trim() === '') return []
+
+    const parsed = safeJsonParseWithValidation<Record<string, unknown>>(
+      props.value,
+      {
+        fallback: {},
+        validator: isObjectRecord,
+        validatorMessage: 'Rate limits must be a JSON object',
+        context: 'rate limits',
+      }
+    )
 
     return Object.entries(parsed)
       .map(([groupName, limits]) => {
@@ -72,7 +88,7 @@ export function RateLimitVisualEditor({
         return null
       })
       .filter((item): item is RateLimitEntry => item !== null)
-  }, [value])
+  }, [props.value])
 
   const filteredRateLimits = useMemo(() => {
     if (!searchText) return rateLimits
@@ -82,12 +98,15 @@ export function RateLimitVisualEditor({
     )
   }, [rateLimits, searchText])
 
-  const handleSave = (data: RateLimitEntryData) => {
-    const parsed = safeJsonParseWithValidation<Record<string, unknown>>(value, {
-      fallback: {},
-      validator: isObjectRecord,
-      silent: true,
-    })
+  const handleSave = (data: RateLimitDialogResult) => {
+    const parsed = safeJsonParseWithValidation<Record<string, unknown>>(
+      props.value,
+      {
+        fallback: {},
+        validator: isObjectRecord,
+        silent: true,
+      }
+    )
 
     if (editData && editData.groupName !== data.groupName) {
       delete parsed[editData.groupName]
@@ -95,19 +114,25 @@ export function RateLimitVisualEditor({
 
     parsed[data.groupName] = [data.maxRequests, data.maxSuccess]
 
-    onChange(JSON.stringify(parsed, null, 2))
+    props.onChange(JSON.stringify(parsed, null, 2))
+
+    props.onClearUserOverrides?.(data.groupName, data.overwriteUserOverrides)
   }
 
   const handleDelete = (groupName: string) => {
-    const parsed = safeJsonParseWithValidation<Record<string, unknown>>(value, {
-      fallback: {},
-      validator: isObjectRecord,
-      silent: true,
-    })
+    const parsed = safeJsonParseWithValidation<Record<string, unknown>>(
+      props.value,
+      {
+        fallback: {},
+        validator: isObjectRecord,
+        silent: true,
+      }
+    )
 
     delete parsed[groupName]
+    props.onClearUserOverrides?.(groupName, false)
 
-    onChange(JSON.stringify(parsed, null, 2))
+    props.onChange(JSON.stringify(parsed, null, 2))
   }
 
   const handleEdit = (limit: RateLimitEntry) => {
@@ -153,7 +178,14 @@ export function RateLimitVisualEditor({
             id: 'group',
             header: t('Group Name'),
             cellClassName: 'font-medium',
-            cell: (limit) => limit.groupName,
+            cell: (limit) => (
+              <span className='flex items-center gap-2'>
+                {limit.groupName}
+                {groups.length > 0 && !groups.includes(limit.groupName) && (
+                  <Badge variant='secondary'>{t('Group missing')}</Badge>
+                )}
+              </span>
+            ),
           },
           {
             id: 'max-requests',
@@ -202,6 +234,12 @@ export function RateLimitVisualEditor({
         onOpenChange={setDialogOpen}
         onSave={handleSave}
         editData={editData}
+        groups={groups}
+        isGroupMissing={
+          editData !== null &&
+          groups.length > 0 &&
+          !groups.includes(editData.groupName)
+        }
       />
     </div>
   )

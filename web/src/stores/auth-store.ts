@@ -51,6 +51,8 @@ export interface AuthUser {
   telegram_id?: string
   linux_do_id?: string
   language?: string
+  /** Provider avatar address synced on OAuth/OIDC login */
+  avatar_url?: string
   setting?: Record<string, unknown> | string
   stripe_customer?: string
   sidebar_modules?: string

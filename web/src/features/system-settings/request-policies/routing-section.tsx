@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -278,6 +279,30 @@ function AffinitySettings() {
             )}
             description={t('Otherwise the binding is removed.')}
           />
+        )}
+      />
+      <FormField
+        control={form.control}
+        name='channel_affinity_setting.failure_threshold'
+        render={({ field }) => (
+          <FormItem className='mt-4'>
+            <FormLabel>{t('Unbind after consecutive failures')}</FormLabel>
+            <FormControl>
+              <Input
+                type='number'
+                min={0}
+                max={1000000}
+                step={1}
+                {...safeNumberFieldProps(field)}
+              />
+            </FormControl>
+            <FormDescription>
+              {t(
+                '0 disables unbinding after failures. Applies to every session mode; reaching the threshold allows strict sessions to retry on another channel.'
+              )}
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
         )}
       />
       <Accordion className='mt-4'>

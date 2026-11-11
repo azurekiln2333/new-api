@@ -8,8 +8,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -87,6 +89,86 @@ func createChannelSelectAutoGroupsChannel(t *testing.T, db *gorm.DB, id int, gro
 		Priority:  &priority,
 		Weight:    weight,
 	}).Error)
+}
+
+func TestRetryAvoidsFailedChannelsAcrossPrioritiesAndGroups(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	// Initialize dialect quoting through startup without migrating unrelated
+	// tables. The ordinary service fixture otherwise uses only memory routing.
+	previousMaster, previousLogDB := common.IsMasterNode, model.LOG_DB
+	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	t.Setenv("LOG_SQL_DSN", "")
+	common.IsMasterNode = false
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	require.NoError(t, model.InitLogDB())
+	common.IsMasterNode = previousMaster
+	t.Cleanup(func() {
+		common.IsMasterNode = false
+		common.SetMainDatabaseType(previousMainType)
+		require.NoError(t, model.InitLogDB())
+		common.SetLogDatabaseType(previousLogType)
+		model.LOG_DB = previousLogDB
+		common.IsMasterNode = previousMaster
+	})
+	const modelName = "retry-failover"
+	for _, spec := range []struct {
+		id       int
+		group    string
+		priority int64
+	}{{3101, "default", 10}, {3102, "default", 10}, {3103, "default", 5}, {3104, "vip", 10}, {3105, "default", 20}} {
+		createChannelSelectAutoGroupsChannel(t, db, spec.id, spec.group, modelName)
+		require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", spec.id).Updates(map[string]any{"priority": spec.priority, "setting": `{"responses_websocket_enabled":true}`}).Error)
+		require.NoError(t, db.Model(&model.Ability{}).Where("channel_id = ?", spec.id).Update("priority", spec.priority).Error)
+	}
+	// A higher-priority channel that fails a transport filter stays excluded.
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 3105).Update("setting", `{"responses_websocket_enabled":false}`).Error)
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previousAffinity := *affinity
+	t.Cleanup(func() { *affinity = previousAffinity })
+	common.RetryTimes = 5
+	for _, cached := range []bool{false, true} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("cache=%t/enabled=%t", cached, enabled), func(t *testing.T) {
+				common.MemoryCacheEnabled = cached
+				model.InitChannelCache()
+				affinity.RetryAvoidFailedChannels = enabled
+				ctx := newRequestAutoGroupsContext()
+				GetChannelConstraints(ctx).AddFilter(dto.ChannelFilter{Kind: dto.FilterResponsesWebSocket})
+				state := RequestPolicy(ctx)
+				state.FailedChannelIDs = []int{3101}
+				retry := &RetryParam{Ctx: ctx, TokenGroup: "default", ModelName: modelName, Retry: common.GetPointer(1)}
+				channel, _, err := CacheGetRandomSatisfiedChannel(retry)
+				require.NoError(t, err)
+				require.NotNil(t, channel)
+				if !enabled {
+					assert.Equal(t, 3103, channel.Id, "disabled switch preserves priority-by-attempt routing")
+					return
+				}
+				assert.Equal(t, 3102, channel.Id, "the same-priority peer must be selected")
+				state.FailedChannelIDs = append(state.FailedChannelIDs, 3102)
+				retry.IncreaseRetry()
+				channel, _, err = CacheGetRandomSatisfiedChannel(retry)
+				require.NoError(t, err)
+				require.NotNil(t, channel)
+				assert.Equal(t, 3103, channel.Id)
+				state.FailedChannelIDs = append(state.FailedChannelIDs, 3103)
+				retry.IncreaseRetry()
+				channel, _, err = CacheGetRandomSatisfiedChannel(retry)
+				require.NoError(t, err)
+				require.NotNil(t, channel)
+				assert.Equal(t, 3103, channel.Id, "a repeat is allowed only after every eligible channel failed")
+				common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+				common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"default", "vip"})
+				common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, true)
+				retry.TokenGroup = "auto"
+				channel, group, err := CacheGetRandomSatisfiedChannel(retry)
+				require.NoError(t, err)
+				require.NotNil(t, channel)
+				assert.Equal(t, 3104, channel.Id, "an untried later group precedes repeating the current group")
+				assert.Equal(t, "vip", group)
+			})
+		}
+	}
 }
 
 func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(t *testing.T) {

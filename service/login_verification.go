@@ -53,6 +53,9 @@ func StartLoginVerification(user *model.User, loginMethod string, migration *Leg
 	if state.Status != common.UserStatusEnabled || state.AuthVersion != user.AuthVersion {
 		return nil, model.ErrUserSessionInactive
 	}
+	if err := loadLoginVerificationPreference(model.DB, state, migration != nil); err != nil {
+		return nil, err
+	}
 	methods, err := securityVerificationPolicy(VerificationScopeLogin, *state)
 	if err != nil || len(methods) == 0 {
 		if err == nil && migration != nil {
@@ -103,6 +106,9 @@ func RequireLoginVerification(token, method string) (*LoginVerification, error) 
 	}
 	if state.Status != common.UserStatusEnabled || state.AuthVersion != payload.AuthVersion {
 		return nil, model.ErrUserSessionInactive
+	}
+	if err := loadLoginVerificationPreference(model.DB, state, payload.PendingGitHubID != ""); err != nil {
+		return nil, err
 	}
 	if err := requireLoginVerificationMethod(state, method); err != nil {
 		return nil, err
@@ -161,6 +167,9 @@ func CompleteLoginVerification(token string, verification *LoginVerification, me
 		if flow.Id != verification.Flow.Id || common.UnmarshalJsonStr(flow.Payload, &payload) != nil || payload != verification.payload {
 			return model.ErrAuthFlowInvalid
 		}
+		if err := loadLoginVerificationPreference(tx, state, payload.PendingGitHubID != ""); err != nil {
+			return err
+		}
 		if err := requireLoginVerificationMethod(state, method); err != nil {
 			return err
 		}
@@ -186,4 +195,19 @@ func CompleteLoginVerification(token string, verification *LoginVerification, me
 		return nil, nil, err
 	}
 	return bundle, migration, nil
+}
+
+// Binding migration remains a sensitive operation even when ordinary login
+// verification is optional. An unavailable enrolled factor is never bypassed.
+func loadLoginVerificationPreference(tx *gorm.DB, state *model.UserVerificationState, bindingMigration bool) error {
+	if bindingMigration {
+		state.LoginVerificationRequired = true
+		return nil
+	}
+	if common.LoginVerificationRequiredEnabled || (!state.HasTwoFA && !state.HasPasskey) {
+		return nil
+	}
+	required, err := model.GetLoginVerificationPreference(tx, state.UserID)
+	state.LoginVerificationRequired = required
+	return err
 }

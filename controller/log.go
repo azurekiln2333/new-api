@@ -13,6 +13,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// logMatchMode reads the text-match mode shared by the log list, the log
+// export and the log statistics. Fuzzy (contains) is the default.
+func logMatchMode(c *gin.Context) model.LogMatchMode {
+	if c.Query("match_mode") == string(model.LogMatchExact) {
+		return model.LogMatchExact
+	}
+	return model.LogMatchFuzzy
+}
+
 // logFilterFromQuery reads the log search shared by the log list and the log
 // export. Username and channel are read only for administrators.
 func logFilterFromQuery(c *gin.Context, admin bool) model.LogFilter {
@@ -28,6 +37,7 @@ func logFilterFromQuery(c *gin.Context, admin bool) model.LogFilter {
 		Group:             c.Query("group"),
 		RequestId:         c.Query("request_id"),
 		UpstreamRequestId: c.Query("upstream_request_id"),
+		MatchMode:         logMatchMode(c),
 	}
 	if admin {
 		filter.Username = c.Query("username")
@@ -201,63 +211,49 @@ func GetLogByKey(c *gin.Context) {
 }
 
 func GetLogsStat(c *gin.Context) {
-	logType, _ := strconv.Atoi(c.Query("type"))
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	tokenName := c.Query("token_name")
-	username := c.Query("username")
-	modelName := c.Query("model_name")
-	channel, _ := strconv.Atoi(c.Query("channel"))
-	group := c.Query("group")
-	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
+	stat, err := model.SumUsedQuota(logFilterFromQuery(c, true))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	//tokenNum := model.SumUsedToken(logType, startTimestamp, endTimestamp, modelName, username, "")
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data": gin.H{
-			"quota": stat.Quota,
-			"rpm":   stat.Rpm,
-			"tpm":   stat.Tpm,
-		},
+		"data":    logStatResponse(stat),
 	})
 	return
 }
 
 func GetLogsSelfStat(c *gin.Context) {
-	username := c.GetString("username")
-	logType, _ := strconv.Atoi(c.Query("type"))
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	filter := logFilterFromQuery(c, false)
+	filter.UserId = c.GetInt("id")
 	if c.GetInt("role") < common.RoleAdminUser {
 		var err error
-		if startTimestamp, err = limitLogTimeRange(startTimestamp, endTimestamp); err != nil {
+		if filter.StartTimestamp, err = limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp); err != nil {
 			common.ApiError(c, err)
 			return
 		}
 	}
-	tokenName := c.Query("token_name")
-	modelName := c.Query("model_name")
-	channel, _ := strconv.Atoi(c.Query("channel"))
-	group := c.Query("group")
-	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
+	stat, err := model.SumUsedQuota(filter)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	//tokenNum := model.SumUsedToken(logType, startTimestamp, endTimestamp, modelName, username, tokenName)
 	c.JSON(200, gin.H{
 		"success": true,
 		"message": "",
-		"data": gin.H{
-			"quota": quotaNum.Quota,
-			"rpm":   quotaNum.Rpm,
-			"tpm":   quotaNum.Tpm,
-			//"token": tokenNum,
-		},
+		"data":    logStatResponse(stat),
 	})
 	return
+}
+
+// logStatResponse shapes the usage-log summary cards.
+func logStatResponse(stat model.Stat) gin.H {
+	return gin.H{
+		"quota":             stat.Quota,
+		"rpm":               stat.Rpm,
+		"tpm":               stat.Tpm,
+		"cache_read_tokens": stat.CacheReadTokens,
+		"input_tokens":      stat.InputTokens,
+	}
 }

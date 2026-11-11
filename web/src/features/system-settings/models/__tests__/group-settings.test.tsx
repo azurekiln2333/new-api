@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   fireEvent,
   render,
@@ -27,12 +28,24 @@ import {
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+
+import { api } from '@/lib/api'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { positiveIntegerSchema } from '../../utils/numeric-field'
 import { GroupRatioForm } from '../group-ratio-form'
+
+beforeEach(() => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: [{ key: 'GroupLevels', value: '{"default":0,"vip":1}' }],
+    },
+  })
+})
+afterEach(() => vi.restoreAllMocks())
 
 const defaults = {
   GroupRatio: '{"default":1,"vip":0.8}',
@@ -61,20 +74,31 @@ function Fixture(props: {
   initial?: Partial<typeof defaults>
   isSaving?: boolean
 }) {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      })
+  )
   const [actions, setActions] = useState<HTMLDivElement | null>(null)
   const form = useForm({
     defaultValues: { ...defaults, ...props.initial },
     resolver: zodResolver(schema),
   })
   return (
-    <SettingsPageProvider actionsContainer={actions}>
-      <div ref={setActions} />
-      <GroupRatioForm
-        form={form}
-        onSave={props.onSave ?? (async () => {})}
-        isSaving={props.isSaving ?? false}
-      />
-    </SettingsPageProvider>
+    <QueryClientProvider client={client}>
+      <SettingsPageProvider actionsContainer={actions}>
+        <div ref={setActions} />
+        <GroupRatioForm
+          form={form}
+          onSave={props.onSave ?? (async () => {})}
+          isSaving={props.isSaving ?? false}
+        />
+      </SettingsPageProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -128,7 +152,9 @@ describe('group settings workspace', () => {
         .map((input) => input.value)
     ).toEqual(['group_2', 'group_1', 'default', 'vip'])
 
-    await user.click(screen.getByRole('button', { name: 'Save group settings' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
     await waitFor(() => expect(onSave).toHaveBeenCalled())
     const saved = onSave.mock.calls[0][0]
     expect(JSON.parse(saved.GroupRatio)).toEqual({
@@ -201,7 +227,9 @@ describe('group settings workspace', () => {
     expect(screen.getByRole('button', { name: 'Move vip up' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Move vip down' })).toBeDisabled()
     await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
-    await user.click(screen.getByRole('button', { name: 'Save group settings' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
     await waitFor(() => expect(onSave).toHaveBeenCalled())
     expect(onSave.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
@@ -244,7 +272,9 @@ describe('group settings workspace', () => {
     )
     expect(screen.getByText('Not in pricing table')).toBeVisible()
     await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
-    await user.click(screen.getByRole('button', { name: 'Save group settings' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
     await waitFor(() => expect(onSave).toHaveBeenCalled())
     expect(JSON.parse(onSave.mock.calls[0][0].AutoGroups)).toEqual([
       'vip',
@@ -286,7 +316,9 @@ describe('group settings workspace', () => {
       { target: { value: '0' } }
     )
     await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
-    await user.click(screen.getByRole('button', { name: 'Save group settings' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
     await waitFor(() =>
       expect(
         screen.getByRole('tab', { name: 'Auto group order' })
@@ -342,4 +374,56 @@ describe('group settings workspace', () => {
       screen.getAllByRole('textbox', { name: 'Group description' })[1]
     ).toHaveValue('Updated description')
   })
+})
+
+it('edits group levels, rejects fractions and previews the server permission result', async () => {
+  vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true, data: ['default', 'vip'] },
+  })
+  render(<Fixture />)
+  await userEvent.click(screen.getByRole('tab', { name: 'Group visibility' }))
+  const input = await screen.findByRole('spinbutton', { name: 'Level for vip' })
+  expect(input).toHaveValue(1)
+  fireEvent.change(input, { target: { value: '1.5' } })
+  expect(
+    screen.getByRole('button', { name: 'Save group levels' })
+  ).toBeDisabled()
+  fireEvent.change(input, { target: { value: '2' } })
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Save group levels' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'GroupLevels',
+      value: '{"default":0,"vip":2}',
+    })
+  )
+  const select = screen.getByRole('combobox', {
+    name: 'Select user group to preview',
+  })
+  await userEvent.click(select)
+  await userEvent.click(screen.getByRole('option', { name: 'vip' }))
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Preview visible groups' })
+  )
+  expect(await screen.findByText('default, vip')).toBeVisible()
+  expect(api.post).toHaveBeenCalledWith(
+    '/api/group/preview',
+    expect.objectContaining({
+      user_group: 'vip',
+      levels: { default: 0, vip: 2 },
+    })
+  )
+  fireEvent.change(input, { target: { value: '' } })
+  expect(screen.queryByText('default, vip')).not.toBeInTheDocument()
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Save group levels' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenLastCalledWith('/api/option/', {
+      key: 'GroupLevels',
+      value: '{"default":0}',
+    })
+  )
 })

@@ -51,6 +51,8 @@ export interface CacheStats {
 }
 
 export interface ChannelAffinitySettings {
+  'channel_affinity_setting.retry_avoid_failed_channels'?: boolean
+  'channel_affinity_setting.failure_threshold'?: number
   'channel_affinity_setting.enabled': boolean
   'channel_affinity_setting.session_mode'?: '' | SessionMode
   'channel_affinity_setting.switch_on_success': boolean

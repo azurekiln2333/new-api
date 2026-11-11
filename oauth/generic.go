@@ -257,6 +257,17 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 	logger.LogDebug(ctx, "[OAuth-Generic-%s] GetUserInfo success: id=%s, username=%s, name=%s, email=%s",
 		p.config.Slug, userId, username, displayName, email)
 
+	// Custom providers map every other field explicitly, but a picture path is not
+	// configurable yet: accept the common claim names so gateways that follow the
+	// OIDC convention ("picture") do not need extra configuration.
+	avatarURL := ""
+	for _, path := range []string{"picture", "avatar", "avatar_url"} {
+		if value := strings.TrimSpace(gjson.Get(bodyStr, path).String()); value != "" {
+			avatarURL = value
+			break
+		}
+	}
+
 	policyRaw := strings.TrimSpace(p.config.AccessPolicy)
 	if policyRaw != "" {
 		policy, err := parseAccessPolicy(policyRaw)
@@ -278,10 +289,17 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 		Username:       username,
 		DisplayName:    displayName,
 		Email:          email,
+		AvatarURL:      avatarURL,
 		Extra: map[string]any{
 			"provider": p.config.Slug,
 		},
 	}, nil
+}
+
+// SupportsAvatar reports that GetUserInfo reads a picture claim from the user
+// info response, which the login flow stores as the account avatar.
+func (p *GenericOAuthProvider) SupportsAvatar() bool {
+	return true
 }
 
 func (p *GenericOAuthProvider) IsUserIDTaken(providerUserID string) bool {

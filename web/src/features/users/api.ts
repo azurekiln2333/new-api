@@ -31,6 +31,9 @@ import type {
   UserFormData,
   ManageUserAction,
   ManageUserQuotaPayload,
+  UserRateLimitOverride,
+  UserRateLimitState,
+  ClearGroupUserRateLimitResult,
   ApiResponse,
 } from './types'
 
@@ -206,6 +209,48 @@ export async function resetUserTwoFA(
  */
 export async function getGroups(): Promise<ApiResponse<string[]>> {
   const res = await api.get('/api/group/')
+  return res.data
+}
+
+/**
+ * Read a user's rate limit state: the effective group limit and whether the
+ * user has a manual override. Admin only.
+ */
+export async function getUserRateLimit(
+  userId: number
+): Promise<ApiResponse<UserRateLimitState>> {
+  const res = await api.get(`/api/user/${userId}/rate_limit`)
+  return res.data
+}
+
+/**
+ * Give a user their own rate limit, overriding the group setting. Admin only.
+ */
+export async function updateUserRateLimit(
+  userId: number,
+  override: UserRateLimitOverride
+): Promise<ApiResponse<UserRateLimitState>> {
+  const res = await api.put(`/api/user/${userId}/rate_limit`, override)
+  return res.data
+}
+
+/**
+ * Remove a user's own rate limit so the user follows the group again. Admin only.
+ */
+export async function deleteUserRateLimit(
+  userId: number
+): Promise<ApiResponse<UserRateLimitState>> {
+  const res = await api.delete(`/api/user/${userId}/rate_limit`)
+  return res.data
+}
+
+/**
+ * Remove the manual rate limits of every user in one group. Admin only.
+ */
+export async function clearGroupUserRateLimits(
+  group: string
+): Promise<ApiResponse<ClearGroupUserRateLimitResult>> {
+  const res = await api.post('/api/user/rate_limit/clear_group', { group })
   return res.data
 }
 

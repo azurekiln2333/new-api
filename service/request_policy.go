@@ -48,6 +48,10 @@ type RequestPolicyState struct {
 	RuleName          string
 	Successful        bool
 	OutcomeRecorded   bool
+	FailureRecorded   bool
+	CurrentChannelID  int
+	FailedChannelIDs  []int
+	AffinityReleased  bool
 	mu                sync.Mutex
 	events            []PolicyEvent
 }
@@ -90,6 +94,8 @@ func (s *RequestPolicyState) BeginAttempt(channel *model.Channel, group string) 
 	s.Attempts++
 	s.Successful = false
 	s.OutcomeRecorded = false
+	s.FailureRecorded = false
+	s.CurrentChannelID = channel.Id
 	s.SelectedGroup = group
 	s.AddEvent(PolicyEvent{ChannelID: channel.Id, Decision: PolicyDecision{Action: "attempt", Reason: "channel_selected", Source: "routing"}})
 }
@@ -107,7 +113,7 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 		source = "channel"
 	case err.GetErrorCode() == types.ErrorCodeDoRequestFailed:
 		source = "transport"
-	case err.GetErrorType() == types.ErrorTypeNewAPIError:
+	case err.GetErrorType() == types.ErrorTypeNewAPIError && !IsChannelFailure(err):
 		source = "local"
 	}
 	state := RequestPolicy(c)
@@ -135,6 +141,7 @@ func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus) 
 	state.Successful = stream == nil || stream.IsNormalEnd() && !stream.HasErrors() && (stream.ResponseOutcome() == "" || stream.ResponseOutcome() == "completed")
 	decision := PolicyDecision{Action: "success", Reason: "request_completed", Source: "upstream"}
 	if !state.Successful {
+		RecordChannelFailure(c)
 		decision = PolicyDecision{Action: "stop", Reason: "stream_not_successful", Source: "system"}
 	}
 	channelID := 0

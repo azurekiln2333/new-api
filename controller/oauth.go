@@ -26,17 +26,19 @@ import (
 const oauthAuthFlowTTL = 10 * time.Minute
 
 type oauthStateRequest struct {
-	Provider string          `json:"provider"`
-	Intent   string          `json:"intent"`
-	Aff      string          `json:"aff,omitempty"`
-	Scope    string          `json:"scope,omitempty"`
-	Context  json.RawMessage `json:"context,omitempty"`
+	Provider       string          `json:"provider"`
+	Intent         string          `json:"intent"`
+	Aff            string          `json:"aff,omitempty"`
+	InvitationCode string          `json:"invitation_code,omitempty"`
+	Scope          string          `json:"scope,omitempty"`
+	Context        json.RawMessage `json:"context,omitempty"`
 }
 
 type oauthFlowPayload struct {
 	RedirectURI        string                         `json:"redirect_uri,omitempty"`
 	BrowserBindingHash string                         `json:"browser_binding_hash,omitempty"`
 	AffiliateCode      string                         `json:"affiliate_code,omitempty"`
+	InvitationCode     string                         `json:"invitation_code,omitempty"`
 	Verification       *service.OAuthVerificationFlow `json:"verification,omitempty"`
 	Telegram           *oauth.TelegramOAuthFlow       `json:"telegram,omitempty"`
 	SessionIdentity    *service.AuthIdentity          `json:"session_identity,omitempty"`
@@ -58,9 +60,11 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Provider = strings.TrimSpace(request.Provider)
 	request.Intent = strings.TrimSpace(request.Intent)
 	request.Aff = strings.TrimSpace(request.Aff)
+	request.InvitationCode = strings.TrimSpace(request.InvitationCode)
 	if oauth.GetProvider(request.Provider) == nil ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind && request.Intent != model.AuthFlowIntentVerify) ||
-		len(request.Aff) > 32 ||
+		len(request.Aff) > 32 || len(request.InvitationCode) > 64 ||
+		(request.Intent != model.AuthFlowIntentLogin && request.InvitationCode != "") ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Aff != "") ||
 		(request.Intent != model.AuthFlowIntentVerify && (request.Scope != "" || len(request.Context) != 0)) {
 		common.ApiErrorT(c, "Invalid parameters")
@@ -68,7 +72,7 @@ func GenerateOAuthCode(c *gin.Context) {
 	}
 	userID := 0
 	sessionID := ""
-	flowPayload := oauthFlowPayload{AffiliateCode: request.Aff}
+	flowPayload := oauthFlowPayload{AffiliateCode: request.Aff, InvitationCode: request.InvitationCode}
 	browserBinding := ""
 	if oauth.UsesBrowserCallback(oauth.GetProvider(request.Provider)) {
 		redirectURI, err := oauth.NewBrowserCallbackURI(c.Request, request.Provider)
@@ -364,8 +368,12 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 		writeSecurityOperationError(c, err)
 		return
 	}
-	user, migration, err := findOrCreateOAuthUser(c, provider, oauthUser, token, payload.AffiliateCode)
+	user, migration, err := findOrCreateOAuthUser(c, provider, oauthUser, token, payload.AffiliateCode, payload.InvitationCode)
 	if err != nil {
+		if errors.Is(err, model.ErrInvitationInvalid) {
+			common.ApiErrorT(c, "Invitation code is invalid or unavailable")
+			return
+		}
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorT(c, "Email address is already in use")
 			return
@@ -384,6 +392,8 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 		}
 		return
 	}
+
+	oauth.SyncUserAvatar(c.Request.Context(), user, provider, oauthUser.AvatarURL)
 
 	// 8. Check user status
 	if user.Status != common.UserStatusEnabled {
@@ -448,7 +458,7 @@ func handleOAuthBind(c *gin.Context, providerName string, provider oauth.Provide
 // findOrCreateOAuthUser finds the existing user or creates a new one. For a
 // legacy GitHub binding that still waits for the login verification, it also
 // returns the rewrite to carry into the challenge.
-func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, token *oauth.OAuthToken, affiliateCode string) (*model.User, *service.LegacyGitHubMigration, error) {
+func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, token *oauth.OAuthToken, affiliateCode string, invitationCodes ...string) (*model.User, *service.LegacyGitHubMigration, error) {
 	user := &model.User{}
 	if provider.ProviderUserIDColumn() == "telegram_id" {
 		err := provider.FillUserByProviderID(user, oauthUser.ProviderUserID)
@@ -528,7 +538,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 
 	// User doesn't exist, create new user if registration is enabled
-	if !common.RegisterEnabled {
+	if !common.RegisterEnabled && !common.InviteRegisterEnabled {
 		return nil, nil, &OAuthRegistrationDisabledError{}
 	}
 
@@ -570,12 +580,17 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 	user.InviterId = inviterId
 
+	invitationCode := ""
+	if len(invitationCodes) > 0 {
+		invitationCode = invitationCodes[0]
+	}
+
 	// Use transaction to ensure user creation and OAuth binding are atomic
 	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
 		// Custom provider: create user and binding in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
-			if err := user.InsertWithTx(tx, inviterId); err != nil {
+			if err := model.InsertUserWithInvitation(tx, user, inviterId, invitationCode); err != nil {
 				return err
 			}
 
@@ -601,7 +616,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		// Built-in provider: create user and update provider ID in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
-			if err := user.InsertWithTx(tx, inviterId); err != nil {
+			if err := model.InsertUserWithInvitation(tx, user, inviterId, invitationCode); err != nil {
 				return err
 			}
 

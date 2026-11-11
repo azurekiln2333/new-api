@@ -67,6 +67,8 @@ email.security_event.email_confirmed: "Email address confirmed"
 email.security_event.login_linked: "Login account linked: {{.Provider}}"
 email.security_event.login_unlinked: "Login account unlinked"
 email.security_event.wechat_linked: "WeChat account linked"
+email.security_event.login_verification_enabled: "Additional login verification enabled"
+email.security_event.login_verification_disabled: "Additional login verification disabled"
 
 # Low-quota notices
 notify.quota_low_title: "Your quota is running low"

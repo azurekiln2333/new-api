@@ -27,6 +27,8 @@ import { RoutingPolicySection } from '../routing-section'
 const options = {
   RetryTimes: '2',
   'channel_affinity_setting.enabled': 'true',
+  'channel_affinity_setting.retry_avoid_failed_channels': 'true',
+  'channel_affinity_setting.failure_threshold': '1',
   'channel_affinity_setting.session_mode': '',
   'channel_affinity_setting.switch_on_success': 'false',
   'channel_affinity_setting.keep_on_channel_disabled': 'false',
@@ -361,7 +363,10 @@ it.each([
     ).toHaveTextContent('Require the original channel')
     expect(
       within(screen.getByRole('table')).getAllByText('Rule override')
-    ).toHaveLength(4)
+    ).toHaveLength(3)
+    expect(
+      within(screen.getByRole('table')).getByText('Legacy strict mode')
+    ).toBeVisible()
     expect(
       screen.queryByRole('radio', { name: 'Use per-rule settings' })
     ).not.toBeInTheDocument()
@@ -1032,3 +1037,46 @@ it.each([
     expect(api.patch).not.toHaveBeenCalled()
   }
 )
+
+it('saves failover controls and rejects a negative failure threshold', async () => {
+  show()
+  const threshold = await screen.findByRole('spinbutton', {
+    name: 'Unbind after consecutive failures',
+  })
+  expect(threshold).toHaveValue(1)
+  fireEvent.change(threshold, { target: { value: '-1' } })
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  expect(api.patch).not.toHaveBeenCalled()
+  fireEvent.change(threshold, { target: { value: '0' } })
+  await userEvent.click(
+    screen.getByRole('switch', { name: 'Avoid failed channels on retry' })
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(currentOptions['channel_affinity_setting.failure_threshold']).toBe('0')
+  expect(
+    currentOptions['channel_affinity_setting.retry_avoid_failed_channels']
+  ).toBe('false')
+})
+
+it('marks legacy strict rules and converts all rules to inherited defaults without losing extensions', async () => {
+  const rules = JSON.parse(currentOptions['channel_affinity_setting.rules'])
+  delete rules[0].session_mode
+  rules[0].skip_retry_on_failure = true
+  currentOptions['channel_affinity_setting.rules'] = JSON.stringify(rules)
+  show()
+  expect(await screen.findByText('Legacy strict mode')).toBeVisible()
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Set all rules to inherit defaults' })
+  )
+  expect(screen.queryByText('Legacy strict mode')).not.toBeInTheDocument()
+  expect(screen.getByRole('table')).toHaveTextContent('Inherit global default')
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(
+    JSON.parse(currentOptions['channel_affinity_setting.rules'])[0]
+  ).toMatchObject({
+    session_mode: 'inherit',
+    future_field: { retained: true },
+  })
+})

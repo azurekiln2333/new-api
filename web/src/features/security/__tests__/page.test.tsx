@@ -89,6 +89,14 @@ beforeEach(() => {
     if (url === '/api/user/passkey') {
       return { data: { success: true, data: { enabled: false } } }
     }
+    if (url === '/api/user/login-verification') {
+      return {
+        data: {
+          success: true,
+          data: { required: false, enrolled: false, policy_required: false },
+        },
+      }
+    }
     if (url === '/api/user/2fa/status') {
       return {
         data: {

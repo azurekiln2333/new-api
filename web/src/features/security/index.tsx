@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
+import { LoginVerificationPreference } from '@/features/auth/login-preferences'
 import { useProfile } from '@/features/profile/hooks/use-profile'
 
 import { AccessTokensCard } from './components/access-tokens-card'
@@ -122,6 +123,7 @@ export function Security() {
             <h3 id='security-verification' className='text-sm font-semibold'>
               {t('Security verification')}
             </h3>
+            <LoginVerificationPreference />
             <PasskeyCard loading={loading} />
             <TwoFACard loading={loading} />
           </div>

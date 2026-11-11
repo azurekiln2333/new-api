@@ -197,3 +197,91 @@ func TestModelRateLimitCountsConfiguredGroupsSeparately(t *testing.T) {
 		})
 	}
 }
+
+// A per-user override replaces that user's group limit and counts on its own,
+// so another user of the same group keeps the group allowance.
+func TestModelRateLimitUserOverrideTakesPrecedenceOverGroup(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousEnabled, previousMinutes := setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes
+	previousTotal, previousSuccess := setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount
+	previousGroups, previousUserGroups := setting.ModelRequestRateLimitGroup, setting.ModelRequestRateLimitUser
+	previousRedisEnabled := common.RedisEnabled
+	t.Cleanup(func() {
+		setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes = previousEnabled, previousMinutes
+		setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = previousTotal, previousSuccess
+		setting.ModelRequestRateLimitGroup, setting.ModelRequestRateLimitUser = previousGroups, previousUserGroups
+		common.RedisEnabled = previousRedisEnabled
+	})
+	setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes = true, 1
+	setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = 0, 1000
+	// The group allows three successful requests; the overridden user allows one.
+	setting.ModelRequestRateLimitGroup = map[string][2]int{"vip": {0, 3}}
+
+	for _, backend := range []string{"memory", "redis"} {
+		t.Run(backend, func(t *testing.T) {
+			if backend == "redis" {
+				useRateLimitMiniRedis(t)
+			} else {
+				common.RedisEnabled = false
+			}
+			overrideUserId := 7300000 + int(modelRateLimitTestUsers.Add(1))*2
+			groupUserId := overrideUserId + 1
+			setting.ModelRequestRateLimitUser = map[string][2]int{strconv.Itoa(overrideUserId): {0, 1}}
+
+			router := gin.New()
+			router.GET("/:id", func(c *gin.Context) {
+				userId, _ := strconv.Atoi(c.Param("id"))
+				c.Set("id", userId)
+				common.SetContextKey(c, constant.ContextKeyTokenGroup, "vip")
+			}, ModelRequestRateLimit(), func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/"+strconv.Itoa(overrideUserId), "127.0.0.1:1000").Code)
+			assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/"+strconv.Itoa(overrideUserId), "127.0.0.1:1000").Code,
+				"the override must reject the second success even though the group allows three")
+
+			for i := range 3 {
+				assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/"+strconv.Itoa(groupUserId), "127.0.0.1:1000").Code, "group request %d", i+1)
+			}
+			assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/"+strconv.Itoa(groupUserId), "127.0.0.1:1000").Code)
+		})
+	}
+}
+
+// Removing a user override returns the user to the group limit.
+func TestModelRateLimitUserOverrideClearedFallsBackToGroup(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousEnabled, previousMinutes := setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes
+	previousTotal, previousSuccess := setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount
+	previousGroups, previousUserGroups := setting.ModelRequestRateLimitGroup, setting.ModelRequestRateLimitUser
+	t.Cleanup(func() {
+		setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes = previousEnabled, previousMinutes
+		setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = previousTotal, previousSuccess
+		setting.ModelRequestRateLimitGroup, setting.ModelRequestRateLimitUser = previousGroups, previousUserGroups
+	})
+	setting.ModelRequestRateLimitEnabled, setting.ModelRequestRateLimitDurationMinutes = true, 1
+	setting.ModelRequestRateLimitCount, setting.ModelRequestRateLimitSuccessCount = 0, 1000
+	common.RedisEnabled = false
+
+	userId := 7400000 + int(modelRateLimitTestUsers.Add(1))
+	setting.ModelRequestRateLimitGroup = map[string][2]int{"vip": {0, 1}}
+	setting.ModelRequestRateLimitUser = map[string][2]int{strconv.Itoa(userId): {0, 2}}
+
+	router := gin.New()
+	router.GET("/", func(c *gin.Context) {
+		c.Set("id", userId)
+		common.SetContextKey(c, constant.ContextKeyTokenGroup, "vip")
+	}, ModelRequestRateLimit(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code)
+	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code)
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code)
+
+	require.NoError(t, setting.UpdateModelRequestRateLimitUserByJSONString("{}"))
+	assert.Equal(t, http.StatusOK, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code,
+		"after clearing the override the fresh group bucket allows one request")
+	assert.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/", "127.0.0.1:1000").Code)
+}

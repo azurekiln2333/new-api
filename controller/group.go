@@ -2,7 +2,9 @@ package controller
 
 import (
 	"net/http"
+	"slices"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -10,6 +12,35 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// PreviewGroupVisibility uses the same resolver as token authorization. Draft
+// visibility and levels are accepted only on the administrator-only route.
+func PreviewGroupVisibility(c *gin.Context) {
+	var request struct {
+		UserGroup     string                       `json:"user_group"`
+		Levels        common.RawMessage            `json:"levels"`
+		UsableGroups  map[string]string            `json:"usable_groups"`
+		SpecialGroups map[string]map[string]string `json:"special_groups"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || request.UserGroup == "" {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	levels, err := setting.ParseGroupLevels(string(request.Levels))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	groups := service.ResolveUserUsableGroups(request.UserGroup, request.UsableGroups, request.SpecialGroups[request.UserGroup], levels)
+	visible := make([]string, 0, len(groups))
+	for group := range groups {
+		if group == "auto" || ratio_setting.ContainsGroupRatio(group) {
+			visible = append(visible, group)
+		}
+	}
+	slices.Sort(visible)
+	common.ApiSuccess(c, visible)
+}
 
 func GetGroups(c *gin.Context) {
 	groupNames := make([]string, 0)

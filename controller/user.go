@@ -223,8 +223,12 @@ func Register(c *gin.Context) {
 		common.ApiErrorT(c, "Password registration has been disabled by administrator, please use third-party account verification")
 		return
 	}
-	var user model.User
-	err := common.DecodeJson(c.Request.Body, &user)
+	var request struct {
+		model.User
+		InvitationCode string `json:"invitation_code"`
+	}
+	err := common.DecodeJson(c.Request.Body, &request)
+	user := request.User
 	if err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
@@ -283,14 +287,22 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		return model.InsertUserWithInvitation(tx, &cleanUser, inviterId, request.InvitationCode)
+	}); err != nil {
+		if errors.Is(err, model.ErrInvitationInvalid) {
+			common.ApiErrorT(c, "Invitation code is invalid or unavailable")
+			return
+		}
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorT(c, "Email address is already in use")
 			return
 		}
-		common.ApiError(c, err)
+		common.ApiErrorT(c, "Database error, please contact the administrator")
 		return
 	}
+
+	cleanUser.FinishInsert(inviterId)
 
 	// 获取插入后的用户ID
 	var insertedUser model.User
@@ -519,6 +531,7 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"inviter_id":        user.InviterId,
 		"linux_do_id":       user.LinuxDOId,
 		"setting":           user.Setting,
+		"avatar_url":        userSetting.AvatarUrl,
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,
@@ -589,6 +602,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"channel":    true,
 			"models":     true,
 			"redemption": true,
+			"invitation": true,
 			"user":       true,
 			"setting":    false, // 管理员不能访问系统设置
 		}
@@ -599,6 +613,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"channel":    true,
 			"models":     true,
 			"redemption": true,
+			"invitation": true,
 			"user":       true,
 			"setting":    true,
 		}

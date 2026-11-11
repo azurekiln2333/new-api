@@ -69,6 +69,20 @@ export function getParamOverrideActionLabel(
 }
 
 /**
+ * Format the cache-read share of the total input tokens as a percentage with
+ * one decimal, e.g. "66.9%". Returns "-" when no consume log reported input
+ * tokens, which is how the usage-log header shows an unavailable figure.
+ */
+export function formatCacheHitRate(
+  cacheReadTokens?: number,
+  inputTokens?: number
+): string {
+  if (!inputTokens || inputTokens <= 0) return '-'
+  const rate = (Math.max(0, cacheReadTokens || 0) / inputTokens) * 100
+  return `${Math.min(rate, 100).toFixed(1)}%`
+}
+
+/**
  * Parse a param override audit line into action and content
  */
 export function parseAuditLine(
@@ -466,6 +480,7 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'user.2fa_disable_self': 'Disabled two-factor authentication',
   'user.2fa_backup_codes': 'Regenerated two-factor backup codes',
   'user.security_verify': 'Completed security verification',
+  'user.login_verification_update': 'Login verification preference update',
   'user.password_change': 'Account password change',
   'user.binding_start': 'Account binding request',
   'user.binding_bind': 'Account binding',
@@ -534,6 +549,11 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   // Redemption codes
   'redemption.create':
     'Created {{count}} redemption codes named {{name}} ({{quota}} each)',
+  'invitation.create': 'Created invitation codes',
+  'invitation.update': 'Updated an invitation code',
+  'invitation.delete': 'Deleted an invitation code',
+  'invitation.delete_batch': 'Batch deleted invitation codes',
+  'invitation.delete_invalid': 'Deleted invalid invitation codes',
   'redemption.update': 'Updated a redemption code',
   'redemption.delete': 'Deleted a redemption code',
   'redemption.delete_invalid': 'Deleted invalid redemption codes',

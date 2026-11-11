@@ -77,13 +77,15 @@ const (
 	MsgEmailSecurityNoticeChanged = "email.security_notice.changed"
 	MsgEmailSecurityNoticeAdvice  = "email.security_notice.advice"
 
-	MsgSecurityEventPasswordUpdated      = "email.security_event.password_updated"
-	MsgSecurityEventEmailChangeRequested = "email.security_event.email_change_requested"
-	MsgSecurityEventEmailChanged         = "email.security_event.email_changed"
-	MsgSecurityEventEmailConfirmed       = "email.security_event.email_confirmed"
-	MsgSecurityEventLoginLinked          = "email.security_event.login_linked"
-	MsgSecurityEventLoginUnlinked        = "email.security_event.login_unlinked"
-	MsgSecurityEventWeChatLinked         = "email.security_event.wechat_linked"
+	MsgSecurityEventPasswordUpdated           = "email.security_event.password_updated"
+	MsgSecurityEventEmailChangeRequested      = "email.security_event.email_change_requested"
+	MsgSecurityEventEmailChanged              = "email.security_event.email_changed"
+	MsgSecurityEventEmailConfirmed            = "email.security_event.email_confirmed"
+	MsgSecurityEventLoginLinked               = "email.security_event.login_linked"
+	MsgSecurityEventLoginUnlinked             = "email.security_event.login_unlinked"
+	MsgSecurityEventWeChatLinked              = "email.security_event.wechat_linked"
+	MsgSecurityEventLoginVerificationEnabled  = "email.security_event.login_verification_enabled"
+	MsgSecurityEventLoginVerificationDisabled = "email.security_event.login_verification_disabled"
 )
 
 // Low-quota notices, in the recipient's saved language

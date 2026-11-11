@@ -1,23 +1,71 @@
 package model
 
 import (
+	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // UserVerificationState is an authoritative, credential-free projection for
 // choosing an authentication method. Loading it never fetches credential secrets.
 type UserVerificationState struct {
-	UserID      int
-	Status      int
-	Role        int
-	AuthVersion int64
-	HasPassword bool
-	HasTwoFA    bool
-	TwoFALocked bool
-	HasPasskey  bool
+	UserID                    int
+	Status                    int
+	Role                      int
+	AuthVersion               int64
+	HasPassword               bool
+	HasTwoFA                  bool
+	TwoFALocked               bool
+	HasPasskey                bool
+	LoginVerificationRequired bool
+}
+
+const loginVerificationUserOptionPrefix = "LoginVerificationUser:"
+
+var ErrLoginVerificationFactorRequired = errors.New("Enroll two-factor authentication or a Passkey first")
+
+func IsLoginVerificationUserOption(key string) bool {
+	return strings.HasPrefix(key, loginVerificationUserOptionPrefix)
+}
+
+func GetLoginVerificationPreference(tx *gorm.DB, userID int) (bool, error) {
+	var option Option
+	err := tx.Where(&Option{Key: loginVerificationUserOptionPrefix + strconv.Itoa(userID)}).Take(&option).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return option.Value == "true", err
+}
+
+// This preference lives outside user.setting so ordinary profile saves cannot
+// overwrite a security decision. It is read from the primary DB on each login.
+func UpdateLoginVerificationPreference(identity AuthSessionIdentity, required bool) error {
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := ValidateAuthSessionWithTx(tx, identity); err != nil {
+			return err
+		}
+		state, err := getUserVerificationState(tx, identity.UserID, true)
+		if err != nil {
+			return err
+		}
+		if required && !state.HasTwoFA && !state.HasPasskey {
+			return ErrLoginVerificationFactorRequired
+		}
+		option := Option{Key: loginVerificationUserOptionPrefix + strconv.Itoa(identity.UserID), Value: strconv.FormatBool(required)}
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value"})}).Create(&option).Error; err != nil {
+			return err
+		}
+		_, err = IncrementUserAuthVersionWithTx(tx, identity.UserID)
+		return err
+	}); err != nil {
+		return err
+	}
+	return PublishUserAuthCache(identity.UserID)
 }
 
 func GetUserVerificationState(userID int) (*UserVerificationState, error) {

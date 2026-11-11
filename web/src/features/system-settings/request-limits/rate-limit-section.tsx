@@ -21,6 +21,7 @@ import { Code2, Palette } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import * as z from 'zod'
 
 import { JsonCodeEditor } from '@/components/json-code-editor'
@@ -36,6 +37,9 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { clearGroupUserRateLimits } from '@/features/users/api'
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
   SettingsForm,
@@ -90,6 +94,7 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const [useVisualEditor, setUseVisualEditor] = useState(true)
+  const [groupsToClear, setGroupsToClear] = useState<string[]>([])
 
   const rateLimitSchema = createRateLimitSchema(t)
 
@@ -109,8 +114,36 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
         value !== defaultValues[key as keyof RateLimitFormValues]
     )
 
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value: value ?? '' })
+    try {
+      for (const [key, value] of updates) {
+        await updateOption.mutateAsync({ key, value: value ?? '' })
+      }
+    } catch {
+      // The mutation reports the error; no overrides change after a failed save.
+      return
+    }
+    const savedGroups: Record<string, unknown> = JSON.parse(
+      values.ModelRequestRateLimitGroup || '{}'
+    )
+    for (const group of groupsToClear) {
+      if (!Object.hasOwn(savedGroups, group)) continue
+      try {
+        const result = requireServerSuccess(
+          await clearGroupUserRateLimits(group)
+        )
+        setGroupsToClear((groups) => groups.filter((value) => value !== group))
+        toast.success(
+          t('Cleared the manual rate limits of {{users}} users in this group', {
+            users: result.data?.cleared ?? 0,
+          })
+        )
+      } catch (error: unknown) {
+        handleServerError(
+          error,
+          t('Failed to clear the manual rate limits of the group users')
+        )
+        return
+      }
     }
   }
 
@@ -120,7 +153,7 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
         <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
-            isSaving={updateOption.isPending}
+            isSaving={updateOption.isPending || form.formState.isSubmitting}
             saveLabel='Save rate limits'
           />
           <FormField
@@ -161,7 +194,7 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
                         step={1}
                         {...field}
                         onChange={(e) =>
-                          field.onChange(parseInt(e.target.value) || 0)
+                          field.onChange(Number.parseInt(e.target.value) || 0)
                         }
                       />
                       <span className='text-muted-foreground text-sm'>
@@ -192,7 +225,7 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
                         step={1}
                         {...field}
                         onChange={(e) =>
-                          field.onChange(parseInt(e.target.value) || 0)
+                          field.onChange(Number.parseInt(e.target.value) || 0)
                         }
                       />
                       <span className='text-muted-foreground text-sm'>
@@ -223,7 +256,7 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
                         step={1}
                         {...field}
                         onChange={(e) =>
-                          field.onChange(parseInt(e.target.value) || 1)
+                          field.onChange(Number.parseInt(e.target.value) || 1)
                         }
                       />
                       <span className='text-muted-foreground text-sm'>
@@ -271,6 +304,14 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
                     <RateLimitVisualEditor
                       value={field.value || ''}
                       onChange={field.onChange}
+                      onClearUserOverrides={(group, clear) =>
+                        setGroupsToClear((groups) => {
+                          const remaining = groups.filter(
+                            (value) => value !== group
+                          )
+                          return clear ? [...remaining, group] : remaining
+                        })
+                      }
                     />
                   ) : (
                     <JsonCodeEditor
@@ -313,6 +354,11 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
                     </div>
                   </FormDescription>
                 )}
+                <FormDescription>
+                  {t(
+                    'Users follow the rate limit of their group unless an administrator sets a separate limit for the user in User Management.'
+                  )}
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

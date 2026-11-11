@@ -49,6 +49,8 @@ const basicAuthSchema = z.object({
   PasswordRegisterEnabled: z.boolean(),
   EmailVerificationEnabled: z.boolean(),
   RegisterEnabled: z.boolean(),
+  InviteRegisterEnabled: z.boolean(),
+  LoginVerificationRequiredEnabled: z.boolean(),
   EmailDomainRestrictionEnabled: z.boolean(),
   EmailAliasRestrictionEnabled: z.boolean(),
   EmailDomainWhitelist: z.string(),
@@ -144,6 +146,53 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
                   <FormLabel>{t('Registration Enabled')}</FormLabel>
                   <FormDescription>
                     {t('Allow new users to register')}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='InviteRegisterEnabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Invitation registration')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Require a single-use invitation code for every new account. With open registration off, only OAuth or SSO can register.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='LoginVerificationRequiredEnabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>
+                    {t('Require login verification for enrolled users')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Off: users choose whether to verify at login. On: all users with TOTP or a Passkey must verify.'
+                    )}
                   </FormDescription>
                 </SettingsSwitchContent>
                 <FormControl>

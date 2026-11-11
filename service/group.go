@@ -1,6 +1,7 @@
 package service
 
 import (
+	"maps"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,10 +13,20 @@ import (
 )
 
 func GetUserUsableGroups(userGroup string) map[string]string {
-	groupsCopy := setting.GetUserUsableGroupsCopy()
+	special, _ := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup)
+	return ResolveUserUsableGroups(userGroup, setting.GetUserUsableGroupsCopy(), special, setting.GetGroupLevelsCopy())
+}
+
+// ResolveUserUsableGroups is shared by runtime authorization and the settings
+// preview. Manual grants and level grants form a union; unranked groups retain
+// their previous behavior.
+func ResolveUserUsableGroups(userGroup string, manual, specialSettings map[string]string, levels map[string]int) map[string]string {
+	groupsCopy := maps.Clone(manual)
+	if groupsCopy == nil {
+		groupsCopy = make(map[string]string)
+	}
 	if userGroup != "" {
-		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup)
-		if b {
+		if len(specialSettings) > 0 {
 			// 处理特殊可用分组
 			for specialGroup, desc := range specialSettings {
 				if after, ok := strings.CutPrefix(specialGroup, "-:"); ok {
@@ -29,6 +40,16 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 				} else {
 					// 直接添加分组
 					groupsCopy[specialGroup] = desc
+				}
+			}
+		}
+		if level, ranked := levels[userGroup]; ranked {
+			for group, candidateLevel := range levels {
+				if group == "auto" || candidateLevel > level || !ratio_setting.ContainsGroupRatio(group) {
+					continue
+				}
+				if _, exists := groupsCopy[group]; !exists {
+					groupsCopy[group] = setting.GetUsableGroupDescription(group)
 				}
 			}
 		}
