@@ -317,15 +317,11 @@ export function FlowCharts(props: FlowChartsProps) {
   const timeRange = useMemo(
     () =>
       computeTimeRange(
-        getDefaultDays(props.filters?.time_granularity),
+        getDefaultDays(),
         props.filters?.start_timestamp,
         props.filters?.end_timestamp
       ),
-    [
-      props.filters?.end_timestamp,
-      props.filters?.start_timestamp,
-      props.filters?.time_granularity,
-    ]
+    [props.filters?.end_timestamp, props.filters?.start_timestamp]
   )
   const flowQueryParams = useMemo(
     () => buildQueryParams(timeRange, props.filters),

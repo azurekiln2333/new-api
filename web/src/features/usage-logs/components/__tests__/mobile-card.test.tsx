@@ -24,9 +24,15 @@ import {
 } from '@tanstack/react-table'
 import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 
 import { usageLogSchema, type UsageLog } from '../../data/schema'
+import {
+  MOBILE_LOG_VIEW_MODES,
+  MOBILE_LOG_VIEW_STORAGE_KEY,
+  readMobileLogViewMode,
+  writeMobileLogViewMode,
+} from '../../lib/mobile-log-view'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
 import { UsageLogsMobileList } from '../usage-logs-mobile-card'
 import { UsageLogsProvider, useUsageLogsContext } from '../usage-logs-provider'
@@ -83,7 +89,13 @@ function Fixture(props: {
   )
 }
 
-function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
+function renderWithViewMode(
+  props: Parameters<typeof Fixture>[0],
+  viewMode?: (typeof MOBILE_LOG_VIEW_MODES)[keyof typeof MOBILE_LOG_VIEW_MODES]
+) {
+  if (viewMode) {
+    window.localStorage.setItem(MOBILE_LOG_VIEW_STORAGE_KEY, viewMode)
+  }
   return render(
     <QueryClientProvider
       client={
@@ -96,6 +108,21 @@ function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
     </QueryClientProvider>
   )
 }
+
+// The cases below describe the expanded card, which the list now renders only
+// in card view. Compact-view behaviour has its own cases further down.
+function renderLogs(props: Parameters<typeof Fixture>[0] = {}) {
+  return renderWithViewMode(props, MOBILE_LOG_VIEW_MODES.CARD)
+}
+
+// No stored preference: the list must fall back to its compact default.
+function renderCompactLogs(props: Parameters<typeof Fixture>[0] = {}) {
+  return renderWithViewMode(props)
+}
+
+beforeEach(() => {
+  window.localStorage.clear()
+})
 
 it('shows model mismatch evidence when tapping the mobile model badge', async () => {
   const user = userEvent.setup()
@@ -336,4 +363,99 @@ it('shows loading placeholders without displaying stale log fields', () => {
   expect(
     screen.queryByRole('button', { name: /^Model:/ })
   ).not.toBeInTheDocument()
+})
+
+it('summarises each log in a collapsed compact row by default', () => {
+  renderCompactLogs()
+
+  const row = screen.getByRole('button', { expanded: false })
+  expect(row).toHaveTextContent(longName)
+  expect(row).toHaveTextContent('↑1.2K ↓800 · 1.5s')
+  expect(row).toHaveTextContent('backend-production-token')
+  expect(row).toHaveTextContent('production-admin')
+
+  // Card-only detail stays collapsed until the row is expanded.
+  expect(
+    screen.queryByRole('button', { name: /Channel:/ })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('Input')).not.toBeInTheDocument()
+})
+
+it('expands a compact row into the full card', async () => {
+  const user = userEvent.setup()
+  renderCompactLogs()
+
+  await user.click(screen.getByRole('button', { expanded: false }))
+
+  expect(screen.getByRole('button', { expanded: true })).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: `Channel: ${longName} #372` })
+  ).toBeVisible()
+  expect(screen.getByText('Input')).toBeVisible()
+})
+
+it('switches to card view from the toggle and remembers the choice', async () => {
+  const user = userEvent.setup()
+  renderCompactLogs()
+
+  await user.click(screen.getByRole('button', { name: 'Card view' }))
+
+  expect(
+    screen.getByRole('button', { name: `Model: ${longName}` })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { expanded: false })
+  ).not.toBeInTheDocument()
+  expect(window.localStorage.getItem(MOBILE_LOG_VIEW_STORAGE_KEY)).toBe(
+    MOBILE_LOG_VIEW_MODES.CARD
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Compact view' }))
+  expect(screen.getByRole('button', { expanded: false })).toBeVisible()
+  expect(window.localStorage.getItem(MOBILE_LOG_VIEW_STORAGE_KEY)).toBe(
+    MOBILE_LOG_VIEW_MODES.COMPACT
+  )
+})
+
+it('summarises an operation log with its content instead of token metrics', () => {
+  renderCompactLogs({
+    logs: [
+      {
+        ...log,
+        type: 1,
+        content: 'Top-up granted by an administrator',
+        prompt_tokens: 0,
+        completion_tokens: 0,
+      },
+    ],
+  })
+
+  const row = screen.getByRole('button', { expanded: false })
+  expect(row).toHaveTextContent('Top-up granted by an administrator')
+  expect(row).not.toHaveTextContent('↑')
+})
+
+it('reads the stored mobile list preference and ignores unknown values', () => {
+  expect(readMobileLogViewMode()).toBe(MOBILE_LOG_VIEW_MODES.COMPACT)
+
+  writeMobileLogViewMode(MOBILE_LOG_VIEW_MODES.CARD)
+  expect(readMobileLogViewMode()).toBe(MOBILE_LOG_VIEW_MODES.CARD)
+
+  window.localStorage.setItem(MOBILE_LOG_VIEW_STORAGE_KEY, 'sideways')
+  expect(readMobileLogViewMode()).toBe(MOBILE_LOG_VIEW_MODES.COMPACT)
+
+  const throwingStorage = {
+    getItem: () => {
+      throw new Error('blocked')
+    },
+    setItem: () => {
+      throw new Error('blocked')
+    },
+  }
+  expect(readMobileLogViewMode(throwingStorage)).toBe(
+    MOBILE_LOG_VIEW_MODES.COMPACT
+  )
+  expect(() =>
+    writeMobileLogViewMode(MOBILE_LOG_VIEW_MODES.CARD, throwingStorage)
+  ).not.toThrow()
 })

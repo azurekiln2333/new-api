@@ -21,6 +21,9 @@ import type { DashboardChartPreferences, DashboardFilters } from './types'
 export const TIME_GRANULARITY_STORAGE_KEY = 'data_export_default_time'
 export const DASHBOARD_CHART_PREFERENCES_STORAGE_KEY =
   'dashboard_models_chart_preferences'
+// The quota/tokens choice of the model and user charts is remembered on its
+// own so it stays shared between both sections.
+export const CHART_METRIC_STORAGE_KEY = 'dashboard_chart_metric'
 export const DEFAULT_TIME_GRANULARITY = 'hour' as const
 export const MAX_CHART_TREND_POINTS = 7
 
@@ -31,16 +34,24 @@ export const DEFAULT_DASHBOARD_CHART_PREFERENCES: DashboardChartPreferences = {
   defaultTimeGranularity: DEFAULT_TIME_GRANULARITY,
 }
 
-export const TIME_RANGE_BY_GRANULARITY = {
-  hour: 1,
-  day: 7,
-  week: 29,
+export const TIME_GRANULARITY_OPTIONS = [
+  { label: 'Hourly', value: 'hour' },
+  { label: 'Daily', value: 'day' },
+  { label: 'Weekly', value: 'week' },
+] as const
+
+// How many days a granularity can bucket before the chart becomes unreadable
+// or too expensive. A range is compatible when it falls inside these bounds;
+// the range and the granularity are otherwise independent.
+export const GRANULARITY_RANGE_LIMITS = {
+  hour: { minDays: 1, maxDays: 7 },
+  day: { minDays: 1, maxDays: 90 },
+  week: { minDays: 8, maxDays: Number.POSITIVE_INFINITY },
 } as const
 
-export const TIME_GRANULARITY_OPTIONS = [
-  { label: 'Hour', value: 'hour' },
-  { label: 'Day', value: 'day' },
-  { label: 'Week', value: 'week' },
+export const CHART_METRIC_OPTIONS = [
+  { value: 'quota', labelKey: 'Quota' },
+  { value: 'tokens', labelKey: 'Tokens' },
 ] as const
 
 export const TIME_RANGE_PRESETS = [

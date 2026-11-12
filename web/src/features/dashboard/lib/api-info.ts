@@ -32,22 +32,109 @@ export function getLatencyColorClass(latency: number): string {
 }
 
 /**
- * Test URL latency
+ * Per-attempt timeout. A request that has not answered by then is useless as a
+ * latency sample: the panel would otherwise sit on "Testing..." forever when a
+ * host silently drops the connection.
  */
-export async function testUrlLatency(url: string): Promise<PingStatus> {
+const LATENCY_TIMEOUT_MS = 4000
+
+/** Samples kept after discarding the first (connection setup) request. */
+const LATENCY_SAMPLE_COUNT = 3
+
+/**
+ * An https console cannot reach an http API: the browser blocks it as mixed
+ * content, so there is no honest number to show.
+ */
+function isBlockedInsecureTarget(url: string): boolean {
+  if (typeof window === 'undefined') return false
+  return window.location.protocol === 'https:' && /^http:\/\//i.test(url)
+}
+
+type LatencySample =
+  | { latency: number }
+  | { failure: 'timeout' | 'unreachable' }
+
+/**
+ * One browser request to the target, timed with `performance.now()`.
+ *
+ * `mode: 'no-cors'` makes the response opaque and unreadable, which is exactly
+ * what an arbitrary third-party API host needs: the request still travels the
+ * network, so we can time it without CORS headers on the target.
+ */
+async function measureLatencyOnce(
+  url: string,
+  timeoutMs: number
+): Promise<LatencySample> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const startTime = performance.now()
     await fetch(url, {
       method: 'HEAD',
       mode: 'no-cors',
       cache: 'no-cache',
+      signal: controller.signal,
     })
-    const endTime = performance.now()
-    const latency = Math.round(endTime - startTime)
+    return { latency: performance.now() - startTime }
+  } catch (error) {
+    return {
+      failure:
+        error instanceof DOMException && error.name === 'AbortError'
+          ? 'timeout'
+          : 'unreachable',
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
-    return { latency, testing: false, error: false }
-  } catch (_error) {
-    return { latency: null, testing: false, error: true }
+/**
+ * Test URL latency from the user's browser.
+ *
+ * The first request is discarded because it pays for DNS, TCP and TLS setup;
+ * the remaining samples are taken over the already-open connection and reduced
+ * to their median, so a single slow packet does not define the result.
+ */
+export async function testUrlLatency(url: string): Promise<PingStatus> {
+  if (isBlockedInsecureTarget(url)) {
+    return {
+      latency: null,
+      testing: false,
+      error: true,
+      reason: 'mixed-content',
+    }
+  }
+
+  const warmup = await measureLatencyOnce(url, LATENCY_TIMEOUT_MS)
+  if ('failure' in warmup) {
+    return {
+      latency: null,
+      testing: false,
+      error: true,
+      reason: warmup.failure,
+    }
+  }
+
+  const samples: number[] = []
+  let lastFailure: 'timeout' | 'unreachable' = 'unreachable'
+  for (let i = 0; i < LATENCY_SAMPLE_COUNT; i++) {
+    const sample = await measureLatencyOnce(url, LATENCY_TIMEOUT_MS)
+    if ('failure' in sample) {
+      lastFailure = sample.failure
+      continue
+    }
+    samples.push(sample.latency)
+  }
+
+  if (samples.length === 0) {
+    return { latency: null, testing: false, error: true, reason: lastFailure }
+  }
+
+  samples.sort((a, b) => a - b)
+  return {
+    latency: Math.round(samples[Math.floor(samples.length / 2)]),
+    testing: false,
+    error: false,
   }
 }
 

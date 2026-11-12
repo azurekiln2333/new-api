@@ -23,6 +23,7 @@ export const MAX_STORED_MESSAGES = 100
 export const MAX_STORED_MESSAGES_BYTES = 1024 * 1024
 export const MAX_LOADED_MESSAGES_CHARS = 120_000
 export const MAX_LOADED_MESSAGE_CHARS = 40_000
+export const MAX_CONVERSATION_TITLE_CHARS = 80
 
 export const playgroundConfigSchema = z.object({
   model: z.string().optional(),
@@ -89,3 +90,17 @@ const messageSchema = z.object({
 })
 
 export const messagesSchema = z.array(messageSchema)
+
+export const conversationSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  archived: z.boolean().optional(),
+  titleCustom: z.boolean().optional(),
+})
+
+export const conversationIndexSchema = z.object({
+  conversations: z.array(conversationSchema),
+  activeId: z.string().nullable().optional(),
+})

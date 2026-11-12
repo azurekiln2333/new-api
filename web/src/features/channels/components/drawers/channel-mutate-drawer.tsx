@@ -198,6 +198,13 @@ import {
 } from '../../lib/channel-plugin-extensions'
 import { getChannelTypeConfig } from '../../lib/channel-type-config'
 import {
+  buildHeaderOverrideJson,
+  CLIENT_HEADER_TEMPLATES,
+  getClientHeaderTemplate,
+  hasHeaderOverrideContent,
+  type ClientHeaderTemplate,
+} from '../../lib/header-templates'
+import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
@@ -212,6 +219,7 @@ import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { ConfigureModelsDialog } from '../dialogs/configure-models-dialog'
+import { HeaderTemplateApplyDialog } from '../dialogs/header-template-apply-dialog'
 import {
   MissingModelsConfirmationDialog,
   type MissingModelsAction,
@@ -445,6 +453,9 @@ export function ChannelMutateDrawer({
   const passthroughWarningResolveRef = useRef<
     ((confirmed: boolean) => void) | null
   >(null)
+  const [pendingHeaderTemplate, setPendingHeaderTemplate] =
+    useState<ClientHeaderTemplate | null>(null)
+  const [headerTemplateResetKey, setHeaderTemplateResetKey] = useState(0)
   const [missingModelsDialogOpen, setMissingModelsDialogOpen] = useState(false)
   const [missingModelsList, setMissingModelsList] = useState<string[]>([])
   const missingModelsResolveRef = useRef<
@@ -1578,6 +1589,39 @@ export function ChannelMutateDrawer({
       passthroughWarningResolveRef.current = null
     }
   }, [])
+
+  // Applies a client header template to the override field. "Replace" drops
+  // existing entries, "merge" keeps them and lets the template win conflicts.
+  const applyHeaderTemplate = useCallback(
+    (template: ClientHeaderTemplate, mode: 'replace' | 'merge') => {
+      form.setValue(
+        'header_override',
+        buildHeaderOverrideJson(
+          template,
+          mode,
+          form.getValues('header_override')
+        ),
+        { shouldDirty: true, shouldValidate: true }
+      )
+      setPendingHeaderTemplate(null)
+      // Remount the picker so it returns to its placeholder after applying.
+      setHeaderTemplateResetKey((key) => key + 1)
+    },
+    [form]
+  )
+
+  const requestHeaderTemplate = useCallback(
+    (templateId: string) => {
+      const template = getClientHeaderTemplate(templateId)
+      if (!template) return
+      if (hasHeaderOverrideContent(form.getValues('header_override'))) {
+        setPendingHeaderTemplate(template)
+        return
+      }
+      applyHeaderTemplate(template, 'replace')
+    },
+    [applyHeaderTemplate, form]
+  )
 
   useEffect(() => {
     return () => {
@@ -2804,6 +2848,30 @@ export function ChannelMutateDrawer({
                   </FormDescription>
                 </div>
                 <div className='flex flex-wrap gap-2'>
+                  <Select
+                    key={headerTemplateResetKey}
+                    items={CLIENT_HEADER_TEMPLATES.map((template) => ({
+                      value: template.id,
+                      label: t(template.labelKey),
+                    }))}
+                    onValueChange={requestHeaderTemplate}
+                  >
+                    <SelectTrigger
+                      className='h-8 w-[172px]'
+                      aria-label={t('Client header template')}
+                    >
+                      <SelectValue placeholder={t('Client header template')} />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {CLIENT_HEADER_TEMPLATES.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>
+                            {t(template.labelKey)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
                   <Button
                     type='button'
                     variant='outline'
@@ -2872,6 +2940,11 @@ export function ChannelMutateDrawer({
                   {'{client_header:NAME}'}
                 </code>{' '}
                 — {t('Client header value')}
+              </FormDescription>
+              <FormDescription className='text-xs'>
+                {t(
+                  'Templates only set request headers. Some upstreams also validate the request body (for example the system prompt or tool definitions) or the API format, so changing headers alone may not be enough. Match the template to the channel interface type: Codex uses the Responses API, [CC] uses the Anthropic Messages API, and OpenCode and Pi use [OI]-compatible APIs.'
+                )}
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -5187,6 +5260,27 @@ export function ChannelMutateDrawer({
           if (!v) handlePassthroughWarningAction(false)
         }}
         handleConfirm={() => handlePassthroughWarningAction(true)}
+      />
+      <HeaderTemplateApplyDialog
+        open={pendingHeaderTemplate !== null}
+        templateName={
+          pendingHeaderTemplate ? t(pendingHeaderTemplate.labelKey) : ''
+        }
+        onOpenChange={(open) => {
+          if (open) return
+          setPendingHeaderTemplate(null)
+          setHeaderTemplateResetKey((key) => key + 1)
+        }}
+        onReplace={() => {
+          if (pendingHeaderTemplate) {
+            applyHeaderTemplate(pendingHeaderTemplate, 'replace')
+          }
+        }}
+        onMerge={() => {
+          if (pendingHeaderTemplate) {
+            applyHeaderTemplate(pendingHeaderTemplate, 'merge')
+          }
+        }}
       />
     </>
   )

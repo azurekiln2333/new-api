@@ -41,6 +41,13 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
   const item = props.item
   const status = props.status
 
+  let failureLabel = t('Unable to measure')
+  if (status.reason === 'mixed-content') {
+    failureLabel = t('Unable to measure (insecure target)')
+  } else if (status.reason === 'timeout') {
+    failureLabel = t('Timed out')
+  }
+
   return (
     <div className='group hover:bg-muted/40 flex items-center justify-between gap-2 px-3 py-2.5 transition-colors sm:gap-3 sm:px-5 sm:py-3'>
       <div className='flex min-w-0 flex-1 items-center gap-2 sm:gap-3'>
@@ -88,7 +95,11 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
             />
           )}
           {status.error && (
-            <StatusBadge label={t('N/A')} variant='neutral' copyable={false} />
+            <StatusBadge
+              label={failureLabel}
+              variant='neutral'
+              copyable={false}
+            />
           )}
         </div>
 

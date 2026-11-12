@@ -207,6 +207,35 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
 }
 
+func TestProcessHeaderOverride_OverridesUserAgentOnUpstreamRequest(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"User-Agent": "codex_cli_rs/0.164.0 (Windows 10.0.19045; x86_64)",
+				"originator": "codex_cli_rs",
+			},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+
+	upstreamReq := httptest.NewRequest(http.MethodPost, "https://example.com/v1/responses", nil)
+	// Simulate the adaptor's default before the override is applied.
+	upstreamReq.Header.Set("User-Agent", "Go-http-client/1.1")
+	applyHeaderOverrideToRequest(upstreamReq, headers)
+
+	require.Equal(t, "codex_cli_rs/0.164.0 (Windows 10.0.19045; x86_64)", upstreamReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", upstreamReq.Header.Get("Originator"))
+}
+
 func TestToWebSocketURL(t *testing.T) {
 	for input, want := range map[string]string{
 		"https://api.openai.com/v1/responses":             "wss://api.openai.com/v1/responses",

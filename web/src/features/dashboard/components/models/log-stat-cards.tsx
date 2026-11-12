@@ -82,7 +82,7 @@ export function LogStatCards(props: LogStatCardsProps) {
     onDataUpdate?.([], true)
 
     const timeRange = computeTimeRange(
-      getDefaultDays(filters?.time_granularity),
+      getDefaultDays(),
       filters?.start_timestamp,
       filters?.end_timestamp
     )

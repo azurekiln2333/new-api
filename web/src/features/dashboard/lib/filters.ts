@@ -17,21 +17,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  CHART_METRIC_STORAGE_KEY,
   DASHBOARD_CHART_PREFERENCES_STORAGE_KEY,
   DEFAULT_DASHBOARD_CHART_PREFERENCES,
   DEFAULT_TIME_GRANULARITY,
   EMPTY_DASHBOARD_FILTERS,
+  GRANULARITY_RANGE_LIMITS,
   TIME_GRANULARITY_STORAGE_KEY,
   TIME_RANGE_PRESETS,
-  TIME_RANGE_BY_GRANULARITY,
 } from '@/features/dashboard/constants'
 import type {
+  ChartMetric,
   ConsumptionDistributionChartType,
   DashboardChartPreferences,
   DashboardFilters,
   ModelAnalyticsChartTab,
 } from '@/features/dashboard/types'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
+
+const GRANULARITY_ORDER: TimeGranularity[] = ['hour', 'day', 'week']
 
 function isTimeGranularity(value: unknown): value is TimeGranularity {
   return value === 'hour' || value === 'day' || value === 'week'
@@ -135,9 +139,90 @@ export function saveChartPreferences(
   )
 }
 
-export function getDefaultDays(granularity?: TimeGranularity): number {
-  if (!granularity) return getSavedChartPreferences().defaultTimeRangeDays
-  return TIME_RANGE_BY_GRANULARITY[getSavedGranularity(granularity)]
+export function getDefaultDays(): number {
+  return getSavedChartPreferences().defaultTimeRangeDays
+}
+
+/**
+ * Days covered by a filter range, or null while the range is incomplete.
+ * Rounded rather than ceiled so a range picked through the date inputs is not
+ * pushed over a compatibility bound by sub-day offsets.
+ */
+export function getFilterRangeDays(filters?: {
+  start_timestamp?: Date
+  end_timestamp?: Date
+}): number | null {
+  const start = filters?.start_timestamp?.getTime()
+  const end = filters?.end_timestamp?.getTime()
+  if (start == null || end == null) return null
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return null
+  }
+  return Math.round((end - start) / 86_400_000)
+}
+
+/**
+ * Whether a granularity can bucket a range of the given length. An unknown
+ * range never blocks a granularity.
+ */
+export function isGranularityAllowed(
+  granularity: TimeGranularity,
+  rangeDays: number | null
+): boolean {
+  if (rangeDays == null) return true
+  const limits = GRANULARITY_RANGE_LIMITS[granularity]
+  return rangeDays >= limits.minDays && rangeDays <= limits.maxDays
+}
+
+/**
+ * The granularity to use instead of one that cannot bucket the range: the
+ * closest still-compatible option, preferring the finer one on a tie.
+ */
+export function nearestAllowedGranularity(
+  granularity: TimeGranularity,
+  rangeDays: number | null
+): TimeGranularity {
+  if (isGranularityAllowed(granularity, rangeDays)) return granularity
+  const current = GRANULARITY_ORDER.indexOf(granularity)
+  const distance = (item: TimeGranularity) =>
+    Math.abs(GRANULARITY_ORDER.indexOf(item) - current)
+  const candidates = GRANULARITY_ORDER.filter((item) =>
+    isGranularityAllowed(item, rangeDays)
+  ).sort((a, b) => distance(a) - distance(b))
+  return candidates[0] ?? granularity
+}
+
+/**
+ * Why a granularity cannot be used for the range, as an i18n key plus the
+ * bound it violates. Null when the combination is allowed.
+ */
+export function getGranularityRangeReason(
+  granularity: TimeGranularity,
+  rangeDays: number | null
+): { key: string; days: number } | null {
+  if (isGranularityAllowed(granularity, rangeDays) || rangeDays == null) {
+    return null
+  }
+  const limits = GRANULARITY_RANGE_LIMITS[granularity]
+  if (rangeDays > limits.maxDays) {
+    return { key: 'Up to {{days}} days', days: limits.maxDays }
+  }
+  return { key: 'At least {{days}} days', days: limits.minDays }
+}
+
+export function isChartMetric(value: unknown): value is ChartMetric {
+  return value === 'quota' || value === 'tokens'
+}
+
+export function getSavedChartMetric(): ChartMetric {
+  if (typeof window === 'undefined') return 'quota'
+  const saved = localStorage.getItem(CHART_METRIC_STORAGE_KEY)
+  return isChartMetric(saved) ? saved : 'quota'
+}
+
+export function saveChartMetric(metric: ChartMetric): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(CHART_METRIC_STORAGE_KEY, metric)
 }
 
 export function buildDefaultDashboardFilters(
@@ -148,7 +233,12 @@ export function buildDefaultDashboardFilters(
     ...EMPTY_DASHBOARD_FILTERS,
     start_timestamp: start,
     end_timestamp: end,
-    time_granularity: preferences.defaultTimeGranularity,
+    // A saved pair may predate the independent range and granularity; keep the
+    // range and fall back to the closest granularity that can bucket it.
+    time_granularity: nearestAllowedGranularity(
+      preferences.defaultTimeGranularity,
+      preferences.defaultTimeRangeDays
+    ),
   }
 }
 

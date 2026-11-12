@@ -21,20 +21,24 @@ import { VChart } from '@visactor/react-vchart'
 import { Users, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTheme } from '@/context/theme-provider'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
+import { ChartMetricToggle } from '@/features/dashboard/components/ui/chart-metric-toggle'
 import {
   TIME_GRANULARITY_OPTIONS,
   TIME_RANGE_PRESETS,
 } from '@/features/dashboard/constants'
+import { useChartMetric } from '@/features/dashboard/hooks/use-chart-metric'
 import {
-  getDefaultDays,
-  saveGranularity,
   processUserChartData,
+  getGranularityRangeReason,
+  nearestAllowedGranularity,
+  saveGranularity,
 } from '@/features/dashboard/lib'
 import type {
   ProcessedUserChartData,
@@ -86,6 +90,7 @@ export function UserCharts(props: UserChartsProps) {
   const selectedRange = props.filters.selectedRange
   const topUserLimit = props.filters.topUserLimit
   const onFiltersChange = props.onFiltersChange
+  const [metric, setMetric] = useChartMetric()
 
   const timeRange = useMemo(() => {
     const { start, end } = getRollingDateRange(selectedRange)
@@ -95,21 +100,36 @@ export function UserCharts(props: UserChartsProps) {
     }
   }, [selectedRange])
 
+  // The range and the granularity are independent: changing the range keeps
+  // the granularity unless that combination cannot be bucketed.
   const handleRangeChange = useCallback(
     (days: number) => {
-      onFiltersChange({ ...props.filters, selectedRange: days })
+      const nextGranularity = nearestAllowedGranularity(timeGranularity, days)
+      if (nextGranularity !== timeGranularity) {
+        saveGranularity(nextGranularity)
+        const label =
+          TIME_GRANULARITY_OPTIONS.find(
+            (option) => option.value === nextGranularity
+          )?.label ?? nextGranularity
+        toast.info(
+          t('Switched to {{granularity}} granularity', {
+            granularity: t(label),
+          })
+        )
+      }
+      onFiltersChange({
+        ...props.filters,
+        selectedRange: days,
+        timeGranularity: nextGranularity,
+      })
     },
-    [onFiltersChange, props.filters]
+    [onFiltersChange, props.filters, t, timeGranularity]
   )
 
   const handleGranularityChange = useCallback(
     (g: TimeGranularity) => {
       saveGranularity(g)
-      onFiltersChange({
-        ...props.filters,
-        timeGranularity: g,
-        selectedRange: getDefaultDays(g),
-      })
+      onFiltersChange({ ...props.filters, timeGranularity: g })
     },
     [onFiltersChange, props.filters]
   )
@@ -151,9 +171,10 @@ export function UserCharts(props: UserChartsProps) {
         isLoading ? [] : (userData ?? []),
         timeGranularity,
         t,
-        topUserLimit
+        topUserLimit,
+        metric
       ),
-    [userData, isLoading, timeGranularity, t, topUserLimit]
+    [userData, isLoading, timeGranularity, t, topUserLimit, metric]
   )
 
   return (
@@ -185,15 +206,22 @@ export function UserCharts(props: UserChartsProps) {
           className='shrink-0'
         >
           <TabsList>
-            {TIME_GRANULARITY_OPTIONS.map((opt) => (
-              <TabsTrigger
-                key={opt.value}
-                value={opt.value}
-                className='px-2.5 text-xs'
-              >
-                {t(opt.label)}
-              </TabsTrigger>
-            ))}
+            {TIME_GRANULARITY_OPTIONS.map((opt) => {
+              const reason = getGranularityRangeReason(opt.value, selectedRange)
+              return (
+                <TabsTrigger
+                  key={opt.value}
+                  value={opt.value}
+                  disabled={reason != null}
+                  title={
+                    reason ? t(reason.key, { days: reason.days }) : undefined
+                  }
+                  className='px-2.5 text-xs'
+                >
+                  {t(opt.label)}
+                </TabsTrigger>
+              )
+            })}
           </TabsList>
         </Tabs>
 
@@ -217,6 +245,8 @@ export function UserCharts(props: UserChartsProps) {
             ))}
           </TabsList>
         </Tabs>
+
+        <ChartMetricToggle value={metric} onChange={setMetric} />
 
         {isLoading && (
           <Loader2 className='text-muted-foreground size-4 animate-spin' />
@@ -246,7 +276,7 @@ export function UserCharts(props: UserChartsProps) {
                   themeReady &&
                   spec && (
                     <VChart
-                      key={`user-${chart.value}-${topUserLimit}-${resolvedTheme}`}
+                      key={`user-${chart.value}-${topUserLimit}-${metric}-${resolvedTheme}`}
                       spec={{
                         ...spec,
                         theme: resolvedTheme === 'dark' ? 'dark' : 'light',

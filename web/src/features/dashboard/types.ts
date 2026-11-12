@@ -195,6 +195,10 @@ export interface DashboardFilters {
 
 export type ConsumptionDistributionChartType = 'bar' | 'area'
 
+// The charts that mix several models can show the same buckets measured in
+// consumed quota or in tokens.
+export type ChartMetric = 'quota' | 'tokens'
+
 export type ModelAnalyticsChartTab = 'trend' | 'proportion' | 'top'
 
 export interface DashboardChartPreferences {
@@ -227,6 +231,8 @@ export interface PingStatus {
   latency: number | null
   testing: boolean
   error: boolean
+  /** Why a browser-side measurement could not produce a number. */
+  reason?: 'mixed-content' | 'timeout' | 'unreachable'
 }
 
 export type PingStatusMap = Record<string, PingStatus>
@@ -245,6 +251,7 @@ export interface ProcessedChartData {
   spec_model_line: VChartSpec
   spec_rank_bar: VChartSpec
   totalQuotaDisplay: string
+  totalTokensDisplay: string
   totalCountDisplay: string
 }
 

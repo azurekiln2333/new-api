@@ -110,6 +110,7 @@ export function useModelStatCardsConfig(): StatCardConfig[] {
 
 export function useSummaryCardsConfig(totals: {
   todayUsageDisplay: string
+  tokensDisplay: string
   usedDisplay: string
   requestCountDisplay: string
   currencyLabel: string
@@ -126,6 +127,13 @@ export function useSummaryCardsConfig(totals: {
         ? `${t('Consumed in the last 24 hours')} (${totals.currencyLabel})`
         : t('Consumed in the last 24 hours'),
       icon: Flame,
+    },
+    {
+      key: 'tokens',
+      title: t('Last 24h tokens'),
+      value: totals.tokensDisplay,
+      description: t('Tokens consumed in the last 24 hours'),
+      icon: Layers,
     },
     {
       key: 'usage',

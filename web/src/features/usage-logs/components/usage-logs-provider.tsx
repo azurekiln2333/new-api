@@ -22,6 +22,11 @@ import { createContext, useContext, useState, type ReactNode } from 'react'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
+import {
+  readMobileLogViewMode,
+  writeMobileLogViewMode,
+  type MobileLogViewMode,
+} from '../lib/mobile-log-view'
 import type { ChannelAffinityInfo } from '../types'
 
 export type LogsViewScope = 'all' | 'self'
@@ -48,6 +53,8 @@ interface UsageLogsContextValue {
   setSensitiveVisible: (visible: boolean) => void
   viewScope: LogsViewScope
   setViewScope: (scope: LogsViewScope) => void
+  mobileLogViewMode: MobileLogViewMode
+  setMobileLogViewMode: (mode: MobileLogViewMode) => void
 }
 
 const UsageLogsContext = createContext<UsageLogsContextValue | undefined>(
@@ -62,6 +69,13 @@ export function UsageLogsProvider({ children }: { children: ReactNode }) {
   const [affinityDialogOpen, setAffinityDialogOpen] = useState(false)
   const [sensitiveVisible, setSensitiveVisible] = useState(true)
   const [viewScope, setViewScope] = useState<LogsViewScope>('all')
+  const [mobileLogViewMode, setMobileLogViewModeState] =
+    useState<MobileLogViewMode>(readMobileLogViewMode)
+
+  const setMobileLogViewMode = (mode: MobileLogViewMode) => {
+    setMobileLogViewModeState(mode)
+    writeMobileLogViewMode(mode)
+  }
 
   return (
     <UsageLogsContext.Provider
@@ -78,6 +92,8 @@ export function UsageLogsProvider({ children }: { children: ReactNode }) {
         setSensitiveVisible,
         viewScope,
         setViewScope,
+        mobileLogViewMode,
+        setMobileLogViewMode,
       }}
     >
       {children}

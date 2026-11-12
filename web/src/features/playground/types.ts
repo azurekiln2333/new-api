@@ -151,3 +151,16 @@ export interface GroupOption {
   ratio: number | string
   desc?: string
 }
+
+// Multi-conversation types
+export interface PlaygroundConversation {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  archived?: boolean
+  titleCustom?: boolean
+}
+
+/** Local storage failure reported to the UI; null means everything is saved. */
+export type PlaygroundStorageFailure = 'quota' | 'error' | null

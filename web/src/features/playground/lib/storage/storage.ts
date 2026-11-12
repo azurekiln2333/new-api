@@ -19,7 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 import { useAuthStore } from '@/stores/auth-store'
 
 import { MESSAGE_STATUS, STORAGE_KEYS } from '../../constants'
-import type { PlaygroundConfig, ParameterEnabled, Message } from '../../types'
+import type {
+  PlaygroundConfig,
+  ParameterEnabled,
+  Message,
+  PlaygroundConversation,
+} from '../../types'
+import {
+  createConversationMeta,
+  deriveConversationTitle,
+} from '../conversation/conversation-utils'
 import {
   finalizeMessage,
   isAssistantMessagePending,
@@ -33,6 +42,7 @@ import {
   MAX_STORED_MESSAGES,
   MAX_STORED_MESSAGES_BYTES,
   STORAGE_VERSION,
+  conversationIndexSchema,
   messagesSchema,
   parameterEnabledSchema,
   playgroundConfigSchema,
@@ -41,6 +51,14 @@ import {
 type StoredEnvelope<T> = {
   version: number
   data: T
+}
+
+/** Outcome of a local storage write, surfaced to the UI when it fails. */
+export type StorageSaveResult = 'ok' | 'quota' | 'error' | 'skipped'
+
+export type StoredConversationIndex = {
+  conversations: PlaygroundConversation[]
+  activeId: string | null
 }
 
 const TRUNCATED_CONTENT_SUFFIX = '\n\n[...]'
@@ -66,8 +84,8 @@ function readStoredValue(baseKey: string): unknown | null {
   return JSON.parse(saved) as unknown
 }
 
-function readStoredMessagesValue(): unknown | null {
-  const key = getUserStorageKey(STORAGE_KEYS.MESSAGES)
+function readStoredMessagesValue(baseKey: string): unknown | null {
+  const key = getUserStorageKey(baseKey)
   if (!key) return null
   const saved = localStorage.getItem(key)
   if (!saved) return null
@@ -92,15 +110,50 @@ function unwrapStoredValue(value: unknown): unknown {
   return value
 }
 
-function writeStoredValue<T>(baseKey: string, data: T): void {
+function isQuotaExceededError(error: unknown): boolean {
+  if (!(error instanceof DOMException)) return false
+
+  return (
+    error.name === 'QuotaExceededError' ||
+    error.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    error.code === 22 ||
+    error.code === 1014
+  )
+}
+
+function writeStoredValue<T>(
+  baseKey: string,
+  data: T,
+  maxBytes?: number
+): StorageSaveResult {
   const key = getUserStorageKey(baseKey)
-  if (!key) return
+  if (!key) return 'skipped'
   const payload: StoredEnvelope<T> = {
     version: STORAGE_VERSION,
     data,
   }
 
-  localStorage.setItem(key, JSON.stringify(payload))
+  try {
+    const serialized = JSON.stringify(payload)
+    // The loader refuses oversized payloads, so refusing them here avoids
+    // writing a chat that would disappear on the next visit.
+    if (maxBytes !== undefined && serialized.length > maxBytes) {
+      return 'quota'
+    }
+    localStorage.setItem(key, serialized)
+  } catch (error) {
+    // Browser quota errors are expected for long chats with inline images, so
+    // they are reported to the caller instead of being swallowed.
+    return isQuotaExceededError(error) ? 'quota' : 'error'
+  }
+
+  return 'ok'
+}
+
+function removeStoredValue(baseKey: string): void {
+  const key = getUserStorageKey(baseKey)
+  if (!key) return
+  localStorage.removeItem(key)
 }
 
 function trimMessages(messages: Message[]): Message[] {
@@ -356,8 +409,12 @@ export function saveParameterEnabled(
  * Load messages from localStorage
  */
 export function loadMessages(): Message[] | null {
+  return loadMessagesFromBaseKey(STORAGE_KEYS.MESSAGES)
+}
+
+function loadMessagesFromBaseKey(baseKey: string): Message[] | null {
   try {
-    const saved = readStoredMessagesValue()
+    const saved = readStoredMessagesValue(baseKey)
     if (!saved) return null
 
     const parsed = messagesSchema.parse(unwrapStoredValue(saved)) as Message[]
@@ -375,7 +432,7 @@ export function loadMessages(): Message[] | null {
       sizeTrimmed !== trimmed ||
       sanitized !== sizeTrimmed
     ) {
-      saveMessages(sanitized)
+      saveMessagesToBaseKey(baseKey, sanitized)
     }
 
     return sanitized
@@ -386,17 +443,148 @@ export function loadMessages(): Message[] | null {
   return null
 }
 
+function trimAndValidateMessages(messages: Message[]): Message[] {
+  return messagesSchema.parse(trimMessages(messages)) as Message[]
+}
+
 /**
  * Save messages to localStorage
  */
 export function saveMessages(messages: Message[]): void {
+  saveMessagesToBaseKey(STORAGE_KEYS.MESSAGES, messages)
+}
+
+function saveMessagesToBaseKey(
+  baseKey: string,
+  messages: Message[]
+): StorageSaveResult {
   try {
-    const trimmed = trimMessages(messages)
-    const parsed = messagesSchema.parse(trimmed) as Message[]
-    writeStoredValue(STORAGE_KEYS.MESSAGES, parsed)
+    const parsed = trimAndValidateMessages(messages)
+    return writeStoredValue(baseKey, parsed, MAX_STORED_MESSAGES_BYTES)
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to save messages:', error)
+    return 'error'
+  }
+}
+
+function conversationMessagesBaseKey(conversationId: string): string {
+  return `${STORAGE_KEYS.CONVERSATION_MESSAGES}:${conversationId}`
+}
+
+function pickActiveConversationId(
+  conversations: PlaygroundConversation[],
+  preferredId?: string | null
+): string | null {
+  if (preferredId && conversations.some((item) => item.id === preferredId)) {
+    return preferredId
+  }
+
+  const openConversation =
+    conversations.find((item) => !item.archived) ?? conversations[0]
+  return openConversation?.id ?? null
+}
+
+function seedConversations(): StoredConversationIndex {
+  const conversation = createConversationMeta()
+  return { conversations: [conversation], activeId: conversation.id }
+}
+
+/**
+ * Move the pre-multi-conversation history into the first conversation so an
+ * upgrade never loses the chat the user already had.
+ */
+function migrateLegacyMessages(): StoredConversationIndex {
+  const legacyMessages = loadMessagesFromBaseKey(STORAGE_KEYS.MESSAGES)
+  const messages = legacyMessages ?? []
+  const createdAt =
+    messages.find((message) => message.createdAt)?.createdAt ?? Date.now()
+  const conversation: PlaygroundConversation = {
+    ...createConversationMeta(createdAt),
+    title: deriveConversationTitle(messages),
+    updatedAt: Date.now(),
+  }
+  const index: StoredConversationIndex = {
+    conversations: [conversation],
+    activeId: conversation.id,
+  }
+
+  const saved = saveConversationIndex(index)
+  if (saved === 'error') return index
+
+  if (messages.length > 0) {
+    saveConversationMessages(conversation.id, messages)
+  }
+  if (legacyMessages !== null) {
+    removeStoredValue(STORAGE_KEYS.MESSAGES)
+  }
+
+  return index
+}
+
+/**
+ * Load the conversation index, creating it (and migrating legacy messages) on
+ * first use.
+ */
+export function loadConversationIndex(): StoredConversationIndex {
+  let stored: unknown = null
+  try {
+    stored = readStoredValue(STORAGE_KEYS.CONVERSATIONS)
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to load conversations:', error)
+  }
+
+  if (stored) {
+    const parsed = conversationIndexSchema.safeParse(unwrapStoredValue(stored))
+    if (parsed.success && parsed.data.conversations.length > 0) {
+      const conversations = parsed.data.conversations
+      return {
+        conversations,
+        activeId: pickActiveConversationId(conversations, parsed.data.activeId),
+      }
+    }
+  }
+
+  const index = migrateLegacyMessages()
+  return index.conversations.length > 0 ? index : seedConversations()
+}
+
+export function saveConversationIndex(
+  index: StoredConversationIndex
+): StorageSaveResult {
+  try {
+    const parsed = conversationIndexSchema.parse(index)
+    return writeStoredValue(STORAGE_KEYS.CONVERSATIONS, parsed)
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to save conversations:', error)
+    return 'error'
+  }
+}
+
+export function loadConversationMessages(
+  conversationId: string
+): Message[] | null {
+  return loadMessagesFromBaseKey(conversationMessagesBaseKey(conversationId))
+}
+
+export function saveConversationMessages(
+  conversationId: string,
+  messages: Message[]
+): StorageSaveResult {
+  return saveMessagesToBaseKey(
+    conversationMessagesBaseKey(conversationId),
+    messages
+  )
+}
+
+export function deleteConversationMessages(conversationId: string): void {
+  try {
+    removeStoredValue(conversationMessagesBaseKey(conversationId))
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to delete conversation messages:', error)
   }
 }
 
@@ -405,9 +593,25 @@ export function saveMessages(messages: Message[]): void {
  */
 export function clearPlaygroundData(): void {
   try {
+    const userId = useAuthStore.getState().auth.user?.id
     for (const baseKey of Object.values(STORAGE_KEYS)) {
       const key = getUserStorageKey(baseKey)
       if (key) localStorage.removeItem(key)
+    }
+    if (userId == null) return
+
+    // Per-conversation message keys are dynamic, so sweep them by prefix.
+    const conversationPrefix = `${STORAGE_KEYS.CONVERSATION_MESSAGES}:`
+    const userSuffix = `:${userId}`
+    const conversationKeys: string[] = []
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key?.startsWith(conversationPrefix) && key.endsWith(userSuffix)) {
+        conversationKeys.push(key)
+      }
+    }
+    for (const key of conversationKeys) {
+      localStorage.removeItem(key)
     }
   } catch (error) {
     // eslint-disable-next-line no-console

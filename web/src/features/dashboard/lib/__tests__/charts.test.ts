@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import type { QuotaDataItem } from '@/features/dashboard/types'
+import { formatCompactNumber } from '@/lib/format'
 import type { TimeGranularity } from '@/lib/time'
 
 import { processChartData, processUserChartData } from '../charts'
@@ -112,12 +113,12 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
     const result = processChartData(data, scenario.granularity)
 
     for (const key of ['spec_line', 'spec_area', 'spec_model_line'] as const) {
-      const values: Array<{ Time: string; rawQuota: number; Count: number }> =
+      const values: Array<{ Time: string; rawValue: number; Count: number }> =
         result[key].data[0].values
       expect(values.map((row) => row.Time)).toEqual(scenario.labels)
       expect(
         values.map((row) =>
-          key === 'spec_model_line' ? row.Count : row.rawQuota / 500000
+          key === 'spec_model_line' ? row.Count : row.rawValue / 500000
         )
       ).toEqual([11, 2, 3, 4, 5, 6, 7, 8])
     }
@@ -128,11 +129,11 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
     const data = unorderedUsage(scenario.start, scenario.interval)
     const original = structuredClone(data)
     const result = processUserChartData(data, scenario.granularity)
-    const values: Array<{ Time: string; rawQuota: number }> =
+    const values: Array<{ Time: string; rawValue: number }> =
       result.spec_user_trend.data[0].values
 
     expect(values.map((row) => row.Time)).toEqual(scenario.labels)
-    expect(values.map((row) => row.rawQuota / 500000)).toEqual([
+    expect(values.map((row) => row.rawValue / 500000)).toEqual([
       11, 2, 3, 4, 5, 6, 7, 8,
     ])
     expect(data).toEqual(original)
@@ -143,14 +144,101 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
     const result = processChartData(data, scenario.granularity)
 
     for (const key of ['spec_line', 'spec_area', 'spec_model_line'] as const) {
-      const values: Array<{ Time: string; rawQuota: number; Count: number }> =
+      const values: Array<{ Time: string; rawValue: number; Count: number }> =
         result[key].data[0].values
       expect(values.map((row) => row.Time)).toEqual(scenario.labels.slice(1))
       expect(
         values.map((row) =>
-          key === 'spec_model_line' ? row.Count : row.rawQuota / 500000
+          key === 'spec_model_line' ? row.Count : row.rawValue / 500000
         )
       ).toEqual([0, 0, 0, 0, 0, 0, 8])
     }
+  })
+})
+
+describe('dashboard chart metric', () => {
+  const first = new Date('2025-12-27T12:00:00').getTime() / 1000
+  const data: QuotaDataItem[] = [
+    {
+      created_at: first,
+      model_name: 'model-a',
+      username: 'alice',
+      quota: 500000,
+      count: 2,
+      token_used: 1200,
+    },
+    {
+      created_at: first,
+      model_name: 'model-b',
+      username: 'bob',
+      quota: 100000,
+      count: 1,
+      token_used: 300,
+    },
+  ]
+
+  test('measures the distribution charts in tokens when asked', () => {
+    const result = processChartData(data, 'day', undefined, undefined, 'tokens')
+    const bar: Array<{ Model: string; rawValue: number; Usage: number }> =
+      result.spec_line.data[0].values
+    const area: Array<{ Model: string; rawValue: number }> =
+      result.spec_area.data[0].values
+
+    expect(
+      bar.reduce<Record<string, number>>(
+        (totals, row) => ({
+          ...totals,
+          [row.Model]: (totals[row.Model] ?? 0) + row.rawValue,
+        }),
+        {}
+      )
+    ).toEqual({ 'model-a': 1200, 'model-b': 300 })
+    expect(
+      area.reduce<Record<string, number>>(
+        (totals, row) => ({
+          ...totals,
+          [row.Model]: (totals[row.Model] ?? 0) + row.rawValue,
+        }),
+        {}
+      )
+    ).toEqual({ 'model-a': 1200, 'model-b': 300 })
+    expect(result.totalTokensDisplay).toBe(formatCompactNumber(1500))
+  })
+
+  test('keeps quota as the default metric', () => {
+    const result = processChartData(data, 'day')
+    const bar: Array<{ Model: string; rawValue: number; Usage: number }> =
+      result.spec_line.data[0].values
+
+    expect(
+      bar.reduce<Record<string, number>>(
+        (totals, row) => ({
+          ...totals,
+          [row.Model]: (totals[row.Model] ?? 0) + row.rawValue,
+        }),
+        {}
+      )
+    ).toEqual({ 'model-a': 500000, 'model-b': 100000 })
+    expect(result.totalTokensDisplay).toBe(formatCompactNumber(1500))
+  })
+
+  test('measures the user charts in tokens when asked', () => {
+    const result = processUserChartData(data, 'day', undefined, 10, 'tokens')
+    const rank: Array<{ User: string; rawValue: number }> =
+      result.spec_user_rank.data[0].values
+    const trend: Array<{ User: string; rawValue: number }> =
+      result.spec_user_trend.data[0].values
+
+    expect(rank.map((row) => [row.User, row.rawValue])).toEqual([
+      ['alice', 1200],
+      ['bob', 300],
+    ])
+    expect(trend.map((row) => [row.User, row.rawValue])).toEqual([
+      ['alice', 1200],
+      ['bob', 300],
+    ])
+    expect(result.spec_user_rank.title.subtext).toContain(
+      formatCompactNumber(1500)
+    )
   })
 })

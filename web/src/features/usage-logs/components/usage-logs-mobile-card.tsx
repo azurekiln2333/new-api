@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { flexRender, type Cell, type Table } from '@tanstack/react-table'
 import { Database } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -32,9 +33,13 @@ import { cn } from '@/lib/utils'
 
 import { LOG_TYPE_ENUM } from '../constants'
 import type { UsageLog } from '../data/schema'
+import { MOBILE_LOG_VIEW_MODES } from '../lib/mobile-log-view'
 import { TASK_MOBILE_SUMMARY_FIELDS } from '../lib/task-mobile-layout'
 import type { LogCategory } from '../types'
 import { CommonLogMobileCard } from './common-log-mobile-card'
+import { CommonLogMobileRow } from './common-log-mobile-row'
+import { LogMobileViewToggle } from './log-mobile-view-toggle'
+import { useUsageLogsContext } from './usage-logs-provider'
 
 const logTypeRowTint: Record<number, string> = {
   [LOG_TYPE_ENUM.ERROR]:
@@ -51,15 +56,42 @@ interface UsageLogsMobileListProps<TData> {
   logCategory: LogCategory
 }
 
-function UsageLogsMobileSkeleton(props: { separate: boolean }) {
+function UsageLogsMobileSkeleton(props: {
+  variant: 'compact' | 'cards' | 'rows'
+}) {
   const { t } = useTranslation()
+  if (props.variant === 'compact') {
+    return (
+      <div
+        role='status'
+        aria-label={t('Loading')}
+        aria-busy='true'
+        className='border-border/50 bg-card divide-border/40 divide-y overflow-hidden rounded-lg border'
+      >
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <div key={i} className='space-y-1.5 px-3 py-2'>
+            <div className='flex items-center gap-2'>
+              <Skeleton className='h-3 w-16 rounded' />
+              <Skeleton className='h-3 w-12 rounded' />
+              <Skeleton className='h-3 flex-1 rounded' />
+              <Skeleton className='h-3 w-12 rounded' />
+            </div>
+            <Skeleton className='h-2.5 w-2/3 rounded' />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  const separate = props.variant === 'cards'
+
   return (
     <div
       role='status'
       aria-label={t('Loading')}
       aria-busy='true'
       className={
-        props.separate
+        separate
           ? 'min-w-0 space-y-3'
           : 'border-border/50 bg-card overflow-hidden rounded-lg border'
       }
@@ -68,7 +100,7 @@ function UsageLogsMobileSkeleton(props: { separate: boolean }) {
         <div
           key={i}
           className={
-            props.separate
+            separate
               ? 'border-border/60 bg-card space-y-3 rounded-xl border p-3.5'
               : 'border-border/40 space-y-2.5 border-b p-3 last:border-b-0'
           }
@@ -244,20 +276,43 @@ export function UsageLogsMobileList<TData>({
   logCategory,
 }: UsageLogsMobileListProps<TData>) {
   const { t } = useTranslation()
+  const { mobileLogViewMode, setMobileLogViewMode } = useUsageLogsContext()
 
   const resolvedEmptyTitle = emptyTitle ?? t('No Logs Found')
   const resolvedEmptyDescription =
     emptyDescription ??
     t('No usage logs available. Logs will appear here once API calls are made.')
 
+  const wrap = (body: ReactNode) => {
+    if (logCategory !== 'common') return body
+    return (
+      <div className='min-w-0'>
+        <div className='flex justify-end pb-2'>
+          <LogMobileViewToggle
+            value={mobileLogViewMode}
+            onChange={setMobileLogViewMode}
+          />
+        </div>
+        {body}
+      </div>
+    )
+  }
+
   if (isLoading) {
-    return <UsageLogsMobileSkeleton separate={logCategory === 'common'} />
+    let skeletonVariant: 'compact' | 'cards' | 'rows' = 'rows'
+    if (logCategory === 'common') {
+      skeletonVariant =
+        mobileLogViewMode === MOBILE_LOG_VIEW_MODES.COMPACT
+          ? 'compact'
+          : 'cards'
+    }
+    return wrap(<UsageLogsMobileSkeleton variant={skeletonVariant} />)
   }
 
   const rows = table.getRowModel().rows
 
   if (!rows || rows.length === 0) {
-    return (
+    return wrap(
       <div className='rounded-lg border p-6'>
         <Empty className='border-none p-0'>
           <EmptyHeader>
@@ -272,14 +327,21 @@ export function UsageLogsMobileList<TData>({
     )
   }
 
-  return (
-    <div
-      className={cn(
-        logCategory === 'common'
-          ? 'min-w-0 space-y-3'
-          : 'border-border/50 bg-card overflow-hidden rounded-lg border'
-      )}
-    >
+  const compactCommon =
+    logCategory === 'common' &&
+    mobileLogViewMode === MOBILE_LOG_VIEW_MODES.COMPACT
+
+  let containerClassName =
+    'border-border/50 bg-card overflow-hidden rounded-lg border'
+  if (compactCommon) {
+    containerClassName =
+      'border-border/50 bg-card divide-border/40 min-w-0 divide-y overflow-hidden rounded-lg border'
+  } else if (logCategory === 'common') {
+    containerClassName = 'min-w-0 space-y-3'
+  }
+
+  return wrap(
+    <div className={containerClassName}>
       {rows.map((row) => {
         const cells = new Map(
           row.getVisibleCells().map((cell) => [cell.column.id, cell])
@@ -290,17 +352,28 @@ export function UsageLogsMobileList<TData>({
           | undefined
         const tintClass = logType != null ? (logTypeRowTint[logType] ?? '') : ''
 
+        let rowClassName = cn(
+          'border-border/40 border-b border-l-2 border-l-transparent p-3 transition-colors last:border-b-0',
+          tintClass
+        )
+        if (compactCommon) {
+          rowClassName = tintClass
+        } else if (logCategory === 'common') {
+          rowClassName = cn(
+            'border-border/60 bg-card min-w-0 rounded-xl border p-3.5',
+            tintClass
+          )
+        }
+
         return (
-          <div
-            key={row.id}
-            className={cn(
-              logCategory === 'common'
-                ? 'border-border/60 bg-card min-w-0 rounded-xl border p-3.5'
-                : 'border-border/40 border-b border-l-2 border-l-transparent p-3 transition-colors last:border-b-0',
-              tintClass
+          <div key={row.id} className={rowClassName}>
+            {compactCommon && (
+              <CommonLogMobileRow
+                log={row.original as UsageLog}
+                cells={cells}
+              />
             )}
-          >
-            {logCategory === 'common' && (
+            {!compactCommon && logCategory === 'common' && (
               <CommonLogMobileCard
                 log={row.original as UsageLog}
                 cells={cells}

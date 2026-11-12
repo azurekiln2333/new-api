@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Filter, RotateCcw, Calendar, Search } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
@@ -41,6 +42,9 @@ import {
 import {
   buildDefaultDashboardFilters,
   cleanFilters,
+  getFilterRangeDays,
+  getGranularityRangeReason,
+  nearestAllowedGranularity,
 } from '@/features/dashboard/lib'
 import type {
   DashboardChartPreferences,
@@ -61,14 +65,9 @@ interface ModelsFilterProps {
   descriptionKey?: string
 }
 
-// Quick-range presets imply a sensible granularity (matching the app's
-// range<->granularity pairing), so picking "7 Days" requests daily buckets
-// instead of leaving the granularity on its previous value (e.g. hourly).
-function granularityForRangeDays(days: number): TimeGranularity {
-  if (days <= 1) return 'hour'
-  if (days >= 29) return 'week'
-  return 'day'
-}
+// Quick-range presets no longer imply a granularity: the two settings are
+// independent. A range that cannot be bucketed by the granularity in use falls
+// back to the closest compatible one and tells the user it happened.
 
 // Highlights the matching quick-range button when the applied range spans an
 // exact preset; custom ranges leave every quick button unselected.
@@ -145,26 +144,54 @@ export function ModelsFilter(props: ModelsFilterProps) {
     setOpen(false)
   }
 
+  const applyGranularityFallback = useCallback(
+    (next: DashboardFilters): DashboardFilters => {
+      const current = next.time_granularity
+      if (!current) return next
+      const allowed = nearestAllowedGranularity(
+        current,
+        getFilterRangeDays(next)
+      )
+      if (allowed === current) return next
+      const label =
+        TIME_GRANULARITY_OPTIONS.find((option) => option.value === allowed)
+          ?.label ?? allowed
+      toast.info(
+        t('Switched to {{granularity}} granularity', {
+          granularity: t(label),
+        })
+      )
+      return { ...next, time_granularity: allowed }
+    },
+    [t]
+  )
+
   const handleChange = (
     field: keyof DashboardFilters,
     value: Date | string | undefined
   ) => {
-    setFilters((prev) => ({ ...prev, [field]: value }))
-    if (field === 'start_timestamp' || field === 'end_timestamp')
-      setSelectedRange(null)
+    const isTimestamp = field === 'start_timestamp' || field === 'end_timestamp'
+    setFilters((prev) => {
+      const next = { ...prev, [field]: value }
+      return isTimestamp ? applyGranularityFallback(next) : next
+    })
+    if (isTimestamp) setSelectedRange(null)
   }
 
   const handleQuickRange = (days: number) => {
     const { start, end } = getRollingDateRange(days)
 
-    setFilters((prev) => ({
-      ...prev,
-      start_timestamp: start,
-      end_timestamp: end,
-      time_granularity: granularityForRangeDays(days),
-    }))
+    setFilters((prev) =>
+      applyGranularityFallback({
+        ...prev,
+        start_timestamp: start,
+        end_timestamp: end,
+      })
+    )
     setSelectedRange(days)
   }
+
+  const rangeDays = getFilterRangeDays(filters)
 
   return (
     <Dialog
@@ -257,12 +284,10 @@ export function ModelsFilter(props: ModelsFilterProps) {
           <div className='grid gap-2'>
             <Label htmlFor='time_granularity'>{t('Time Granularity')}</Label>
             <Select
-              items={[
-                ...TIME_GRANULARITY_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(option.label),
-                })),
-              ]}
+              items={TIME_GRANULARITY_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
               value={filters.time_granularity}
               onValueChange={(value) =>
                 handleChange('time_granularity', value as TimeGranularity)
@@ -273,11 +298,26 @@ export function ModelsFilter(props: ModelsFilterProps) {
               </SelectTrigger>
               <SelectContent alignItemWithTrigger={false}>
                 <SelectGroup>
-                  {TIME_GRANULARITY_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {t(option.label)}
-                    </SelectItem>
-                  ))}
+                  {TIME_GRANULARITY_OPTIONS.map((option) => {
+                    const reason = getGranularityRangeReason(
+                      option.value,
+                      rangeDays
+                    )
+                    return (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        disabled={reason != null}
+                      >
+                        {t(option.label)}
+                        {reason && (
+                          <span className='text-muted-foreground text-xs'>
+                            {t(reason.key, { days: reason.days })}
+                          </span>
+                        )}
+                      </SelectItem>
+                    )
+                  })}
                 </SelectGroup>
               </SelectContent>
             </Select>

@@ -1,3 +1,4 @@
+import { PanelLeftIcon } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -16,7 +17,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/ui/button'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+
 import { PlaygroundChat } from './components/chat/playground-chat'
+import {
+  ConversationPanel,
+  StorageWarningBanner,
+} from './components/conversations'
 import { PlaygroundInput } from './components/input/playground-input'
 import {
   useChatHandler,
@@ -26,11 +42,15 @@ import {
 } from './hooks'
 
 export function Playground() {
+  const { t } = useTranslation()
   const {
     config,
     parameterEnabled,
+    conversations,
+    activeConversationId,
     messages,
     isLoadingMessages,
+    storageFailure,
     models,
     groups,
     updateMessages,
@@ -39,7 +59,14 @@ export function Playground() {
     updateConfig,
     updateParameterEnabled,
     clearMessages,
+    createConversation,
+    switchConversation,
+    renameConversation,
+    deleteConversation,
+    archiveConversation,
+    dismissStorageFailure,
   } = usePlaygroundState()
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
 
   const { sendChat, stopGeneration, isGenerating } = useChatHandler({
     config,
@@ -74,47 +101,136 @@ export function Playground() {
     updateConfig,
   })
 
+  // A reply streams into the conversation that is active when it starts, so a
+  // conversation switch stops the generation instead of mixing the two chats.
+  const runConversationAction = (action: () => void) => {
+    if (isGenerating) stopGeneration()
+    handleEditOpenChange(false)
+    action()
+    setIsHistoryOpen(false)
+  }
+
+  const handleSelectConversation = (conversationId: string) => {
+    if (conversationId === activeConversationId) {
+      setIsHistoryOpen(false)
+      return
+    }
+
+    runConversationAction(() => switchConversation(conversationId))
+  }
+
+  const handleCreateConversation = () => {
+    runConversationAction(() => {
+      createConversation()
+    })
+  }
+
+  const handleDeleteConversation = (conversationId: string) => {
+    runConversationAction(() => deleteConversation(conversationId))
+  }
+
+  const handleArchiveConversation = (
+    conversationId: string,
+    archived: boolean
+  ) => {
+    runConversationAction(() => archiveConversation(conversationId, archived))
+  }
+
+  const activeConversation = conversations.find(
+    (conversation) => conversation.id === activeConversationId
+  )
+  const activeTitle = activeConversation?.title || t('New chat')
+
+  const conversationPanel = (
+    <ConversationPanel
+      activeConversationId={activeConversationId}
+      conversations={conversations}
+      onArchive={handleArchiveConversation}
+      onCreate={handleCreateConversation}
+      onDelete={handleDeleteConversation}
+      onRename={renameConversation}
+      onSelect={handleSelectConversation}
+    />
+  )
+
   return (
-    <div className='relative flex size-full min-h-0 flex-col overflow-hidden'>
-      {/* Full-width scroll container: scrolling works even over side whitespace */}
-      <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
-        <PlaygroundChat
-          messages={messages}
-          isLoadingMessages={isLoadingMessages}
-          onRegenerateMessage={handleRegenerateMessage}
-          onEditMessage={handleEditMessage}
-          onDeleteMessage={handleDeleteMessage}
-          onSelectPrompt={handleSendMessage}
-          isGenerating={isGenerating}
-          editingKey={editingMessageKey}
-          onCancelEdit={handleEditOpenChange}
-          onSaveEdit={(newContent) => applyEdit(newContent, false)}
-          onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
+    <div className='flex size-full min-h-0 overflow-hidden'>
+      <aside className='hidden w-64 shrink-0 flex-col border-e lg:flex'>
+        {conversationPanel}
+      </aside>
+
+      <div className='flex min-w-0 flex-1 flex-col overflow-hidden'>
+        <div className='flex items-center gap-2 border-b px-3 py-1.5 lg:hidden'>
+          <Button
+            aria-label={t('Open chat list')}
+            size='icon'
+            type='button'
+            variant='ghost'
+            onClick={() => setIsHistoryOpen(true)}
+          >
+            <PanelLeftIcon className='size-4' />
+          </Button>
+          <span className='min-w-0 flex-1 truncate text-sm font-medium'>
+            {activeTitle}
+          </span>
+        </div>
+
+        <StorageWarningBanner
+          failure={storageFailure}
+          onDismiss={dismissStorageFailure}
         />
+
+        {/* Full-width scroll container: scrolling works even over side whitespace */}
+        <div className='flex min-h-0 flex-1 flex-col overflow-hidden'>
+          <PlaygroundChat
+            messages={messages}
+            isLoadingMessages={isLoadingMessages}
+            onRegenerateMessage={handleRegenerateMessage}
+            onEditMessage={handleEditMessage}
+            onDeleteMessage={handleDeleteMessage}
+            onSelectPrompt={handleSendMessage}
+            isGenerating={isGenerating}
+            editingKey={editingMessageKey}
+            onCancelEdit={handleEditOpenChange}
+            onSaveEdit={(newContent) => applyEdit(newContent, false)}
+            onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
+          />
+        </div>
+
+        {/* Input area: center content and constrain to the same container width */}
+        <div className='mx-auto w-full max-w-4xl'>
+          <PlaygroundInput
+            config={config}
+            disabled={isGenerating}
+            groups={groups}
+            groupValue={config.group}
+            isGenerating={isGenerating}
+            isModelLoading={isLoadingModels}
+            modelValue={config.model}
+            models={models}
+            onGroupChange={(value) => updateConfig('group', value)}
+            onConfigChange={updateConfig}
+            onClearMessages={handleClearMessages}
+            onModelChange={(value) => updateConfig('model', value)}
+            onParameterEnabledChange={updateParameterEnabled}
+            onStop={stopGeneration}
+            onSubmit={handleSendMessage}
+            parameterEnabled={parameterEnabled}
+            hasMessages={messages.length > 0}
+          />
+        </div>
       </div>
 
-      {/* Input area: center content and constrain to the same container width */}
-      <div className='mx-auto w-full max-w-4xl'>
-        <PlaygroundInput
-          config={config}
-          disabled={isGenerating}
-          groups={groups}
-          groupValue={config.group}
-          isGenerating={isGenerating}
-          isModelLoading={isLoadingModels}
-          modelValue={config.model}
-          models={models}
-          onGroupChange={(value) => updateConfig('group', value)}
-          onConfigChange={updateConfig}
-          onClearMessages={handleClearMessages}
-          onModelChange={(value) => updateConfig('model', value)}
-          onParameterEnabledChange={updateParameterEnabled}
-          onStop={stopGeneration}
-          onSubmit={handleSendMessage}
-          parameterEnabled={parameterEnabled}
-          hasMessages={messages.length > 0}
-        />
-      </div>
+      <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+        <SheetContent side='left' className='w-72 gap-0 sm:max-w-xs'>
+          <SheetHeader className='px-3 pt-3'>
+            <SheetTitle>{t('Chat history')}</SheetTitle>
+          </SheetHeader>
+          <div className='flex min-h-0 flex-1 flex-col'>
+            {conversationPanel}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

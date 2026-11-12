@@ -29,7 +29,7 @@ import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-
 import type { QuotaDataItem } from '@/features/dashboard/types'
 import { useStatus } from '@/hooks/use-status'
 import { getCurrencyLabel, isCurrencyDisplayEnabled } from '@/lib/currency'
-import { formatNumber, formatQuota } from '@/lib/format'
+import { formatCompactNumber, formatNumber, formatQuota } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -39,7 +39,7 @@ import { StatCard } from '../ui/stat-card'
 
 const SUMMARY_SPARKLINE_BUCKETS = 12
 
-type SummarySparklineKey = 'balance' | 'usage' | 'requests'
+type SummarySparklineKey = 'balance' | 'usage' | 'requests' | 'tokens'
 
 function getBucketIndex(
   timestamp: number,
@@ -60,6 +60,7 @@ function buildSummarySparklines(
 ): Record<SummarySparklineKey, number[]> {
   const usage = Array.from({ length: SUMMARY_SPARKLINE_BUCKETS }, () => 0)
   const requests = Array.from({ length: SUMMARY_SPARKLINE_BUCKETS }, () => 0)
+  const tokens = Array.from({ length: SUMMARY_SPARKLINE_BUCKETS }, () => 0)
 
   for (const item of data) {
     const timestamp = Number(item.created_at) || start
@@ -71,6 +72,7 @@ function buildSummarySparklines(
     )
     usage[index] += Number(item.quota) || 0
     requests[index] += Number(item.count) || 0
+    tokens[index] += Number(item.token_used) || 0
   }
 
   let balance = currentBalance
@@ -88,6 +90,7 @@ function buildSummarySparklines(
     balance: balanceTrend,
     usage,
     requests,
+    tokens,
   }
 }
 
@@ -97,6 +100,7 @@ function getSummarySparkline(
 ): number[] | undefined {
   if (key === 'usage') return sparklineData.usage
   if (key === 'requests') return sparklineData.requests
+  if (key === 'tokens') return sparklineData.tokens
   return undefined
 }
 
@@ -209,6 +213,15 @@ export function SummaryCards() {
     [usageTrendQuery.data?.data]
   )
 
+  const recentTokens = useMemo(
+    () =>
+      (usageTrendQuery.data?.data ?? []).reduce(
+        (total, item) => total + (Number(item.token_used) || 0),
+        0
+      ),
+    [usageTrendQuery.data?.data]
+  )
+
   const healthLevel = getHealthLevel(remainQuota, recentUsage)
   const healthCfg = HEALTH_CONFIG[healthLevel]
   const runwayDays = getRunwayDays(remainQuota, recentUsage)
@@ -232,6 +245,7 @@ export function SummaryCards() {
   const items = useSummaryCardsConfig({
     ...summaryValues,
     todayUsageDisplay,
+    tokensDisplay: formatCompactNumber(recentTokens),
     currencyEnabled,
     currencyLabel,
   }).map((config, index) => {
@@ -243,7 +257,7 @@ export function SummaryCards() {
       value: config.value,
       desc: config.description,
       icon: config.icon,
-      tone: tones[index] ?? 'accent-3',
+      tone: tones[index % tones.length],
       sparkline:
         config.key === 'todayUsage'
           ? sparklineData.usage
@@ -266,7 +280,7 @@ export function SummaryCards() {
               </p>
             </div>
           </div>
-          <StaggerContainer className='grid grid-cols-3 gap-1.5 sm:gap-3'>
+          <StaggerContainer className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-4'>
             {items.map((it) => (
               <StaggerItem
                 key={it.key}
