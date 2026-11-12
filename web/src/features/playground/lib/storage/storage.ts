@@ -61,6 +61,11 @@ export type StoredConversationIndex = {
   activeId: string | null
 }
 
+type LoadedConversationIndex = StoredConversationIndex & {
+  pendingMessages?: Message[]
+  saveFailure?: StorageSaveResult
+}
+
 const TRUNCATED_CONTENT_SUFFIX = '\n\n[...]'
 const MIN_PREFIX_COLLAPSE_LENGTH = 2000
 const MIN_REPEATED_SECTION_COUNT = 3
@@ -494,7 +499,7 @@ function seedConversations(): StoredConversationIndex {
  * Move the pre-multi-conversation history into the first conversation so an
  * upgrade never loses the chat the user already had.
  */
-function migrateLegacyMessages(): StoredConversationIndex {
+function migrateLegacyMessages(): LoadedConversationIndex {
   const legacyMessages = loadMessagesFromBaseKey(STORAGE_KEYS.MESSAGES)
   const messages = legacyMessages ?? []
   const createdAt =
@@ -509,24 +514,37 @@ function migrateLegacyMessages(): StoredConversationIndex {
     activeId: conversation.id,
   }
 
-  const saved = saveConversationIndex(index)
-  if (saved === 'error') return index
+  const messageResult = saveConversationMessages(conversation.id, messages)
+  if (messageResult !== 'ok') {
+    return { ...index, pendingMessages: messages, saveFailure: messageResult }
+  }
 
-  if (messages.length > 0) {
-    saveConversationMessages(conversation.id, messages)
+  const indexResult = saveConversationIndex(index)
+  if (indexResult !== 'ok') {
+    // The legacy key remains authoritative until both writes succeed. Avoid
+    // accumulating orphan copies when the browser rejects the index write.
+    deleteConversationMessages(conversation.id)
+    return { ...index, pendingMessages: messages, saveFailure: indexResult }
   }
-  if (legacyMessages !== null) {
-    removeStoredValue(STORAGE_KEYS.MESSAGES)
-  }
+
+  if (legacyMessages !== null) completeLegacyMessageMigration()
 
   return index
+}
+
+export function completeLegacyMessageMigration(): void {
+  try {
+    removeStoredValue(STORAGE_KEYS.MESSAGES)
+  } catch {
+    // Retaining the redundant legacy copy is safe when storage is unavailable.
+  }
 }
 
 /**
  * Load the conversation index, creating it (and migrating legacy messages) on
  * first use.
  */
-export function loadConversationIndex(): StoredConversationIndex {
+export function loadConversationIndex(): LoadedConversationIndex {
   let stored: unknown = null
   try {
     stored = readStoredValue(STORAGE_KEYS.CONVERSATIONS)

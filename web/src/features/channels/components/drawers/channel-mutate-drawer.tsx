@@ -1611,7 +1611,8 @@ export function ChannelMutateDrawer({
   )
 
   const requestHeaderTemplate = useCallback(
-    (templateId: string) => {
+    (templateId: string | null) => {
+      if (templateId === null) return
       const template = getClientHeaderTemplate(templateId)
       if (!template) return
       if (hasHeaderOverrideContent(form.getValues('header_override'))) {

@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { useAuthStore } from '@/stores/auth-store'
 
+import { STORAGE_KEYS } from '../../constants'
 import type { Message } from '../../types'
 import { usePlaygroundState } from '../use-playground-state'
 
@@ -49,6 +50,96 @@ afterEach(() => {
 })
 
 describe('usePlaygroundState conversations', () => {
+  test('shows legacy history and a warning when migration storage is full', async () => {
+    const messages = [userMessage('keep legacy history', 'legacy')]
+    localStorage.setItem(
+      `${STORAGE_KEYS.MESSAGES}:1`,
+      JSON.stringify({ version: 1, data: messages })
+    )
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException('quota exceeded', 'QuotaExceededError')
+      })
+
+    const view = await renderPlaygroundState()
+
+    expect(view.result.current.messages).toEqual(messages)
+    expect(view.result.current.storageFailure).toBe('quota')
+    expect(localStorage.getItem(`${STORAGE_KEYS.MESSAGES}:1`)).not.toBeNull()
+    setItem.mockRestore()
+    view.unmount()
+    expect(localStorage.getItem(`${STORAGE_KEYS.MESSAGES}:1`)).toBeNull()
+
+    const reloaded = await renderPlaygroundState()
+    expect(reloaded.result.current.messages).toEqual(messages)
+    reloaded.unmount()
+  })
+
+  test('preserves unsaved messages across chat switches and retries them after storage recovers', async () => {
+    const view = await renderPlaygroundState()
+    const firstId = view.result.current.activeConversationId ?? ''
+    act(() => {
+      view.result.current.updateMessages([userMessage('first', 'first')])
+    })
+    let secondId = ''
+    act(() => {
+      secondId = view.result.current.createConversation()
+    })
+    act(() => {
+      view.result.current.updateMessages([userMessage('second', 'second')])
+    })
+    act(() => {
+      view.result.current.switchConversation(firstId)
+    })
+
+    const originalSetItem = Storage.prototype.setItem
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(function (this: Storage, key, value) {
+        if (key.startsWith(`${STORAGE_KEYS.CONVERSATION_MESSAGES}:`)) {
+          throw new DOMException('quota exceeded', 'QuotaExceededError')
+        }
+        originalSetItem.call(this, key, value)
+      })
+    const firstUpdate = [userMessage('unsaved first', 'first-new')]
+    const secondUpdate = [userMessage('unsaved second', 'second-new')]
+    act(() => {
+      view.result.current.updateMessages(firstUpdate)
+    })
+    act(() => {
+      view.result.current.switchConversation(secondId)
+    })
+    act(() => {
+      view.result.current.updateMessages(secondUpdate)
+    })
+    act(() => {
+      view.result.current.switchConversation(firstId)
+    })
+
+    expect(view.result.current.storageFailure).toBe('quota')
+    expect(view.result.current.messages).toEqual(firstUpdate)
+    act(() => {
+      view.result.current.switchConversation(secondId)
+    })
+    expect(view.result.current.messages).toEqual(secondUpdate)
+
+    setItem.mockRestore()
+    act(() => {
+      view.result.current.switchConversation(firstId)
+    })
+    expect(view.result.current.storageFailure).toBeNull()
+    view.unmount()
+
+    const reloaded = await renderPlaygroundState()
+    expect(reloaded.result.current.messages).toEqual(firstUpdate)
+    act(() => {
+      reloaded.result.current.switchConversation(secondId)
+    })
+    expect(reloaded.result.current.messages).toEqual(secondUpdate)
+    reloaded.unmount()
+  })
+
   test('keeps each chat history separate and restores it after a reload', async () => {
     const view = await renderPlaygroundState()
     const firstId = view.result.current.activeConversationId
@@ -128,7 +219,20 @@ describe('usePlaygroundState conversations', () => {
       conversations.find((conversation) => conversation.id === archivedId)
         ?.archived
     ).toBe(true)
+    expect(
+      conversations.find((conversation) => conversation.id === archivedId)
+        ?.title
+    ).toBe('archived chat')
     expect(view.result.current.activeConversationId).not.toBe(archivedId)
     expect(view.result.current.messages).toEqual([])
+    view.unmount()
+
+    const reloaded = await renderPlaygroundState()
+    expect(
+      reloaded.result.current.conversations.find(
+        (conversation) => conversation.id === archivedId
+      )?.title
+    ).toBe('archived chat')
+    reloaded.unmount()
   })
 })

@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../constants'
 import {
   applyMessageStateUpdate,
+  completeLegacyMessageMigration,
   createConversationMeta,
   deleteConversationMessages,
   getInitialParameterEnabled,
@@ -49,11 +50,6 @@ import type {
 } from '../types'
 
 const MESSAGE_SAVE_DEBOUNCE_MS = 500
-
-type PendingConversationSave = {
-  conversationId: string
-  messages: Message[]
-}
 
 function toStorageFailure(result: StorageSaveResult): PlaygroundStorageFailure {
   return result === 'quota' || result === 'error' ? result : null
@@ -92,7 +88,8 @@ export function usePlaygroundState() {
   const conversationsRef = useRef<PlaygroundConversation[]>([])
   const activeConversationIdRef = useRef<string | null>(null)
   const messagesRef = useRef<Message[]>([])
-  const pendingSaveRef = useRef<PendingConversationSave | null>(null)
+  const pendingSavesRef = useRef(new Map<string, Message[]>())
+  const pendingMigrationRef = useRef(false)
   const saveTimerRef = useRef<number | null>(null)
   const hasLoadedRef = useRef(false)
   const storageFailureDismissedRef = useRef(false)
@@ -112,7 +109,10 @@ export function usePlaygroundState() {
   const applyActiveConversation = useCallback((conversationId: string) => {
     activeConversationIdRef.current = conversationId
     setActiveConversationId(conversationId)
-    const loadedMessages = loadConversationMessages(conversationId) ?? []
+    const loadedMessages =
+      pendingSavesRef.current.get(conversationId) ??
+      loadConversationMessages(conversationId) ??
+      []
     messagesRef.current = loadedMessages
     setMessages(loadedMessages)
   }, [])
@@ -135,40 +135,44 @@ export function usePlaygroundState() {
       saveTimerRef.current = null
     }
 
-    const pending = pendingSaveRef.current
-    if (!pending) return
-    pendingSaveRef.current = null
+    if (!hasLoadedRef.current || pendingSavesRef.current.size === 0) return
 
-    // A deleted conversation may still have a debounced save in flight.
-    if (
-      !hasLoadedRef.current ||
-      !conversationsRef.current.some(
-        (conversation) => conversation.id === pending.conversationId
+    let nextConversations = conversationsRef.current
+    let messageFailure = false
+    for (const [conversationId, pendingMessages] of pendingSavesRef.current) {
+      // A deleted conversation may still have a debounced save in flight.
+      if (!nextConversations.some((item) => item.id === conversationId)) {
+        pendingSavesRef.current.delete(conversationId)
+        continue
+      }
+      nextConversations = touchConversation(
+        nextConversations,
+        conversationId,
+        pendingMessages
       )
-    ) {
-      return
+      const result = saveConversationMessages(conversationId, pendingMessages)
+      reportStorageFailure(result)
+      if (result !== 'ok') messageFailure = true
     }
-
-    const nextConversations = touchConversation(
-      conversationsRef.current,
-      pending.conversationId,
-      pending.messages
-    )
     if (nextConversations !== conversationsRef.current) {
       applyConversations(nextConversations)
     }
 
-    const messageFailure = reportStorageFailure(
-      saveConversationMessages(pending.conversationId, pending.messages)
-    )
-    const indexFailure = reportStorageFailure(
-      saveConversationIndex({
-        conversations: nextConversations,
-        activeId: activeConversationIdRef.current,
-      })
-    )
+    // Keep all unsaved messages in memory and leave the durable index alone
+    // until its conversations have actually been written.
+    if (messageFailure) return
+    const indexResult = saveConversationIndex({
+      conversations: nextConversations,
+      activeId: activeConversationIdRef.current,
+    })
+    reportStorageFailure(indexResult)
 
-    if (!messageFailure && !indexFailure) {
+    if (indexResult === 'ok') {
+      pendingSavesRef.current.clear()
+      if (pendingMigrationRef.current) {
+        completeLegacyMessageMigration()
+        pendingMigrationRef.current = false
+      }
       storageFailureDismissedRef.current = false
       setStorageFailure((previous) => (previous === null ? previous : null))
     }
@@ -176,10 +180,7 @@ export function usePlaygroundState() {
 
   const scheduleSave = useCallback(
     (conversationId: string, nextMessages: Message[]) => {
-      pendingSaveRef.current = {
-        conversationId,
-        messages: nextMessages,
-      }
+      pendingSavesRef.current.set(conversationId, nextMessages)
       if (!hasLoadedRef.current) return
       if (saveTimerRef.current !== null) return
 
@@ -200,9 +201,14 @@ export function usePlaygroundState() {
 
       conversationsRef.current = index.conversations
       setConversations(index.conversations)
-      const loadedMessages = index.activeId
-        ? (loadConversationMessages(index.activeId) ?? [])
-        : []
+      const loadedMessages =
+        index.pendingMessages ??
+        (index.activeId ? (loadConversationMessages(index.activeId) ?? []) : [])
+      if (index.pendingMessages && index.activeId) {
+        pendingSavesRef.current.set(index.activeId, index.pendingMessages)
+        pendingMigrationRef.current = true
+      }
+      if (index.saveFailure) reportStorageFailure(index.saveFailure)
       activeConversationIdRef.current = index.activeId
       setActiveConversationId(index.activeId)
       messagesRef.current = loadedMessages
@@ -214,7 +220,7 @@ export function usePlaygroundState() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reportStorageFailure])
 
   useEffect(
     () => () => {
@@ -279,6 +285,7 @@ export function usePlaygroundState() {
 
   const persistIndex = useCallback(
     (nextConversations: PlaygroundConversation[], activeId: string | null) => {
+      if (pendingSavesRef.current.size > 0) return
       reportStorageFailure(
         saveConversationIndex({ conversations: nextConversations, activeId })
       )
@@ -348,9 +355,7 @@ export function usePlaygroundState() {
 
   const deleteConversation = useCallback(
     (conversationId: string) => {
-      if (pendingSaveRef.current?.conversationId === conversationId) {
-        pendingSaveRef.current = null
-      }
+      pendingSavesRef.current.delete(conversationId)
       deleteConversationMessages(conversationId)
 
       const remaining = conversationsRef.current.filter(
@@ -399,14 +404,14 @@ export function usePlaygroundState() {
       if (nextActiveId) {
         flushPendingSave()
         applyActiveConversation(nextActiveId)
-        persistIndex(nextConversations, nextActiveId)
+        persistIndex(conversationsRef.current, nextActiveId)
         return
       }
 
       // Every chat is archived now, so continue with a fresh one.
       flushPendingSave()
       const conversation = createConversationMeta()
-      const withNewConversation = [conversation, ...nextConversations]
+      const withNewConversation = [conversation, ...conversationsRef.current]
       applyConversations(withNewConversation)
       applyActiveConversation(conversation.id)
       persistIndex(withNewConversation, conversation.id)

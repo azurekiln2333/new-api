@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -61,15 +62,22 @@ func TestSetUpLoggerMasksQueryCredentials(t *testing.T) {
 }
 
 func TestAccessAndPanicLogsFollowLogRotation(t *testing.T) {
-	previousMode, previousWriter, previousErrorWriter := gin.Mode(), gin.DefaultWriter, gin.DefaultErrorWriter
-	previousLogDir := *common.LogDir
+	logDir := os.Getenv("NEW_API_LOG_ROTATION_TEST_DIR")
+	if logDir == "" {
+		// The process-wide logger keeps its current file open until exit. Run
+		// this check in a child so Windows can remove the parent's temp directory.
+		executable, err := os.Executable()
+		require.NoError(t, err)
+		cmd := exec.CommandContext(t.Context(), executable,
+			"-test.run=^TestAccessAndPanicLogsFollowLogRotation$", "-test.count=1")
+		cmd.Env = append(os.Environ(), "NEW_API_LOG_ROTATION_TEST_DIR="+t.TempDir())
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+
 	gin.SetMode(gin.TestMode)
-	*common.LogDir = t.TempDir()
-	t.Cleanup(func() {
-		gin.SetMode(previousMode)
-		gin.DefaultWriter, gin.DefaultErrorWriter = previousWriter, previousErrorWriter
-		*common.LogDir = previousLogDir
-	})
+	*common.LogDir = logDir
 
 	logger.SetupLogger()
 	router := gin.New()

@@ -106,6 +106,31 @@ describe('buildHeaderOverrideJson', () => {
     })
   })
 
+  test('merge replaces differently cased and padded header names while preserving passthrough rules', () => {
+    const codex = getClientHeaderTemplate('codex')
+    if (!codex) throw new Error('missing codex template')
+
+    const json = buildHeaderOverrideJson(
+      codex,
+      'merge',
+      JSON.stringify({
+        'user-agent': 'stale',
+        ' USER-AGENT ': 'also stale',
+        Originator: 'other-client',
+        Authorization: 'Bearer {api_key}',
+        '*': true,
+        're:^X-Trace-.*$': true,
+      })
+    )
+
+    expect(JSON.parse(json)).toEqual({
+      Authorization: 'Bearer {api_key}',
+      '*': true,
+      're:^X-Trace-.*$': true,
+      ...codex.headers,
+    })
+  })
+
   test('merge falls back to replace when existing JSON is invalid', () => {
     if (!template) throw new Error('missing opencode template')
     expect(

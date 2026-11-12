@@ -16,18 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Activity, RotateCw } from 'lucide-react'
-import { memo, useEffect, useState } from 'react'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { getUptimeStatus } from '@/features/dashboard/api'
-import type {
-  UptimeGroupResult,
-  UptimeMonitor,
-} from '@/features/dashboard/types'
+import type { UptimeMonitor } from '@/features/dashboard/types'
+import {
+  getServerErrorMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { PanelWrapper } from '../ui/panel-wrapper'
@@ -47,51 +50,17 @@ const StatusDot = memo(function StatusDot(props: { status: number }) {
 
 export function UptimePanel() {
   const { t } = useTranslation()
-  const [groups, setGroups] = useState<UptimeGroupResult[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-
-  useEffect(() => {
-    const abortController = new AbortController()
-
-    void getUptimeStatus()
-      .then((res) => {
-        if (abortController.signal.aborted) return
-        setGroups(res?.data || [])
-      })
-      .catch(() => {
-        if (abortController.signal.aborted) return
-        setGroups([])
-      })
-      .finally(() => {
-        if (!abortController.signal.aborted) {
-          setLoading(false)
-        }
-      })
-
-    return () => {
-      abortController.abort()
-    }
-  }, [])
+  const uptimeQuery = useQuery({
+    queryKey: ['uptime-status'],
+    queryFn: async () => requireServerSuccess(await getUptimeStatus()),
+    retry: false,
+    meta: { errorToast: false },
+  })
+  const groups = uptimeQuery.data?.data ?? []
+  const refreshing = uptimeQuery.isFetching
 
   const handleRefresh = () => {
-    const abortController = new AbortController()
-    setRefreshing(true)
-
-    void getUptimeStatus()
-      .then((res) => {
-        if (abortController.signal.aborted) return
-        setGroups(res?.data || [])
-      })
-      .catch(() => {
-        if (abortController.signal.aborted) return
-        setGroups([])
-      })
-      .finally(() => {
-        if (!abortController.signal.aborted) {
-          setRefreshing(false)
-        }
-      })
+    void uptimeQuery.refetch()
   }
 
   return (
@@ -105,8 +74,8 @@ export function UptimePanel() {
         </span>
       }
       description={t('Grouped monitor status from Uptime Kuma')}
-      loading={loading}
-      empty={!groups.length}
+      loading={uptimeQuery.isLoading}
+      empty={uptimeQuery.isSuccess && !groups.length}
       emptyMessage={t('No uptime monitoring configured')}
       height='h-80'
       contentClassName='p-0'
@@ -117,15 +86,32 @@ export function UptimePanel() {
           onClick={handleRefresh}
           disabled={refreshing}
           className='size-7 p-0'
+          aria-label={t('Refresh')}
         >
           <RotateCw
             className={cn('size-3.5', refreshing && 'animate-spin')}
-            aria-label={t('Refresh')}
+            aria-hidden='true'
           />
         </Button>
       }
     >
       <ScrollArea className='h-80'>
+        {uptimeQuery.isError && (
+          <ErrorState
+            className={groups.length ? 'min-h-0 py-4' : 'h-80'}
+            description={getServerErrorMessage(uptimeQuery.error)}
+            action={
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={handleRefresh}
+                disabled={refreshing}
+              >
+                {t('Retry')}
+              </Button>
+            }
+          />
+        )}
         <div>
           {groups.map((group, groupIdx) => (
             <div key={group.categoryName}>

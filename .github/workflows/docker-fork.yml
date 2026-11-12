@@ -16,8 +16,13 @@ env:
   IMAGE: ghcr.io/azurekiln2333/new-api
 
 jobs:
-  prepare:
+  validate:
     if: github.repository == 'azurekiln2333/new-api' && github.ref == 'refs/heads/main'
+    name: Validate release commit
+    uses: ./.github/workflows/ci.yml
+
+  prepare:
+    needs: validate
     name: Prepare version
     runs-on: ubuntu-latest
     outputs:

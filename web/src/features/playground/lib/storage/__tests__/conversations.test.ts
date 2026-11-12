@@ -92,6 +92,43 @@ describe('playground conversation storage', () => {
     expect(localStorage.getItem(legacyMessagesKey)).toBeNull()
   })
 
+  test.each(['messages', 'index'] as const)(
+    'preserves legacy history when the migration %s cannot be stored',
+    (failedWrite) => {
+      localStorage.setItem(
+        legacyMessagesKey,
+        JSON.stringify({ version: 1, data: legacyMessages })
+      )
+      const originalSetItem = Storage.prototype.setItem
+      const setItem = vi
+        .spyOn(Storage.prototype, 'setItem')
+        .mockImplementation(function (this: Storage, key, value) {
+          const fails =
+            failedWrite === 'messages'
+              ? key.startsWith(`${STORAGE_KEYS.CONVERSATION_MESSAGES}:`)
+              : key === `${STORAGE_KEYS.CONVERSATIONS}:${USER_ID}`
+          if (fails) {
+            throw new DOMException('quota exceeded', 'QuotaExceededError')
+          }
+          originalSetItem.call(this, key, value)
+        })
+
+      loadConversationIndex()
+
+      expect(localStorage.getItem(legacyMessagesKey)).not.toBeNull()
+      expect(
+        localStorage.getItem(`${STORAGE_KEYS.CONVERSATIONS}:${USER_ID}`)
+      ).toBeNull()
+
+      setItem.mockRestore()
+      const restored = loadConversationIndex()
+      expect(loadConversationMessages(restored.activeId ?? '')).toEqual(
+        legacyMessages
+      )
+      expect(localStorage.getItem(legacyMessagesKey)).toBeNull()
+    }
+  )
+
   test('keeps the history of every conversation separate', () => {
     saveConversationIndex({
       conversations: [conversation('a'), conversation('b')],

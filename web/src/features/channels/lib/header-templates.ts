@@ -135,6 +135,16 @@ export function buildHeaderOverrideJson(
   if (mode === 'merge') {
     const parsed = parseHeaderOverrideObject(existing)
     if (parsed) {
+      const templateHeaderNames = new Set(
+        Object.keys(template.headers).map((key) => key.trim().toLowerCase())
+      )
+      // The relay normalizes header names before applying overrides. Remove
+      // equivalent keys so the old value cannot win during map iteration.
+      for (const key of Object.keys(parsed)) {
+        if (templateHeaderNames.has(key.trim().toLowerCase())) {
+          delete parsed[key]
+        }
+      }
       return JSON.stringify({ ...parsed, ...template.headers }, null, 2)
     }
   }
