@@ -29,7 +29,7 @@ import {
 } from 'vitest'
 
 import { Playground } from '../index'
-import type { PlaygroundConversation } from '../types'
+import type { PlaygroundConversation, PlaygroundProject } from '../types'
 
 // jsdom does not implement the Web Animations API that the scroll area reads.
 const getAnimationsDescriptor = Object.getOwnPropertyDescriptor(
@@ -77,6 +77,7 @@ const chatState = {
     seed: false,
   },
   conversations: [] as PlaygroundConversation[],
+  projects: [] as PlaygroundProject[],
   activeConversationId: 'first',
   messages: [],
   isLoadingMessages: false,
@@ -95,6 +96,10 @@ const chatState = {
   renameConversation: vi.fn(),
   deleteConversation: vi.fn(),
   archiveConversation: vi.fn(),
+  createProject: vi.fn(),
+  renameProject: vi.fn(),
+  deleteProject: vi.fn(),
+  moveConversationToProject: vi.fn(),
   dismissStorageFailure: vi.fn(),
 }
 

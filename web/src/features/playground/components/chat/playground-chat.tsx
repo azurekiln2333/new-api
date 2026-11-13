@@ -133,7 +133,7 @@ export function PlaygroundChat({
         from={message.from}
         key={message.key}
       >
-        <div className='w-full min-w-0 flex-1 basis-full'>
+        <div className='flex w-full min-w-0 flex-1 basis-full flex-col'>
           {isEditing ? (
             <PlaygroundMessageEditor
               editText={editText}
@@ -215,6 +215,7 @@ export function PlaygroundChat({
     <Conversation>
       {/* Remove outer padding; apply padding to inner centered container to align with input */}
       <ConversationContent className='p-0'>
+        {/* Left column for replies and right column for user bubbles */}
         <div className='mx-auto w-full max-w-4xl px-4 py-4'>{chatContent}</div>
       </ConversationContent>
       <ConversationScrollButton />

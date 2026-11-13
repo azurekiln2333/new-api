@@ -32,8 +32,27 @@ export function getMessageAlignment(
   return message.from === MESSAGE_ROLES.USER ? 'right' : 'left'
 }
 
+/**
+ * Column that holds the message content. It spans the whole conversation
+ * width and positions the bubble, so a reply never forces a split layout.
+ */
 export function getMessageAlignmentClass(alignment: MessageAlignment): string {
   return alignment === 'right'
     ? 'items-end text-right'
     : 'items-start text-left'
+}
+
+/**
+ * Reply block: left aligned, limited to a comfortable reading measure inside
+ * the conversation column instead of stretching across the whole screen.
+ */
+export function getAssistantContentClass(): string {
+  return 'w-full max-w-3xl'
+}
+
+/**
+ * User bubble: sized by its content, capped at roughly 70% of the column.
+ */
+export function getUserContentClass(): string {
+  return 'w-fit max-w-[85%] sm:max-w-[70%]'
 }

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  FolderInputIcon,
   MoreHorizontalIcon,
   PencilIcon,
   Trash2Icon,
@@ -31,27 +32,45 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import type { PlaygroundConversation } from '../../types'
+import type { PlaygroundConversation, PlaygroundProject } from '../../types'
 
 interface ConversationListItemProps {
   conversation: PlaygroundConversation
   active: boolean
+  projects: PlaygroundProject[]
   onSelect: () => void
   onRename: () => void
   onToggleArchive: () => void
   onDelete: () => void
+  onMoveToProject: (projectId: string | null) => void
 }
 
 export function ConversationListItem(props: ConversationListItemProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const title = props.conversation.title || t('New chat')
+  const currentProjectId = props.conversation.projectId ?? null
+
+  // The menu only offers real moves; "Ungrouped" disappears when unused.
+  const projectTargets = props.projects.map((project) => ({
+    id: project.id as string | null,
+    name: project.name,
+  }))
+  if (currentProjectId !== null) {
+    projectTargets.push({ id: null, name: t('Ungrouped') })
+  }
+  const movableTargets = projectTargets.filter(
+    (target) => target.id !== currentProjectId
+  )
 
   return (
     <div
@@ -107,6 +126,24 @@ export function ConversationListItem(props: ConversationListItemProps) {
             )}
             {props.conversation.archived ? t('Unarchive') : t('Archive')}
           </DropdownMenuItem>
+          {movableTargets.length > 0 ? (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <FolderInputIcon />
+                {t('Move to project')}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className='w-44'>
+                {movableTargets.map((target) => (
+                  <DropdownMenuItem
+                    key={target.id ?? 'ungrouped'}
+                    onClick={() => props.onMoveToProject(target.id)}
+                  >
+                    <span className='truncate'>{target.name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant='destructive' onClick={props.onDelete}>
             <Trash2Icon />

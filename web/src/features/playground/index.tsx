@@ -47,6 +47,7 @@ export function Playground() {
     config,
     parameterEnabled,
     conversations,
+    projects,
     activeConversationId,
     messages,
     isLoadingMessages,
@@ -64,6 +65,10 @@ export function Playground() {
     renameConversation,
     deleteConversation,
     archiveConversation,
+    createProject,
+    renameProject,
+    deleteProject,
+    moveConversationToProject,
     dismissStorageFailure,
   } = usePlaygroundState()
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
@@ -145,11 +150,16 @@ export function Playground() {
     <ConversationPanel
       activeConversationId={activeConversationId}
       conversations={conversations}
-      onArchive={handleArchiveConversation}
       onCreate={handleCreateConversation}
+      onCreateProject={createProject}
       onDelete={handleDeleteConversation}
+      onDeleteProject={deleteProject}
+      onMoveToProject={moveConversationToProject}
+      onArchive={handleArchiveConversation}
       onRename={renameConversation}
+      onRenameProject={renameProject}
       onSelect={handleSelectConversation}
+      projects={projects}
     />
   )
 

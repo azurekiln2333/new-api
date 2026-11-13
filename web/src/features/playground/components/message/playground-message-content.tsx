@@ -40,14 +40,16 @@ import {
 } from '@/components/ai-elements/sources'
 import { cn } from '@/lib/utils'
 
-import { MESSAGE_STATUS } from '../../constants'
+import { MESSAGE_ROLES, MESSAGE_STATUS } from '../../constants'
 import {
+  getAssistantContentClass,
   getMessageAlignmentClass,
   getMessageContentState,
+  getMessageContentStyles,
+  getUserContentClass,
   isErrorMessage,
   type MessageAlignment,
 } from '../../lib'
-import { getMessageContentStyles } from '../../lib/message/message-styles'
 import type { Message } from '../../types'
 import { MessageError } from './message-error'
 import { MessageMetadata } from './message-metadata'
@@ -83,11 +85,17 @@ export function PlaygroundMessageContent({
   const isMessageFinal =
     message.status !== MESSAGE_STATUS.LOADING &&
     message.status !== MESSAGE_STATUS.STREAMING
+  // Assistant blocks keep a reading measure; user bubbles shrink to fit.
+  const contentWidthClass =
+    message.from === MESSAGE_ROLES.USER
+      ? getUserContentClass()
+      : getAssistantContentClass()
 
   return (
     <div
       className={cn(
-        'flex w-full min-w-0 flex-col',
+        'flex min-w-0 flex-col',
+        contentWidthClass,
         getMessageAlignmentClass(alignment)
       )}
     >
@@ -139,7 +147,7 @@ export function PlaygroundMessageContent({
           {isSourceVisible ? (
             <CodeBlock
               code={versionContent}
-              className='my-0 group-[.is-assistant]:w-full group-[.is-assistant]:max-w-[78ch]'
+              className='my-0'
               collapsedLines={24}
               defaultCollapsed={false}
               language='markdown'

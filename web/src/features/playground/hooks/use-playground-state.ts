@@ -23,6 +23,7 @@ import {
   applyMessageStateUpdate,
   completeLegacyMessageMigration,
   createConversationMeta,
+  createProjectMeta,
   deleteConversationMessages,
   getInitialParameterEnabled,
   getInitialPlaygroundConfig,
@@ -30,6 +31,7 @@ import {
   loadConversationMessages,
   nextActiveConversationId,
   normalizeConversationTitle,
+  normalizeProjectName,
   patchConversation,
   saveConfig,
   saveConversationIndex,
@@ -44,6 +46,7 @@ import type {
   PlaygroundConfig,
   ParameterEnabled,
   PlaygroundConversation,
+  PlaygroundProject,
   PlaygroundStorageFailure,
   ModelOption,
   GroupOption,
@@ -74,6 +77,7 @@ export function usePlaygroundState() {
   const [conversations, setConversations] = useState<PlaygroundConversation[]>(
     []
   )
+  const [projects, setProjects] = useState<PlaygroundProject[]>([])
   const [activeConversationId, setActiveConversationId] = useState<
     string | null
   >(null)
@@ -86,6 +90,7 @@ export function usePlaygroundState() {
   const [groups, setGroups] = useState<GroupOption[]>([])
 
   const conversationsRef = useRef<PlaygroundConversation[]>([])
+  const projectsRef = useRef<PlaygroundProject[]>([])
   const activeConversationIdRef = useRef<string | null>(null)
   const messagesRef = useRef<Message[]>([])
   const pendingSavesRef = useRef(new Map<string, Message[]>())
@@ -105,6 +110,11 @@ export function usePlaygroundState() {
     },
     []
   )
+
+  const applyProjects = useCallback((nextProjects: PlaygroundProject[]) => {
+    projectsRef.current = nextProjects
+    setProjects(nextProjects)
+  }, [])
 
   const applyActiveConversation = useCallback((conversationId: string) => {
     activeConversationIdRef.current = conversationId
@@ -164,6 +174,7 @@ export function usePlaygroundState() {
     const indexResult = saveConversationIndex({
       conversations: nextConversations,
       activeId: activeConversationIdRef.current,
+      projects: projectsRef.current,
     })
     reportStorageFailure(indexResult)
 
@@ -201,6 +212,8 @@ export function usePlaygroundState() {
 
       conversationsRef.current = index.conversations
       setConversations(index.conversations)
+      projectsRef.current = index.projects ?? []
+      setProjects(index.projects ?? [])
       const loadedMessages =
         index.pendingMessages ??
         (index.activeId ? (loadConversationMessages(index.activeId) ?? []) : [])
@@ -287,7 +300,11 @@ export function usePlaygroundState() {
     (nextConversations: PlaygroundConversation[], activeId: string | null) => {
       if (pendingSavesRef.current.size > 0) return
       reportStorageFailure(
-        saveConversationIndex({ conversations: nextConversations, activeId })
+        saveConversationIndex({
+          conversations: nextConversations,
+          activeId,
+          projects: projectsRef.current,
+        })
       )
     },
     [reportStorageFailure]
@@ -429,11 +446,105 @@ export function usePlaygroundState() {
     setStorageFailure(null)
   }, [])
 
+  // Projects group chats; deleting a project only ungroups its chats.
+  const createProject = useCallback(
+    (name: string) => {
+      const normalizedName = normalizeProjectName(name)
+      if (!normalizedName) return null
+
+      const project = createProjectMeta(normalizedName)
+      applyProjects([...projectsRef.current, project])
+      persistIndex(conversationsRef.current, activeConversationIdRef.current)
+      return project.id
+    },
+    [applyProjects, persistIndex]
+  )
+
+  const renameProject = useCallback(
+    (projectId: string, name: string) => {
+      const normalizedName = normalizeProjectName(name)
+      if (!normalizedName) return
+
+      let changed = false
+      const nextProjects = projectsRef.current.map((project) => {
+        if (project.id !== projectId || project.name === normalizedName) {
+          return project
+        }
+
+        changed = true
+        return { ...project, name: normalizedName, updatedAt: Date.now() }
+      })
+      if (!changed) return
+
+      applyProjects(nextProjects)
+      persistIndex(conversationsRef.current, activeConversationIdRef.current)
+    },
+    [applyProjects, persistIndex]
+  )
+
+  const deleteProject = useCallback(
+    (projectId: string) => {
+      if (!projectsRef.current.some((project) => project.id === projectId)) {
+        return
+      }
+
+      applyProjects(
+        projectsRef.current.filter((project) => project.id !== projectId)
+      )
+      const nextConversations = conversationsRef.current.map((conversation) => {
+        if (conversation.projectId !== projectId) return conversation
+
+        const ungrouped: PlaygroundConversation = { ...conversation }
+        delete ungrouped.projectId
+        return ungrouped
+      })
+      applyConversations(nextConversations)
+      persistIndex(nextConversations, activeConversationIdRef.current)
+    },
+    [applyConversations, applyProjects, persistIndex]
+  )
+
+  const moveConversationToProject = useCallback(
+    (conversationId: string, projectId: string | null) => {
+      if (
+        projectId &&
+        !projectsRef.current.some((project) => project.id === projectId)
+      ) {
+        return
+      }
+
+      const nextConversations = conversationsRef.current.map((conversation) => {
+        if (conversation.id !== conversationId) return conversation
+        if ((conversation.projectId ?? null) === projectId) return conversation
+
+        const moved: PlaygroundConversation = { ...conversation }
+        if (projectId) {
+          moved.projectId = projectId
+        } else {
+          delete moved.projectId
+        }
+        return moved
+      })
+      if (
+        nextConversations.every(
+          (item, index) => item === conversationsRef.current[index]
+        )
+      ) {
+        return
+      }
+
+      applyConversations(nextConversations)
+      persistIndex(nextConversations, activeConversationIdRef.current)
+    },
+    [applyConversations, persistIndex]
+  )
+
   return {
     // State
     config,
     parameterEnabled,
     conversations,
+    projects,
     activeConversationId,
     messages,
     isLoadingMessages,
@@ -456,6 +567,10 @@ export function usePlaygroundState() {
     renameConversation,
     deleteConversation,
     archiveConversation,
+    createProject,
+    renameProject,
+    deleteProject,
+    moveConversationToProject,
     dismissStorageFailure,
   }
 }

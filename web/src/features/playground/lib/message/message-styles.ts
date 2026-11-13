@@ -22,11 +22,6 @@ For commercial licensing, please contact support@quantumnous.com
  */
 export function getMessageContentStyles() {
   return [
-    // Assistant content reads like a document column; user bubble stays compact.
-    'group-[.is-assistant]:w-full',
-    'group-[.is-assistant]:max-w-[78ch]',
-    'group-[.is-user]:w-fit',
-
     // User bubble: compact surface that stays calm in both light and dark themes.
     'group-[.is-user]:rounded-2xl',
     'group-[.is-user]:rounded-br-md',
@@ -48,17 +43,12 @@ export function getMessageContentStyles() {
     'group-[.is-assistant]:text-foreground/90',
 
     // Preferred readable widths and wrapping
+    'min-w-0',
     'text-[0.95rem]',
     'leading-6',
     'break-words',
     'whitespace-pre-wrap',
     'sm:text-[0.975rem]',
     'sm:leading-7',
-
-    // Cap user bubble width so it does not look like a banner
-    'group-[.is-user]:max-w-[85%]',
-    'sm:group-[.is-user]:max-w-[62ch]',
-    'md:group-[.is-user]:max-w-[68ch]',
-    'lg:group-[.is-user]:max-w-[72ch]',
   ].join(' ')
 }

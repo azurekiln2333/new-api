@@ -155,7 +155,7 @@ export function PlaygroundMessageEditor({
       <CodeBlockEditor
         actions={editorActions}
         ariaLabel={t('Edit')}
-        className='my-0 group-[.is-assistant]:w-full group-[.is-assistant]:max-w-[78ch] group-[.is-user]:max-w-[85%] sm:group-[.is-user]:max-w-[62ch] md:group-[.is-user]:max-w-[68ch] lg:group-[.is-user]:max-w-[72ch]'
+        className='my-0 group-[.is-assistant]:w-full group-[.is-user]:w-full'
         language='markdown'
         onChange={onEditTextChange}
         onKeyDown={handleKeyDown}

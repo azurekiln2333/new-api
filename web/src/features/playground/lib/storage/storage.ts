@@ -24,6 +24,7 @@ import type {
   ParameterEnabled,
   Message,
   PlaygroundConversation,
+  PlaygroundProject,
 } from '../../types'
 import {
   createConversationMeta,
@@ -59,6 +60,7 @@ export type StorageSaveResult = 'ok' | 'quota' | 'error' | 'skipped'
 export type StoredConversationIndex = {
   conversations: PlaygroundConversation[]
   activeId: string | null
+  projects?: PlaygroundProject[]
 }
 
 type LoadedConversationIndex = StoredConversationIndex & {
@@ -560,6 +562,7 @@ export function loadConversationIndex(): LoadedConversationIndex {
       return {
         conversations,
         activeId: pickActiveConversationId(conversations, parsed.data.activeId),
+        projects: parsed.data.projects,
       }
     }
   }

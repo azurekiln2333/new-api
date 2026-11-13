@@ -22,17 +22,22 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
-import type { PlaygroundConversation } from '../../types'
+import type { PlaygroundConversation, PlaygroundProject } from '../../types'
 import { ConversationList } from './conversation-list'
 
 interface ConversationPanelProps {
   conversations: PlaygroundConversation[]
+  projects: PlaygroundProject[]
   activeConversationId: string | null
   onSelect: (conversationId: string) => void
   onCreate: () => void
   onRename: (conversationId: string, title: string) => void
   onDelete: (conversationId: string) => void
   onArchive: (conversationId: string, archived: boolean) => void
+  onMoveToProject: (conversationId: string, projectId: string | null) => void
+  onCreateProject: (name: string) => void
+  onRenameProject: (projectId: string, name: string) => void
+  onDeleteProject: (projectId: string) => void
 }
 
 export function ConversationPanel(props: ConversationPanelProps) {
@@ -62,9 +67,14 @@ export function ConversationPanel(props: ConversationPanelProps) {
           <ConversationList
             activeConversationId={props.activeConversationId}
             conversations={props.conversations}
+            projects={props.projects}
             onArchive={props.onArchive}
+            onCreateProject={props.onCreateProject}
             onDelete={props.onDelete}
+            onDeleteProject={props.onDeleteProject}
+            onMoveToProject={props.onMoveToProject}
             onRename={props.onRename}
+            onRenameProject={props.onRenameProject}
             onSelect={props.onSelect}
           />
         </div>

@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../../constants'
-import type { Message, ParameterEnabled, PlaygroundConfig } from '../../types'
+import type {
+  Message,
+  ParameterEnabled,
+  PlaygroundConfig,
+  PlaygroundConversation,
+  PlaygroundProject,
+} from '../../types'
 import {
   loadConfig,
   loadMessages,
@@ -27,6 +33,58 @@ import {
 export type MessageStateUpdater =
   | Message[]
   | ((previousMessages: Message[]) => Message[])
+
+/**
+ * One section of the chat list: a project with its open chats, or the chats
+ * that have no project. Projects keep their stored order (oldest first).
+ */
+export type ConversationGroup = {
+  /** Project id, or null for the ungrouped section. */
+  projectId: string | null
+  /** Project name, empty for the ungrouped section. */
+  name: string
+  conversations: PlaygroundConversation[]
+}
+
+export function groupConversationsByProject(
+  conversations: PlaygroundConversation[],
+  projects: PlaygroundProject[]
+): ConversationGroup[] {
+  const knownProjectIds = new Set(projects.map((project) => project.id))
+  const byProject = new Map<string, PlaygroundConversation[]>()
+  const ungrouped: PlaygroundConversation[] = []
+
+  for (const conversation of conversations) {
+    // A project deleted outside this session leaves chats in "Ungrouped".
+    if (conversation.projectId && knownProjectIds.has(conversation.projectId)) {
+      const group = byProject.get(conversation.projectId) ?? []
+      group.push(conversation)
+      byProject.set(conversation.projectId, group)
+      continue
+    }
+
+    ungrouped.push(conversation)
+  }
+
+  const groups: ConversationGroup[] = []
+  for (const project of [...projects].sort(
+    (left, right) => left.createdAt - right.createdAt
+  )) {
+    const projectConversations = byProject.get(project.id)
+    if (!projectConversations) continue
+    groups.push({
+      projectId: project.id,
+      name: project.name,
+      conversations: projectConversations,
+    })
+  }
+
+  if (ungrouped.length > 0) {
+    groups.push({ projectId: null, name: '', conversations: ungrouped })
+  }
+
+  return groups
+}
 
 export function getInitialPlaygroundConfig(): PlaygroundConfig {
   return { ...DEFAULT_CONFIG, ...loadConfig() }

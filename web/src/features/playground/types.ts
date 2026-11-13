@@ -160,6 +160,15 @@ export interface PlaygroundConversation {
   updatedAt: number
   archived?: boolean
   titleCustom?: boolean
+  /** Owning project, absent when the chat is not grouped. */
+  projectId?: string
+}
+
+export interface PlaygroundProject {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
 }
 
 /** Local storage failure reported to the UI; null means everything is saved. */

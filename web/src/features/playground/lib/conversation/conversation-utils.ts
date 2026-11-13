@@ -16,8 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Message, PlaygroundConversation } from '../../types'
-import { MAX_CONVERSATION_TITLE_CHARS } from '../storage/storage-schema'
+import type {
+  Message,
+  PlaygroundConversation,
+  PlaygroundProject,
+} from '../../types'
+import {
+  MAX_CONVERSATION_TITLE_CHARS,
+  MAX_PROJECT_NAME_CHARS,
+} from '../storage/storage-schema'
 
 // Metadata refreshes are throttled so streaming does not rewrite the index for
 // every chunk; the title still updates immediately when it actually changes.
@@ -58,6 +65,27 @@ export function createConversationMeta(
   return {
     id: createConversationId(),
     title: '',
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+export function normalizeProjectName(name: string): string {
+  const collapsed = name.replace(TITLE_WHITESPACE_PATTERN, ' ').trim()
+  if (collapsed.length <= MAX_PROJECT_NAME_CHARS) {
+    return collapsed
+  }
+
+  return collapsed.slice(0, MAX_PROJECT_NAME_CHARS).trim()
+}
+
+export function createProjectMeta(
+  name: string,
+  now: number = Date.now()
+): PlaygroundProject {
+  return {
+    id: createConversationId(),
+    name,
     createdAt: now,
     updatedAt: now,
   }

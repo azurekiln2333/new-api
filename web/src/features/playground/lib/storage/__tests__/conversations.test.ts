@@ -180,6 +180,48 @@ describe('playground conversation storage', () => {
     expect(loadConversationMessages('a')).toBeNull()
   })
 
+  test('keeps projects in the conversation index across reloads', () => {
+    saveConversationIndex({
+      conversations: [
+        conversation('a', { projectId: 'p1' }),
+        conversation('b'),
+      ],
+      activeId: 'a',
+      projects: [
+        {
+          id: 'p1',
+          name: 'Research',
+          createdAt: 1_700_000_000_000,
+          updatedAt: 1_700_000_000_000,
+        },
+      ],
+    })
+
+    const index = loadConversationIndex()
+
+    expect(index.projects).toEqual([
+      expect.objectContaining({ id: 'p1', name: 'Research' }),
+    ])
+    expect(index.conversations[0].projectId).toBe('p1')
+    expect(index.conversations[1].projectId).toBeUndefined()
+  })
+
+  test('loads a conversation index written before projects existed', () => {
+    localStorage.setItem(
+      `${STORAGE_KEYS.CONVERSATIONS}:${USER_ID}`,
+      JSON.stringify({
+        version: 1,
+        data: { conversations: [conversation('a')], activeId: 'a' },
+      })
+    )
+
+    const index = loadConversationIndex()
+
+    expect(index.projects).toBeUndefined()
+    expect(index.conversations).toHaveLength(1)
+    expect(loadConversationMessages('a')).toBeNull()
+  })
+
   test('clearing playground data removes every conversation history', () => {
     saveConversationIndex({
       conversations: [conversation('a'), conversation('b')],
