@@ -26,6 +26,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// maxKeyScopeFallbacks bounds how many alternative channels one request tries
+// after the selected channel turns out to have no enabled key serving it.
+const maxKeyScopeFallbacks = 3
+
 type ModelRequest struct {
 	Model string `json:"model"`
 	Group string `json:"group,omitempty"`
@@ -131,9 +135,45 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		// A channel can be eligible for the group and the model yet hold no enabled
+		// key that serves this request (a per-key model scope, or every matching key
+		// bound to another user). Fall back to the next candidate channel instead of
+		// forwarding without a key, which would surface as an upstream auth failure.
+		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		policyState := service.RequestPolicy(c)
+		for attempt := 1; setupErr != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelKeyScopeUnsatisfied && attempt <= maxKeyScopeFallbacks; attempt++ {
+			// The channel stays healthy for other requests, so only this attempt moves on.
+			if !slices.Contains(policyState.FailedChannelIDs, channel.Id) {
+				policyState.FailedChannelIDs = append(policyState.FailedChannelIDs, channel.Id)
+			}
+			next, _, nextErr := service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
+				Ctx:         c,
+				ModelName:   modelRequest.Model,
+				TokenGroup:  common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+				RequestPath: c.Request.URL.Path,
+				Retry:       common.GetPointer(attempt),
+			})
+			if nextErr != nil || next == nil {
+				break
+			}
+			if slices.Contains(policyState.FailedChannelIDs, next.Id) {
+				// Every candidate the routing returned for this tier was unusable too.
+				continue
+			}
+			channel = next
+			setupErr = SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		}
+		if setupErr != nil {
+			abortWithOpenAiMessage(c, setupErr.StatusCode, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{
+				"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+				"Model": modelRequest.Model,
+			}), setupErr.GetErrorCode())
+			return
+		}
 		c.Next()
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
+		// A channel reached through a user-bound key is exclusive to that user, so
+		// it must not enter session affinity that other users could hit.
+		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest && !service.UserBoundChannelRouted(c) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
@@ -668,7 +708,9 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
+	// A key bound to the requesting user belongs to that user alone, and a
+	// per-key model scope decides which key serves this model.
+	key, index, newAPIError := channel.GetNextEnabledKeyFor(modelName, c.GetInt("id"))
 	if newAPIError != nil {
 		return newAPIError
 	}

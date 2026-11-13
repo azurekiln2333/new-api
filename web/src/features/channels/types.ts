@@ -28,6 +28,10 @@ export const channelInfoSchema = z.object({
   multi_key_status_list: z.record(z.string(), z.number()).optional(),
   multi_key_disabled_reason: z.record(z.string(), z.string()).optional(),
   multi_key_disabled_time: z.record(z.string(), z.number()).optional(),
+  // Key index -> models that key may serve. Absent or empty = every channel model.
+  multi_key_models: z.record(z.string(), z.array(z.string())).optional(),
+  // Key index -> user ID that exclusively owns the key. Absent = public key.
+  multi_key_users: z.record(z.string(), z.number()).optional(),
   multi_key_polling_index: z.number().default(0),
   multi_key_mode: z.enum(['random', 'polling']).default('random'),
 })
@@ -116,6 +120,8 @@ export interface ChannelOtherSettings {
   upstream_model_update_ignored_models?: string[]
   upstream_model_update_last_check_time?: number
   upstream_model_update_last_detected_models?: string[]
+  // Group -> models visible to that group. Absent or empty = every channel model.
+  group_models?: Record<string, string[]>
   advanced_custom?: AdvancedCustomConfig
 }
 
@@ -239,6 +245,11 @@ export interface KeyStatus {
   disabled_time?: number
   reason?: string
   key_preview?: string
+  // Models this key may serve; empty = every channel model.
+  models?: string[]
+  // User that exclusively owns this key; absent or 0 = public key.
+  user_id?: number
+  username?: string
 }
 
 export type MultiKeyConfirmAction = {
@@ -316,20 +327,26 @@ export interface CopyChannelParams {
   reset_balance?: boolean
 }
 
+export type MultiKeyManageAction =
+  | 'get_key_status'
+  | 'disable_key'
+  | 'enable_key'
+  | 'enable_all_keys'
+  | 'disable_all_keys'
+  | 'delete_key'
+  | 'delete_disabled_keys'
+  | 'set_key_models'
+  | 'set_key_user'
+
 export interface MultiKeyManageParams {
   channel_id: number
-  action:
-    | 'get_key_status'
-    | 'disable_key'
-    | 'enable_key'
-    | 'enable_all_keys'
-    | 'disable_all_keys'
-    | 'delete_key'
-    | 'delete_disabled_keys'
+  action: MultiKeyManageAction
   key_index?: number
   page?: number
   page_size?: number
   status?: number // 1=enabled, 2=manual_disabled, 3=auto_disabled
+  models?: string[] // set_key_models: empty array clears the restriction
+  user_id?: number // set_key_user: 0 unbinds
 }
 
 export interface BatchDeleteParams {
@@ -381,6 +398,18 @@ export interface ChannelFormData {
   multi_key_mode?: 'single' | 'batch' | 'multi_to_single'
   multi_key_type?: 'random' | 'polling'
   batch_add_set_key_prefix_2_name?: boolean
+}
+
+//
+// Update (PUT /api/channel/) adds a few control fields on top of the channel
+// payload: `key_mode` decides append/replace for multi-key channels and
+// `to_multi_key` converts a single-key channel into a multi-key one, using
+// `multi_key_mode` for the resulting key selection strategy.
+//
+export interface ChannelUpdateRequest extends Partial<Channel> {
+  key_mode?: 'append' | 'replace'
+  to_multi_key?: boolean
+  multi_key_mode?: 'random' | 'polling'
 }
 
 // ============================================================================

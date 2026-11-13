@@ -657,10 +657,24 @@ func GetUserModels(c *gin.Context) {
 			groupsToQuery = []string{group}
 		}
 	}
+	models := service.GetGroupsEnabledModels(groupsToQuery)
+	// Keys bound to the user serve their models outside the group routing, so
+	// they belong in the console model list as well.
+	seen := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		seen[modelName] = struct{}{}
+	}
+	for _, modelName := range model.GetUserBoundModels(id) {
+		if _, duplicate := seen[modelName]; duplicate {
+			continue
+		}
+		seen[modelName] = struct{}{}
+		models = append(models, modelName)
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    service.GetGroupsEnabledModels(groupsToQuery),
+		"data":    models,
 	})
 }
 

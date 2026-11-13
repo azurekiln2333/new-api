@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -70,6 +71,10 @@ type ChannelInfo struct {
 	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
+	// 每个key可用的模型，key index -> models；缺失或空表示该key可用渠道全部模型
+	MultiKeyModels map[int][]string `json:"multi_key_models,omitempty"`
+	// 独占某个key的用户，key index -> user id；缺失或0表示公共key
+	MultiKeyUsers map[int]int `json:"multi_key_users,omitempty"`
 }
 
 type ChannelSortOptions struct {
@@ -210,6 +215,16 @@ func (channel *Channel) GetKeys() []string {
 }
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+	return channel.GetNextEnabledKeyFor("", 0)
+}
+
+// GetNextEnabledKeyFor selects the key that serves one request.
+//
+// modelName is the requested model; an empty name means no model filter.
+// userId > 0 is a forwarded request: keys bound to that user win, and when they
+// cannot serve the request only public keys are eligible. userId <= 0 is an
+// administrative caller (channel test), where every key stays eligible.
+func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
 		return channel.Key, 0, nil
@@ -238,12 +253,28 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		return common.ChannelStatusEnabled
 	}
 
-	// Collect indexes of enabled keys
+	// Collect the enabled keys that may serve this request. Without any key
+	// scope or user binding this is exactly the previous set of enabled keys.
 	enabledIdx := make([]int, 0, len(keys))
+	candidates := make([]int, 0, len(keys))
+	boundIdx := make([]int, 0, len(keys))
 	for i := range keys {
-		if getStatus(i) == common.ChannelStatusEnabled {
-			enabledIdx = append(enabledIdx, i)
+		if getStatus(i) != common.ChannelStatusEnabled {
+			continue
 		}
+		enabledIdx = append(enabledIdx, i)
+		if !channel.keyServesModel(i, modelName) {
+			continue
+		}
+		owner := channel.ChannelInfo.MultiKeyUsers[i]
+		if userId > 0 && owner != 0 && owner != userId {
+			// A key bound to another user is never used for this request.
+			continue
+		}
+		if userId > 0 && owner == userId {
+			boundIdx = append(boundIdx, i)
+		}
+		candidates = append(candidates, i)
 	}
 	// If no specific status list or none enabled, return an explicit error so caller can
 	// properly handle a channel with no available keys (e.g. mark channel disabled).
@@ -251,11 +282,21 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	if len(enabledIdx) == 0 {
 		return "", 0, types.NewError(errors.New("no enabled keys"), types.ErrorCodeChannelNoAvailableKey)
 	}
+	// Enabled keys exist but none may serve this request. The channel itself is
+	// healthy, so this error is retryable elsewhere and must not disable it.
+	if len(candidates) == 0 {
+		return "", 0, types.NewError(errors.New("no enabled key serves this request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable))
+	}
+	if len(boundIdx) > 0 {
+		// A key bound to the requesting user is exclusive to that user, so it is
+		// preferred over the public keys of the same channel.
+		candidates = boundIdx
+	}
 
 	switch channel.ChannelInfo.MultiKeyMode {
 	case constant.MultiKeyModeRandom:
-		// Randomly pick one enabled key
-		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
+		// Randomly pick one eligible key
+		selectedIdx := candidates[rand.Intn(len(candidates))]
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
 		// Use channel-specific lock to ensure thread-safe polling
@@ -275,24 +316,98 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 			}
 		}()
 		// Start from the saved polling index and look for the next enabled key
+		eligible := make(map[int]struct{}, len(candidates))
+		for _, idx := range candidates {
+			eligible[idx] = struct{}{}
+		}
 		start := channelInfo.MultiKeyPollingIndex
 		if start < 0 || start >= len(keys) {
 			start = 0
 		}
 		for i := range keys {
 			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled {
+			if _, ok := eligible[idx]; ok {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
 				return keys[idx], idx, nil
 			}
 		}
-		// Fallback – should not happen, but return first enabled key
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		// Fallback – should not happen, but return the first eligible key
+		return keys[candidates[0]], candidates[0], nil
 	default:
-		// Unknown mode, default to first enabled key (or original key string)
-		return keys[enabledIdx[0]], enabledIdx[0], nil
+		// Unknown mode, default to the first eligible key
+		return keys[candidates[0]], candidates[0], nil
 	}
+}
+
+// keyServesModel reports whether the key at idx may serve modelName. A key
+// without a configured scope serves every model of the channel.
+func (channel *Channel) keyServesModel(idx int, modelName string) bool {
+	if modelName == "" {
+		return true
+	}
+	scope := channel.ChannelInfo.MultiKeyModels[idx]
+	return len(scope) == 0 || slices.Contains(scope, modelName)
+}
+
+// modelsServedByKeys returns the subset of models that at least one of the
+// given keys may serve. A model with no serving key is dropped, so an all-bound
+// channel contributes nothing to the group it no longer serves.
+func (channel *Channel) modelsServedByKeys(keyIndexes []int, models []string) []string {
+	if len(keyIndexes) == 0 {
+		return nil
+	}
+	served := make([]string, 0, len(models))
+	for _, model := range models {
+		for _, idx := range keyIndexes {
+			scope := channel.ChannelInfo.MultiKeyModels[idx]
+			if len(scope) == 0 || slices.Contains(scope, model) {
+				served = append(served, model)
+				break
+			}
+		}
+	}
+	return served
+}
+
+// PublicModels returns the models the channel's unbound keys serve, always
+// intersected with the channel's own model list. Key enable status is ignored
+// because abilities do not change while a key is temporarily disabled.
+func (channel *Channel) PublicModels() []string {
+	models := channel.GetModels()
+	if !channel.ChannelInfo.IsMultiKey {
+		return models
+	}
+	keys := channel.GetKeys()
+	public := make([]int, 0, len(keys))
+	for i := range keys {
+		if channel.ChannelInfo.MultiKeyUsers[i] == 0 {
+			public = append(public, i)
+		}
+	}
+	return channel.modelsServedByKeys(public, models)
+}
+
+// UserBoundModels returns the models served by the keys bound to userId that are
+// enabled, intersected with the channel's own model list. It returns nil when
+// the user has no bound key on this channel.
+func (channel *Channel) UserBoundModels(userId int) []string {
+	if !channel.ChannelInfo.IsMultiKey || userId <= 0 {
+		return nil
+	}
+	keys := channel.GetKeys()
+	statusList := channel.ChannelInfo.MultiKeyStatusList
+	bound := make([]int, 0, len(keys))
+	for i := range keys {
+		if channel.ChannelInfo.MultiKeyUsers[i] != userId {
+			continue
+		}
+		if status, ok := statusList[i]; ok && status != common.ChannelStatusEnabled {
+			continue
+		}
+		bound = append(bound, i)
+	}
+	return channel.modelsServedByKeys(bound, channel.GetModels())
 }
 
 func (channel *Channel) SaveChannelInfo() error {
@@ -563,6 +678,50 @@ func (channel *Channel) Insert() error {
 	return err
 }
 
+// remapKeyScopes re-points the per-key model scope and user binding at the given
+// key list by matching key contents, so appending, replacing or deleting keys
+// never moves a scope or a binding onto a different key. A scope whose key no
+// longer exists is dropped, and a key with no previous counterpart starts with
+// no scope. The status, disabled-reason and disabled-time tables keep their own
+// reindexing next to the operations that change them.
+func (channel *Channel) remapKeyScopes(keys []string) {
+	if len(channel.ChannelInfo.MultiKeyModels) == 0 && len(channel.ChannelInfo.MultiKeyUsers) == 0 {
+		return
+	}
+	stored, err := GetChannelById(channel.Id, true)
+	if err != nil {
+		return
+	}
+	storedIndex := make(map[string]int)
+	for i, key := range stored.GetKeys() {
+		if _, ok := storedIndex[strings.TrimSpace(key)]; !ok {
+			storedIndex[strings.TrimSpace(key)] = i
+		}
+	}
+	models := make(map[int][]string, len(channel.ChannelInfo.MultiKeyModels))
+	users := make(map[int]int, len(channel.ChannelInfo.MultiKeyUsers))
+	for i, key := range keys {
+		oldIndex, ok := storedIndex[strings.TrimSpace(key)]
+		if !ok {
+			continue
+		}
+		if scope, ok := channel.ChannelInfo.MultiKeyModels[oldIndex]; ok {
+			models[i] = scope
+		}
+		if owner, ok := channel.ChannelInfo.MultiKeyUsers[oldIndex]; ok {
+			users[i] = owner
+		}
+	}
+	if len(models) == 0 {
+		models = nil
+	}
+	channel.ChannelInfo.MultiKeyModels = models
+	if len(users) == 0 {
+		users = nil
+	}
+	channel.ChannelInfo.MultiKeyUsers = users
+}
+
 func (channel *Channel) Update() error {
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
@@ -593,6 +752,8 @@ func (channel *Channel) Update() error {
 			}
 		}
 		channel.ChannelInfo.MultiKeySize = len(keys)
+		// The per-key scopes follow the key contents, not the old indexes.
+		channel.remapKeyScopes(keys)
 		// Clean up status data that exceeds the new key count to prevent index out of range
 		if channel.ChannelInfo.MultiKeyStatusList != nil {
 			for idx := range channel.ChannelInfo.MultiKeyStatusList {

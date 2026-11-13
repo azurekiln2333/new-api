@@ -140,6 +140,10 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	// GroupModels limits the channel models each group can see. A missing or
+	// empty entry means every channel model; entries are always intersected
+	// with the channel models, so stale names are ignored.
+	GroupModels map[string][]string `json:"group_models,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

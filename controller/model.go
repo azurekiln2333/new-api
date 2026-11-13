@@ -217,8 +217,8 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 
 func ListModels(c *gin.Context, modelType int) {
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
+	userId := c.GetInt("id")
 	if !acceptUnsetRatioModel {
-		userId := c.GetInt("id")
 		if userId > 0 {
 			userSettings, _ := model.GetUserSetting(userId, false)
 			if userSettings.AcceptUnsetRatioModel {
@@ -249,7 +249,14 @@ func ListModels(c *gin.Context, modelType int) {
 		}
 	}
 	models := service.GetGroupsEnabledModels(ownerGroups)
+	// A key bound to the user serves its models even when the user's group does
+	// not include the channel, so those models belong in the list too.
+	models = append(models, model.GetUserBoundModels(userId)...)
+	seenModels := make(map[string]struct{}, len(models))
 	for _, modelName := range models {
+		if _, duplicate := seenModels[modelName]; duplicate {
+			continue
+		}
 		if modelLimitEnable {
 			matchingName := ratio_setting.RoutingMatchModelName(modelName)
 			if !tokenModelLimit[modelName] && !tokenModelLimit[matchingName] {
@@ -259,6 +266,7 @@ func ListModels(c *gin.Context, modelType int) {
 		if !acceptUnsetRatioModel && !helper.HasModelBillingConfig(modelName) {
 			continue
 		}
+		seenModels[modelName] = struct{}{}
 		userModelNames = append(userModelNames, modelName)
 	}
 

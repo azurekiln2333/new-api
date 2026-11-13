@@ -171,6 +171,67 @@ func TestRetryAvoidsFailedChannelsAcrossPrioritiesAndGroups(t *testing.T) {
 	}
 }
 
+func TestSelectChannelForRequestRoutesBoundUserThenFallsBackOnRetry(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "bound-model"
+	createChannelSelectAutoGroupsChannel(t, db, 4301, "default", modelName)
+
+	boundUserId := 4302
+	boundPriority := int64(100)
+	boundWeight := uint(100)
+	channelInfo := model.ChannelInfo{
+		IsMultiKey:     true,
+		MultiKeySize:   2,
+		MultiKeyUsers:  map[int]int{0: boundUserId},
+		MultiKeyModels: map[int][]string{0: {modelName}},
+	}
+	require.NoError(t, db.Create(&model.Channel{
+		Id:          4302,
+		Type:        constant.ChannelTypeOpenAI,
+		Key:         "bound-key\npublic-key",
+		Status:      common.ChannelStatusEnabled,
+		Name:        "bound-channel",
+		Models:      modelName,
+		Group:       "vip",
+		Priority:    &boundPriority,
+		Weight:      &boundWeight,
+		ChannelInfo: channelInfo,
+	}).Error)
+	model.InitChannelCache()
+
+	require.NotNil(t, model.GetUserBoundChannel(boundUserId, modelName))
+
+	ctx := newRequestAutoGroupsContext()
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	ctx.Set("id", boundUserId)
+	firstAttempt := &RetryParam{Ctx: ctx, TokenGroup: "default", ModelName: modelName, Retry: common.GetPointer(0)}
+	channel, group, selectErr := SelectChannelForRequest(ctx, modelName, firstAttempt)
+	require.Nil(t, selectErr)
+	require.NotNil(t, channel)
+	assert.Equal(t, 4302, channel.Id, "a key bound to the user outranks group routing outside the group")
+	assert.Empty(t, group)
+	assert.True(t, UserBoundChannelRouted(ctx))
+
+	retryCtx := newRequestAutoGroupsContext()
+	common.SetContextKey(retryCtx, constant.ContextKeyUserGroup, "default")
+	retryCtx.Set("id", boundUserId)
+	retryAttempt := &RetryParam{Ctx: retryCtx, TokenGroup: "default", ModelName: modelName, Retry: common.GetPointer(1)}
+	channel, _, selectErr = SelectChannelForRequest(retryCtx, modelName, retryAttempt)
+	require.Nil(t, selectErr)
+	require.NotNil(t, channel)
+	assert.Equal(t, 4301, channel.Id, "retries keep the ordinary group routing")
+	assert.False(t, UserBoundChannelRouted(retryCtx))
+
+	otherCtx := newRequestAutoGroupsContext()
+	common.SetContextKey(otherCtx, constant.ContextKeyUserGroup, "default")
+	otherCtx.Set("id", boundUserId+1)
+	otherAttempt := &RetryParam{Ctx: otherCtx, TokenGroup: "default", ModelName: modelName, Retry: common.GetPointer(0)}
+	channel, _, selectErr = SelectChannelForRequest(otherCtx, modelName, otherAttempt)
+	require.Nil(t, selectErr)
+	require.NotNil(t, channel)
+	assert.Equal(t, 4301, channel.Id, "a bound channel is never chosen for another user")
+}
+
 func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 	const modelName = "auto-groups-runtime-model"

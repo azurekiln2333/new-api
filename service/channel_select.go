@@ -374,6 +374,15 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	var channel *model.Channel
 	var selectGroup string
 	if retry.GetRetry() == 0 && len(RequestPolicy(c).FailedChannelIDs) == 0 {
+		// A key bound to the requesting user routes the first attempt to the
+		// channel carrying it, before session affinity. Retries keep the
+		// ordinary group routing so a failing bound channel can fail over.
+		if bound := model.GetUserBoundChannel(c.GetInt("id"), modelName); bound != nil {
+			if ok, _ := model.ChannelSatisfiesFilters(bound, modelName, constraints.Filters); ok {
+				c.Set(ginKeyUserBoundChannel, true)
+				return bound, "", nil
+			}
+		}
 		if preferredChannelID, found := GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
 			affinityUsable := false
 			preferred, err := model.CacheGetChannel(preferredChannelID)
@@ -447,6 +456,20 @@ func pinnedChannelUnavailable(pin dto.ChannelPin, statusCode int, messageID stri
 		return &ChannelSelectError{StatusCode: http.StatusBadRequest, Code: "origin_task_channel_disabled", Message: "origin_task_channel_disabled"}
 	}
 	return &ChannelSelectError{StatusCode: statusCode, MessageID: messageID}
+}
+
+// ginKeyUserBoundChannel marks the request as routed by a key bound to the
+// requesting user. Such a channel is exclusive to that user, so it must not be
+// written into session affinity that another user could hit.
+const ginKeyUserBoundChannel = "user_bound_channel"
+
+// UserBoundChannelRouted reports whether the current attempt was routed to a
+// channel through a key bound to the requesting user.
+func UserBoundChannelRouted(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	return c.GetBool(ginKeyUserBoundChannel)
 }
 
 // AppendUsedChannel records an attempted channel in the request's channel

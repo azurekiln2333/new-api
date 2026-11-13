@@ -169,7 +169,12 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	group, _ := model.GetUserGroup(testUserID, false)
 	c.Set("group", group)
 
+	// A channel test selects keys as an administrator (user id 0): a key bound to
+	// a user stays eligible, and the tested model decides which key is used. The
+	// test user id is restored right after, since logs and billing still need it.
+	c.Set("id", 0)
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
+	c.Set("id", testUserID)
 	if newAPIError != nil {
 		return testResult{
 			context:     c,

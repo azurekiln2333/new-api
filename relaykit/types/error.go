@@ -52,7 +52,12 @@ const (
 	ErrorCodeGenRelayInfoFailed ErrorCode = "gen_relay_info_failed"
 
 	// channel error
-	ErrorCodeChannelNoAvailableKey        ErrorCode = "channel:no_available_key"
+	ErrorCodeChannelNoAvailableKey ErrorCode = "channel:no_available_key"
+	// ErrorCodeChannelKeyScopeUnsatisfied marks a channel whose enabled keys all
+	// fail the per-key model scope or the user binding of this request. The
+	// channel itself is healthy, so the code deliberately avoids the "channel:"
+	// prefix that IsChannelError turns into automatic disabling.
+	ErrorCodeChannelKeyScopeUnsatisfied   ErrorCode = "channel_key_scope_unsatisfied"
 	ErrorCodeChannelParamOverrideInvalid  ErrorCode = "channel:param_override_invalid"
 	ErrorCodeChannelHeaderOverrideInvalid ErrorCode = "channel:header_override_invalid"
 	ErrorCodeChannelModelMappedError      ErrorCode = "channel:model_mapped_error"

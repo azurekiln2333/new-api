@@ -163,6 +163,23 @@ export function isMultiKeyChannel(channel: Channel): boolean {
   return channel.channel_info?.is_multi_key || false
 }
 
+/**
+ * Absolute http(s) address a channel card may open in a new tab. Only those two
+ * schemes are safe to hand to `window.open`; empty values and placeholders
+ * such as `doubao-coding-plan` resolve to null so no button is rendered.
+ */
+export function resolveChannelAddressUrl(
+  baseUrl: string | null | undefined
+): string | null {
+  const trimmed = typeof baseUrl === 'string' ? baseUrl.trim() : ''
+  if (!/^https?:\/\//i.test(trimmed)) return null
+  try {
+    return new URL(trimmed).hostname ? trimmed : null
+  } catch {
+    return null
+  }
+}
+
 // ============================================================================
 // Key Formatting
 // ============================================================================

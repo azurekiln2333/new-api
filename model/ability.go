@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -223,29 +224,7 @@ func identityFilterRequiresKey(filters []dto.ChannelFilter) bool {
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
-	models_ := strings.Split(channel.Models, ",")
-	groups_ := strings.Split(channel.Group, ",")
-	abilitySet := make(map[string]struct{})
-	abilities := make([]Ability, 0, len(models_))
-	for _, model := range models_ {
-		for _, group := range groups_ {
-			key := group + "|" + model
-			if _, exists := abilitySet[key]; exists {
-				continue
-			}
-			abilitySet[key] = struct{}{}
-			ability := Ability{
-				Group:     group,
-				Model:     model,
-				ChannelId: channel.Id,
-				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
-				Tag:       channel.Tag,
-			}
-			abilities = append(abilities, ability)
-		}
-	}
+	abilities := channel.channelAbilities()
 	if len(abilities) == 0 {
 		return nil
 	}
@@ -261,6 +240,51 @@ func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// filterGroupModels narrows models to the models a group is allowed to see.
+// An empty whitelist keeps every model, so channels without group scoping
+// derive exactly the same model set as before.
+func filterGroupModels(models []string, allowed []string) []string {
+	if len(allowed) == 0 {
+		return models
+	}
+	return lo.Filter(models, func(model string, _ int) bool {
+		return slices.Contains(allowed, model)
+	})
+}
+
+// channelAbilities derives the group × model pairs this channel serves through
+// its public (unbound) keys. Abilities never cover keys bound to a user, because
+// those serve only that user, and they honor each group's model whitelist.
+func (channel *Channel) channelAbilities() []Ability {
+	publicModels := channel.PublicModels()
+	if len(publicModels) == 0 {
+		return nil
+	}
+	groupModels := channel.GetOtherSettings().GroupModels
+	enabled := channel.Status == common.ChannelStatusEnabled
+	abilities := make([]Ability, 0, len(publicModels))
+	abilitySet := make(map[string]struct{})
+	for _, group := range strings.Split(channel.Group, ",") {
+		for _, model := range filterGroupModels(publicModels, groupModels[group]) {
+			key := group + "|" + model
+			if _, exists := abilitySet[key]; exists {
+				continue
+			}
+			abilitySet[key] = struct{}{}
+			abilities = append(abilities, Ability{
+				Group:     group,
+				Model:     model,
+				ChannelId: channel.Id,
+				Enabled:   enabled,
+				Priority:  channel.Priority,
+				Weight:    uint(channel.GetWeight()),
+				Tag:       channel.Tag,
+			})
+		}
+	}
+	return abilities
 }
 
 func (channel *Channel) DeleteAbilities() error {
@@ -295,30 +319,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	}
 
 	// Then add new abilities
-	models_ := channel.GetModels()
-	groups_ := strings.Split(channel.Group, ",")
-	abilitySet := make(map[string]struct{})
-	abilities := make([]Ability, 0, len(models_))
-	for _, model := range models_ {
-		for _, group := range groups_ {
-			key := group + "|" + model
-			if _, exists := abilitySet[key]; exists {
-				continue
-			}
-			abilitySet[key] = struct{}{}
-			ability := Ability{
-				Group:     group,
-				Model:     model,
-				ChannelId: channel.Id,
-				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
-				Tag:       channel.Tag,
-			}
-			abilities = append(abilities, ability)
-		}
-	}
-
+	abilities := channel.channelAbilities()
 	if len(abilities) > 0 {
 		for _, chunk := range lo.Chunk(abilities, 50) {
 			err = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error

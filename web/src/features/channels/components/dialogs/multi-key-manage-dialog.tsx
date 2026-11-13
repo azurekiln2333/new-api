@@ -25,8 +25,10 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
+import { MultiSelect } from '@/components/multi-select'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -53,6 +55,8 @@ import {
   enableAllMultiKeys,
   disableAllMultiKeys,
   deleteDisabledMultiKeys,
+  setMultiKeyModels,
+  setMultiKeyUser,
 } from '../../api'
 import { MULTI_KEY_FILTER_OPTIONS } from '../../constants'
 import {
@@ -61,6 +65,7 @@ import {
   getMultiKeyStatusConfig,
   getMultiKeyConfirmMessage,
   isDestructiveAction,
+  parseModelsList,
 } from '../../lib'
 import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
 import { useChannels } from '../channels-provider'
@@ -102,6 +107,26 @@ export function MultiKeyManageDialog({
   const [confirmAction, setConfirmAction] =
     useState<MultiKeyConfirmAction | null>(null)
   const [isPerformingAction, setIsPerformingAction] = useState(false)
+
+  // Per-key model scope and user binding editors
+  const [modelsEditor, setModelsEditor] = useState<{
+    keyIndex: number
+    models: string[]
+  } | null>(null)
+  const [userEditor, setUserEditor] = useState<{
+    keyIndex: number
+    userId: string
+  } | null>(null)
+  const [unbindKeyIndex, setUnbindKeyIndex] = useState<number | null>(null)
+  const [isSavingAssignment, setIsSavingAssignment] = useState(false)
+
+  const channelModels = parseModelsList(currentRow?.models ?? '')
+  const modelOptions = channelModels.map((model) => ({
+    value: model,
+    label: model,
+  }))
+  const parsedUserId = Number.parseInt(userEditor?.userId ?? '')
+  const userIdValid = Number.isInteger(parsedUserId) && parsedUserId > 0
 
   // Reset and load data when dialog opens
   useEffect(() => {
@@ -212,6 +237,53 @@ export function MultiKeyManageDialog({
       setIsPerformingAction(false)
       setConfirmAction(null)
     }
+  }
+
+  // Restrict a key to a subset of the channel models; an empty list restores
+  // "every channel model". Both actions rebuild abilities on the server.
+  const saveKeyAssignment = async (
+    request: () => Promise<{ success: boolean; message?: string }>
+  ) => {
+    setIsSavingAssignment(true)
+    try {
+      const response = await request()
+      if (response.success) {
+        toast.success(getServerMessage(response) || t('Operation successful'))
+        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+        setModelsEditor(null)
+        setUserEditor(null)
+        await loadKeyStatus()
+      } else {
+        handleServerError(response, t('Operation failed'))
+      }
+    } catch (error: unknown) {
+      handleServerError(error, t('Operation failed'))
+    } finally {
+      setIsSavingAssignment(false)
+    }
+  }
+
+  const saveModels = () => {
+    if (!modelsEditor || !currentRow) return
+    const { keyIndex, models } = modelsEditor
+    void saveKeyAssignment(() =>
+      setMultiKeyModels(currentRow.id, keyIndex, models)
+    )
+  }
+
+  const saveUser = () => {
+    if (!userEditor || !currentRow || !userIdValid) return
+    const { keyIndex } = userEditor
+    void saveKeyAssignment(() =>
+      setMultiKeyUser(currentRow.id, keyIndex, parsedUserId)
+    )
+  }
+
+  const unbindUser = async () => {
+    if (unbindKeyIndex === null || !currentRow) return
+    const keyIndex = unbindKeyIndex
+    setUnbindKeyIndex(null)
+    await saveKeyAssignment(() => setMultiKeyUser(currentRow.id, keyIndex, 0))
   }
 
   const renderStatusBadge = (status: number) => {
@@ -372,6 +444,106 @@ export function MultiKeyManageDialog({
             </p>
           )}
 
+          {/* Per-key model scope, edited in place to keep the key list visible */}
+          {modelsEditor && (
+            <div className='shrink-0 space-y-2 rounded-md border p-3'>
+              <div className='flex items-center justify-between gap-2'>
+                <p className='text-sm font-medium'>
+                  {t('Allowed Models')} #{modelsEditor.keyIndex + 1}
+                </p>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={isSavingAssignment}
+                    onClick={() => setModelsEditor(null)}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                  <Button
+                    size='sm'
+                    disabled={isSavingAssignment || modelOptions.length === 0}
+                    onClick={saveModels}
+                  >
+                    {isSavingAssignment && (
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    )}
+                    {t('Save')}
+                  </Button>
+                </div>
+              </div>
+              <MultiSelect
+                options={modelOptions}
+                selected={modelsEditor.models}
+                onChange={(selected) =>
+                  setModelsEditor((current) =>
+                    current ? { ...current, models: selected } : current
+                  )
+                }
+                placeholder={t('All models')}
+                emptyText={t('No channel models yet')}
+                disabled={isSavingAssignment}
+              />
+              <p className='text-muted-foreground text-xs'>
+                {t('Leave empty to let this key serve every channel model.')}
+              </p>
+            </div>
+          )}
+
+          {/* Per-key owner */}
+          {userEditor && (
+            <div className='shrink-0 space-y-2 rounded-md border p-3'>
+              <div className='flex items-center justify-between gap-2'>
+                <p className='text-sm font-medium'>
+                  {t('Bind User')} #{userEditor.keyIndex + 1}
+                </p>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    disabled={isSavingAssignment}
+                    onClick={() => setUserEditor(null)}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                  <Button
+                    size='sm'
+                    disabled={isSavingAssignment || !userIdValid}
+                    onClick={saveUser}
+                  >
+                    {isSavingAssignment && (
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    )}
+                    {t('Save')}
+                  </Button>
+                </div>
+              </div>
+              <Input
+                type='number'
+                min={1}
+                value={userEditor.userId}
+                onChange={(event) =>
+                  setUserEditor((current) =>
+                    current
+                      ? { ...current, userId: event.target.value }
+                      : current
+                  )
+                }
+                placeholder={t('User ID')}
+                aria-label={t('User ID')}
+                disabled={isSavingAssignment}
+              />
+              <p className='text-muted-foreground text-xs'>
+                {t('User ID must be a positive integer.')}
+              </p>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'The key is used only by this user and leaves the public key pool.'
+                )}
+              </p>
+            </div>
+          )}
+
           {/* Table */}
           <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
             {isLoading && (
@@ -405,6 +577,28 @@ export function MultiKeyManageDialog({
                     cell: (key) => renderStatusBadge(key.status),
                   },
                   {
+                    id: 'models',
+                    header: t('Allowed Models'),
+                    className: 'min-w-[160px]',
+                    cellClassName: 'text-sm',
+                    cell: (key) =>
+                      key.models?.length
+                        ? key.models.join(', ')
+                        : t('All models'),
+                  },
+                  {
+                    id: 'user',
+                    header: t('Bound User'),
+                    className: 'min-w-[140px]',
+                    cellClassName: 'text-sm',
+                    cell: (key) => {
+                      if (!key.user_id) return '-'
+                      return key.username
+                        ? `${key.username} (#${key.user_id})`
+                        : `#${key.user_id}`
+                    },
+                  },
+                  {
                     id: 'reason',
                     header: t('Disabled Reason'),
                     className: 'min-w-[200px]',
@@ -426,8 +620,29 @@ export function MultiKeyManageDialog({
                       <MultiKeyTableRowActions
                         keyIndex={key.index}
                         status={key.status}
-                        canDelete={canEditSensitive}
+                        boundUserId={key.user_id}
+                        canManage={canEditSensitive}
                         onAction={setConfirmAction}
+                        onEditModels={(keyIndex) => {
+                          setUserEditor(null)
+                          setModelsEditor({
+                            keyIndex,
+                            models:
+                              keys.find((item) => item.index === keyIndex)
+                                ?.models ?? [],
+                          })
+                        }}
+                        onEditUser={(keyIndex) => {
+                          setModelsEditor(null)
+                          setUserEditor({
+                            keyIndex,
+                            userId: String(
+                              keys.find((item) => item.index === keyIndex)
+                                ?.user_id ?? ''
+                            ),
+                          })
+                        }}
+                        onUnbind={setUnbindKeyIndex}
                       />
                     ),
                   },
@@ -477,6 +692,16 @@ export function MultiKeyManageDialog({
         destructive={isDestructiveAction(confirmAction)}
         isLoading={isPerformingAction}
         handleConfirm={performAction}
+      />
+
+      {/* Unbind confirmation */}
+      <ConfirmDialog
+        open={unbindKeyIndex !== null}
+        onOpenChange={(open) => !open && setUnbindKeyIndex(null)}
+        title={t('Unbind User')}
+        desc={t('This key returns to the public key pool.')}
+        isLoading={isSavingAssignment}
+        handleConfirm={() => void unbindUser()}
       />
     </>
   )

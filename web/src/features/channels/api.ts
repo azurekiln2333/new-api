@@ -30,6 +30,7 @@ import type {
   ChannelBalanceResponse,
   ChannelOpsResponse,
   ChannelTestResponse,
+  ChannelUpdateRequest,
   CopyChannelParams,
   CopyChannelResponse,
   FetchModelsResponse,
@@ -201,7 +202,7 @@ export async function createChannel(
  */
 export async function updateChannel(
   id: number,
-  data: Partial<Channel>
+  data: ChannelUpdateRequest
 ): Promise<{ success: boolean; message?: string; data?: Channel }> {
   const res = await api.put(
     '/api/channel/',
@@ -539,6 +540,39 @@ export async function deleteDisabledMultiKeys(
     channel_id: channelId,
     action: 'delete_disabled_keys',
   }) as Promise<{ success: boolean; message?: string; data?: number }>
+}
+
+/**
+ * Restrict a key to a subset of the channel models.
+ * An empty list clears the restriction so the key serves every channel model.
+ */
+export async function setMultiKeyModels(
+  channelId: number,
+  keyIndex: number,
+  models: string[]
+): Promise<{ success: boolean; message?: string }> {
+  return manageMultiKeys({
+    channel_id: channelId,
+    action: 'set_key_models',
+    key_index: keyIndex,
+    models,
+  }) as Promise<{ success: boolean; message?: string }>
+}
+
+/**
+ * Bind a key exclusively to a user. User ID 0 unbinds it again.
+ */
+export async function setMultiKeyUser(
+  channelId: number,
+  keyIndex: number,
+  userId: number
+): Promise<{ success: boolean; message?: string }> {
+  return manageMultiKeys({
+    channel_id: channelId,
+    action: 'set_key_user',
+    key_index: keyIndex,
+    user_id: userId,
+  }) as Promise<{ success: boolean; message?: string }>
 }
 
 // ============================================================================

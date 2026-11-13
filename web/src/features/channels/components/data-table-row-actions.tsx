@@ -33,6 +33,7 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  ExternalLink,
 } from 'lucide-react'
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -67,6 +68,7 @@ import {
   handleToggleChannelStatus,
   isChannelEnabled,
   isMultiKeyChannel,
+  resolveChannelAddressUrl,
 } from '../lib'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
@@ -89,6 +91,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
+  const addressUrl = resolveChannelAddressUrl(channel.base_url)
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -140,6 +143,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const handleManageKeys = () => {
     setCurrentRow(channel)
     setOpen('multi-key-manage')
+  }
+
+  // Only absolute http(s) channel addresses can be opened; the helper already
+  // rejects empty values and placeholders such as `doubao-coding-plan`, so the
+  // button is not rendered for them at all.
+  const handleOpenAddress = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    if (!addressUrl) return
+    window.open(addressUrl, '_blank', 'noopener,noreferrer')
   }
 
   const handleToggleStatus = async (
@@ -223,6 +235,24 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             <PlugZap className='size-4' />
           </TooltipTrigger>
           <TooltipContent>{t('Test Channel Connection')}</TooltipContent>
+        </Tooltip>
+      )}
+
+      {layout === 'card' && addressUrl && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={handleOpenAddress}
+                aria-label={t('Open Channel Address')}
+              />
+            }
+          >
+            <ExternalLink className='size-4' />
+          </TooltipTrigger>
+          <TooltipContent>{t('Open Channel Address')}</TooltipContent>
         </Tooltip>
       )}
 

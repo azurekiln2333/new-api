@@ -40,6 +40,7 @@ import {
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from './advanced-custom'
+import { parseGroupModels, pruneGroupModels } from './channel-group-models'
 import { readTaskExtendPluginKeys } from './channel-plugin-extensions'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
@@ -260,6 +261,10 @@ export const channelFormSchema = z
     multi_key_type: z.enum(['random', 'polling']).optional(),
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
     key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
+    // Convert a single-key channel into a multi-key one on save
+    to_multi_key: z.boolean().optional(),
+    // Group -> models visible to that group (stored in settings JSON)
+    group_models: z.record(z.string(), z.array(z.string())).optional(),
     // Channel extra settings (stored in setting JSON, not sent directly)
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
@@ -458,6 +463,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   multi_key_type: 'random',
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
+  to_multi_key: false,
+  group_models: {},
   // Channel extra settings
   force_format: false,
   thinking_to_content: false,
@@ -633,6 +640,8 @@ export function transformChannelToFormDefaults(
     multi_key_type: channel.channel_info.multi_key_mode || 'random',
     batch_add_set_key_prefix_2_name: false,
     key_mode: 'append', // Default to append mode for editing multi-key channels
+    to_multi_key: false,
+    group_models: parseGroupModels(channel.settings),
     // Channel extra settings
     ...extraSettings,
     // Type-specific settings
@@ -853,6 +862,19 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     }
   } else if ('advanced_custom' in settingsObj) {
     delete settingsObj.advanced_custom
+  }
+
+  // Per-group model visibility follows the channel's current groups and models,
+  // so removing either one also drops the stale whitelist entries.
+  const groupModels = pruneGroupModels(
+    formData.group_models ?? {},
+    formData.group,
+    parseModels(formData.models)
+  )
+  if (Object.keys(groupModels).length > 0) {
+    settingsObj.group_models = groupModels
+  } else if ('group_models' in settingsObj) {
+    delete settingsObj.group_models
   }
 
   return JSON.stringify(settingsObj)

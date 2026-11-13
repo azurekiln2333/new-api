@@ -63,6 +63,7 @@ import {
 } from '@/components/drawer-layout'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
+import { GroupBadge } from '@/components/group-badge'
 import { JsonCodeEditor } from '@/components/json-code-editor'
 import { JsonEditor } from '@/components/json-editor'
 import { LearnMore } from '@/components/learn-more'
@@ -593,6 +594,11 @@ export function ChannelMutateDrawer({
   const multiKeyMode = formValues.multi_key_mode
   const multiKeyType = formValues.multi_key_type
   const keyMode = formValues.key_mode
+  // A single-key channel can be converted into a multi-key one on save, which
+  // enables the same key management controls as an existing multi-key channel.
+  const convertsToMultiKey =
+    isEditing && !isMultiKeyChannel && formValues.to_multi_key === true
+  const managesMultiKeys = isMultiKeyChannel || convertsToMultiKey
   const currentGroups = formValues.group
   const currentType = formValues.type
   const baseUrlPlaceholder = [CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG].includes(
@@ -609,6 +615,7 @@ export function ChannelMutateDrawer({
   const currentTaskExtendPluginKeys = formValues.task_extend_plugin_keys
   const currentKey = formValues.key
   const currentModels = formValues.models
+  const currentGroupModels = formValues.group_models ?? {}
   const currentModelMapping = formValues.model_mapping
   const awsKeyType = formValues.aws_key_type
   const vertexKeyType = formValues.vertex_key_type
@@ -1339,6 +1346,21 @@ export function ChannelMutateDrawer({
   const handleModelsChange = useCallback(
     (selected: string[]) => {
       form.setValue('models', selected.join(','))
+    },
+    [form]
+  )
+
+  // Per-group model visibility: an empty selection means "every model visible",
+  // which is stored by omitting the group from `settings.group_models`.
+  const handleGroupModelsChange = useCallback(
+    (group: string, visible: string[]) => {
+      const next = { ...form.getValues('group_models') }
+      if (visible.length === 0) {
+        delete next[group]
+      } else {
+        next[group] = visible
+      }
+      form.setValue('group_models', next, { shouldDirty: true })
     },
     [form]
   )
@@ -3614,6 +3636,57 @@ export function ChannelMutateDrawer({
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name='group_models'
+              render={() => (
+                <FormItem className='mt-4 space-y-3 border-t pt-4'>
+                  <div className='space-y-1'>
+                    <FormLabel>{t('Model Visibility by Group')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Leave empty to make every channel model visible to this group.'
+                      )}
+                    </FormDescription>
+                  </div>
+                  {currentGroups.length === 0 ? (
+                    <p className='text-muted-foreground text-xs'>
+                      {t('Select a group first')}
+                    </p>
+                  ) : (
+                    <div className='space-y-2'>
+                      {currentGroups.map((group) => (
+                        <div
+                          key={group}
+                          className='flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3'
+                        >
+                          <GroupBadge
+                            group={group}
+                            size='sm'
+                            containerClassName='sm:w-40 sm:shrink-0'
+                          />
+                          <div className='min-w-0 flex-1'>
+                            <MultiSelect
+                              options={currentModelsArray.map((model) => ({
+                                value: model,
+                                label: model,
+                              }))}
+                              selected={currentGroupModels[group] ?? []}
+                              onChange={(visible) =>
+                                handleGroupModelsChange(group, visible)
+                              }
+                              placeholder={t('All models')}
+                              emptyText={t('No channel models yet')}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
         </div>
       </ChannelModelsSection>
@@ -4522,7 +4595,7 @@ export function ChannelMutateDrawer({
                         {t(
                           'Enter new key to update, or leave empty to keep current key'
                         )}
-                        {isMultiKeyChannel && (
+                        {managesMultiKeys && (
                           <span className='text-warning mt-1 block'>
                             {keyModeDescription}
                           </span>
@@ -4663,7 +4736,33 @@ export function ChannelMutateDrawer({
                 </div>
               )}
 
-              {isEditing && isMultiKeyChannel && (
+              {isEditing && !isMultiKeyChannel && supportsMultiKeyAddMode && (
+                <FormField
+                  control={form.control}
+                  name='to_multi_key'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='flex flex-col gap-0.5'>
+                        <FormLabel>{t('Convert to Multi-Key')}</FormLabel>
+                        <FormDescription className='text-xs'>
+                          {t(
+                            'Keep the current key as the first key and manage additional keys for this channel.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value === true}
+                          onCheckedChange={(checked) => field.onChange(checked)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {isEditing && managesMultiKeys && (
                 <FormField
                   control={form.control}
                   name='key_mode'
@@ -4716,7 +4815,7 @@ export function ChannelMutateDrawer({
                 />
               )}
 
-              {(isMultiKeyChannel ||
+              {(managesMultiKeys ||
                 (!isEditing && multiKeyMode === 'multi_to_single')) && (
                 <FormField
                   control={form.control}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -24,8 +25,140 @@ var channelsIDM map[int]*Channel                     // all channels include dis
 var channel2advancedCustomConfig map[int]*kitdto.AdvancedCustomConfig
 var channelSyncLock sync.RWMutex
 
+// The user-bound channel index answers "which channels carry a key exclusive to
+// this user". Bindings live in the channel_info JSON column, so the index is
+// derived from channel rows in Go and never from dialect-specific JSON SQL.
+var userBoundChannelsLock sync.RWMutex
+var userBoundChannels map[int][]int // user id -> channel ids carrying a bound key
+var userBoundChannelsBuiltAt int64
+
+// userBoundChannelIndexTTL bounds how stale the index may be when the channel
+// memory cache is off, where nothing refreshes it periodically.
+const userBoundChannelIndexTTL = 10 // seconds
+
+// refreshUserBoundChannelIndex rebuilds the user-bound channel index from the
+// database. It is the source used when the channel memory cache is disabled.
+func refreshUserBoundChannelIndex() {
+	if DB == nil {
+		return
+	}
+	var channels []*Channel
+	if err := DB.Find(&channels).Error; err != nil {
+		common.SysLog(common.LogText("failed to load channels for the user bound index: %v", err))
+		return
+	}
+	rebuildUserBoundChannelIndex(channels)
+}
+
+func rebuildUserBoundChannelIndex(channels []*Channel) {
+	index := make(map[int][]int)
+	for _, channel := range channels {
+		if !channel.ChannelInfo.IsMultiKey {
+			continue
+		}
+		bound := make(map[int]struct{}, len(channel.ChannelInfo.MultiKeyUsers))
+		for _, userId := range channel.ChannelInfo.MultiKeyUsers {
+			if userId <= 0 {
+				continue
+			}
+			if _, duplicate := bound[userId]; duplicate {
+				continue
+			}
+			bound[userId] = struct{}{}
+			index[userId] = append(index[userId], channel.Id)
+		}
+	}
+	for _, ids := range index {
+		slices.Sort(ids)
+	}
+	userBoundChannelsLock.Lock()
+	userBoundChannels = index
+	userBoundChannelsBuiltAt = time.Now().Unix()
+	userBoundChannelsLock.Unlock()
+}
+
+func userBoundChannelIDs(userId int) []int {
+	userBoundChannelsLock.RLock()
+	ids := userBoundChannels[userId]
+	builtAt := userBoundChannelsBuiltAt
+	userBoundChannelsLock.RUnlock()
+	if common.MemoryCacheEnabled || time.Now().Unix()-builtAt < userBoundChannelIndexTTL {
+		return ids
+	}
+	refreshUserBoundChannelIndex()
+	userBoundChannelsLock.RLock()
+	defer userBoundChannelsLock.RUnlock()
+	return userBoundChannels[userId]
+}
+
+// GetUserBoundChannel returns an enabled channel where a key bound to userId can
+// serve modelName, or nil when the request keeps its ordinary group routing.
+// Bound channels outside the user's group are reachable here, and channels whose
+// bound keys cannot serve the model are skipped.
+func GetUserBoundChannel(userId int, modelName string) *Channel {
+	if userId <= 0 || modelName == "" {
+		return nil
+	}
+	candidates := make([]*Channel, 0, 1)
+	for _, id := range userBoundChannelIDs(userId) {
+		channel, err := CacheGetChannel(id)
+		if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		if !slices.Contains(channel.UserBoundModels(userId), modelName) {
+			continue
+		}
+		candidates = append(candidates, channel)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	priority := candidates[0].GetPriority()
+	for _, channel := range candidates {
+		priority = max(priority, channel.GetPriority())
+	}
+	targets := make([]*Channel, 0, len(candidates))
+	weight := 0
+	for _, channel := range candidates {
+		if channel.GetPriority() == priority {
+			targets = append(targets, channel)
+			weight += channel.GetWeight()
+		}
+	}
+	selected, err := chooseWeightedChannel(targets, weight)
+	if err != nil {
+		return nil
+	}
+	return selected
+}
+
+// GetUserBoundModels lists the models userId reaches through keys bound to them,
+// across every enabled channel. The model list adds these to the group models.
+func GetUserBoundModels(userId int) []string {
+	if userId <= 0 {
+		return nil
+	}
+	models := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, id := range userBoundChannelIDs(userId) {
+		channel, err := CacheGetChannel(id)
+		if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		for _, modelName := range channel.UserBoundModels(userId) {
+			if _, duplicate := seen[modelName]; duplicate {
+				continue
+			}
+			seen[modelName] = struct{}{}
+			models = append(models, modelName)
+		}
+	}
+	return models
+}
+
 func InitChannelCache() {
 	if !common.MemoryCacheEnabled {
+		refreshUserBoundChannelIndex()
 		InvalidatePricingCache()
 		rebuildTaskAliasView()
 		return
@@ -56,17 +189,31 @@ func InitChannelCache() {
 		if channel.Status != common.ChannelStatusEnabled {
 			continue // skip disabled channels
 		}
+		// Only public keys serve a whole group; group model whitelists narrow
+		// the set further. Both rules match the abilities generated for the
+		// channel, so the cache and the database agree on what a group reaches.
+		publicModels := channel.PublicModels()
+		if len(publicModels) == 0 {
+			continue
+		}
+		groupModels := channel.GetOtherSettings().GroupModels
 		groups := strings.SplitSeq(channel.Group, ",")
 		for group := range groups {
-			models := channel.GetModels()
+			models := filterGroupModels(publicModels, groupModels[group])
+			if len(models) == 0 {
+				continue
+			}
+			model2channels, exists := newGroup2model2channels[group]
+			if !exists {
+				model2channels = make(map[string][]int)
+				newGroup2model2channels[group] = model2channels
+			}
 			for _, model := range models {
-				if _, ok := newGroup2model2channels[group][model]; !ok {
-					newGroup2model2channels[group][model] = make([]int, 0)
-				}
-				newGroup2model2channels[group][model] = append(newGroup2model2channels[group][model], channel.Id)
+				model2channels[model] = append(model2channels[model], channel.Id)
 			}
 		}
 	}
+	rebuildUserBoundChannelIndex(channels)
 
 	// sort by priority
 	for group, model2channels := range newGroup2model2channels {
@@ -305,10 +452,15 @@ func CacheUpdateChannel(channel *Channel) {
 		}
 	}
 	logger.LogDebug(nil, "CacheUpdateChannel after: id=%d, name=%s, status=%d, polling_index=%d", channel.Id, channel.Name, channel.Status, channel.ChannelInfo.MultiKeyPollingIndex)
+	cached := make([]*Channel, 0, len(channelsIDM))
+	for _, cachedChannel := range channelsIDM {
+		cached = append(cached, cachedChannel)
+	}
 	// Lock ordering: do NOT hold channelSyncLock while calling
 	// InvalidatePricingCache. GetPricing acquires updatePricingLock first and then
 	// channelSyncLock.RLock (via loadPricingAdvancedCustomConfigs); acquiring
 	// updatePricingLock while holding channelSyncLock would be an AB-BA deadlock.
 	channelSyncLock.Unlock()
+	rebuildUserBoundChannelIndex(cached)
 	InvalidatePricingCache()
 }

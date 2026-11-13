@@ -215,6 +215,61 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 	require.Empty(t, decodeUserModelsResponse(t, vipRecorder))
 }
 
+func TestGetUserModelsIncludesUserBoundModels(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1004,
+		Username: "bound-model-user",
+		Password: "password",
+		Group:    "default",
+		AffCode:  "bound-model-user-aff",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1005,
+		Username: "unbound-model-user",
+		Password: "password",
+		Group:    "default",
+		AffCode:  "unbound-model-user-aff",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	// The channel belongs to another group, so the model is reachable only
+	// through the key bound to user 1004.
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     5101,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "bound-key\npublic-key",
+		Status: common.ChannelStatusEnabled,
+		Name:   "bound-vip",
+		Models: "zz-bound-model",
+		Group:  "vip",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:    true,
+			MultiKeySize:  2,
+			MultiKeyUsers: map[int]int{0: 1004},
+			MultiKeyModels: map[int][]string{
+				0: {"zz-bound-model"},
+			},
+		},
+	}).Error)
+	model.InitChannelCache()
+
+	boundRecorder := httptest.NewRecorder()
+	boundContext, _ := gin.CreateTestContext(boundRecorder)
+	boundContext.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/models", nil)
+	boundContext.Set("id", 1004)
+	GetUserModels(boundContext)
+	assert.Equal(t, []string{"zz-bound-model"}, decodeUserModelsResponse(t, boundRecorder))
+
+	unboundRecorder := httptest.NewRecorder()
+	unboundContext, _ := gin.CreateTestContext(unboundRecorder)
+	unboundContext.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/models", nil)
+	unboundContext.Set("id", 1005)
+	GetUserModels(unboundContext)
+	assert.Empty(t, decodeUserModelsResponse(t, unboundRecorder),
+		"another user sees neither the bound model nor the channel behind it")
+}
+
 func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {
 	originalAutoGroups := setting.AutoGroups2JsonString()
 	originalUsableGroups := setting.UserUsableGroups2JSONString()

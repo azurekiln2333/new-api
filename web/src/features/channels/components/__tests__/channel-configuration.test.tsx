@@ -3029,3 +3029,77 @@ test('AWS interface selection is disabled without sensitive channel write permis
     await screen.findByRole('combobox', { name: 'AWS API' })
   ).toBeDisabled()
 })
+
+test('converting a single-key channel to multi-key sends the conversion flags with the appended key', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+
+  await user.click(screen.getByRole('switch', { name: 'Convert to Multi-Key' }))
+  await user.type(screen.getByLabelText('API Key *'), 'second-key')
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(put.mock.calls[0]?.[1]).toMatchObject({
+    id: 42,
+    key: 'second-key',
+    to_multi_key: true,
+    key_mode: 'append',
+    multi_key_mode: 'random',
+  })
+})
+
+test('multi-key channels keep the conversion flags out of the payload', async () => {
+  editingChannel = {
+    ...editingChannel,
+    channel_info: {
+      ...editingChannel.channel_info,
+      is_multi_key: true,
+      multi_key_size: 2,
+    },
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  expect(
+    screen.queryByRole('switch', { name: 'Convert to Multi-Key' })
+  ).toBeNull()
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as Record<string, unknown>
+  expect(payload).toMatchObject({ id: 42, multi_key_mode: 'random' })
+  expect(payload.to_multi_key).toBeUndefined()
+  expect(payload.key_mode).toBeUndefined()
+})
+
+test('saving drops per-group model visibility entries that no longer match the channel models', async () => {
+  editingChannel = {
+    ...editingChannel,
+    settings: JSON.stringify({
+      group_models: { default: ['custom-model', 'stale-model'] },
+    }),
+  }
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  expect(screen.getByText('Model Visibility by Group')).toBeVisible()
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { settings: string }
+  expect(JSON.parse(payload.settings).group_models).toEqual({
+    default: ['custom-model'],
+  })
+})

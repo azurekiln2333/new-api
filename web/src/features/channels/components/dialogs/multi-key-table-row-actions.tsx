@@ -25,21 +25,32 @@ import type { MultiKeyConfirmAction } from '../../types'
 type MultiKeyTableRowActionsProps = {
   keyIndex: number
   status: number
-  canDelete: boolean
+  boundUserId?: number
+  canManage: boolean
   onAction: (action: MultiKeyConfirmAction) => void
+  onEditModels: (keyIndex: number) => void
+  onEditUser: (keyIndex: number) => void
+  onUnbind: (keyIndex: number) => void
 }
 
 export function MultiKeyTableRowActions({
   keyIndex,
   status,
-  canDelete,
+  boundUserId,
+  canManage,
   onAction,
+  onEditModels,
+  onEditUser,
+  onUnbind,
 }: MultiKeyTableRowActionsProps) {
   const { t } = useTranslation()
   const isEnabled = status === 1
+  const noPermissionTitle = canManage
+    ? undefined
+    : t('No permission to perform this action')
 
   return (
-    <div className='flex justify-end gap-2'>
+    <div className='flex flex-wrap justify-end gap-2'>
       {isEnabled ? (
         <Button
           variant='outline'
@@ -58,16 +69,53 @@ export function MultiKeyTableRowActions({
         </Button>
       )}
       <Button
+        variant='outline'
+        size='sm'
+        onClick={() => {
+          if (!canManage) return
+          onEditModels(keyIndex)
+        }}
+        disabled={!canManage}
+        title={noPermissionTitle}
+      >
+        {t('Set Models')}
+      </Button>
+      {boundUserId ? (
+        <Button
+          variant='outline'
+          size='sm'
+          onClick={() => {
+            if (!canManage) return
+            onUnbind(keyIndex)
+          }}
+          disabled={!canManage}
+          title={noPermissionTitle}
+        >
+          {t('Unbind')}
+        </Button>
+      ) : (
+        <Button
+          variant='outline'
+          size='sm'
+          onClick={() => {
+            if (!canManage) return
+            onEditUser(keyIndex)
+          }}
+          disabled={!canManage}
+          title={noPermissionTitle}
+        >
+          {t('Bind User')}
+        </Button>
+      )}
+      <Button
         variant='destructive'
         size='sm'
         onClick={() => {
-          if (!canDelete) return
+          if (!canManage) return
           onAction({ type: 'delete', keyIndex })
         }}
-        disabled={!canDelete}
-        title={
-          canDelete ? undefined : t('No permission to perform this action')
-        }
+        disabled={!canManage}
+        title={noPermissionTitle}
       >
         {t('Delete')}
       </Button>

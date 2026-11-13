@@ -81,11 +81,14 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
             delete payload[field]
           }
         }
+        // Single-key channels become multi-key through `to_multi_key`; the key
+        // update mode and the selection strategy apply to both cases.
+        const convertsToMultiKey =
+          !props.isMultiKeyChannel && data.to_multi_key === true
+        const managesKeys =
+          canEditSensitive && (props.isMultiKeyChannel || convertsToMultiKey)
         const payloadWithKeyMode =
-          canEditSensitive &&
-          props.isMultiKeyChannel &&
-          data.key?.trim() &&
-          data.key_mode
+          managesKeys && data.key?.trim() && data.key_mode
             ? {
                 ...payload,
                 key_mode: data.key_mode,
@@ -94,9 +97,8 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
 
         const response = await updateChannel(props.currentRow.id, {
           ...payloadWithKeyMode,
-          ...(canEditSensitive && props.isMultiKeyChannel
-            ? { multi_key_mode: data.multi_key_type }
-            : {}),
+          ...(managesKeys ? { multi_key_mode: data.multi_key_type } : {}),
+          ...(convertsToMultiKey ? { to_multi_key: true } : {}),
         })
         if (!response.success) {
           throw createServerError(response, t(ERROR_MESSAGES.UPDATE_FAILED))
