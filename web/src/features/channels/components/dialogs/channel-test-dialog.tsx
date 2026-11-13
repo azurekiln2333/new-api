@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   ColumnDef,
   RowSelectionState,
@@ -81,7 +81,7 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { updateChannel } from '../../api'
+import { updateChannel, getMultiKeyStatus } from '../../api'
 import {
   channelsQueryKeys,
   formatResponseTime,
@@ -90,6 +90,7 @@ import {
 import type {
   Channel,
   GetChannelsResponse,
+  KeyStatus,
   SearchChannelsResponse,
 } from '../../types'
 import { useChannels } from '../channels-provider'
@@ -204,6 +205,27 @@ const MODEL_PRICE_ERROR_CODE = 'model_price_error'
 const FAILURE_SUMMARY_MAX_LENGTH = 96
 const BATCH_TEST_CONCURRENCY = 5
 const BATCH_TEST_DELAY_MS = 100
+const AUTO_TEST_KEY = 'auto'
+
+// A key scoped to other models cannot serve this test, so the channel picks the
+// key instead of the named one.
+function keyServesModel(key: KeyStatus, model: string) {
+  return !key.models?.length || key.models.includes(model)
+}
+
+function getKeyDisabledReason(key: KeyStatus) {
+  return key.status === 1 ? undefined : key.reason
+}
+
+// Keeps the key option identifiable without revealing the key: its position, the
+// masked preview the server already returns, and its current status.
+function keyMenuLabel(
+  key: KeyStatus,
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  const status = key.status === 1 ? t('Enabled') : t('Disabled')
+  return `${key.index + 1} · ${key.key_preview || '-'} · ${status}`
+}
 
 type FailureStatusDisplay = {
   summary: string
@@ -324,6 +346,7 @@ function ChannelTestDialogContent({
   > | null>(null)
   const [endpointType, setEndpointType] = useState('auto')
   const [isStreamTest, setIsStreamTest] = useState(false)
+  const [selectedKeyIndex, setSelectedKeyIndex] = useState<number | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
@@ -352,6 +375,42 @@ function ChannelTestDialogContent({
         label: t(option.label),
       })),
     [t]
+  )
+
+  // Only a multi-key channel has keys to choose from; the key list is already
+  // served by the existing multi-key management endpoint.
+  const isMultiKeyChannel =
+    currentRow.channel_info.is_multi_key &&
+    currentRow.channel_info.multi_key_size > 1
+  const keyStatusQuery = useQuery({
+    queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId),
+    queryFn: () =>
+      getMultiKeyStatus(
+        currentChannelId,
+        1,
+        currentRow.channel_info.multi_key_size
+      ),
+    enabled: open && isMultiKeyChannel,
+    staleTime: 30_000,
+  })
+  const channelKeys = useMemo(
+    () => (isMultiKeyChannel ? (keyStatusQuery.data?.data?.keys ?? []) : []),
+    [isMultiKeyChannel, keyStatusQuery.data]
+  )
+  const selectedKey =
+    selectedKeyIndex === null
+      ? undefined
+      : channelKeys.find((key) => key.index === selectedKeyIndex)
+  const listedKeyCount = keyStatusQuery.data?.data?.total ?? channelKeys.length
+  const keySelectItems = useMemo(
+    () => [
+      { value: AUTO_TEST_KEY, label: t('Auto (by tested model)') },
+      ...channelKeys.map((key) => ({
+        value: String(key.index),
+        label: keyMenuLabel(key, t),
+      })),
+    ],
+    [channelKeys, t]
   )
 
   const dismissBatchProgressToast = useCallback(() => {
@@ -391,6 +450,7 @@ function ChannelTestDialogContent({
     batchStopRequestedRef.current = true
     setEndpointType('auto')
     setIsStreamTest(false)
+    setSelectedKeyIndex(null)
     setSearchTerm('')
     setTestResults({})
     setRowSelection({})
@@ -415,6 +475,11 @@ function ChannelTestDialogContent({
     if (STREAM_INCOMPATIBLE_ENDPOINTS.has(value)) {
       setIsStreamTest(false)
     }
+  }, [])
+
+  const handleKeyChange = useCallback((value: string | null) => {
+    if (value === null) return
+    setSelectedKeyIndex(value === AUTO_TEST_KEY ? null : Number(value))
   }, [])
 
   const handleSearchTermChange = useCallback(
@@ -543,6 +608,12 @@ function ChannelTestDialogContent({
       markModelTesting(model, true)
       updateTestResult(model, { status: 'testing' })
       let finalResult: TestResult | undefined
+      // The result belongs to the selected key when that key serves this model.
+      // Otherwise the channel picks the key, as it always has.
+      const testKeyIndex =
+        selectedKey && keyServesModel(selectedKey, model)
+          ? (selectedKeyIndex ?? undefined)
+          : undefined
 
       try {
         await handleTestChannel(
@@ -552,6 +623,7 @@ function ChannelTestDialogContent({
             testModel: model,
             endpointType: endpointType === 'auto' ? undefined : endpointType,
             stream: effectiveStreamTest || undefined,
+            keyIndex: testKeyIndex,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -588,6 +660,8 @@ function ChannelTestDialogContent({
     },
     [
       currentRow,
+      selectedKey,
+      selectedKeyIndex,
       endpointType,
       effectiveStreamTest,
       markModelTesting,
@@ -1013,6 +1087,40 @@ function ChannelTestDialogContent({
                 {t('Enable streaming mode for the test request.')}
               </p>
             </div>
+            {isMultiKeyChannel && (
+              <div className='grid gap-2 md:col-span-2'>
+                <Label htmlFor='test-key'>{t('Tested key')}</Label>
+                <Combobox
+                  options={keySelectItems}
+                  value={
+                    selectedKeyIndex === null
+                      ? AUTO_TEST_KEY
+                      : String(selectedKeyIndex)
+                  }
+                  onValueChange={handleKeyChange}
+                  id='test-key'
+                  className='w-full min-w-0'
+                  placeholder={t('Auto (by tested model)')}
+                />
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Choose which key this test uses. Auto tests the key that serves the tested model.'
+                  )}
+                </p>
+                {listedKeyCount > channelKeys.length && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Only the first {{count}} keys are listed.', {
+                      count: channelKeys.length,
+                    })}
+                  </p>
+                )}
+                {selectedKey && getKeyDisabledReason(selectedKey) && (
+                  <p className='text-muted-foreground text-xs wrap-break-word'>
+                    {t('Disabled Reason')}: {getKeyDisabledReason(selectedKey)}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className='space-y-3 max-sm:has-[div[role="toolbar"]]:pb-16'>

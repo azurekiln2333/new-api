@@ -174,6 +174,16 @@ test('each key row shows its allowed models and bound user', async () => {
   expect(screen.getByText('All models')).toBeVisible()
 })
 
+test('each key row shows the masked key preview next to its index', async () => {
+  await renderDialog([
+    keyStatus({ index: 0, key_preview: 'sk-…mnop' }),
+    keyStatus({ index: 1 }),
+  ])
+
+  expect(screen.getByText('1. sk-…mnop')).toBeVisible()
+  expect(screen.getByText('2. -')).toBeVisible()
+})
+
 test('setting models on a key posts the key index with the selected models', async () => {
   const post = await renderDialog([keyStatus({ index: 0 })])
   const user = userEvent.setup()

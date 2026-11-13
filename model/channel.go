@@ -263,7 +263,7 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (stri
 			continue
 		}
 		enabledIdx = append(enabledIdx, i)
-		if !channel.keyServesModel(i, modelName) {
+		if !channel.KeyServesModel(i, modelName) {
 			continue
 		}
 		owner := channel.ChannelInfo.MultiKeyUsers[i]
@@ -340,9 +340,9 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (stri
 	}
 }
 
-// keyServesModel reports whether the key at idx may serve modelName. A key
+// KeyServesModel reports whether the key at idx may serve modelName. A key
 // without a configured scope serves every model of the channel.
-func (channel *Channel) keyServesModel(idx int, modelName string) bool {
+func (channel *Channel) KeyServesModel(idx int, modelName string) bool {
 	if modelName == "" {
 		return true
 	}

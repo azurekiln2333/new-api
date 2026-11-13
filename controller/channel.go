@@ -1705,10 +1705,44 @@ type KeyStatus struct {
 	Status       int      `json:"status"` // 1: enabled, 2: disabled
 	DisabledTime int64    `json:"disabled_time,omitempty"`
 	Reason       string   `json:"reason,omitempty"`
-	KeyPreview   string   `json:"key_preview"`        // first 10 chars of key for identification
+	KeyPreview   string   `json:"key_preview"`        // masked key for identification; never the full key
 	Models       []string `json:"models,omitempty"`   // models this key may serve; empty means every channel model
 	UserId       int      `json:"user_id,omitempty"`  // user this key is bound to; 0 means a public key
 	Username     string   `json:"username,omitempty"` // display name of the bound user
+}
+
+// maskKeyPreview renders just enough of a key to tell it apart from the other
+// keys of the same channel. A plain key keeps its first three and last four
+// characters, or only its last two when it is shorter than twelve, and never
+// shows more than eight characters in total. A JSON key such as a Vertex AI
+// service account shows no key characters at all: only one of its non-secret
+// identifiers, falling back to the plain rule when it carries none. The result
+// is only returned to the caller as key_preview, never logged or audited.
+func maskKeyPreview(key string) string {
+	trimmed := strings.TrimSpace(key)
+	if strings.HasPrefix(trimmed, "{") {
+		var fields map[string]any
+		if err := common.UnmarshalJsonStr(trimmed, &fields); err == nil {
+			for _, field := range []string{"client_email", "project_id"} {
+				if value, ok := fields[field].(string); ok && strings.TrimSpace(value) != "" {
+					return truncateRunes(strings.TrimSpace(value), 40)
+				}
+			}
+		}
+	}
+	runes := []rune(trimmed)
+	if len(runes) < 12 {
+		return "…" + string(runes[max(0, len(runes)-2):])
+	}
+	return string(runes[:3]) + "…" + string(runes[len(runes)-4:])
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "…"
 }
 
 // ManageMultiKeys handles multi-key management operations
@@ -1799,18 +1833,12 @@ func ManageMultiKeys(c *gin.Context) {
 				}
 			}
 
-			// Create key preview (first 10 chars)
-			keyPreview := key
-			if len(key) > 10 {
-				keyPreview = key[:10] + "..."
-			}
-
 			allKeyStatusList = append(allKeyStatusList, KeyStatus{
 				Index:        i,
 				Status:       status,
 				DisabledTime: disabledTime,
 				Reason:       reason,
-				KeyPreview:   keyPreview,
+				KeyPreview:   maskKeyPreview(key),
 				Models:       channel.ChannelInfo.MultiKeyModels[i],
 				UserId:       channel.ChannelInfo.MultiKeyUsers[i],
 			})

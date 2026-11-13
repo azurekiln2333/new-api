@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -488,4 +490,156 @@ func TestDistributeRoutesBoundKeyAndFallsBackWhenNoKeyServes(t *testing.T) {
 	gapChannel, err := model.GetChannelById(9402, true)
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusEnabled, gapChannel.Status, "a channel without an eligible key is not disabled")
+}
+
+// TestMultiKeyStatusKeyPreview pins the masked preview of every key: a short key
+// keeps only its tail, a plain key keeps three and four characters, a JSON key
+// shows a non-secret identifier, and the response never carries a full key.
+func TestMultiKeyStatusKeyPreview(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	const (
+		shortKey   = "sk1234567" // 9 characters, below the 12 character threshold
+		plainKey   = "sk-abcdefghijklmnop"
+		jsonKey    = `{"type":"service_account","client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----secret"}`
+		projectKey = `{"type":"service_account","project_id":"vertex-project","private_key":"secret"}`
+	)
+	channel := &model.Channel{Name: "multi-key-preview", Type: constant.ChannelTypeVertexAi, Other: `{"default":"us-central1"}`,
+		Models: "model-a", Group: "default",
+		Key:         strings.Join([]string{shortKey, plainKey, jsonKey, projectKey}, "\n"),
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 4, MultiKeyMode: constant.MultiKeyModeRandom},
+	}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+
+	recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "get_key_status", Page: 1, PageSize: 50})
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Keys []KeyStatus `json:"keys"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+	require.True(t, result.Success, recorder.Body.String())
+	require.Len(t, result.Data.Keys, 4)
+	for i, want := range []string{"…67", "sk-…mnop", "svc@example.iam.gserviceaccount.com", "vertex-project"} {
+		assert.Equal(t, want, result.Data.Keys[i].KeyPreview, "key #%d", i+1)
+		assert.LessOrEqual(t, len([]rune(want)), 40)
+	}
+	body := recorder.Body.String()
+	for _, fullKey := range []string{shortKey, plainKey, jsonKey, projectKey, "private_key"} {
+		assert.NotContains(t, body, fullKey, "the response must not carry the full key")
+	}
+}
+
+// TestChannelTestKeySelection pins how a channel test chooses its key: an
+// unnamed test keeps the automatic selection, a named key is validated against
+// the channel and the tested model, and a failure is attributed to the tested
+// key only, so it never disables the channel or another key.
+func TestChannelTestKeySelection(t *testing.T) {
+	previousAutoDisable := common.AutomaticDisableChannelEnabled
+	t.Cleanup(func() { common.AutomaticDisableChannelEnabled = previousAutoDisable })
+	common.AutomaticDisableChannelEnabled = true
+
+	multiKey := &model.Channel{Id: 11, Type: constant.ChannelTypeOpenAI, Key: "sk-first\nsk-second", Models: "model-a,model-b", Group: "default",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyModels:     map[int][]string{1: {"model-b"}},
+			MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled}}}
+	singleKey := &model.Channel{Id: 12, Type: constant.ChannelTypeOpenAI, Key: "sk-single", Models: "model-a", Group: "default"}
+
+	t.Run("no key index keeps the automatic selection", func(t *testing.T) {
+		require.NoError(t, checkChannelTestKey(multiKey, -1, "model-a"))
+		require.NoError(t, checkChannelTestKey(singleKey, -1, "model-a"))
+	})
+
+	t.Run("a covered key is accepted even while it is disabled", func(t *testing.T) {
+		// Key #2 is disabled and scoped to model-b; an operator may still test it
+		// to learn whether it recovered.
+		require.NoError(t, checkChannelTestKey(multiKey, 1, "model-b"))
+	})
+
+	t.Run("an unknown or out-of-range key is rejected", func(t *testing.T) {
+		for _, keyIndex := range []int{2, 9} {
+			err := checkChannelTestKey(multiKey, keyIndex, "model-a")
+			var keyErr *channelTestKeyError
+			require.ErrorAs(t, err, &keyErr)
+			assert.Equal(t, types.ErrorCodeInvalidRequest, keyErr.code)
+			assert.Contains(t, keyErr.Error(), "does not exist")
+		}
+		err := checkChannelTestKey(singleKey, 0, "model-a")
+		var keyErr *channelTestKeyError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, types.ErrorCodeInvalidRequest, keyErr.code)
+		assert.Contains(t, keyErr.Error(), "multi-key mode")
+	})
+
+	t.Run("a key outside its model scope is rejected with the model named", func(t *testing.T) {
+		err := checkChannelTestKey(multiKey, 1, "model-a")
+		var keyErr *channelTestKeyError
+		require.ErrorAs(t, err, &keyErr)
+		assert.Equal(t, types.ErrorCodeChannelKeyScopeUnsatisfied, keyErr.code)
+		assert.Contains(t, keyErr.Error(), "key #2")
+		assert.Contains(t, keyErr.Error(), "model-a")
+	})
+
+	t.Run("a rejected test never reaches the relay or the disable path", func(t *testing.T) {
+		result := testChannel(t.Context(), multiKey, 0, "model-a", "", false, 9)
+		var keyErr *channelTestKeyError
+		require.ErrorAs(t, result.localErr, &keyErr)
+		require.Nil(t, result.newAPIError, "a rejected key is reported as a local failure only")
+		require.Equal(t, 9, result.keyIndex)
+	})
+
+	t.Run("a failure is attributed to the key that served the test", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		require.Nil(t, middleware.SetupChannelTestContext(ctx, multiKey, "model-b", "sk-second", 1))
+		assert.Equal(t, 1, servedTestKeyIndex(ctx, multiKey))
+
+		require.Nil(t, middleware.SetupChannelTestContext(ctx, singleKey, "model-a", "sk-single", 0))
+		assert.Equal(t, -1, servedTestKeyIndex(ctx, singleKey), "a single-key channel has no key index")
+	})
+}
+
+// TestChannelTestNamedKeyFailureOnlyDisablesThatKey proves the consequence of a
+// named-key test: the tested key can be auto-disabled, while the channel and the
+// other keys stay usable.
+func TestChannelTestNamedKeyFailureOnlyDisablesThatKey(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	setupChannelCreateTest(t)
+	previousAutoDisable := common.AutomaticDisableChannelEnabled
+	t.Cleanup(func() { common.AutomaticDisableChannelEnabled = previousAutoDisable })
+	common.AutomaticDisableChannelEnabled = true
+
+	autoBan := 1
+	channel := &model.Channel{Name: "multi-key-test-failure", Type: constant.ChannelTypeOpenAI, Key: "sk-first\nsk-second",
+		Models: "model-a", Group: "default", Status: common.ChannelStatusEnabled, AutoBan: &autoBan,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom}}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.Nil(t, middleware.SetupChannelTestContext(ctx, channel, "model-a", "sk-first", 0))
+	usingKey := common.GetContextKeyString(ctx, constant.ContextKeyChannelKey)
+	require.Equal(t, "sk-first", usingKey)
+
+	processChannelError(ctx, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, usingKey, channel.GetAutoBan()),
+		types.NewError(fmt.Errorf("upstream rejected the key"), types.ErrorCodeChannelInvalidKey), nil)
+
+	// The disable runs in the background; the notice path also has to finish.
+	var loaded *model.Channel
+	require.Eventually(t, func() bool {
+		var err error
+		loaded, err = model.GetChannelById(channel.Id, true)
+		return err == nil && len(loaded.ChannelInfo.MultiKeyStatusList) == 1
+	}, 5*time.Second, 20*time.Millisecond)
+	assert.Equal(t, common.ChannelStatusEnabled, loaded.Status, "the channel stays enabled while another key works")
+	assert.Equal(t, map[int]int{0: common.ChannelStatusAutoDisabled}, loaded.ChannelInfo.MultiKeyStatusList,
+		"only the tested key is disabled")
+
+	// The healthy key still serves requests, and the channel is not lost.
+	key, index, apiErr := loaded.GetNextEnabledKeyFor("model-a", 0)
+	require.Nil(t, apiErr)
+	assert.Equal(t, 1, index)
+	assert.Equal(t, "sk-second", key)
 }

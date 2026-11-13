@@ -92,5 +92,17 @@ export function useChannelKeyDisclosure(
 
   const channelKey =
     open && disclosedKey?.channelId === channelId ? disclosedKey.key : null
-  return { channelKey, isChannelKeyLoading, handleRevealKey, verification }
+  // A multi-key channel stores its keys as one newline-separated list, so the
+  // reveal has to show them one per line; the order is the key index order used
+  // by the multi-key management list.
+  const channelKeyLines = channelKey
+    ? channelKey.split('\n').filter((line) => line.trim() !== '')
+    : []
+  return {
+    channelKey,
+    channelKeyLines,
+    isChannelKeyLoading,
+    handleRevealKey,
+    verification,
+  }
 }

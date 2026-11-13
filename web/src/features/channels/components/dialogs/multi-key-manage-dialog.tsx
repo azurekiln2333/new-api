@@ -566,9 +566,10 @@ export function MultiKeyManageDialog({
                   {
                     id: 'index',
                     header: t('Index'),
-                    className: 'w-20',
-                    cellClassName: 'font-mono text-sm',
-                    cell: (key) => `#${key.index + 1}`,
+                    className: 'w-40',
+                    cellClassName: 'font-mono text-xs sm:text-sm',
+                    cell: (key) =>
+                      `${key.index + 1}. ${key.key_preview || '-'}`,
                   },
                   {
                     id: 'status',

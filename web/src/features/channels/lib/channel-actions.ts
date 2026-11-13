@@ -56,6 +56,8 @@ export const channelsQueryKeys = {
     [...channelsQueryKeys.lists(), params] as const,
   details: () => [...channelsQueryKeys.all, 'detail'] as const,
   detail: (id: number) => [...channelsQueryKeys.details(), id] as const,
+  multiKeyStatus: (id: number) =>
+    [...channelsQueryKeys.detail(id), 'multi_key_status'] as const,
 }
 
 function getChannelTestResponseTime(
@@ -277,6 +279,7 @@ export async function handleTestChannel(
     testModel?: string
     endpointType?: string
     stream?: boolean
+    keyIndex?: number
     silent?: boolean
   },
   onTestComplete?: (
@@ -286,14 +289,18 @@ export async function handleTestChannel(
     errorCode?: string
   ) => void
 ): Promise<void> {
+  const hasKeyIndex =
+    typeof options?.keyIndex === 'number' && options.keyIndex >= 0
   const payload =
-    options && (options.testModel || options.endpointType || options.stream)
+    options &&
+    (options.testModel || options.endpointType || options.stream || hasKeyIndex)
       ? {
           ...(options.testModel ? { model: options.testModel } : {}),
           ...(options.endpointType
             ? { endpoint_type: options.endpointType }
             : {}),
           ...(options.stream ? { stream: true } : {}),
+          ...(hasKeyIndex ? { key_index: options.keyIndex } : {}),
         }
       : undefined
 

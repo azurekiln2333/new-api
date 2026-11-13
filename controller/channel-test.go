@@ -40,6 +40,22 @@ type testResult struct {
 	context     *gin.Context
 	localErr    error
 	newAPIError *types.NewAPIError
+	// keyIndex is the key of a multi-key channel that served this test, or -1
+	// when it is unknown. It decides which key a failed test may disable.
+	keyIndex int
+}
+
+// channelTestKeyError marks a key named for a channel test that the channel or
+// the tested model cannot accept. Such a test only reports the reason: the
+// channel and its keys stay untouched and the automatic disable path is not
+// entered.
+type channelTestKeyError struct {
+	message string
+	code    types.ErrorCode
+}
+
+func (err *channelTestKeyError) Error() string {
+	return err.message
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) string {
@@ -70,7 +86,55 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 	return rootUser.Id, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+// checkChannelTestKey validates a key named for a channel test before any relay
+// request is built: a named key must exist and be allowed to serve the tested
+// model. A key disabled by automatic health checks stays eligible, so an
+// operator can confirm whether it works again.
+func checkChannelTestKey(channel *model.Channel, keyIndex int, testModel string) error {
+	if keyIndex < 0 {
+		return nil
+	}
+	if !channel.ChannelInfo.IsMultiKey {
+		return &channelTestKeyError{
+			message: "this channel is not in multi-key mode, so it has no key to select",
+			code:    types.ErrorCodeInvalidRequest,
+		}
+	}
+	if keyIndex >= len(channel.GetKeys()) {
+		return &channelTestKeyError{
+			message: fmt.Sprintf("key #%d does not exist: the channel has %d keys", keyIndex+1, len(channel.GetKeys())),
+			code:    types.ErrorCodeInvalidRequest,
+		}
+	}
+	if !channel.KeyServesModel(keyIndex, testModel) {
+		return &channelTestKeyError{
+			message: fmt.Sprintf("key #%d is not allowed to serve model %q", keyIndex+1, testModel),
+			code:    types.ErrorCodeChannelKeyScopeUnsatisfied,
+		}
+	}
+	return nil
+}
+
+// servedTestKeyIndex reports which key of the channel serves the test request,
+// so a failure is attributed to that key rather than to the channel. It returns
+// -1 when the key is unknown, including for a single-key channel.
+func servedTestKeyIndex(c *gin.Context, channel *model.Channel) int {
+	if !channel.ChannelInfo.IsMultiKey {
+		return -1
+	}
+	key := common.GetContextKeyString(c, constant.ContextKeyChannelKey)
+	index := common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+	keys := channel.GetKeys()
+	if index >= 0 && index < len(keys) && keys[index] == key {
+		return index
+	}
+	return -1
+}
+
+// testChannel runs one channel test. A keyIndex of -1 lets the channel pick the
+// key for the tested model, which is the behavior of every caller that does not
+// name one; a keyIndex >= 0 tests exactly that key.
+func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, keyIndex int) testResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -107,6 +171,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				testModel = "gpt-4o-mini"
 			}
 		}
+	}
+
+	if err := checkChannelTestKey(channel, keyIndex, testModel); err != nil {
+		return testResult{localErr: err, keyIndex: keyIndex}
 	}
 
 	endpointType = normalizeChannelTestEndpoint(channel, endpointType)
@@ -173,16 +241,40 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	// a user stays eligible, and the tested model decides which key is used. The
 	// test user id is restored right after, since logs and billing still need it.
 	c.Set("id", 0)
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
+	var newAPIError *types.NewAPIError
+	if keyIndex >= 0 && channel.ChannelInfo.IsMultiKey {
+		// Test exactly the requested key, so an operator can verify one key on its
+		// own even when the channel would prefer another one.
+		newAPIError = middleware.SetupChannelTestContext(c, channel, testModel, channel.GetKeys()[keyIndex], keyIndex)
+	} else {
+		newAPIError = middleware.SetupContextForSelectedChannel(c, channel, testModel)
+	}
 	c.Set("id", testUserID)
 	if newAPIError != nil {
+		index := keyIndex
+		if index < 0 {
+			index = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+		}
 		return testResult{
 			context:     c,
 			localErr:    newAPIError,
 			newAPIError: newAPIError,
+			keyIndex:    index,
 		}
 	}
+	if keyIndex < 0 {
+		// Attribute a later failure to the key that actually served the request.
+		keyIndex = servedTestKeyIndex(c, channel)
+	}
 
+	result := runChannelTestRequest(c, w, channel, testUserID, testModel, endpointType, isStream, tik)
+	result.keyIndex = keyIndex
+	return result
+}
+
+// runChannelTestRequest sends the synthetic test request through the already
+// selected channel and key and reports the outcome.
+func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, tik time.Time) testResult {
 	// Determine relay format based on endpoint type or request path
 	var relayFormat types.RelayFormat
 	if endpointType != "" {
@@ -854,6 +946,14 @@ func TestChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	keyIndex := -1
+	if raw := c.Query("key_index"); raw != "" {
+		keyIndex, err = strconv.Atoi(raw)
+		if err != nil || keyIndex < 0 {
+			common.ApiError(c, errors.New("key_index must be a non-negative integer"))
+			return
+		}
+	}
 	channel, err := model.CacheGetChannel(channelId)
 	if err != nil {
 		channel, err = model.GetChannelById(channelId, true)
@@ -880,7 +980,7 @@ func TestChannel(c *gin.Context) {
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
-	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
+	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, keyIndex)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -890,12 +990,20 @@ func TestChannel(c *gin.Context) {
 		if result.newAPIError != nil {
 			resp["error_code"] = result.newAPIError.GetErrorCode()
 		}
+		var keyErr *channelTestKeyError
+		if errors.As(result.localErr, &keyErr) {
+			resp["error_code"] = keyErr.code
+		}
 		c.JSON(http.StatusOK, resp)
 		return
 	}
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
-	go channel.UpdateResponseTime(milliseconds)
+	// A test of one named key acts on that key only, so it leaves the channel
+	// level response time alone. An automatic test still updates it.
+	if keyIndex < 0 {
+		go channel.UpdateResponseTime(milliseconds)
+	}
 	consumedTime := float64(milliseconds) / 1000.0
 	if result.newAPIError != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -927,7 +1035,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	summary := channelTestSummary{}
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 	tik := time.Now()
-	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), -1)
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
 		return summary
@@ -941,7 +1049,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
 	}
 
-	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
+	if common.AutomaticDisableChannelEnabled && !shouldBanChannel && result.localErr == nil {
 		if milliseconds > disableThreshold {
 			// The reason is stored with the channel and sent in the disable
 			// notice; no request states a language here.
@@ -961,12 +1069,18 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	}
 
 	if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
+		// The health check reaches a channel through one key, so a failure is
+		// attributed to that key: the channel is disabled only once none of its
+		// keys can serve a request any more (handlerMultiKeyUpdate).
 		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, nil)
 		summary.Disabled++
 	}
 
-	if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
-		service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+	if result.localErr == nil && result.keyIndex >= 0 && !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
+		// The test named one key and that key works, so restore it. Recovery
+		// remains per key: the channel comes back once any key works again.
+		key := common.GetContextKeyString(result.context, constant.ContextKeyChannelKey)
+		service.EnableChannel(channel.Id, key, channel.Name)
 		summary.Enabled++
 	}
 

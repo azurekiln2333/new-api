@@ -35,6 +35,13 @@ function Harness(props: { open: boolean; channelId: number }) {
       <output aria-label='Channel key'>
         {disclosure.channelKey ?? 'Hidden'}
       </output>
+      <output aria-label='Channel key lines'>
+        {disclosure.channelKeyLines.map((line) => (
+          <span key={line} data-testid='channel-key-line'>
+            {line}
+          </span>
+        ))}
+      </output>
       <SecureVerificationDialog {...disclosure.verification.dialogProps} />
     </>
   )
@@ -118,6 +125,36 @@ it.each(['switch', 'close'] as const)(
     expect(screen.queryByText('CHANNEL_A_SECRET')).not.toBeInTheDocument()
   }
 )
+
+it('lists every key of a multi-key channel on its own line', async () => {
+  const proof = channelVerification()
+  vi.spyOn(api, 'post').mockImplementation((url) => {
+    if (url === '/api/verify') return Promise.resolve(proof)
+    if (url === '/api/channel/123/key') {
+      return Promise.resolve({
+        data: { success: true, data: { key: 'KEY_ONE\nKEY_TWO' } },
+      })
+    }
+    throw new Error(`Unexpected POST ${url}`)
+  })
+  const user = userEvent.setup()
+  render(<Harness open channelId={123} />)
+  await user.click(screen.getByRole('button', { name: 'Reveal' }))
+  await user.type(
+    await screen.findByLabelText('Authenticator code or backup code'),
+    '123456'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+
+  await waitFor(() =>
+    expect(screen.getAllByTestId('channel-key-line')).toHaveLength(2)
+  )
+  const lines = screen
+    .getAllByTestId('channel-key-line')
+    .map((line) => line.textContent)
+  expect(lines).toEqual(['KEY_ONE', 'KEY_TWO'])
+  expect(screen.queryByText('KEY_ONEKEY_TWO')).not.toBeInTheDocument()
+})
 
 it('cancels a pending verification when the selected channel changes', async () => {
   channelVerification()

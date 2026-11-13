@@ -627,7 +627,49 @@ func getTaskOriginModelName(c *gin.Context) string {
 	return ""
 }
 
+// SetupChannelTestContext prepares the relay context for a channel test and binds
+// the explicitly requested key. A channel test names the key it wants to
+// exercise, so key selection is bypassed: the key is used even when it is
+// disabled or bound to a user, which lets an operator confirm whether that key
+// works again.
+func SetupChannelTestContext(c *gin.Context, channel *model.Channel, modelName string, key string, keyIndex int) *types.NewAPIError {
+	if newAPIError := applySelectedChannelContext(c, channel, modelName); newAPIError != nil {
+		return newAPIError
+	}
+	setSelectedChannelKey(c, channel, key, keyIndex)
+	return nil
+}
+
+// SetupContextForSelectedChannel prepares the relay context for a channel chosen
+// by the distributor and selects the key that serves the request.
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	if newAPIError := applySelectedChannelContext(c, channel, modelName); newAPIError != nil {
+		return newAPIError
+	}
+	// A key bound to the requesting user belongs to that user alone, and a
+	// per-key model scope decides which key serves this model.
+	key, index, newAPIError := channel.GetNextEnabledKeyFor(modelName, c.GetInt("id"))
+	if newAPIError != nil {
+		return newAPIError
+	}
+	setSelectedChannelKey(c, channel, key, index)
+	return nil
+}
+
+// setSelectedChannelKey records the key that serves this request.
+func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, index int) {
+	common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
+	if channel.ChannelInfo.IsMultiKey {
+		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+	}
+	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
+	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+}
+
+// applySelectedChannelContext copies the selected channel's configuration into the
+// relay context, before the key that serves the request is chosen.
+func applySelectedChannelContext(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	expectedPlugin := c.GetString("expected_task_plugin_key")
 	if channel == nil {
@@ -711,23 +753,6 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, channel.GetAutoBan())
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
-
-	// A key bound to the requesting user belongs to that user alone, and a
-	// per-key model scope decides which key serves this model.
-	key, index, newAPIError := channel.GetNextEnabledKeyFor(modelName, c.GetInt("id"))
-	if newAPIError != nil {
-		return newAPIError
-	}
-	if channel.ChannelInfo.IsMultiKey {
-		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
-		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
-	} else {
-		// 必须设置为 false，否则在重试到单个 key 的时候会导致日志显示错误
-		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
-	}
-	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
-	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 

@@ -576,8 +576,13 @@ export function ChannelMutateDrawer({
 
   const { copyToClipboard } = useCopyToClipboard()
 
-  const { channelKey, isChannelKeyLoading, handleRevealKey, verification } =
-    useChannelKeyDisclosure(open, channelId)
+  const {
+    channelKey,
+    channelKeyLines,
+    isChannelKeyLoading,
+    handleRevealKey,
+    verification,
+  } = useChannelKeyDisclosure(open, channelId)
 
   // Check if this is a multi-key channel
   const isMultiKeyChannel =
@@ -4681,12 +4686,25 @@ export function ChannelMutateDrawer({
                               </Button>
                             </div>
                           </div>
-                          <Input
-                            readOnly
-                            value={channelKey ?? ''}
-                            placeholder={t('Hidden — verify to reveal')}
-                            className='font-mono'
-                          />
+                          {isMultiKeyChannel ? (
+                            <Textarea
+                              readOnly
+                              value={channelKeyLines.join('\n')}
+                              placeholder={t('Hidden — verify to reveal')}
+                              rows={Math.min(
+                                Math.max(channelKeyLines.length, 2),
+                                8
+                              )}
+                              className='font-mono'
+                            />
+                          ) : (
+                            <Input
+                              readOnly
+                              value={channelKey ?? ''}
+                              placeholder={t('Hidden — verify to reveal')}
+                              className='font-mono'
+                            />
+                          )}
                         </div>
                       )}
                       <FormMessage />
