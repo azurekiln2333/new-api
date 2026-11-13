@@ -137,38 +137,42 @@ func Distribute() func(c *gin.Context) {
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		// A channel can be eligible for the group and the model yet hold no enabled
 		// key that serves this request (a per-key model scope, or every matching key
-		// bound to another user). Fall back to the next candidate channel instead of
-		// forwarding without a key, which would surface as an upstream auth failure.
+		// bound to another user). That case falls back to the next candidate channel
+		// instead of forwarding without a key, which would surface as an upstream
+		// auth failure. Every other setup outcome keeps the previous behaviour: task
+		// routes that select no channel call this with a nil channel and carry on.
 		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
-		policyState := service.RequestPolicy(c)
-		for attempt := 1; setupErr != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelKeyScopeUnsatisfied && attempt <= maxKeyScopeFallbacks; attempt++ {
-			// The channel stays healthy for other requests, so only this attempt moves on.
-			if !slices.Contains(policyState.FailedChannelIDs, channel.Id) {
-				policyState.FailedChannelIDs = append(policyState.FailedChannelIDs, channel.Id)
+		if setupErr != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelKeyScopeUnsatisfied {
+			policyState := service.RequestPolicy(c)
+			for attempt := 1; setupErr != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelKeyScopeUnsatisfied && attempt <= maxKeyScopeFallbacks; attempt++ {
+				// The channel stays healthy for other requests, so only this attempt moves on.
+				if channel != nil && !slices.Contains(policyState.FailedChannelIDs, channel.Id) {
+					policyState.FailedChannelIDs = append(policyState.FailedChannelIDs, channel.Id)
+				}
+				next, _, nextErr := service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
+					Ctx:         c,
+					ModelName:   modelRequest.Model,
+					TokenGroup:  common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+					RequestPath: c.Request.URL.Path,
+					Retry:       common.GetPointer(attempt),
+				})
+				if nextErr != nil || next == nil {
+					break
+				}
+				if slices.Contains(policyState.FailedChannelIDs, next.Id) {
+					// Every candidate the routing returned for this tier was unusable too.
+					continue
+				}
+				channel = next
+				setupErr = SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 			}
-			next, _, nextErr := service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
-				Ctx:         c,
-				ModelName:   modelRequest.Model,
-				TokenGroup:  common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
-				RequestPath: c.Request.URL.Path,
-				Retry:       common.GetPointer(attempt),
-			})
-			if nextErr != nil || next == nil {
-				break
+			if setupErr != nil {
+				abortWithOpenAiMessage(c, setupErr.StatusCode, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{
+					"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+					"Model": modelRequest.Model,
+				}), setupErr.GetErrorCode())
+				return
 			}
-			if slices.Contains(policyState.FailedChannelIDs, next.Id) {
-				// Every candidate the routing returned for this tier was unusable too.
-				continue
-			}
-			channel = next
-			setupErr = SetupContextForSelectedChannel(c, channel, modelRequest.Model)
-		}
-		if setupErr != nil {
-			abortWithOpenAiMessage(c, setupErr.StatusCode, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{
-				"Group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
-				"Model": modelRequest.Model,
-			}), setupErr.GetErrorCode())
-			return
 		}
 		c.Next()
 		// A channel reached through a user-bound key is exclusive to that user, so

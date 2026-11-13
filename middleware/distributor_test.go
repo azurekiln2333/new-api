@@ -400,3 +400,29 @@ func TestSharedEndpointRebindsToBoundNewAPIExtension(t *testing.T) {
 	assert.Equal(t, "alpha", c.GetString("task_plugin_key"), "the first bound candidate executes regardless of the earlier pin")
 	assert.Equal(t, "alpha", c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint).Plugin.Meta.Key)
 }
+
+// A task fetch route selects no channel and carries no model name. Key-scope
+// routing must stay out of that path: no bound-key lookup, no second selection
+// and no 5xx from a channel that was never selected.
+func TestDistributeKeepsModelLessTaskRoutesOffTheKeyScopePath(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousCacheEnabled })
+
+	reached := false
+	router := gin.New()
+	router.GET("/v1/videos/:task_id", RequestId(), func(c *gin.Context) {
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		c.Set("id", 7301)
+	}, Distribute(), func(c *gin.Context) {
+		reached = true
+		c.Status(http.StatusOK)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/videos/task_jimeng_public", nil))
+
+	assert.True(t, reached, "the route reaches the relay handler")
+	assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+}

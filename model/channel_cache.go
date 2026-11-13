@@ -30,14 +30,10 @@ var channelSyncLock sync.RWMutex
 // derived from channel rows in Go and never from dialect-specific JSON SQL.
 var userBoundChannelsLock sync.RWMutex
 var userBoundChannels map[int][]int // user id -> channel ids carrying a bound key
-var userBoundChannelsBuiltAt int64
-
-// userBoundChannelIndexTTL bounds how stale the index may be when the channel
-// memory cache is off, where nothing refreshes it periodically.
-const userBoundChannelIndexTTL = 10 // seconds
 
 // refreshUserBoundChannelIndex rebuilds the user-bound channel index from the
-// database. It is the source used when the channel memory cache is disabled.
+// database. It runs on cache initialization and after every channel mutation,
+// never on the request path.
 func refreshUserBoundChannelIndex() {
 	if DB == nil {
 		return
@@ -73,19 +69,13 @@ func rebuildUserBoundChannelIndex(channels []*Channel) {
 	}
 	userBoundChannelsLock.Lock()
 	userBoundChannels = index
-	userBoundChannelsBuiltAt = time.Now().Unix()
 	userBoundChannelsLock.Unlock()
 }
 
+// userBoundChannelIDs lists the channels carrying a key bound to userId. The
+// index is built by InitChannelCache, which every channel mutation runs, so the
+// request path never queries the database for it.
 func userBoundChannelIDs(userId int) []int {
-	userBoundChannelsLock.RLock()
-	ids := userBoundChannels[userId]
-	builtAt := userBoundChannelsBuiltAt
-	userBoundChannelsLock.RUnlock()
-	if common.MemoryCacheEnabled || time.Now().Unix()-builtAt < userBoundChannelIndexTTL {
-		return ids
-	}
-	refreshUserBoundChannelIndex()
 	userBoundChannelsLock.RLock()
 	defer userBoundChannelsLock.RUnlock()
 	return userBoundChannels[userId]

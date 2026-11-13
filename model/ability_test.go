@@ -143,6 +143,7 @@ func TestGetUserBoundChannelReachesBoundUserOutsideGroup(t *testing.T) {
 		require.NotNil(t, bound, "memory cache %t", memoryCache)
 		assert.Equal(t, channel.Id, bound.Id)
 		assert.Nil(t, GetUserBoundChannel(boundUserId, "public-model"), "the bound key does not serve this model")
+		assert.Nil(t, GetUserBoundChannel(boundUserId, ""), "a model-less task route never enters the bound-key path")
 		assert.Nil(t, GetUserBoundChannel(otherUserId, "bound-model"), "another user never reaches a bound channel")
 		assert.Equal(t, []string{"bound-model"}, GetUserBoundModels(boundUserId))
 		assert.Empty(t, GetUserBoundModels(otherUserId))
