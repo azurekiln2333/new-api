@@ -33,13 +33,14 @@ export function getMessageAlignment(
 }
 
 /**
- * Column that holds the message content. It spans the whole conversation
- * width and positions the bubble, so a reply never forces a split layout.
+ * Content column for one message. `self-*` positions this column within the
+ * parent flex column; `items-*` positions its bubble and actions; `text-left`
+ * keeps bubble text readable on both sides.
  */
 export function getMessageAlignmentClass(alignment: MessageAlignment): string {
   return alignment === 'right'
-    ? 'items-end text-right'
-    : 'items-start text-left'
+    ? 'items-end text-left self-end'
+    : 'items-start text-left self-start'
 }
 
 /**

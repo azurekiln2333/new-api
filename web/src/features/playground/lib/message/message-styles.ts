@@ -22,6 +22,10 @@ For commercial licensing, please contact support@quantumnous.com
  */
 export function getMessageContentStyles() {
   return [
+    // The bubble is width-capped by the message column, not by itself; a
+    // percentage here resolves against the shrink-to-fit parent and shrinks it.
+    'group-[.is-user]:max-w-none',
+
     // User bubble: compact surface that stays calm in both light and dark themes.
     'group-[.is-user]:rounded-2xl',
     'group-[.is-user]:rounded-br-md',

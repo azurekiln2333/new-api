@@ -112,7 +112,7 @@ export const Response = memo((props: ResponseProps) => {
   return (
     <div
       className={cn(
-        'size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
+        'size-full min-w-0 text-pretty [overflow-wrap:anywhere] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
         props.className
       )}
     >

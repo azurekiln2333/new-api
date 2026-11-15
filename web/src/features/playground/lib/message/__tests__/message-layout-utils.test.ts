@@ -43,9 +43,23 @@ describe('playground message layout', () => {
     expect(getMessageAlignment(message('assistant'), 'left')).toBe('left')
   })
 
-  test('stacks messages through a full width column instead of a split row', () => {
-    expect(getMessageAlignmentClass('right')).toContain('items-end')
-    expect(getMessageAlignmentClass('left')).toContain('items-start')
+  test('sticks the right aligned bubble to the column end but keeps its text left aligned', () => {
+    const rightClass = getMessageAlignmentClass('right')
+
+    expect(rightClass).toContain('self-end')
+    expect(rightClass).toContain('items-end')
+    expect(rightClass).toContain('text-left')
+    // Right aligned text inside the bubble is the defect this guards against.
+    expect(rightClass).not.toContain('text-right')
+  })
+
+  test('sticks the left aligned bubble to the column start', () => {
+    const leftClass = getMessageAlignmentClass('left')
+
+    expect(leftClass).toContain('self-start')
+    expect(leftClass).toContain('items-start')
+    expect(leftClass).toContain('text-left')
+    expect(leftClass).not.toContain('text-right')
   })
 
   test('caps the reply at a reading measure and the bubble at 70%', () => {

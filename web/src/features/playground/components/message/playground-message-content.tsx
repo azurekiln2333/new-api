@@ -116,6 +116,7 @@ export function PlaygroundMessageContent({
 
       {hasReasoning && (
         <Reasoning
+          className='max-w-full'
           defaultOpen
           duration={message.reasoning?.duration}
           isStreaming={message.isReasoningStreaming}
@@ -161,7 +162,7 @@ export function PlaygroundMessageContent({
           ) : (
             <MessageContent
               variant='flat'
-              className={cn(getMessageContentStyles())}
+              className={cn('max-w-full', getMessageContentStyles())}
             >
               <Response final={isMessageFinal}>{displayContent}</Response>
             </MessageContent>
