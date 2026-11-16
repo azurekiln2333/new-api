@@ -83,7 +83,7 @@ jobs:
 
   macos:
     name: macOS Release
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -118,9 +118,17 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build Backend
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: '1'
+          CC: clang
         run: |
           go mod download
           go build -pgo="$(go list -m -f '{{.Dir}}' github.com/Calcium-Ion/moejs)/default.pgo" -ldflags "-X 'github.com/QuantumNous/new-api/common.Version=$VERSION'" -o new-api-macos-$VERSION
+          file "new-api-macos-$VERSION"
+          test "$(lipo -archs "new-api-macos-$VERSION")" = arm64
+          go version -m "new-api-macos-$VERSION"
       - name: Generate checksums
         run: shasum -a 256 new-api-macos-* > checksums-macos.txt
 
