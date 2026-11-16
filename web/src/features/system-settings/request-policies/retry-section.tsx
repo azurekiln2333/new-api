@@ -50,7 +50,7 @@ export function RetrySection() {
               onCheckedChange={field.onChange}
               label={t('Avoid failed channels on retry')}
               description={t(
-                'Try unused channels at the same priority before lower priorities. Repeat only after all eligible channels have failed.'
+                'Try unused channels at the same priority before lower priorities. Stop when all eligible channels have failed.'
               )}
             />
           )}
@@ -71,7 +71,34 @@ export function RetrySection() {
                 />
               </FormControl>
               <FormDescription>
-                {t('Excludes the first attempt. Counted per group.')}
+                {t('Excludes the first attempt. Counted per group.')}{' '}
+                {t(
+                  '0 retries disables automatic channel switching after upstream errors, including timeouts.'
+                )}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name='UpstreamFirstByteTimeoutSeconds'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Global first-byte timeout (seconds)')}</FormLabel>
+              <FormControl>
+                <Input
+                  type='number'
+                  min={0}
+                  max={86400}
+                  step={1}
+                  {...safeNumberFieldProps(field)}
+                />
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'Wait for the first upstream response body byte, including connection and upload time. Headers alone do not end the wait; an upstream heartbeat does. 0 disables this additional timeout. Channels can override it.'
+                )}
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -90,7 +117,9 @@ export function RetrySection() {
                 />
               </FormControl>
               <FormDescription>
-                {t('2xx, 504 and 524 are always excluded.')}
+                {t(
+                  '2xx responses are excluded. Upstream 403, 404, 504 and 524 can retry when included. The first-byte timeout uses the retry budget regardless of this list.'
+                )}
               </FormDescription>
               <FormMessage />
             </FormItem>

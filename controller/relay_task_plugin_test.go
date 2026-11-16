@@ -14,10 +14,12 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -385,6 +387,7 @@ func TestExecuteTaskSubmissionDisconnectBeforeUpstreamAcceptanceSkipsSubmitAndRe
 }
 
 func TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurableBarrier(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	events := make([]string, 0, 1)
 	setupTaskSubmissionDatabase(t, true, &events)
 	billing := &taskSubmissionTestBilling{events: &events}
@@ -392,6 +395,11 @@ func TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurable
 	requestContext, cancel := context.WithCancel(c.Request.Context())
 	c.Request = c.Request.WithContext(requestContext)
 	info := taskSubmissionRelayInfo(billing)
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
+	settings := kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)}
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, settings)
 	submitStarted := make(chan struct{})
 	done := make(chan struct{})
 	var outcome *taskSubmissionOutcome
@@ -410,6 +418,8 @@ func TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurable
 	case <-time.After(2 * time.Second):
 		require.FailNow(t, "submission did not start")
 	}
+	_, capacityErr := service.AcquireChannelCapacity(context.Background(), 1, settings)
+	require.NotNil(t, capacityErr, "submission holds the channel slot until its handler returns")
 	cancel()
 	select {
 	case <-done:
@@ -423,6 +433,9 @@ func TestExecuteTaskSubmissionCallerCancellationDuringSubmitRefundsBeforeDurable
 	assert.Equal(t, []string{"refund"}, events)
 	assert.Equal(t, 1, billing.refunds)
 	assert.False(t, c.Writer.Written())
+	replacement, capacityErr := service.AcquireChannelCapacity(context.Background(), 1, settings)
+	require.Nil(t, capacityErr, "canceled submission releases its slot before returning")
+	replacement.Release()
 }
 
 func TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund(t *testing.T) {

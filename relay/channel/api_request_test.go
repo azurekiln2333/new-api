@@ -1,16 +1,123 @@
 package channel
 
 import (
+	"bufio"
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"testing/synctest"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type contextRequestAdaptor struct{ Adaptor }
+
+func (contextRequestAdaptor) GetRequestURL(*relaycommon.RelayInfo) (string, error) {
+	return "http://upstream.example/relay", nil
+}
+
+func (contextRequestAdaptor) SetupRequestHeader(*gin.Context, *http.Header, *relaycommon.RelayInfo) error {
+	return nil
+}
+
+type contextRequestTransport func(*http.Request) (*http.Response, error)
+
+func (f contextRequestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestAPIAndFormRequestsInheritClientCancellation(t *testing.T) {
+	for name, request := range map[string]func(Adaptor, *gin.Context, *relaycommon.RelayInfo, io.Reader) (*http.Response, error){
+		"json": DoApiRequest,
+		"form": DoFormRequest,
+	} {
+		t.Run(name, func(t *testing.T) {
+			zero := 0
+			settings := dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &zero}
+			client, err := service.GetRelayHttpClientWithProxySettings("", settings)
+			require.NoError(t, err)
+			previousTransport := client.Transport
+			t.Cleanup(func() { client.Transport = previousTransport })
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			client.Transport = contextRequestTransport(func(req *http.Request) (*http.Response, error) {
+				cancel()
+				assert.ErrorIs(t, req.Context().Err(), context.Canceled)
+				return nil, context.Canceled
+			})
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("{}")).WithContext(parent)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelSetting: settings}}
+			_, err = request(contextRequestAdaptor{}, c, info, strings.NewReader("{}"))
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestFirstByteTimeoutDoesNotCommitEarlySSEKeepAlive(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		clientConn, upstreamConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close(); _ = upstreamConn.Close() })
+		upstreamClosed := make(chan error, 1)
+		go func() {
+			defer upstreamConn.Close()
+			req, err := http.ReadRequest(bufio.NewReader(upstreamConn))
+			if err == nil {
+				_, err = io.Copy(io.Discard, req.Body)
+				_ = req.Body.Close()
+			}
+			if err == nil {
+				_, err = io.WriteString(upstreamConn, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+			}
+			if err == nil {
+				var b [1]byte
+				_, err = upstreamConn.Read(b[:])
+			}
+			upstreamClosed <- err
+		}()
+		previousTransport := http.DefaultTransport
+		http.DefaultTransport = &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) { return clientConn, nil }}
+		service.ResetProxyClientCache()
+		general := operation_setting.GetGeneralSetting()
+		previousGeneral := *general
+		general.PingIntervalEnabled, general.PingIntervalSeconds = true, 1
+		t.Cleanup(func() {
+			*general = previousGeneral
+			http.DefaultTransport = previousTransport
+			service.ResetProxyClientCache()
+		})
+		timeout := 3
+		info := &relaycommon.RelayInfo{IsStream: true, ChannelMeta: &relaycommon.ChannelMeta{ChannelSetting: dto.ChannelSettings{
+			HTTPProtocol: dto.HTTPProtocolHTTP1, UpstreamFirstByteTimeoutSeconds: &timeout,
+		}}}
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("{}"))
+		resp, err := DoApiRequest(contextRequestAdaptor{}, c, info, strings.NewReader("{}"))
+		require.Error(t, err)
+		assert.Nil(t, resp)
+		assert.True(t, service.IsUpstreamFirstByteTimeout(err), "safe masking must preserve the typed cause")
+		var gatewayErr *types.NewAPIError
+		require.ErrorAs(t, err, &gatewayErr)
+		assert.Equal(t, http.StatusGatewayTimeout, gatewayErr.StatusCode)
+		assert.False(t, types.IsSkipRetryError(gatewayErr))
+		assert.False(t, c.Writer.Written(), "a keepalive must not prohibit channel failover")
+		assert.Empty(t, recorder.Body.String())
+		assert.NoError(t, c.Request.Context().Err())
+		assert.ErrorIs(t, <-upstreamClosed, io.EOF, "upstream is closed before another attempt can run")
+	})
+}
 
 func TestNewTaskAPIRequestInheritsClientCancellation(t *testing.T) {
 	recorder := httptest.NewRecorder()

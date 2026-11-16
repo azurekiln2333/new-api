@@ -16,17 +16,186 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/coze"
+	"github.com/QuantumNous/new-api/relay/channel/jimeng"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type relayCancellationTransport func(*http.Request) (*http.Response, error)
+
+func (transport relayCancellationTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+func TestProviderRequestsInheritAttemptCancellation(t *testing.T) {
+	service.InitHttpClient()
+	for _, tc := range []struct {
+		name        string
+		adaptor     channel.Adaptor
+		cancelPath  string
+		requestPath []string
+	}{
+		{name: "jimeng submission", adaptor: &jimeng.Adaptor{}, cancelPath: "/", requestPath: []string{"/"}},
+		{name: "coze status poll", adaptor: &coze.Adaptor{}, cancelPath: "/v3/chat/retrieve", requestPath: []string{"/v3/chat", "/v3/chat/retrieve"}},
+		{name: "coze message fetch", adaptor: &coze.Adaptor{}, cancelPath: "/v3/chat/message/list", requestPath: []string{"/v3/chat", "/v3/chat/retrieve", "/v3/chat/message/list"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: common.GetPointer(0)}
+			client, err := service.GetHttpClientWithProxySettings("", settings)
+			require.NoError(t, err)
+			previousTransport := client.Transport
+			t.Cleanup(func() { client.Transport = previousTransport })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var requested []string
+			client.Transport = relayCancellationTransport(func(req *http.Request) (*http.Response, error) {
+				requested = append(requested, req.URL.Path)
+				if req.URL.Path == tc.cancelPath {
+					cancel()
+					assert.ErrorIs(t, req.Context().Err(), context.Canceled, "upstream must observe client cancellation and lease loss")
+					return nil, context.Canceled
+				}
+				body := `{"code":0,"data":{"id":"chat-test","conversation_id":"conversation-test","status":"completed"}}`
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("{}")).WithContext(ctx)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: "https://upstream.example", ApiKey: "test-access|test-secret", ChannelSetting: settings,
+			}}
+			_, err = tc.adaptor.DoRequest(c, info, strings.NewReader("{}"))
+			require.Error(t, err)
+			assert.Equal(t, tc.requestPath, requested)
+			assert.False(t, c.Writer.Written(), "canceled work must not commit a client response")
+		})
+	}
+}
+
+func TestChannelCapacityStreamsRouteAroundFullChannelAndRelease(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	fixture := newResponsesWSBillingTest(t, `p * 0`, func(ws *websocket.Conn, _ *http.Request) { _, _, _ = ws.ReadMessage() })
+	fixture.httpDone = make(chan struct{}, 4)
+	waitDone := func() {
+		t.Helper()
+		select {
+		case <-fixture.httpDone:
+		case <-time.After(3 * time.Second):
+			t.Fatal("gateway request did not finish")
+		}
+	}
+	service.InitHttpClient()
+	previousRetries := common.RetryTimes
+	common.RetryTimes = 0
+	t.Cleanup(func() { common.RetryTimes = previousRetries })
+	settings := fixture.channel.GetSetting()
+	settings.MaxConcurrentRequests = common.GetPointer(2)
+	fixture.channel.SetSetting(settings)
+	require.NoError(t, model.DB.Model(fixture.channel).Updates(map[string]any{"setting": fixture.channel.Setting, "priority": 10}).Error)
+	require.NoError(t, model.DB.Model(&model.Ability{}).Where("channel_id = ?", fixture.channel.Id).Update("priority", 10).Error)
+	release, cancelled := make(chan struct{}), make(chan struct{}, 2)
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	var active, calls atomic.Int32
+	fixture.httpUpstream = func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		current := active.Add(1)
+		defer active.Add(-1)
+		assert.LessOrEqual(t, current, int32(2))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"holding\",\"status\":\"in_progress\"}}\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+			cancelled <- struct{}{}
+		case <-release:
+			_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"finished\",\"status\":\"completed\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"total_tokens\":0}}}\n\n")
+		}
+	}
+	var fallbackCalls atomic.Int32
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fallbackCalls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fallback-B\",\"status\":\"completed\",\"model\":\"ws-billing\",\"output\":[],\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"total_tokens\":0}}}\n\n")
+	}))
+	defer fallback.Close()
+	b := &model.Channel{Name: "capacity-fallback", Type: constant.ChannelTypeOpenAI, Key: "test-only", BaseURL: &fallback.URL, Status: common.ChannelStatusEnabled, Group: "default", Models: "ws-billing", Priority: common.GetPointer(int64(5))}
+	b.SetSetting(dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+	require.NoError(t, b.Insert())
+	t.Cleanup(func() { require.NoError(t, b.Delete()) })
+	client := &http.Client{Timeout: 8 * time.Second}
+	post := func(ctx context.Context) *http.Response {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(`{"model":"ws-billing","input":"hold","stream":true}`))
+		require.NoError(t, err)
+		request.Header.Set("Authorization", "Bearer sk-"+fixture.token.Key)
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		require.NoError(t, err)
+		return response
+	}
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	first := post(firstCtx)
+	defer first.Body.Close()
+	second := post(context.Background())
+	defer second.Body.Close()
+	require.Equal(t, int32(2), active.Load())
+	third := post(context.Background())
+	body, err := io.ReadAll(third.Body)
+	third.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, third.StatusCode)
+	assert.Contains(t, string(body), "fallback-B")
+	assert.Equal(t, int32(1), fallbackCalls.Load(), "capacity traversal works even with RetryTimes=0")
+	waitDone()
+
+	// A health test uses the same budget and must be skipped without disabling.
+	summary := testChannelForHealthCheck(context.Background(), fixture.channel, fixture.user.Id, true, 0)
+	assert.Equal(t, channelTestSummary{}, summary)
+	busyB, apiErr := service.AcquireChannelCapacity(context.Background(), b.Id, b.GetSetting())
+	require.Nil(t, apiErr)
+	defer busyB.Release()
+	full := post(context.Background())
+	body, err = io.ReadAll(full.Body)
+	full.Body.Close()
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusTooManyRequests, full.StatusCode, string(body))
+	assert.Contains(t, string(body), string(types.ErrorCodeChannelCapacitySaturated))
+	assert.Equal(t, int32(2), calls.Load())
+	assert.Equal(t, int32(1), fallbackCalls.Load())
+	waitDone()
+	cancelFirst()
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream did not close after the client canceled")
+	}
+	waitDone()
+	replacement, apiErr := service.AcquireChannelCapacity(context.Background(), fixture.channel.Id, settings)
+	require.Nil(t, apiErr, "stream cancellation returns its channel slot")
+	replacement.Release()
+	releaseOnce.Do(func() { close(release) })
+	_, err = io.ReadAll(second.Body)
+	require.NoError(t, err)
+	waitDone()
+	for range 2 {
+		lease, err := service.AcquireChannelCapacity(context.Background(), fixture.channel.Id, settings)
+		require.Nil(t, err, "completed stream returns its slot")
+		defer lease.Release()
+	}
+}
 
 func TestRelayKeepAliveDuringImagePreparation(t *testing.T) {
 	settings := operation_setting.GetGeneralSetting()

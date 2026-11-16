@@ -50,6 +50,33 @@ func TestChannelValidateSettingsRejectsInvalidHTTPTransport(t *testing.T) {
 	}
 }
 
+func TestChannelValidateSettingsRequestLimits(t *testing.T) {
+	for _, tc := range []struct {
+		setting string
+		valid   bool
+	}{
+		{`{}`, true},
+		{`{"max_concurrent_requests":0,"upstream_first_byte_timeout_seconds":0}`, true},
+		{`{"max_concurrent_requests":2,"upstream_first_byte_timeout_seconds":null}`, true},
+		{`{"max_concurrent_requests":1000000,"upstream_first_byte_timeout_seconds":86400}`, true},
+		{`{"max_concurrent_requests":-1}`, false},
+		{`{"max_concurrent_requests":1000001}`, false},
+		{`{"max_concurrent_requests":1.5}`, false},
+		{`{"upstream_first_byte_timeout_seconds":-1}`, false},
+		{`{"upstream_first_byte_timeout_seconds":86401}`, false},
+		{`{"upstream_first_byte_timeout_seconds":1.5}`, false},
+	} {
+		t.Run(tc.setting, func(t *testing.T) {
+			channel := Channel{Setting: &tc.setting}
+			if tc.valid {
+				require.NoError(t, channel.ValidateSettings())
+			} else {
+				require.Error(t, channel.ValidateSettings())
+			}
+		})
+	}
+}
+
 func TestAdvancedCustomChannelRequiresModelListRouteOnlyWhenUpdateChecksEnabled(t *testing.T) {
 	inferenceRoute := dto.AdvancedCustomRoute{
 		IncomingPath: "/v1/chat/completions",
@@ -143,6 +170,25 @@ func TestInferencePresetSettingsAndDatabaseRoundTrip(t *testing.T) {
 				require.NoError(t, db.Raw("select version()").Scan(&version).Error)
 			}
 			t.Logf("%s version: %s", dialect, version)
+			for _, encoded := range []string{
+				`{}`,
+				`{"max_concurrent_requests":0,"upstream_first_byte_timeout_seconds":0}`,
+				`{"max_concurrent_requests":2,"upstream_first_byte_timeout_seconds":15}`,
+				`{"max_concurrent_requests":2}`,
+			} {
+				channel := Channel{Type: constant.ChannelTypeOpenAI, Key: "test-only", Name: "request-limits", Setting: &encoded}
+				require.NoError(t, channel.ValidateSettings())
+				want := channel.GetSetting()
+				require.NoError(t, table.Create(&channel).Error)
+				for range 2 {
+					require.NoError(t, table.AutoMigrate(&Channel{}))
+					var loaded Channel
+					require.NoError(t, table.First(&loaded, channel.Id).Error)
+					assert.Equal(t, want, loaded.GetSetting(), "inheritance and explicit zero survive reload")
+					loaded.SetSetting(loaded.GetSetting())
+					require.NoError(t, table.Save(&loaded).Error)
+				}
+			}
 			for _, channelType := range []int{constant.ChannelTypeVLLM, constant.ChannelTypeSGLang} {
 				t.Run(fmt.Sprint(channelType), func(t *testing.T) {
 					channel := &Channel{Type: channelType, Key: "EMPTY", Name: "inference", Status: common.ChannelStatusEnabled}

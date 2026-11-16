@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,6 +48,16 @@ type RetryParam struct {
 	RequestPath  string
 	Retry        *int
 	resetNextTry bool
+}
+
+// Selecting an auto-group candidate prepares routing for its next upstream
+// retry. Capacity rejection must restore this candidate's unused attempt.
+type autoGroupAdmissionRetry struct {
+	channelID           int
+	groupIndex          int
+	retry               int
+	resetNextTry        bool
+	affinityRetryOffset int
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -139,9 +148,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		// Cross-group retries also prefer an untried channel in a later group
 		// over repeating a failed channel in the current group.
 		state := RequestPolicy(param.Ctx)
-		if crossGroupRetry && operation_setting.GetChannelAffinitySetting().RetryAvoidFailedChannels && len(state.FailedChannelIDs) > 0 {
+		excluded := state.ChannelSelectionExclusions()
+		if crossGroupRetry && len(excluded) > 0 {
 			for i := startGroupIndex; i < len(autoGroups); i++ {
-				candidate, candidateErr := model.GetUntriedSatisfiedChannel(autoGroups[i], param.ModelName, state.FailedChannelIDs, filters)
+				candidate, candidateErr := model.GetUntriedSatisfiedChannel(autoGroups[i], param.ModelName, excluded, filters)
 				if candidateErr != nil {
 					return nil, autoGroups[i], candidateErr
 				}
@@ -157,6 +167,9 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				startGroupIndex = i
 				state.AddEvent(PolicyEvent{ChannelID: channel.Id, Group: autoGroups[i], Decision: PolicyDecision{Action: "select", Reason: "avoid_failed_channels", Source: "routing"}})
 				break
+			}
+			if channel == nil {
+				return nil, selectGroup, nil
 			}
 		}
 
@@ -200,6 +213,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, autoGroup)
 			selectGroup = autoGroup
 			logger.LogDebug(param.Ctx, "Auto selected group: %s", autoGroup)
+			state.selectedAutoGroupRetry = &autoGroupAdmissionRetry{
+				channelID: channel.Id, groupIndex: i, retry: groupRetry,
+				resetNextTry: param.resetNextTry, affinityRetryOffset: affinityRetryOffset,
+			}
 
 			// Prepare state for next retry
 			// 为下一次重试准备状态
@@ -238,8 +255,8 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 func selectRetryChannel(c *gin.Context, group, modelName string, retry int, filters []dto.ChannelFilter) (*model.Channel, error) {
 	state := RequestPolicy(c)
-	if operation_setting.GetChannelAffinitySetting().RetryAvoidFailedChannels && len(state.FailedChannelIDs) > 0 {
-		channel, err := model.GetUntriedSatisfiedChannel(group, modelName, state.FailedChannelIDs, filters)
+	if excluded := state.ChannelSelectionExclusions(); len(excluded) > 0 {
+		channel, err := model.GetUntriedSatisfiedChannel(group, modelName, excluded, filters)
 		if err != nil {
 			return nil, err
 		}
@@ -247,6 +264,7 @@ func selectRetryChannel(c *gin.Context, group, modelName string, retry int, filt
 			state.AddEvent(PolicyEvent{ChannelID: channel.Id, Group: group, Decision: PolicyDecision{Action: "select", Reason: "avoid_failed_channels", Source: "routing"}})
 			return channel, nil
 		}
+		return nil, nil
 	}
 	return model.GetRandomSatisfiedChannel(group, modelName, retry, filters)
 }
@@ -373,7 +391,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	usingGroup := retry.TokenGroup
 	var channel *model.Channel
 	var selectGroup string
-	if retry.GetRetry() == 0 && len(RequestPolicy(c).FailedChannelIDs) == 0 {
+	if retry.GetRetry() == 0 && len(RequestPolicy(c).FailedChannelIDs) == 0 && len(RequestPolicy(c).SaturatedChannelIDs) == 0 {
 		// A key bound to the requesting user routes the first attempt to the
 		// channel carrying it, before session affinity. Retries keep the
 		// ordinary group routing so a failing bound channel can fail over.

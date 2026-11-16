@@ -100,13 +100,16 @@ type responsesWSSession struct {
 	workers        sync.WaitGroup
 	closeOnce      sync.Once
 
-	clientWriteMu sync.Mutex
-	targetWriteMu sync.Mutex
-	connectionMu  sync.Mutex
-	target        *websocket.Conn
-	unregister    func()
-	stateMu       sync.Mutex
-	current       *responsesWSCallState
+	clientWriteMu  sync.Mutex
+	targetWriteMu  sync.Mutex
+	connectionMu   sync.Mutex
+	target         *websocket.Conn
+	unregister     func()
+	targetLease    *service.ChannelCapacityLease
+	stopLeaseClose func() bool
+	capacityErr    *types.NewAPIError
+	stateMu        sync.Mutex
+	current        *responsesWSCallState
 
 	// clientWriteBudget is guarded by clientWriteMu.
 	clientWriteBudget helper.StreamWriteBudget
@@ -240,19 +243,35 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 
 func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState, create responsesWSCreateRequest) (apiErr *types.NewAPIError) {
 	policy := service.RequestPolicy(c)
+	originalCallRequest := c.Request
+	defer func() { c.Request = originalCallRequest }()
 	modelName := create.Request.Model
 	started := time.Now()
 	var info *relaycommon.RelayInfo
+	var pendingLease *service.ChannelCapacityLease
 	billingPrepared := false
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			apiErr = types.NewError(fmt.Errorf("responses websocket call panic: %v", recovered), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			state.closeCode = websocket.CloseInternalServerErr
 		}
+		if pendingLease != nil {
+			if coordinationErr := pendingLease.Err(); coordinationErr != nil {
+				apiErr = coordinationErr
+			}
+			pendingLease.Release()
+		}
+		s.connectionMu.Lock()
+		if s.capacityErr != nil && !policy.Successful {
+			apiErr = s.capacityErr
+		}
+		s.connectionMu.Unlock()
 		if info == nil && modelName != "" {
 			info = &relaycommon.RelayInfo{OriginModelName: modelName, UsingGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), StartTime: started}
 		}
-		perfmetrics.RecordRelayResult(c.Request.Context(), info, apiErr)
+		if !service.IsChannelCapacityError(apiErr) {
+			perfmetrics.RecordRelayResult(c.Request.Context(), info, apiErr)
+		}
 		if policy.CurrentChannelID > 0 && service.IsChannelFailure(apiErr) {
 			service.RecordChannelFailure(c)
 		}
@@ -280,6 +299,12 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	service.GetChannelConstraints(c).AddFilter(appdto.ChannelFilter{Kind: appdto.FilterRequestPath, RequestPath: c.Request.URL.Path})
 
 	if s.lockedChannelID != 0 {
+		s.connectionMu.Lock()
+		connectionLease := s.targetLease
+		s.connectionMu.Unlock()
+		if connectionLease != nil {
+			c.Request = c.Request.WithContext(connectionLease.Context())
+		}
 		service.GetPreferredChannelByAffinity(c, modelName, common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup))
 		if apiErr = s.restoreConnectionContext(c, modelName); apiErr != nil {
 			return apiErr
@@ -304,9 +329,29 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		retry := &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0)}
 		for ; retry.GetRetry() <= common.RetryTimes; retry.IncreaseRetry() {
 			var channel *appmodel.Channel
-			channel, apiErr = selectResponsesWSChannel(c, modelName, retry)
-			if apiErr != nil {
-				return apiErr
+			var lastBusy *types.NewAPIError
+			for {
+				var selectionErr *types.NewAPIError
+				channel, selectionErr = selectResponsesWSChannel(c, modelName, retry)
+				if selectionErr != nil {
+					if apiErr != nil {
+						return apiErr
+					}
+					if lastBusy != nil {
+						return lastBusy
+					}
+					return selectionErr
+				}
+				// The upstream socket outlives this response.create's middleware
+				// invocation, so its lease belongs to the whole session context.
+				pendingLease, selectionErr = service.AcquireChannelCapacity(s.ctx, channel.Id, channel.GetSetting())
+				if selectionErr == nil {
+					break
+				}
+				if !service.RetryChannelAdmission(c, channel.Id, selectionErr, retry) {
+					return selectionErr
+				}
+				lastBusy = selectionErr
 			}
 			service.AppendUsedChannel(c, channel.Id)
 			if info == nil {
@@ -332,8 +377,17 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			}
 			adaptor := GetAdaptor(info.ApiType)
 			adaptor.Init(info)
+			originalRequest := c.Request
+			c.Request = originalRequest.WithContext(pendingLease.Context())
 			target, dialErr := relaychannel.DoWssRequest(adaptor, c, info, nil)
+			c.Request = originalRequest
 			if dialErr != nil {
+				coordinationErr := pendingLease.Err()
+				pendingLease.Release()
+				pendingLease = nil
+				if coordinationErr != nil {
+					return coordinationErr
+				}
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
 				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
@@ -345,9 +399,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				}
 				return apiErr
 			}
-			if !s.setTarget(target) {
+			if !s.setTarget(target, pendingLease) {
 				return types.NewError(context.Canceled, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
+			c.Request = c.Request.WithContext(pendingLease.Context())
+			pendingLease = nil // ownership transferred to the connection
 			if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 				state.closeCode = websocket.CloseInternalServerErr
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -696,15 +752,22 @@ func (s *responsesWSSession) getTarget() *websocket.Conn {
 	return s.target
 }
 
-func (s *responsesWSSession) setTarget(target *websocket.Conn) bool {
+func (s *responsesWSSession) setTarget(target *websocket.Conn, lease *service.ChannelCapacityLease) bool {
 	s.connectionMu.Lock()
 	defer s.connectionMu.Unlock()
-	if s.ctx.Err() != nil {
+	if s.ctx.Err() != nil || lease.Context().Err() != nil {
 		_ = target.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 		_ = target.Close()
 		return false
 	}
 	s.target = target
+	s.targetLease = lease
+	s.stopLeaseClose = context.AfterFunc(lease.Context(), func() {
+		s.connectionMu.Lock()
+		s.capacityErr = lease.Err()
+		s.connectionMu.Unlock()
+		s.shutdown(websocket.CloseInternalServerErr, "channel capacity lease ended")
+	})
 	return true
 }
 
@@ -749,8 +812,13 @@ func (s *responsesWSSession) shutdown(code int, reason string) {
 		s.cancel()
 		s.connectionMu.Lock()
 		target, unregister := s.target, s.unregister
+		lease, stopLeaseClose := s.targetLease, s.stopLeaseClose
 		s.target, s.unregister = nil, nil
+		s.targetLease, s.stopLeaseClose = nil, nil
 		s.connectionMu.Unlock()
+		if stopLeaseClose != nil {
+			stopLeaseClose()
+		}
 		if unregister != nil {
 			unregister()
 		}
@@ -760,6 +828,7 @@ func (s *responsesWSSession) shutdown(code int, reason string) {
 			_ = target.WriteControl(websocket.CloseMessage, closeMessage, time.Now().Add(time.Second))
 			_ = target.Close()
 		}
+		lease.Release()
 		_ = s.client.Close()
 	})
 }

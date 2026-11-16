@@ -61,7 +61,7 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if !common.AutomaticDisableChannelEnabled {
 		return false
 	}
-	if err == nil {
+	if err == nil || IsChannelCapacityError(err) {
 		return false
 	}
 	if types.IsChannelError(err) {

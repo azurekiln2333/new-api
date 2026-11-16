@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -528,6 +529,7 @@ func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, 
 }
 
 func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	type upstreamRequest struct {
 		Authorization      string
 		Type               string `json:"type"`
@@ -561,6 +563,10 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 		}
 	})
 	client, user, token := fixture.client, fixture.user, fixture.token
+	capacitySettings := fixture.channel.GetSetting()
+	capacitySettings.MaxConcurrentRequests = common.GetPointer(1)
+	fixture.channel.SetSetting(capacitySettings)
+	require.NoError(t, model.DB.Model(fixture.channel).Update("setting", fixture.channel.Setting).Error)
 
 	for index, payload := range []string{
 		`{"type":"response.create","model":"ws-billing","input":"first","service_tier":"default"}`,
@@ -580,6 +586,8 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 		require.Equal(t, "response.completed", terminal.Type, "unexpected response: %s", data)
 		assert.Equal(t, fmt.Sprintf("resp_%d", index+1), terminal.Response.ID)
 		observed := <-received
+		_, capacityErr := service.AcquireChannelCapacity(context.Background(), fixture.channel.Id, capacitySettings)
+		require.NotNil(t, capacityErr, "an idle reusable upstream socket continues to own one channel slot")
 		assert.Equal(t, "Bearer upstream-first", observed.Authorization)
 		assert.Equal(t, "gpt-4o", observed.Model)
 		assert.Equal(t, "response.create", observed.Type)
@@ -642,6 +650,10 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 	assert.Equal(t, 3000, token.UsedQuota)
 	assert.Equal(t, 97000, user.Quota)
 	assert.Equal(t, 3000, user.UsedQuota)
+	fixture.closeAndWait(t)
+	replacement, capacityErr := service.AcquireChannelCapacity(context.Background(), fixture.channel.Id, capacitySettings)
+	require.Nil(t, capacityErr, "closing the reusable connection releases its slot")
+	replacement.Release()
 }
 
 // Both transports must reach the same upstream target with the same
@@ -996,6 +1008,12 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 }
 
 func TestResponsesHTTPHealthCountsFinalResult(t *testing.T) {
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previousAvoidFailed := affinity.RetryAvoidFailedChannels
+	// This fixture intentionally retries the same single upstream to verify
+	// final-result metrics; routing avoidance is covered separately.
+	affinity.RetryAvoidFailedChannels = false
+	t.Cleanup(func() { affinity.RetryAvoidFailedChannels = previousAvoidFailed })
 	for _, tc := range []struct {
 		name, code            string
 		firstStatus, attempts int

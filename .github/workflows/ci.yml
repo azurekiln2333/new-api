@@ -12,7 +12,7 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Checkout the event commit in both jobs. A PR merge ref can disappear while
+# Checkout the event commit in every job. A PR merge ref can disappear while
 # queued runs start, and a base branch can advance after the merge event.
 jobs:
   backend:
@@ -68,6 +68,82 @@ jobs:
 
       - name: Test root, relaykit, and tokenkit modules
         run: make test
+
+  relay_policy_integration:
+    name: Relay policy database and Redis integration
+    if: github.event.action != 'closed' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOWORK: 'off'
+      TEST_MYSQL_DSN: 'root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local'
+      TEST_POSTGRES_DSN: 'host=127.0.0.1 port=5432 user=postgres password=integration dbname=relay_policy sslmode=disable'
+      TEST_REDIS_ADDR: '127.0.0.1:6379'
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: integration
+          MYSQL_DATABASE: relay_policy
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pintegration"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: integration
+          POSTGRES_DB: relay_policy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d relay_policy"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      redis:
+        image: redis:7.4
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
+          ref: ${{ github.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            relaykit/go.sum
+            tokenkit/go.sum
+
+      - name: Record database and Redis versions
+        run: |
+          docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -N -e 'SELECT VERSION()'
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d relay_policy -Atc 'SELECT VERSION()'
+          docker exec ${{ job.services.redis.id }} redis-server --version
+
+      # These packages use process-wide fixtures. Keep them sequential against
+      # the isolated service databases, and require configured external engines.
+      - name: Verify channel settings, failover and shared capacity
+        run: go test -p 1 -count=1 -v ./model ./service ./controller -run 'RequestPolicy|Channel.*(Settings|Capacity|Concurrency)|InferencePreset|AffinityFailover|FirstByte|Midjourney'
+
+      - name: Check concurrent admission and timeout races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 ./service ./relay/channel -run 'ChannelCapacity|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation'
 
   frontend:
     name: Frontend typecheck, test, and build

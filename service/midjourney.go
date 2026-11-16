@@ -13,10 +13,13 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
@@ -275,6 +278,13 @@ func ConvertSimpleChangeParams(content string) *dto.MidjourneyRequest {
 // HTTP 200 responses. Submissions are single-attempt: an ambiguous transport
 // failure must never create a duplicate task on another channel.
 func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResponseWithStatusCode, requestErr error) bool {
+	var capacityErr *types.NewAPIError
+	if errors.As(requestErr, &capacityErr) && IsChannelCapacityError(capacityErr) {
+		RequestPolicy(c).AddEvent(PolicyEvent{ChannelID: c.GetInt("channel_id"), Status: capacityErr.StatusCode,
+			ErrorCode: string(capacityErr.GetErrorCode()), ErrorSource: "local", Health: "unchanged",
+			Decision: PolicyDecision{Action: "stop", Reason: string(capacityErr.GetErrorCode()), Source: "capacity"}})
+		return false
+	}
 	if response == nil {
 		response = MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "empty_response", http.StatusBadGateway)
 	}
@@ -296,7 +306,9 @@ func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResp
 	return false
 }
 
-func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
+// DoMidjourneyHttpRequest holds admission through a submission response body.
+// Task lookups pass submission=false and do not consume generation capacity.
+func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string, submission bool) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
 	var nullBytes []byte
 	//var requestBody io.Reader
 	//requestBody = c.Request.Body
@@ -330,13 +342,29 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 	if err != nil {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "marshal_request_body_failed", http.StatusInternalServerError), nullBytes, err
 	}
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, strings.NewReader(string(reqBody)))
+	requestContext := c.Request.Context()
+	client := GetHttpClient()
+	var lease *ChannelCapacityLease
+	if submission {
+		var capacityErr *types.NewAPIError
+		lease, capacityErr = AcquireRequestChannelCapacity(c, c.GetInt("channel_id"))
+		if capacityErr != nil {
+			return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, capacityErr.Error(), capacityErr.StatusCode), nullBytes, capacityErr
+		}
+		defer lease.Release()
+		requestContext = lease.Context()
+		settings, _ := common.GetContextKeyType[kitdto.ChannelSettings](c, constant.ContextKeyChannelSetting)
+		client, err = GetRelayHttpClientWithProxySettings(settings.Proxy, settings)
+		if err != nil {
+			return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "create_request_failed", http.StatusInternalServerError), nullBytes, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(requestContext, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, c.Request.Method, fullRequestURL, strings.NewReader(string(reqBody)))
 	if err != nil {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "create_request_failed", http.StatusInternalServerError), nullBytes, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	// 使用带有超时的 context 创建新的请求
-	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	req.Header.Set("Accept", c.Request.Header.Get("Accept"))
 	auth := common.GetContextKeyString(c, constant.ContextKeyChannelKey)
@@ -344,12 +372,19 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 		auth = strings.TrimPrefix(auth, "Bearer ")
 		req.Header.Set("mj-api-secret", auth)
 	}
-	defer cancel()
-	resp, err := GetHttpClient().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
+		if lease != nil && lease.Err() != nil {
+			capacityErr := lease.Err()
+			return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, capacityErr.Error(), capacityErr.StatusCode), nullBytes, capacityErr
+		}
+		if IsUpstreamFirstByteTimeout(err) {
+			return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, i18n.T(c, i18n.MsgRelayUpstreamFirstByteTimeout), http.StatusGatewayTimeout), nullBytes, err
+		}
 		common.SysLog(common.LogText("do request failed: %s", err.Error()))
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "do_request_failed", http.StatusInternalServerError), nullBytes, err
 	}
+	defer CloseResponseBodyGracefully(resp)
 	statusCode := resp.StatusCode
 	//if statusCode != 200  {
 	//	return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "bad_response_status_code", statusCode), nullBytes, nil
@@ -365,10 +400,13 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 	var midjResponse dto.MidjourneyResponse
 	var midjourneyUploadsResponse dto.MidjourneyUploadResponse
 	responseBody, err := io.ReadAll(resp.Body)
+	if lease != nil && lease.Err() != nil {
+		capacityErr := lease.Err()
+		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, capacityErr.Error(), capacityErr.StatusCode), nullBytes, capacityErr
+	}
 	if err != nil {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "read_response_body_failed", statusCode), nullBytes, err
 	}
-	CloseResponseBodyGracefully(resp)
 	logger.LogDebug(c, "midjourney response body: %s", responseBody)
 	if len(responseBody) == 0 {
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "empty_response_body", statusCode), responseBody, nil

@@ -564,12 +564,18 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, bod
 	var release context.CancelFunc
 	if a.submit != nil && a.submit.ResponseType == "sse" && relaysSubmitEvents(c) {
 		detached := c.Request.WithContext(context.WithoutCancel(c.Request.Context()))
+		upstreamContext, releaseCapacityContext := service.WithChannelCapacityCancellation(detached.Context())
 		timeout := time.Duration(constant.TaskPluginProtocolTimeoutSeconds) * time.Second
 		if timeout <= 0 {
 			timeout = 10 * time.Minute
 		}
 		var upstream context.Context
-		upstream, release = context.WithTimeout(detached.Context(), timeout)
+		var releaseTimeout context.CancelFunc
+		upstream, releaseTimeout = context.WithTimeout(upstreamContext, timeout)
+		release = func() {
+			releaseTimeout()
+			releaseCapacityContext()
+		}
 		c.Request = detached.WithContext(upstream)
 		defer func() { c.Request = detached }()
 	}

@@ -358,14 +358,14 @@ func newHTTPClientFromTransportFactory(policy HTTPTransportPolicy, factory func(
 	if policy.Protocol == dto.HTTPProtocolHTTP1 || policy.Shards == 1 {
 		transport := factory()
 		applyHTTPTransportPolicy(transport, policy)
-		return newRelayHTTPClient(transport)
+		return newRelayHTTPClient(withUpstreamFirstByteTimeout(transport, policy.UpstreamFirstByteTimeoutSeconds))
 	}
 	shardedFactory := func() *http.Transport {
 		transport := factory()
 		applyHTTPTransportPolicy(transport, policy)
 		return transport
 	}
-	return newRelayHTTPClient(newShardedRoundTripper(policy, shardedFactory))
+	return newRelayHTTPClient(withUpstreamFirstByteTimeout(newShardedRoundTripper(policy, shardedFactory), policy.UpstreamFirstByteTimeoutSeconds))
 }
 
 func newDirectHTTPClient(policy HTTPTransportPolicy, tlsConfig *tls.Config) *http.Client {
@@ -374,7 +374,7 @@ func newDirectHTTPClient(policy HTTPTransportPolicy, tlsConfig *tls.Config) *htt
 		// Direct clients cannot fail proxy configuration.
 		transport := newRelayHTTPTransport()
 		applyHTTPTransportPolicy(transport, policy)
-		return newRelayHTTPClient(transport)
+		return newRelayHTTPClient(withUpstreamFirstByteTimeout(transport, policy.UpstreamFirstByteTimeoutSeconds))
 	}
 	return client
 }
@@ -395,10 +395,23 @@ func GetHttpClientWithProxy(rawProxyURL string) (*http.Client, error) {
 }
 
 // GetHttpClientWithProxySettings returns a cached HTTP client for the proxy URL and
-// channel transport settings. Default auto + 1 shard shares the same client pool as
+// channel connection settings, without the generation-only first-byte deadline.
+// Default auto + 1 shard shares the same client pool as
 // GetHttpClientWithProxy / GetHttpClient for the empty-proxy case.
 func GetHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSettings) (*http.Client, error) {
+	return getHttpClientWithProxyPolicy(rawProxyURL, NormalizeHTTPTransportPolicy(settings))
+}
+
+// GetRelayHttpClientWithProxySettings adds the effective first-byte deadline for
+// generation attempts, task submissions and administrator channel tests. Polling,
+// discovery and artifact fetches must use GetHttpClientWithProxySettings instead.
+func GetRelayHttpClientWithProxySettings(rawProxyURL string, settings dto.ChannelSettings) (*http.Client, error) {
 	policy := NormalizeHTTPTransportPolicy(settings)
+	policy.UpstreamFirstByteTimeoutSeconds = EffectiveUpstreamFirstByteTimeoutSeconds(settings)
+	return getHttpClientWithProxyPolicy(rawProxyURL, policy)
+}
+
+func getHttpClientWithProxyPolicy(rawProxyURL string, policy HTTPTransportPolicy) (*http.Client, error) {
 	trimmedProxyURL := strings.TrimSpace(rawProxyURL)
 
 	if trimmedProxyURL == "" {

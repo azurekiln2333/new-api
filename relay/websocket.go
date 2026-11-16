@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -36,6 +37,13 @@ func WssHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.
 	if resp != nil {
 		info.TargetWs = resp.(*websocket.Conn)
 		defer info.TargetWs.Close()
+		// A lease loss or canceled client must also unblock socket readers;
+		// canceling the HTTP handshake context alone cannot close an upgrade.
+		stopCancellation := context.AfterFunc(c.Request.Context(), func() {
+			_ = info.TargetWs.Close()
+			_ = info.ClientWs.Close()
+		})
+		defer stopCancellation()
 		var closeOnce sync.Once
 		unregister := wsmanager.Register(info.ChannelId, wsmanager.KindRealtime, func(reason string) {
 			closeOnce.Do(func() {

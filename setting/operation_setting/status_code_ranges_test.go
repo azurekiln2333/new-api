@@ -3,6 +3,7 @@ package operation_setting
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,26 +63,30 @@ func TestShouldRetryByStatusCode(t *testing.T) {
 
 	require.True(t, ShouldRetryByStatusCode(429))
 	require.True(t, ShouldRetryByStatusCode(500))
-	require.False(t, ShouldRetryByStatusCode(504))
-	require.False(t, ShouldRetryByStatusCode(524))
+	assert.True(t, ShouldRetryByStatusCode(504))
+	assert.True(t, ShouldRetryByStatusCode(524))
 	require.False(t, ShouldRetryByStatusCode(400))
 	require.False(t, ShouldRetryByStatusCode(200))
 }
 
-func TestShouldRetryByStatusCode_DefaultMatchesLegacyBehavior(t *testing.T) {
+func TestShouldRetryByStatusCode_DefaultIncludesUpstreamTimeouts(t *testing.T) {
 	require.False(t, ShouldRetryByStatusCode(200))
 	require.False(t, ShouldRetryByStatusCode(400))
 	require.True(t, ShouldRetryByStatusCode(401))
 	require.False(t, ShouldRetryByStatusCode(408))
 	require.True(t, ShouldRetryByStatusCode(429))
 	require.True(t, ShouldRetryByStatusCode(500))
-	require.False(t, ShouldRetryByStatusCode(504))
-	require.False(t, ShouldRetryByStatusCode(524))
+	assert.True(t, ShouldRetryByStatusCode(504))
+	assert.True(t, ShouldRetryByStatusCode(524))
 	require.True(t, ShouldRetryByStatusCode(599))
 }
 
-func TestIsAlwaysSkipRetryStatusCode(t *testing.T) {
-	require.True(t, IsAlwaysSkipRetryStatusCode(504))
-	require.True(t, IsAlwaysSkipRetryStatusCode(524))
-	require.False(t, IsAlwaysSkipRetryStatusCode(500))
+func TestShouldRetryByStatusCode_ExplicitExclusions(t *testing.T) {
+	original := AutomaticRetryStatusCodeRanges
+	t.Cleanup(func() { AutomaticRetryStatusCodeRanges = original })
+	require.NoError(t, AutomaticRetryStatusCodesFromString("403-404,500-503"))
+	assert.True(t, ShouldRetryByStatusCode(403))
+	assert.True(t, ShouldRetryByStatusCode(404))
+	assert.False(t, ShouldRetryByStatusCode(504))
+	assert.False(t, ShouldRetryByStatusCode(524))
 }

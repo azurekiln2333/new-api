@@ -58,6 +58,9 @@ const (
 	// channel itself is healthy, so the code deliberately avoids the "channel:"
 	// prefix that IsChannelError turns into automatic disabling.
 	ErrorCodeChannelKeyScopeUnsatisfied   ErrorCode = "channel_key_scope_unsatisfied"
+	ErrorCodeChannelCapacitySaturated     ErrorCode = "channel_capacity_saturated"
+	ErrorCodeChannelCapacityUnavailable   ErrorCode = "channel_capacity_unavailable"
+	ErrorCodeUpstreamFirstByteTimeout     ErrorCode = "upstream_first_byte_timeout"
 	ErrorCodeChannelParamOverrideInvalid  ErrorCode = "channel:param_override_invalid"
 	ErrorCodeChannelHeaderOverrideInvalid ErrorCode = "channel:header_override_invalid"
 	ErrorCodeChannelModelMappedError      ErrorCode = "channel:model_mapped_error"

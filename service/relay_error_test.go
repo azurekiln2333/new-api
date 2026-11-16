@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -206,7 +208,14 @@ func TestDecideRelayRetryReasons(t *testing.T) {
 		{name: "retry status matched", err: upstream(http.StatusTooManyRequests), retries: 1, want: PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}},
 		{name: "status outside retry rules", err: upstream(http.StatusBadRequest), retries: 1, want: PolicyDecision{Action: "stop", Reason: "status_not_retryable", Source: "global"}},
 		{name: "attempt budget exhausted", err: upstream(http.StatusTooManyRequests), retries: 0, want: PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}},
-		{name: "always skipped status", err: upstream(http.StatusGatewayTimeout), retries: 1, want: PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}},
+		{name: "upstream gateway timeout", err: upstream(http.StatusGatewayTimeout), retries: 1, want: PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}},
+		{name: "typed first byte timeout ignores mapped status", err: types.NewErrorWithStatusCode(&upstreamFirstByteTimeoutError{}, types.ErrorCodeUpstreamFirstByteTimeout, http.StatusBadRequest), retries: 1, want: PolicyDecision{Action: "retry", Reason: "upstream_first_byte_timeout", Source: "system"}},
+		{name: "typed timeout still respects budget", err: types.NewErrorWithStatusCode(&upstreamFirstByteTimeoutError{}, types.ErrorCodeUpstreamFirstByteTimeout, http.StatusGatewayTimeout), retries: 0, want: PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}},
+		{name: "cancelled client never retries", err: upstream(http.StatusBadGateway), retries: 1, setup: func(c *gin.Context) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/responses", nil)
+		}, want: PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}},
 		{name: "success status never retries", err: upstream(http.StatusOK), retries: 1, want: PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}},
 		{name: "skip retry error", err: types.NewErrorWithStatusCode(errors.New("local"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()), retries: 1, want: PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}},
 		{name: "channel error retries without budget", err: types.NewError(errors.New("no key"), types.ErrorCodeChannelNoAvailableKey), retries: 0, want: PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}},
@@ -276,6 +285,24 @@ func TestRequestPolicyEventsReachLogAdminInfo(t *testing.T) {
 	assert.Equal(t, 8, events[6].ChannelID)
 	assert.Equal(t, 2, events[6].Attempt)
 	assert.True(t, state.Successful)
+
+	state.BeginAttempt(&model.Channel{Id: 9}, "default")
+	requestContext, cancel := context.WithCancel(c.Request.Context())
+	c.Request = c.Request.WithContext(requestContext)
+	cancel()
+	decision := DecideRelayRetry(c, apiErr, 2)
+	RecordPolicyFailure(c, 9, apiErr, decision)
+	ProcessChannelError(c, types.ChannelError{ChannelId: 9, AutoBan: true}, apiErr, nil)
+	cancelled := state.Events()[8]
+	assert.Equal(t, "local", cancelled.ErrorSource)
+	assert.Equal(t, PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}, cancelled.Decision)
+	assert.Equal(t, "unchanged", cancelled.Health)
+	assert.NotContains(t, state.FailedChannelIDs, 9)
+	stream := relaycommon.NewStreamStatus()
+	stream.SetEndReason(relaycommon.StreamEndReasonClientGone, context.Canceled)
+	MarkRequestPolicySuccess(c, stream)
+	assert.NotContains(t, state.FailedChannelIDs, 9, "an interrupted client stream must not mark the channel unhealthy")
+	assert.Equal(t, "client_cancelled", state.Events()[9].Decision.Reason)
 
 	untouched, _ := gin.CreateTestContext(httptest.NewRecorder())
 	other := model.NewLogOther()

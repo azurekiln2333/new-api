@@ -142,7 +142,7 @@ var QuotaRemindThreshold = 1000
 // use quota_setting.pre_consume_multiplier and the estimated input cost.
 var PreConsumedQuota = 500
 
-var RetryTimes = 0
+var RetryTimes = 2
 
 //var RootUserEmail = ""
 

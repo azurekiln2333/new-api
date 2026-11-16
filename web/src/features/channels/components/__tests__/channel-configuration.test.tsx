@@ -47,12 +47,150 @@ import {
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
 } from '../../constants'
+import {
+  getChannelConfigurationState,
+  getChannelConfigurationSection,
+} from '../../lib/channel-configuration'
+import {
+  buildSettingJSON,
+  channelFormSchema,
+  transformChannelToFormDefaults,
+} from '../../lib/channel-form'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelsProvider } from '../channels-provider'
 import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
 const originalAuth = useAuthStore.getState().auth
+
+test.each([undefined, null, 0, 15])(
+  'channel request limits preserve timeout %s through save and reload',
+  (timeout) => {
+    const channel = {
+      ...editingChannel,
+      setting: JSON.stringify({
+        max_concurrent_requests: 2,
+        upstream_first_byte_timeout_seconds: timeout,
+      }),
+    }
+    const values = transformChannelToFormDefaults(channel)
+    const saved = JSON.parse(buildSettingJSON(values))
+    expect(saved.max_concurrent_requests).toBe(2)
+    if (timeout == null) {
+      expect(saved).not.toHaveProperty('upstream_first_byte_timeout_seconds')
+    } else {
+      expect(saved.upstream_first_byte_timeout_seconds).toBe(timeout)
+    }
+    expect(
+      transformChannelToFormDefaults({
+        ...channel,
+        setting: JSON.stringify(saved),
+      })
+    ).toMatchObject({
+      max_concurrent_requests: 2,
+      upstream_first_byte_timeout_mode: timeout == null ? 'inherit' : 'custom',
+      upstream_first_byte_timeout_seconds: timeout ?? 0,
+    })
+    expect(getChannelConfigurationState(values, {}, true).sections.other).toBe(
+      'configured'
+    )
+  }
+)
+
+test.each([
+  ['max_concurrent_requests', -1],
+  ['max_concurrent_requests', 2.5],
+  ['max_concurrent_requests', 1000001],
+  ['upstream_first_byte_timeout_seconds', -1],
+  ['upstream_first_byte_timeout_seconds', 1.5],
+  ['upstream_first_byte_timeout_seconds', 86401],
+])(
+  'channel request limits reject %s=%s and locate its settings tab',
+  (field, value) => {
+    const values = {
+      ...transformChannelToFormDefaults(editingChannel),
+      upstream_first_byte_timeout_mode: 'custom',
+      [field]: value,
+    }
+    const result = channelFormSchema.safeParse(values)
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === field)).toBe(
+        true
+      )
+    }
+    expect(getChannelConfigurationSection(String(field))).toBe('other')
+  }
+)
+
+test('channel request limits expose custom zero and restore inheritance on save', async () => {
+  editingChannel.setting =
+    '{"max_concurrent_requests":2,"upstream_first_byte_timeout_seconds":0}'
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  expect(
+    screen.getByRole('spinbutton', { name: 'Channel concurrency limit' })
+  ).toHaveValue(2)
+  expect(
+    screen.getByRole('spinbutton', {
+      name: 'Custom first-byte timeout (seconds)',
+    })
+  ).toHaveValue(0)
+  await user.click(
+    screen.getByRole('combobox', { name: 'Upstream first-byte timeout' })
+  )
+  await user.click(
+    screen.getByRole('option', { name: 'Inherit global setting' })
+  )
+  expect(
+    screen.queryByRole('spinbutton', {
+      name: 'Custom first-byte timeout (seconds)',
+    })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  const saved = JSON.parse(
+    (put.mock.calls[0][1] as { setting: string }).setting
+  )
+  expect(saved.max_concurrent_requests).toBe(2)
+  expect(saved).not.toHaveProperty('upstream_first_byte_timeout_seconds')
+})
+
+test('channel request limits save an explicit custom zero instead of inheritance', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
+  fireEvent.change(
+    screen.getByRole('spinbutton', { name: 'Channel concurrency limit' }),
+    { target: { value: '2' } }
+  )
+  await user.click(
+    screen.getByRole('combobox', { name: 'Upstream first-byte timeout' })
+  )
+  await user.click(screen.getByRole('option', { name: 'Custom' }))
+  const seconds = screen.getByRole('spinbutton', {
+    name: 'Custom first-byte timeout (seconds)',
+  })
+  fireEvent.change(seconds, { target: { value: '15' } })
+  fireEvent.change(seconds, { target: { value: '0' } })
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(
+    JSON.parse((put.mock.calls[0][1] as { setting: string }).setting)
+  ).toMatchObject({
+    max_concurrent_requests: 2,
+    upstream_first_byte_timeout_seconds: 0,
+  })
+})
 let client: QueryClient
 let editingChannel: Channel
 let pluginOptions: TaskPluginOption[]
@@ -2135,6 +2273,12 @@ test('an operator without sensitive write permission can discover saved models a
   expect(thinking).not.toBeChecked()
   await user.click(screen.getByRole('tab', { name: /Other Settings/ }))
   expect(screen.getByLabelText('Proxy Address')).toBeDisabled()
+  expect(
+    screen.getByRole('spinbutton', { name: 'Channel concurrency limit' })
+  ).toBeDisabled()
+  expect(
+    screen.getByRole('combobox', { name: 'Upstream first-byte timeout' })
+  ).toBeDisabled()
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
   fireEvent.change(screen.getByLabelText('Priority'), {
     target: { value: '8' },

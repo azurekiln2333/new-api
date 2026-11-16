@@ -77,6 +77,68 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			}
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Logf("database version: %s", version)
+			const legacyRetryRange = "100-199,300-399,401-407,409-499,500-503,505-523,525-599"
+			const currentRetryRange = "100-199,300-399,401-407,409-499,500-599"
+			require.NoError(t, db.Create(&Option{Key: "AutomaticRetryStatusCodes", Value: legacyRetryRange}).Error)
+			require.NoError(t, db.Callback().Update().Before("gorm:update").Register("reject_retry_migration", func(tx *gorm.DB) {
+				tx.AddError(errors.New("migration write rejected"))
+			}))
+			assert.Error(t, migrateRequestPolicyRetryDefaults(db))
+			require.NoError(t, db.Callback().Update().Remove("reject_retry_migration"))
+			var markerCount int64
+			require.NoError(t, db.Model(&Option{}).Where(&Option{Key: requestPolicyRetryDefaultsMigrationKey}).Count(&markerCount).Error)
+			assert.Zero(t, markerCount, "failed migration must not leave a completed marker")
+			var unchanged Option
+			require.NoError(t, db.Where(&Option{Key: "AutomaticRetryStatusCodes"}).First(&unchanged).Error)
+			assert.Equal(t, legacyRetryRange, unchanged.Value)
+			for _, tc := range []struct {
+				name        string
+				saved       map[string]string
+				wantRange   string
+				wantRetries int
+			}{
+				{"fresh", nil, currentRetryRange, 2},
+				{"legacy", map[string]string{"AutomaticRetryStatusCodes": legacyRetryRange}, currentRetryRange, 2},
+				{"custom", map[string]string{"AutomaticRetryStatusCodes": "403-404,429"}, "403-404,429", 2},
+				{"saved zero", map[string]string{"AutomaticRetryStatusCodes": legacyRetryRange, "RetryTimes": "0"}, currentRetryRange, 0},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					keys := []string{"AutomaticRetryStatusCodes", "RetryTimes", requestPolicyRetryDefaultsMigrationKey}
+					require.NoError(t, db.Where(map[string]any{"key": keys}).Delete(&Option{}).Error)
+					for key, value := range tc.saved {
+						require.NoError(t, db.Create(&Option{Key: key, Value: value}).Error)
+					}
+					for range 2 {
+						require.NoError(t, db.AutoMigrate(&Option{}))
+						InitOptionMap()
+						assert.Equal(t, tc.wantRange, CurrentRequestPolicy().Options["AutomaticRetryStatusCodes"])
+						assert.Equal(t, tc.wantRetries, CurrentRequestPolicy().RetryTimes)
+						assert.Equal(t, tc.wantRetries, common.RetryTimes)
+						assert.Equal(t, CurrentRequestPolicy().RetryCodes, operation_setting.AutomaticRetryStatusCodeRanges)
+						assert.NotContains(t, common.OptionMap, requestPolicyRetryDefaultsMigrationKey)
+					}
+					// An administrator can deliberately restore the old range later.
+					require.NoError(t, UpdateOption("AutomaticRetryStatusCodes", legacyRetryRange))
+					for range 2 {
+						InitOptionMap()
+						assert.Equal(t, legacyRetryRange, CurrentRequestPolicy().Options["AutomaticRetryStatusCodes"])
+					}
+				})
+			}
+			for _, seconds := range []string{"12", "0", "86400"} {
+				require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"UpstreamFirstByteTimeoutSeconds": seconds}))
+				for range 2 {
+					InitOptionMap()
+				}
+				value, err := strconv.Atoi(seconds)
+				require.NoError(t, err)
+				assert.Equal(t, value, CurrentRequestPolicy().UpstreamFirstByteTimeoutSeconds)
+			}
+			for _, invalid := range []string{"-1", "1.5", "86401", "invalid"} {
+				snapshot := CurrentRequestPolicy()
+				assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"UpstreamFirstByteTimeoutSeconds": invalid}))
+				assert.Same(t, snapshot, CurrentRequestPolicy())
+			}
 			rules := `[{"name":"session","model_regex":[".*"],"key_sources":[{"type":"request_header","key":"X-Session"}],"ttl_seconds":0,"skip_retry_on_failure":false,"include_using_group":false,"param_override_template":{"temperature":0},"future_field":{"enabled":false}}]`
 			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"RetryTimes": "2", "channel_affinity_setting.rules": rules, "channel_affinity_setting.failure_threshold": "3", "channel_affinity_setting.retry_avoid_failed_channels": "false"}))
 			require.NoError(t, UpdateOption("GroupLevels", `{"default":0,"vip":1}`))

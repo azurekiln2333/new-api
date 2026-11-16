@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"sync"
 	"time"
@@ -39,21 +41,33 @@ type PolicyEvent struct {
 // read the decision flow in the log details. Channel selection and the retry
 // decision stay in the relay flows; this state only records them.
 type RequestPolicyState struct {
-	FinalLogged       bool
-	StartedAt         time.Time
-	Attempts          int
-	SelectedGroup     string
-	SessionMode       string
-	SessionModeSource string
-	RuleName          string
-	Successful        bool
-	OutcomeRecorded   bool
-	FailureRecorded   bool
-	CurrentChannelID  int
-	FailedChannelIDs  []int
-	AffinityReleased  bool
-	mu                sync.Mutex
-	events            []PolicyEvent
+	FinalLogged            bool
+	StartedAt              time.Time
+	Attempts               int
+	SelectedGroup          string
+	SessionMode            string
+	SessionModeSource      string
+	RuleName               string
+	Successful             bool
+	OutcomeRecorded        bool
+	FailureRecorded        bool
+	CurrentChannelID       int
+	FailedChannelIDs       []int
+	SaturatedChannelIDs    []int
+	AffinityReleased       bool
+	selectedAutoGroupRetry *autoGroupAdmissionRetry
+	mu                     sync.Mutex
+	events                 []PolicyEvent
+}
+
+// ChannelSelectionExclusions keeps local capacity rejections hard even when
+// the administrator permits retrying an upstream-failed channel.
+func (s *RequestPolicyState) ChannelSelectionExclusions() []int {
+	excluded := slices.Clone(s.SaturatedChannelIDs)
+	if operation_setting.GetChannelAffinitySetting().RetryAvoidFailedChannels {
+		excluded = append(excluded, s.FailedChannelIDs...)
+	}
+	return excluded
 }
 
 func RequestPolicy(c *gin.Context) *RequestPolicyState {
@@ -107,6 +121,10 @@ func RecordPolicyFailure(c *gin.Context, channelID int, err *types.NewAPIError, 
 	if c == nil || err == nil {
 		return
 	}
+	if c.Request != nil && c.Request.Context().Err() != nil {
+		RequestPolicy(c).AddEvent(PolicyEvent{ChannelID: channelID, Status: err.StatusCode, ErrorCode: string(err.GetErrorCode()), ErrorSource: "local", Decision: PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}, Health: "unchanged"})
+		return
+	}
 	source := "upstream"
 	switch {
 	case types.IsChannelError(err):
@@ -141,8 +159,15 @@ func MarkRequestPolicySuccess(c *gin.Context, stream *relaycommon.StreamStatus) 
 	state.Successful = stream == nil || stream.IsNormalEnd() && !stream.HasErrors() && (stream.ResponseOutcome() == "" || stream.ResponseOutcome() == "completed")
 	decision := PolicyDecision{Action: "success", Reason: "request_completed", Source: "upstream"}
 	if !state.Successful {
-		RecordChannelFailure(c)
 		decision = PolicyDecision{Action: "stop", Reason: "stream_not_successful", Source: "system"}
+		var cause *types.NewAPIError
+		if c != nil && c.Request != nil && errors.As(context.Cause(c.Request.Context()), &cause) && IsChannelCapacityError(cause) {
+			decision = PolicyDecision{Action: "stop", Reason: string(cause.GetErrorCode()), Source: "capacity"}
+		} else if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+			decision = PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}
+		} else {
+			RecordChannelFailure(c)
+		}
 	}
 	channelID := 0
 	if c != nil {

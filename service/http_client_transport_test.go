@@ -1,28 +1,385 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
+	"gorm.io/gorm"
 )
+
+type firstByteTestTransport func(*http.Request) (*http.Response, error)
+
+func (f firstByteTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type firstByteTestBody struct {
+	read   func([]byte) (int, error)
+	closed bool
+}
+
+func (b *firstByteTestBody) Read(p []byte) (int, error) { return b.read(p) }
+func (b *firstByteTestBody) Close() error {
+	b.closed = true
+	return nil
+}
+
+func TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt(t *testing.T) {
+	for _, headers := range []bool{false, true} {
+		t.Run(fmt.Sprintf("headers=%t", headers), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				parent := context.Background()
+				var attemptContext context.Context
+				var body *firstByteTestBody
+				transport := withUpstreamFirstByteTimeout(firstByteTestTransport(func(req *http.Request) (*http.Response, error) {
+					attemptContext = req.Context()
+					if !headers {
+						<-req.Context().Done()
+						return nil, req.Context().Err()
+					}
+					body = &firstByteTestBody{read: func([]byte) (int, error) {
+						<-req.Context().Done()
+						return 0, req.Context().Err()
+					}}
+					return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+				}), 1)
+				req := httptest.NewRequest(http.MethodPost, "https://upstream.example", nil).WithContext(parent)
+				resp, err := transport.RoundTrip(req)
+				require.Error(t, err)
+				assert.Nil(t, resp)
+				assert.True(t, IsUpstreamFirstByteTimeout(fmt.Errorf("outer: %w", err)))
+				gatewayErr := types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+				assert.Equal(t, types.ErrorCodeUpstreamFirstByteTimeout, gatewayErr.GetErrorCode())
+				assert.Equal(t, http.StatusGatewayTimeout, gatewayErr.StatusCode)
+				assert.False(t, types.IsSkipRetryError(gatewayErr))
+				assert.True(t, IsUpstreamFirstByteTimeout(context.Cause(attemptContext)))
+				assert.NoError(t, parent.Err())
+				if headers {
+					assert.True(t, body.closed, "body must close before channel failover")
+				}
+			})
+		})
+	}
+}
+
+func TestUpstreamFirstBytePreservesPayloadAndLongStream(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var attemptContext context.Context
+		payload := strings.NewReader("data: hello\n\ndata: world\n\n")
+		body := &firstByteTestBody{read: payload.Read}
+		transport := withUpstreamFirstByteTimeout(firstByteTestTransport(func(req *http.Request) (*http.Response, error) {
+			attemptContext = req.Context()
+			return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+		}), 1)
+		resp, err := transport.RoundTrip(httptest.NewRequest(http.MethodPost, "https://upstream.example", nil))
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, payload.Size()-int64(payload.Len()), "only one byte may be consumed before the handler")
+		// synctest advances a virtual clock; no wall-clock sleep is involved.
+		<-time.After(2 * time.Second)
+		require.NoError(t, attemptContext.Err(), "productive streams outlive the first-byte deadline")
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, "data: hello\n\ndata: world\n\n", string(data))
+		assert.ErrorIs(t, attemptContext.Err(), context.Canceled, "EOF releases the derived context")
+		require.NoError(t, resp.Body.Close())
+		assert.True(t, body.closed)
+	})
+}
+
+func TestUpstreamFirstByteCancellationAndDeadlineWinner(t *testing.T) {
+	for _, scenario := range []string{"parent before byte", "parent after byte", "close after byte", "deadline before buffered byte"} {
+		t.Run(scenario, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				parent, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var attemptContext context.Context
+				var body *firstByteTestBody
+				transport := withUpstreamFirstByteTimeout(firstByteTestTransport(func(req *http.Request) (*http.Response, error) {
+					attemptContext = req.Context()
+					first := true
+					body = &firstByteTestBody{read: func(p []byte) (int, error) {
+						if scenario == "parent before byte" {
+							cancel()
+							return 0, req.Context().Err()
+						}
+						if scenario == "deadline before buffered byte" {
+							<-req.Context().Done()
+						}
+						if first {
+							first = false
+							p[0] = 'x'
+							return 1, nil
+						}
+						<-req.Context().Done()
+						return 0, req.Context().Err()
+					}}
+					return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+				}), 1)
+				resp, err := transport.RoundTrip(httptest.NewRequest(http.MethodPost, "https://upstream.example", nil).WithContext(parent))
+				switch scenario {
+				case "parent before byte":
+					require.ErrorIs(t, err, context.Canceled)
+					assert.False(t, IsUpstreamFirstByteTimeout(err))
+					assert.Nil(t, resp)
+				case "deadline before buffered byte":
+					require.Error(t, err)
+					assert.True(t, IsUpstreamFirstByteTimeout(err), "expired attempts cannot deliver a late buffered byte")
+					assert.Nil(t, resp)
+				default:
+					require.NoError(t, err)
+					if scenario == "parent after byte" {
+						cancel()
+						_, readErr := io.ReadAll(resp.Body)
+						assert.ErrorIs(t, readErr, context.Canceled)
+					}
+					require.NoError(t, resp.Body.Close())
+					assert.ErrorIs(t, attemptContext.Err(), context.Canceled)
+				}
+				assert.True(t, body.closed)
+			})
+		})
+	}
+}
+
+type firstByteTestUpgradeBody struct{ bytes.Buffer }
+
+func (*firstByteTestUpgradeBody) Close() error { return nil }
+
+func TestUpstreamFirstByteEmptyAndUpgradeResponses(t *testing.T) {
+	for _, scenario := range []string{"no body", "empty EOF", "upgrade"} {
+		t.Run(scenario, func(t *testing.T) {
+			var attemptContext context.Context
+			var body io.ReadCloser = http.NoBody
+			status := http.StatusNoContent
+			if scenario == "empty EOF" {
+				body = io.NopCloser(strings.NewReader(""))
+			} else if scenario == "upgrade" {
+				upgrade := &firstByteTestUpgradeBody{}
+				_, err := upgrade.WriteString("upgraded payload")
+				require.NoError(t, err)
+				body, status = upgrade, http.StatusSwitchingProtocols
+			}
+			transport := withUpstreamFirstByteTimeout(firstByteTestTransport(func(req *http.Request) (*http.Response, error) {
+				attemptContext = req.Context()
+				return &http.Response{StatusCode: status, Body: body}, nil
+			}), 1)
+			resp, err := transport.RoundTrip(httptest.NewRequest(http.MethodGet, "https://upstream.example", nil))
+			require.NoError(t, err)
+			if scenario == "upgrade" {
+				assert.Equal(t, "upgraded payload", body.(*firstByteTestUpgradeBody).String(), "101 must not pre-read")
+				writer, ok := resp.Body.(io.Writer)
+				require.True(t, ok, "upgraded body keeps its write interface")
+				_, err := writer.Write([]byte("!"))
+				require.NoError(t, err)
+				assert.Equal(t, "upgraded payload!", body.(*firstByteTestUpgradeBody).String())
+				assert.NoError(t, attemptContext.Err())
+			} else {
+				data, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				assert.Empty(t, data)
+			}
+			require.NoError(t, resp.Body.Close())
+			assert.ErrorIs(t, attemptContext.Err(), context.Canceled)
+		})
+	}
+	tracker := &closeCountingRoundTripper{}
+	client := &http.Client{Transport: withUpstreamFirstByteTimeout(tracker, 1)}
+	client.CloseIdleConnections()
+	assert.Equal(t, int32(1), tracker.closes.Load())
+}
+
+func TestUpstreamFirstByteTimeoutSDKRetries(t *testing.T) {
+	for _, timeout := range []bool{true, false} {
+		t.Run(fmt.Sprintf("timeout=%t", timeout), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				attempts := 0
+				transport := withUpstreamFirstByteTimeout(firstByteTestTransport(func(req *http.Request) (*http.Response, error) {
+					attempts++
+					if timeout {
+						<-req.Context().Done()
+						return nil, req.Context().Err()
+					}
+					status := http.StatusOK
+					if attempts == 1 {
+						status = http.StatusServiceUnavailable
+					}
+					return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+				}), 1)
+				client := bedrockruntime.New(bedrockruntime.Options{
+					Region: "us-east-1", BaseEndpoint: aws.String("https://bedrock.example"),
+					Credentials: credentials.NewStaticCredentialsProvider("access", "secret", ""),
+					HTTPClient:  &http.Client{Transport: transport},
+					Retryer: retry.NewStandard(func(o *retry.StandardOptions) {
+						o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
+					}),
+				})
+				parent := context.Background()
+				_, err := client.InvokeModel(parent, &bedrockruntime.InvokeModelInput{ModelId: aws.String("test-model"), Body: []byte(`{}`), ContentType: aws.String("application/json")})
+				if timeout {
+					require.Error(t, err)
+					assert.True(t, IsUpstreamFirstByteTimeout(err), "SDK and url wrappers retain timeout identity")
+					var gatewayErr *types.NewAPIError
+					require.True(t, errors.As(err, &gatewayErr))
+					assert.Equal(t, http.StatusGatewayTimeout, gatewayErr.StatusCode)
+					assert.False(t, types.IsSkipRetryError(gatewayErr))
+					assert.Equal(t, 1, attempts, "SDK must return to gateway channel selection after one timeout")
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, 2, attempts, "ordinary SDK transient-error retries remain enabled")
+				}
+				assert.NoError(t, parent.Err())
+			})
+		})
+	}
+}
+
+func TestUpstreamFirstByteTimeoutCacheOverrides(t *testing.T) {
+	defaultClient := initDefaultHTTPClientFixture(t)
+	previousDB := model.DB
+	previousSeconds := model.CurrentRequestPolicy().UpstreamFirstByteTimeoutSeconds
+	common.OptionMapRWMutex.Lock()
+	previousOptions := common.OptionMap
+	common.OptionMap = maps.Clone(previousOptions)
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	common.OptionMapRWMutex.Unlock()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	model.DB = db
+	t.Cleanup(func() {
+		assert.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"UpstreamFirstByteTimeoutSeconds": strconv.Itoa(previousSeconds)}))
+		model.DB = previousDB
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptions
+		common.OptionMapRWMutex.Unlock()
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		assert.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"UpstreamFirstByteTimeoutSeconds": "1"}))
+	zero, short, long := 0, 1, 2
+	for _, proxy := range []string{"", "http://timeout-proxy.example:8080"} {
+		zeroClient, err := GetRelayHttpClientWithProxySettings(proxy, dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &zero})
+		require.NoError(t, err)
+		shortClient, err := GetRelayHttpClientWithProxySettings(proxy, dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &short})
+		require.NoError(t, err)
+		longClient, err := GetRelayHttpClientWithProxySettings(proxy, dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &long})
+		require.NoError(t, err)
+		shortAgain, err := GetRelayHttpClientWithProxySettings(proxy, dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &short})
+		require.NoError(t, err)
+		assert.NotSame(t, zeroClient, shortClient)
+		assert.NotSame(t, shortClient, longClient)
+		assert.Same(t, shortClient, shortAgain)
+		inherited, err := GetRelayHttpClientWithProxySettings(proxy, dto.ChannelSettings{})
+		require.NoError(t, err)
+		assert.Same(t, shortClient, inherited)
+		background, err := GetHttpClientWithProxySettings(proxy, dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &long})
+		require.NoError(t, err)
+		assert.Same(t, zeroClient, background, "channel overrides only apply to generation attempts")
+		legacy, err := GetHttpClientWithProxy(proxy)
+		require.NoError(t, err)
+		assert.Same(t, zeroClient, legacy, "global deadline must not affect polling and discovery")
+		if proxy == "" {
+			assert.Same(t, defaultClient, zeroClient)
+		}
+	}
+	require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"UpstreamFirstByteTimeoutSeconds": "2"}))
+	inherited, err := GetRelayHttpClientWithProxySettings("", dto.ChannelSettings{})
+	require.NoError(t, err)
+	overridden, err := GetRelayHttpClientWithProxySettings("", dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &long})
+	require.NoError(t, err)
+	assert.Same(t, overridden, inherited, "global updates select the current timeout's cached transport")
+	disabled, err := GetRelayHttpClientWithProxySettings("", dto.ChannelSettings{UpstreamFirstByteTimeoutSeconds: &zero})
+	require.NoError(t, err)
+	assert.Same(t, defaultClient, disabled, "explicit zero stays disabled after a global update")
+}
+
+func TestUpstreamFirstByteTimeoutOnlyAppliesToRelayClients(t *testing.T) {
+	for _, relayAttempt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("relay=%t", relayAttempt), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				clientConn, serverConn := net.Pipe()
+				t.Cleanup(func() { _ = clientConn.Close(); _ = serverConn.Close() })
+				serverDone := make(chan error, 1)
+				go func() {
+					defer serverConn.Close()
+					request, err := http.ReadRequest(bufio.NewReader(serverConn))
+					if err == nil {
+						_, err = io.Copy(io.Discard, request.Body)
+						_ = request.Body.Close()
+					}
+					if err == nil {
+						<-time.After(2 * time.Second)
+						_, err = io.WriteString(serverConn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+					}
+					serverDone <- err
+				}()
+				previousTransport := http.DefaultTransport
+				http.DefaultTransport = &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) { return clientConn, nil }}
+				ResetProxyClientCache()
+				t.Cleanup(func() {
+					http.DefaultTransport = previousTransport
+					ResetProxyClientCache()
+				})
+				timeout := 1
+				settings := dto.ChannelSettings{HTTPProtocol: dto.HTTPProtocolHTTP1, UpstreamFirstByteTimeoutSeconds: &timeout}
+				selectClient := GetHttpClientWithProxySettings
+				if relayAttempt {
+					selectClient = GetRelayHttpClientWithProxySettings
+				}
+				client, err := selectClient("", settings)
+				require.NoError(t, err)
+				resp, err := client.Get("http://upstream.example/pending")
+				if relayAttempt {
+					require.Error(t, err)
+					assert.True(t, IsUpstreamFirstByteTimeout(err))
+					assert.Nil(t, resp)
+					assert.Error(t, <-serverDone, "timed-out upstream connection must close")
+					return
+				}
+				require.NoError(t, err, "polling and discovery may wait beyond the generation deadline")
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				assert.Equal(t, "ok", string(body))
+				assert.NoError(t, <-serverDone)
+			})
+		})
+	}
+}
 
 func withRelayHTTPTransportSettings(t *testing.T) {
 	t.Helper()

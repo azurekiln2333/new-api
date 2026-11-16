@@ -84,6 +84,8 @@ export type Channel = z.infer<typeof channelSchema>
 // ============================================================================
 
 export interface ChannelSettings {
+  max_concurrent_requests?: number
+  upstream_first_byte_timeout_seconds?: number | null
   task_plugin_key?: string
   task_extend_plugin_keys?: string[]
   force_format?: boolean

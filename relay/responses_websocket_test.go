@@ -641,13 +641,24 @@ func TestResponsesWSMessageSizeLimit(t *testing.T) {
 	assert.False(t, admitted.Load())
 }
 
-func TestResponsesWSShutdownInterruptsBusyWriter(t *testing.T) {
+func TestResponsesWSChannelCapacityShutdownInterruptsBusyWriter(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
 	client, server, cleanupClient := newTestWebSocketPair(t)
 	defer cleanupClient()
 	target, peer, cleanupTarget := newTestWebSocketPair(t)
 	defer cleanupTarget()
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &responsesWSSession{ctx: ctx, cancel: cancel, client: server, target: target}
+	s := &responsesWSSession{ctx: ctx, cancel: cancel, client: server}
+	settings := dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)}
+	lease, capacityErr := service.AcquireChannelCapacity(ctx, 72001, settings)
+	require.Nil(t, capacityErr)
+	defer lease.Release()
+	require.True(t, s.setTarget(target, lease))
+	_, capacityErr = service.AcquireChannelCapacity(context.Background(), 72001, settings)
+	require.NotNil(t, capacityErr, "a live upstream socket holds the channel slot between messages")
 	// Blocked network writers own these locks. Shutdown must not wait for
 	// them: its close frames are bounded control writes, and closing the
 	// sockets is what interrupts those writers.
@@ -669,11 +680,16 @@ func TestResponsesWSShutdownInterruptsBusyWriter(t *testing.T) {
 		assert.True(t, websocket.IsCloseError(err, websocket.CloseInternalServerErr), "want a 1011 close frame, got %v", err)
 	}
 	assert.Nil(t, s.getTarget())
+	replacement, capacityErr := service.AcquireChannelCapacity(context.Background(), 72001, settings)
+	require.Nil(t, capacityErr, "closing the socket releases its slot")
+	defer replacement.Release()
 
 	// An upstream dial that completes after shutdown is closed with a frame too.
 	late, latePeer, cleanupLate := newTestWebSocketPair(t)
 	defer cleanupLate()
-	assert.False(t, s.setTarget(late))
+	lateLease, capacityErr := service.AcquireChannelCapacity(context.Background(), 72002, dto.ChannelSettings{})
+	require.Nil(t, capacityErr)
+	assert.False(t, s.setTarget(late, lateLease))
 	require.NoError(t, latePeer.SetReadDeadline(time.Now().Add(time.Second)))
 	_, _, err := latePeer.ReadMessage()
 	assert.True(t, websocket.IsCloseError(err, websocket.CloseNormalClosure), "want a 1000 close frame, got %v", err)

@@ -18,8 +18,11 @@ import (
 // IsChannelFailure includes upstream response errors wrapped by the gateway,
 // while excluding local validation, pricing and quota rejections.
 func IsChannelFailure(err *types.NewAPIError) bool {
-	if err == nil {
+	if err == nil || IsChannelCapacityError(err) {
 		return false
+	}
+	if IsUpstreamFirstByteTimeout(err) || err.GetErrorCode() == types.ErrorCodeUpstreamFirstByteTimeout {
+		return true
 	}
 	if types.IsChannelError(err) || err.GetErrorType() != types.ErrorTypeNewAPIError {
 		return true
@@ -39,6 +42,12 @@ func IsChannelFailure(err *types.NewAPIError) bool {
 func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) PolicyDecision {
 	if err == nil {
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
+	}
+	if IsChannelCapacityError(err) {
+		return PolicyDecision{Action: "stop", Reason: string(err.GetErrorCode()), Source: "capacity"}
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}
 	}
 	if IsChannelFailure(err) {
 		RecordChannelFailure(c)
@@ -65,6 +74,9 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if retryTimes <= 0 {
 		return PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}
 	}
+	if IsUpstreamFirstByteTimeout(err) || err.GetErrorCode() == types.ErrorCodeUpstreamFirstByteTimeout {
+		return PolicyDecision{Action: "retry", Reason: "upstream_first_byte_timeout", Source: "system"}
+	}
 	code := err.StatusCode
 	if code >= 200 && code < 300 {
 		return PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}
@@ -72,7 +84,7 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if code < 100 || code > 599 {
 		return PolicyDecision{Action: "retry", Reason: "unrecognized_status", Source: "system"}
 	}
-	if operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) || operation_setting.IsAlwaysSkipRetryStatusCode(code) {
+	if operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) {
 		return PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}
 	}
 	if operation_setting.ShouldRetryByStatusCode(code) {
@@ -86,7 +98,10 @@ func ShouldRetryRelayError(c *gin.Context, openaiErr *types.NewAPIError, retryTi
 }
 
 func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
-	if err == nil {
+	if err == nil || IsChannelCapacityError(err) {
+		return
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 		return
 	}
 	upstreamURLs := common.UpstreamAddresses(c)

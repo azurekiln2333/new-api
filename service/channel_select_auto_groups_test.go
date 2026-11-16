@@ -9,7 +9,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -92,6 +94,7 @@ func createChannelSelectAutoGroupsChannel(t *testing.T, db *gorm.DB, id int, gro
 }
 
 func TestRetryAvoidsFailedChannelsAcrossPrioritiesAndGroups(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	db := setupChannelSelectAutoGroupsTest(t)
 	// Initialize dialect quoting through startup without migrating unrelated
 	// tables. The ordinary service fixture otherwise uses only memory routing.
@@ -155,8 +158,7 @@ func TestRetryAvoidsFailedChannelsAcrossPrioritiesAndGroups(t *testing.T) {
 				retry.IncreaseRetry()
 				channel, _, err = CacheGetRandomSatisfiedChannel(retry)
 				require.NoError(t, err)
-				require.NotNil(t, channel)
-				assert.Equal(t, 3103, channel.Id, "a repeat is allowed only after every eligible channel failed")
+				assert.Nil(t, channel, "failed-channel avoidance stops after every eligible channel failed")
 				common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 				common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"default", "vip"})
 				common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, true)
@@ -168,6 +170,50 @@ func TestRetryAvoidsFailedChannelsAcrossPrioritiesAndGroups(t *testing.T) {
 				assert.Equal(t, "vip", group)
 			})
 		}
+	}
+	for _, retryLimit := range []int{0, 2} {
+		t.Run(fmt.Sprintf("capacity preserves group and retry budget %d", retryLimit), func(t *testing.T) {
+			common.RetryTimes = retryLimit
+			common.MemoryCacheEnabled = true
+			model.InitChannelCache()
+			affinity.RetryAvoidFailedChannels = false
+			ctx := newRequestAutoGroupsContext()
+			ctx.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+			common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+			common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"default", "vip"})
+			common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, true)
+			// An affinity attempt offset still starts at the highest priority
+			// when the group's upstream retry budget is already at its boundary.
+			ctx.Set(ginKeyChannelAffinityRetryOffset, retryLimit)
+			GetChannelConstraints(ctx).AddFilter(dto.ChannelFilter{Kind: dto.FilterResponsesWebSocket})
+			retry := &RetryParam{Ctx: ctx, TokenGroup: "auto", ModelName: modelName, Retry: common.GetPointer(retryLimit)}
+			var busy []int
+			for range 2 {
+				channel, group, err := CacheGetRandomSatisfiedChannel(retry)
+				require.NoError(t, err)
+				require.NotNil(t, channel)
+				assert.Equal(t, "default", group)
+				busy = append(busy, channel.Id)
+				require.True(t, RetryChannelAdmission(ctx, channel.Id, channelCapacityError(types.ErrorCodeChannelCapacitySaturated), retry))
+				assert.Equal(t, retryLimit, retry.GetRetry(), "busy traversal must preserve spent retries")
+				assert.False(t, retry.resetNextTry, "a busy candidate must not reset the next upstream retry")
+				assert.Equal(t, retryLimit, ctx.GetInt(ginKeyChannelAffinityRetryOffset))
+			}
+			assert.ElementsMatch(t, []int{3101, 3102}, busy)
+			channel, group, err := CacheGetRandomSatisfiedChannel(retry)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 3103, channel.Id, "same-group free capacity precedes moving to the next group")
+			assert.Equal(t, "default", group)
+			assert.Zero(t, retry.GetRetry())
+			require.True(t, RetryChannelAdmission(ctx, channel.Id, channelCapacityError(types.ErrorCodeChannelCapacitySaturated), retry))
+			assert.Equal(t, retryLimit, retry.GetRetry())
+			channel, group, err = CacheGetRandomSatisfiedChannel(retry)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 3104, channel.Id, "next group is reached after every same-group candidate is busy")
+			assert.Equal(t, "vip", group)
+		})
 	}
 }
 

@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createRouter,
@@ -22,10 +40,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
+import {
+  createRoutingPolicySchema,
+  routingPolicyFormValues,
+} from '../routing-form'
 import { RoutingPolicySection } from '../routing-section'
 
 const options = {
   RetryTimes: '2',
+  UpstreamFirstByteTimeoutSeconds: '0',
   'channel_affinity_setting.enabled': 'true',
   'channel_affinity_setting.retry_avoid_failed_channels': 'true',
   'channel_affinity_setting.failure_threshold': '1',
@@ -53,6 +76,57 @@ const options = {
   AutomaticRetryStatusCodes: '429,500-503',
 }
 let currentOptions: Record<string, string>
+
+it('global first-byte timeout saves seconds and explains disabled retries', async () => {
+  show()
+  const timeout = await screen.findByRole('spinbutton', {
+    name: 'Global first-byte timeout (seconds)',
+  })
+  expect(timeout).toHaveValue(0)
+  fireEvent.change(timeout, { target: { value: '15' } })
+  fireEvent.change(
+    screen.getByRole('spinbutton', { name: 'Maximum retries' }),
+    { target: { value: '0' } }
+  )
+  expect(
+    screen.getByRole('spinbutton', { name: 'Maximum retries' })
+  ).toHaveAccessibleDescription(
+    expect.stringContaining(
+      '0 retries disables automatic channel switching after upstream errors, including timeouts.'
+    )
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(api.patch).mock.calls[0][1]).toEqual({
+    options: { RetryTimes: '0', UpstreamFirstByteTimeoutSeconds: '15' },
+  })
+  expect(timeout).toHaveValue(15)
+})
+
+it('request policy defaults preserve saved zero retries and validate timeout bounds', () => {
+  const missing: Record<string, string> = { ...options }
+  delete missing.RetryTimes
+  delete missing.UpstreamFirstByteTimeoutSeconds
+  expect(routingPolicyFormValues(missing)).toMatchObject({
+    RetryTimes: 2,
+    UpstreamFirstByteTimeoutSeconds: 0,
+  })
+  expect(
+    routingPolicyFormValues({ ...options, RetryTimes: '0' }).RetryTimes
+  ).toBe(0)
+  for (const value of [-1, 1.5, 86401]) {
+    const result = createRoutingPolicySchema(i18next.t).safeParse({
+      ...routingPolicyFormValues(options),
+      UpstreamFirstByteTimeoutSeconds: value,
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues[0].path).toEqual([
+        'UpstreamFirstByteTimeoutSeconds',
+      ])
+    }
+  }
+})
 let client: QueryClient
 beforeEach(() => {
   client = new QueryClient({

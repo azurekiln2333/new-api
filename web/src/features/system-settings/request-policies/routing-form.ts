@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
@@ -7,8 +25,16 @@ export function createRoutingPolicySchema(t: TFunction) {
   const failureThresholdMessage = t(
     'affinity failure threshold must be an integer between 0 and 1000000'
   )
+  const timeoutMessage = t(
+    'Upstream first-byte timeout must be an integer between 0 and 86400'
+  )
   return z.object({
     RetryTimes: z.number().int().min(0).max(99),
+    UpstreamFirstByteTimeoutSeconds: z
+      .number({ error: timeoutMessage })
+      .int(timeoutMessage)
+      .min(0, timeoutMessage)
+      .max(86400, timeoutMessage),
     AutomaticRetryStatusCodes: z
       .string()
       .refine(
@@ -56,7 +82,10 @@ export function routingPolicyFormValues(
   options: Record<string, string>
 ): RoutingPolicyFormValues {
   return {
-    RetryTimes: Number(options.RetryTimes),
+    RetryTimes: Number(options.RetryTimes ?? '2'),
+    UpstreamFirstByteTimeoutSeconds: Number(
+      options.UpstreamFirstByteTimeoutSeconds ?? '0'
+    ),
     AutomaticRetryStatusCodes: options.AutomaticRetryStatusCodes,
     channel_affinity_setting: {
       enabled: options['channel_affinity_setting.enabled'] === 'true',
@@ -86,6 +115,9 @@ export function routingPolicyOptions(
 ): Record<string, string> {
   return {
     RetryTimes: String(values.RetryTimes),
+    UpstreamFirstByteTimeoutSeconds: String(
+      values.UpstreamFirstByteTimeoutSeconds
+    ),
     AutomaticRetryStatusCodes: values.AutomaticRetryStatusCodes,
     ...Object.fromEntries(
       Object.entries(values.channel_affinity_setting).map(([key, value]) => [

@@ -1,19 +1,24 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
@@ -383,6 +388,131 @@ func TestMidjourneyPolicyAcceptance(t *testing.T) {
 			assert.Equal(t, PolicyDecision{Action: "stop", Reason: tc.reason, Source: "system"}, events[2].Decision, "submissions are never replayed")
 		})
 	}
+}
+
+func TestChannelCapacityMidjourneySubmissionLifetime(t *testing.T) {
+	previousRedis, previousClient := common.RedisEnabled, httpClient
+	common.RedisEnabled = false
+	InitHttpClient()
+	t.Cleanup(func() { common.RedisEnabled, httpClient = previousRedis, previousClient })
+	settings := kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1), UpstreamFirstByteTimeoutSeconds: common.GetPointer(0)}
+	started, upstreamCanceled := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			_, _ = io.WriteString(w, `{"code":`)
+			w.(http.Flusher).Flush()
+			close(started)
+			<-r.Context().Done()
+			close(upstreamCanceled)
+			return
+		}
+		_, _ = io.WriteString(w, `{"code":1,"result":"accepted"}`)
+	}))
+	t.Cleanup(upstream.Close)
+	newRequest := func(ctx context.Context, method string) *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(method, "/mj/submit/imagine", strings.NewReader(`{"prompt":"test"}`)).WithContext(ctx)
+		c.Set("channel_id", 72001)
+		common.SetContextKey(c, constant.ContextKeyChannelSetting, settings)
+		return c
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	firstFinished := make(chan error, 1)
+	go func() {
+		_, _, err := DoMidjourneyHttpRequest(newRequest(ctx, http.MethodPost), time.Minute, upstream.URL, true)
+		firstFinished <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the submission did not reach the upstream")
+	}
+	blocked := newRequest(context.Background(), http.MethodPost)
+	response, _, err := DoMidjourneyHttpRequest(blocked, time.Minute, upstream.URL, true)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusTooManyRequests, response.StatusCode)
+	assert.Equal(t, int32(1), calls.Load(), "a busy submission must not reach upstream")
+	assert.False(t, RecordMidjourneyPolicyResponse(blocked, response, err))
+	events := RequestPolicy(blocked).Events()
+	require.Len(t, events, 1)
+	assert.Equal(t, "local", events[0].ErrorSource)
+	assert.Equal(t, "unchanged", events[0].Health)
+	assert.Equal(t, "stop", events[0].Decision.Action)
+	assert.Empty(t, RequestPolicy(blocked).FailedChannelIDs)
+
+	// Fetching a remote task's seed is not a generation submission.
+	response, _, err = DoMidjourneyHttpRequest(newRequest(context.Background(), http.MethodGet), time.Minute, upstream.URL, false)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, int32(2), calls.Load())
+	cancel()
+	select {
+	case err = <-firstFinished:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(3 * time.Second):
+		t.Fatal("canceled submission did not return")
+	}
+	select {
+	case <-upstreamCanceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancellation did not reach the upstream")
+	}
+	response, _, err = DoMidjourneyHttpRequest(newRequest(context.Background(), http.MethodPost), time.Minute, upstream.URL, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1, response.Response.Code, "closed submission releases capacity before returning")
+	assert.Equal(t, int32(3), calls.Load())
+}
+
+func TestChannelCapacityMidjourneyCoordinationFailure(t *testing.T) {
+	previousRedis, previousRDB := common.RedisEnabled, common.RDB
+	common.RedisEnabled, common.RDB = true, nil
+	t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousRDB })
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/mj/insight-face/swap", strings.NewReader(`{}`))
+	c.Set("channel_id", 72002)
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(2)})
+	response, _, err := DoMidjourneyHttpRequest(c, time.Minute, "http://unused.invalid", true)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+	assert.False(t, RecordMidjourneyPolicyResponse(c, response, err))
+	events := RequestPolicy(c).Events()
+	require.Len(t, events, 1)
+	assert.Equal(t, "local", events[0].ErrorSource)
+	assert.Equal(t, string(types.ErrorCodeChannelCapacityUnavailable), events[0].Decision.Reason)
+}
+
+func TestFirstByteMidjourneyChannelOverride(t *testing.T) {
+	previousRedis, previousClient := common.RedisEnabled, httpClient
+	common.RedisEnabled = false
+	InitHttpClient()
+	t.Cleanup(func() { common.RedisEnabled, httpClient = previousRedis, previousClient })
+	canceled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(canceled)
+	}))
+	t.Cleanup(upstream.Close)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/mj/submit/imagine", strings.NewReader(`{}`))
+	c.Set("channel_id", 72003)
+	settings := kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1), UpstreamFirstByteTimeoutSeconds: common.GetPointer(1)}
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, settings)
+	response, _, err := DoMidjourneyHttpRequest(c, time.Minute, upstream.URL, true)
+	require.Error(t, err)
+	assert.True(t, IsUpstreamFirstByteTimeout(err))
+	assert.Equal(t, http.StatusGatewayTimeout, response.StatusCode)
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first-byte timeout did not cancel the upstream")
+	}
+	lease, capacityErr := AcquireChannelCapacity(context.Background(), 72003, settings)
+	require.Nil(t, capacityErr, "timeout must release the submission slot")
+	lease.Release()
 }
 
 func TestSessionRulesInheritOrOverrideGlobalDefault(t *testing.T) {

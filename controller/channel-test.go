@@ -274,7 +274,20 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 // runChannelTestRequest sends the synthetic test request through the already
 // selected channel and key and reports the outcome.
-func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, tik time.Time) testResult {
+func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, tik time.Time) (outcome testResult) {
+	lease, capacityErr := service.AcquireRequestChannelCapacity(c, channel.Id)
+	if capacityErr != nil {
+		return testResult{localErr: capacityErr, newAPIError: capacityErr}
+	}
+	originalRequest := c.Request
+	c.Request = originalRequest.WithContext(lease.Context())
+	defer func() {
+		if coordinationErr := lease.Err(); coordinationErr != nil {
+			outcome = testResult{localErr: coordinationErr, newAPIError: coordinationErr}
+		}
+		lease.Release()
+		c.Request = originalRequest
+	}()
 	// Determine relay format based on endpoint type or request path
 	var relayFormat types.RelayFormat
 	if endpointType != "" {
@@ -1037,7 +1050,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	tik := time.Now()
 	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel), -1)
 	milliseconds := time.Since(tik).Milliseconds()
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || service.IsChannelCapacityError(result.newAPIError) {
 		return summary
 	}
 

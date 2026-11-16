@@ -216,6 +216,7 @@ import {
 import type { Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelQuickOptions } from '../channel-quick-options'
+import { ChannelRequestLimits } from '../channel-request-limits'
 import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
@@ -309,6 +310,9 @@ const SENSITIVE_FORM_FIELDS = [
   'force_format',
   'thinking_to_content',
   'proxy',
+  'max_concurrent_requests',
+  'upstream_first_byte_timeout_mode',
+  'upstream_first_byte_timeout_seconds',
   'http_protocol',
   'http2_connection_shards',
   'tls_insecure_skip_verify',
@@ -5005,6 +5009,7 @@ export function ChannelMutateDrawer({
                 className='space-y-4 disabled:opacity-60'
               >
                 {taskPollingFields}
+                <ChannelRequestLimits disabled={sensitiveLocked} />
                 {proxyFields}
                 {httpProtocolFields}
                 {httpShardsFields}

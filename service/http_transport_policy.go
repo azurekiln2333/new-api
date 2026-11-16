@@ -14,9 +14,10 @@ import (
 // HTTPTransportPolicy is the runtime-normalized outbound HTTP transport policy
 // for a channel. Unknown or out-of-range stored values are clamped safely.
 type HTTPTransportPolicy struct {
-	Protocol              string // dto.HTTPProtocolAuto or dto.HTTPProtocolHTTP1
-	Shards                int    // 1..dto.MaxHTTP2ConnectionShards
-	TLSInsecureSkipVerify bool
+	Protocol                        string // dto.HTTPProtocolAuto or dto.HTTPProtocolHTTP1
+	Shards                          int    // 1..dto.MaxHTTP2ConnectionShards
+	TLSInsecureSkipVerify           bool
+	UpstreamFirstByteTimeoutSeconds int
 }
 
 var httpTransportPolicyWarnings sync.Map
@@ -28,7 +29,9 @@ func defaultHTTPTransportPolicy() HTTPTransportPolicy {
 	}
 }
 
-// NormalizeHTTPTransportPolicy converts channel settings into a safe runtime policy.
+// NormalizeHTTPTransportPolicy converts channel connection settings into a safe
+// runtime policy. The generation-only first-byte deadline is added by
+// GetRelayHttpClientWithProxySettings, never by polling or discovery clients.
 // Invalid stored values never panic; they clamp to defaults and warn once per bad value.
 func NormalizeHTTPTransportPolicy(settings dto.ChannelSettings) HTTPTransportPolicy {
 	policy := defaultHTTPTransportPolicy()
@@ -86,7 +89,7 @@ func warnHTTPTransportPolicyOnce(field, value string) {
 }
 
 func (p HTTPTransportPolicy) cacheKeyPart() string {
-	return fmt.Sprintf("%s|%d|%t", p.Protocol, p.Shards, p.TLSInsecureSkipVerify)
+	return fmt.Sprintf("%s|%d|%t|%d", p.Protocol, p.Shards, p.TLSInsecureSkipVerify, p.UpstreamFirstByteTimeoutSeconds)
 }
 
 func (p HTTPTransportPolicy) String() string {

@@ -100,13 +100,16 @@ const (
 // Channel notices sent to administrators who receive them and to model update
 // watchers
 const (
-	MsgChannelNotifyDisabledSubject = "channel.notify_disabled_subject"
-	MsgChannelNotifyDisabledContent = "channel.notify_disabled_content"
-	MsgChannelNotifyEnabledSubject  = "channel.notify_enabled_subject"
-	MsgChannelNotifyEnabledContent  = "channel.notify_enabled_content"
-	MsgChannelTestCompletedSubject  = "channel.test_completed_subject"
-	MsgChannelTestCompletedContent  = "channel.test_completed_content"
-	MsgChannelResponseTimeExceeded  = "channel.response_time_exceeded"
+	MsgChannelNotifyDisabledSubject  = "channel.notify_disabled_subject"
+	MsgChannelNotifyDisabledContent  = "channel.notify_disabled_content"
+	MsgChannelNotifyEnabledSubject   = "channel.notify_enabled_subject"
+	MsgChannelNotifyEnabledContent   = "channel.notify_enabled_content"
+	MsgChannelTestCompletedSubject   = "channel.test_completed_subject"
+	MsgChannelTestCompletedContent   = "channel.test_completed_content"
+	MsgChannelResponseTimeExceeded   = "channel.response_time_exceeded"
+	MsgChannelCapacitySaturated      = "channel.capacity_saturated"
+	MsgChannelCapacityUnavailable    = "channel.capacity_unavailable"
+	MsgRelayUpstreamFirstByteTimeout = "relay.upstream_first_byte_timeout"
 
 	MsgChannelUpstreamUpdateNotifySubject   = "channel.upstream_update_notify_subject"
 	MsgChannelUpstreamUpdateSummary         = "channel.upstream_update_summary"

@@ -266,6 +266,20 @@ export const channelFormSchema = z
     // Group -> models visible to that group (stored in settings JSON)
     group_models: z.record(z.string(), z.array(z.string())).optional(),
     // Channel extra settings (stored in setting JSON, not sent directly)
+    max_concurrent_requests: z
+      .number()
+      .int('max_concurrent_requests must be an integer between 0 and 1000000')
+      .min(
+        0,
+        'max_concurrent_requests must be an integer between 0 and 1000000'
+      )
+      .max(
+        1000000,
+        'max_concurrent_requests must be an integer between 0 and 1000000'
+      )
+      .optional(),
+    upstream_first_byte_timeout_mode: z.enum(['inherit', 'custom']).optional(),
+    upstream_first_byte_timeout_seconds: z.number().optional(),
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
     proxy: z
@@ -303,6 +317,19 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (
+      data.upstream_first_byte_timeout_mode === 'custom' &&
+      (!Number.isInteger(data.upstream_first_byte_timeout_seconds) ||
+        (data.upstream_first_byte_timeout_seconds ?? -1) < 0 ||
+        (data.upstream_first_byte_timeout_seconds ?? 0) > 86400)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['upstream_first_byte_timeout_seconds'],
+        message:
+          'upstream_first_byte_timeout_seconds must be an integer between 0 and 86400',
+      })
+    }
     if (
       [
         3,
@@ -466,6 +493,9 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   to_multi_key: false,
   group_models: {},
   // Channel extra settings
+  max_concurrent_requests: 0,
+  upstream_first_byte_timeout_mode: 'inherit',
+  upstream_first_byte_timeout_seconds: 0,
   force_format: false,
   thinking_to_content: false,
   proxy: '',
@@ -512,6 +542,9 @@ export function transformChannelToFormDefaults(
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
+    max_concurrent_requests: 0,
+    upstream_first_byte_timeout_mode: 'inherit' as 'inherit' | 'custom',
+    upstream_first_byte_timeout_seconds: 0,
     task_plugin_key: '',
     task_extend_plugin_keys: [] as string[],
     force_format: false,
@@ -534,6 +567,13 @@ export function transformChannelToFormDefaults(
         parsed.http2_connection_shards
       )
       extraSettings = {
+        max_concurrent_requests: parsed.max_concurrent_requests ?? 0,
+        upstream_first_byte_timeout_mode:
+          parsed.upstream_first_byte_timeout_seconds == null
+            ? 'inherit'
+            : 'custom',
+        upstream_first_byte_timeout_seconds:
+          parsed.upstream_first_byte_timeout_seconds ?? 0,
         task_plugin_key: parsed.task_plugin_key || '',
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
         force_format: parsed.force_format || false,
@@ -673,6 +713,11 @@ export function transformChannelToFormDefaults(
  */
 export function buildSettingJSON(formData: ChannelFormValues): string {
   const settingObj: Record<string, unknown> = {
+    max_concurrent_requests: formData.max_concurrent_requests || undefined,
+    upstream_first_byte_timeout_seconds:
+      formData.upstream_first_byte_timeout_mode === 'custom'
+        ? (formData.upstream_first_byte_timeout_seconds ?? 0)
+        : undefined,
     task_plugin_key:
       formData.type === CHANNEL_TYPE_TASK_PLUGIN
         ? formData.task_plugin_key?.trim() || ''

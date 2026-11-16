@@ -12,30 +12,61 @@ import (
 	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // RequestPolicySnapshot is the validated read model behind the request policy
 // settings API. It is rebuilt from the option map on every option write, so
 // the runtime globals updated by the same write never disagree with it.
 type RequestPolicySnapshot struct {
-	Affinity        operation_setting.ChannelAffinitySetting
-	RetryTimes      int
-	RetryCodes      []operation_setting.StatusCodeRange
-	DisableCodes    []operation_setting.StatusCodeRange
-	DisableKeywords []string
-	CheckText       bool
-	TextKeywords    []string
-	AutoDisable     bool
-	Options         map[string]string
+	Affinity                        operation_setting.ChannelAffinitySetting
+	RetryTimes                      int
+	UpstreamFirstByteTimeoutSeconds int
+	RetryCodes                      []operation_setting.StatusCodeRange
+	DisableCodes                    []operation_setting.StatusCodeRange
+	DisableKeywords                 []string
+	CheckText                       bool
+	TextKeywords                    []string
+	AutoDisable                     bool
+	Options                         map[string]string
 }
 
 var requestPolicySnapshot atomic.Pointer[RequestPolicySnapshot]
 var requestPolicyOptionMutex sync.Mutex
 var requestPolicyDefaults = requestPolicyDefaultOptions()
+
+const requestPolicyRetryDefaultsMigrationKey = "internal.request_policy.retry_timeouts_v1"
+
+// migrateRequestPolicyRetryDefaults upgrades only the old built-in range, once.
+// Claiming the marker and changing the value share a transaction, so an error
+// cannot leave a completed marker with the old configuration still installed.
+func migrateRequestPolicyRetryDefaults(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		marker := Option{Key: requestPolicyRetryDefaultsMigrationKey, Value: "0"}
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&marker)
+		if result.Error != nil {
+			return result.Error
+		}
+		if err := lockForUpdate(tx).Where(&Option{Key: marker.Key}).First(&marker).Error; err != nil {
+			return err
+		}
+		if marker.Value == "1" {
+			return nil
+		}
+		if err := tx.Model(&Option{}).Where(map[string]any{
+			"key":   "AutomaticRetryStatusCodes",
+			"value": "100-199,300-399,401-407,409-499,500-503,505-523,525-599",
+		}).Update("value", "100-199,300-399,401-407,409-499,500-599").Error; err != nil {
+			return err
+		}
+		return tx.Model(&marker).Update("value", "1").Error
+	})
+}
 
 func requestPolicyDefaultOptions() map[string]string {
 	defaults := make(map[string]string)
@@ -52,6 +83,7 @@ func requestPolicyDefaultOptions() map[string]string {
 		}
 	}
 	defaults["RetryTimes"] = strconv.Itoa(common.RetryTimes)
+	defaults["UpstreamFirstByteTimeoutSeconds"] = "0"
 	defaults["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
 	defaults["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	defaults["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
@@ -70,6 +102,8 @@ func IsRequestPolicyOption(key string) bool {
 	}
 	switch key {
 	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
+		return true
+	case "UpstreamFirstByteTimeoutSeconds":
 		return true
 	}
 	return false
@@ -139,6 +173,10 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 	snapshot.RetryTimes, err = strconv.Atoi(raw["RetryTimes"])
 	if err != nil || snapshot.RetryTimes < 0 || snapshot.RetryTimes == math.MaxInt {
 		return nil, fmt.Errorf("retry times must be a non-negative integer with room for the initial attempt")
+	}
+	snapshot.UpstreamFirstByteTimeoutSeconds, err = strconv.Atoi(raw["UpstreamFirstByteTimeoutSeconds"])
+	if err != nil || snapshot.UpstreamFirstByteTimeoutSeconds < 0 || snapshot.UpstreamFirstByteTimeoutSeconds > dto.MaxUpstreamFirstByteTimeoutSeconds {
+		return nil, common.NewMessage("Upstream first-byte timeout must be an integer between 0 and 86400")
 	}
 	snapshot.AutoDisable, err = strconv.ParseBool(raw["AutomaticDisableChannelEnabled"])
 	if err != nil {

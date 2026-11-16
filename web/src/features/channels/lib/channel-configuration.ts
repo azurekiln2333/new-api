@@ -81,6 +81,9 @@ const CONFIGURATION_BLOCKS = {
   extraSettings: {
     section: 'other',
     fields: [
+      'max_concurrent_requests',
+      'upstream_first_byte_timeout_mode',
+      'upstream_first_byte_timeout_seconds',
       'proxy',
       'http_protocol',
       'http2_connection_shards',
@@ -173,6 +176,8 @@ export function getChannelConfigurationState(
           (values.type === 14 && values.claude_beta_query)))
     ),
     extraSettings: Boolean(
+      values.max_concurrent_requests ||
+      values.upstream_first_byte_timeout_mode === 'custom' ||
       values.proxy?.trim() ||
       (values.http_protocol && values.http_protocol !== 'auto') ||
       (values.http2_connection_shards ?? 1) > 1 ||

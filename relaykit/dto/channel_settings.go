@@ -12,14 +12,19 @@ import (
 )
 
 type ChannelSettings struct {
-	TaskPluginKey             string `json:"task_plugin_key,omitempty"`
-	ForceFormat               bool   `json:"force_format,omitempty"`
-	ThinkingToContent         bool   `json:"thinking_to_content,omitempty"`
-	Proxy                     string `json:"proxy"`
-	PassThroughBodyEnabled    bool   `json:"pass_through_body_enabled,omitempty"`
-	ResponsesWebSocketEnabled bool   `json:"responses_websocket_enabled,omitempty"`
-	SystemPrompt              string `json:"system_prompt,omitempty"`
-	SystemPromptOverride      bool   `json:"system_prompt_override,omitempty"`
+	// MaxConcurrentRequests limits active attempts across all keys of this channel.
+	// Nil and zero leave admission unlimited.
+	MaxConcurrentRequests *int `json:"max_concurrent_requests,omitempty"`
+	// Nil inherits the global first response-body byte timeout; zero disables it.
+	UpstreamFirstByteTimeoutSeconds *int   `json:"upstream_first_byte_timeout_seconds,omitempty"`
+	TaskPluginKey                   string `json:"task_plugin_key,omitempty"`
+	ForceFormat                     bool   `json:"force_format,omitempty"`
+	ThinkingToContent               bool   `json:"thinking_to_content,omitempty"`
+	Proxy                           string `json:"proxy"`
+	PassThroughBodyEnabled          bool   `json:"pass_through_body_enabled,omitempty"`
+	ResponsesWebSocketEnabled       bool   `json:"responses_websocket_enabled,omitempty"`
+	SystemPrompt                    string `json:"system_prompt,omitempty"`
+	SystemPromptOverride            bool   `json:"system_prompt_override,omitempty"`
 	// TaskExtendPluginKeys lists the task plugins a New API channel (type 60)
 	// is extended with. The upstream gateway may host many plugins, so the
 	// channel serves every listed plugin's models while the request still pins
@@ -63,10 +68,26 @@ func (s ChannelSettings) TaskPluginBindings() []string {
 }
 
 const (
-	HTTPProtocolAuto         = "auto"
-	HTTPProtocolHTTP1        = "http1"
-	MaxHTTP2ConnectionShards = 8
+	HTTPProtocolAuto                   = "auto"
+	HTTPProtocolHTTP1                  = "http1"
+	MaxHTTP2ConnectionShards           = 8
+	MaxChannelConcurrentRequests       = 1_000_000
+	MaxUpstreamFirstByteTimeoutSeconds = 86_400
 )
+
+// ValidateRequestLimits preserves the distinction between inheritance and zero.
+func (s *ChannelSettings) ValidateRequestLimits() error {
+	if s == nil {
+		return nil
+	}
+	if s.MaxConcurrentRequests != nil && (*s.MaxConcurrentRequests < 0 || *s.MaxConcurrentRequests > MaxChannelConcurrentRequests) {
+		return fmt.Errorf("max_concurrent_requests must be an integer between 0 and 1000000")
+	}
+	if s.UpstreamFirstByteTimeoutSeconds != nil && (*s.UpstreamFirstByteTimeoutSeconds < 0 || *s.UpstreamFirstByteTimeoutSeconds > MaxUpstreamFirstByteTimeoutSeconds) {
+		return fmt.Errorf("upstream_first_byte_timeout_seconds must be an integer between 0 and 86400")
+	}
+	return nil
+}
 
 // ValidateHTTPTransport validates save-time HTTP transport channel settings.
 func (s *ChannelSettings) ValidateHTTPTransport() error {

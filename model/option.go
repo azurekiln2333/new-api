@@ -31,6 +31,11 @@ func AllOption() ([]*Option, error) {
 }
 
 func InitOptionMap() {
+	// Run only at startup, before hydration. Ordinary sync and later explicit
+	// administrator edits must not repeat this legacy-default upgrade.
+	if err := migrateRequestPolicyRetryDefaults(DB); err != nil {
+		common.SysError(common.LogText("failed to migrate request policy retry defaults: %s", err.Error()))
+	}
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
 
@@ -172,7 +177,8 @@ func InitOptionMap() {
 	//common.OptionMap["ChatLink"] = common.ChatLink
 	//common.OptionMap["ChatLink2"] = common.ChatLink2
 	common.OptionMap["QuotaPerUnit"] = strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)
-	common.OptionMap["RetryTimes"] = strconv.Itoa(common.RetryTimes)
+	common.OptionMap["RetryTimes"] = requestPolicyDefaults["RetryTimes"]
+	common.OptionMap["UpstreamFirstByteTimeoutSeconds"] = requestPolicyDefaults["UpstreamFirstByteTimeoutSeconds"]
 	common.OptionMap["DataExportInterval"] = strconv.Itoa(common.DataExportInterval)
 	common.OptionMap["DataExportDefaultTime"] = common.DataExportDefaultTime
 	common.OptionMap["DefaultCollapseSidebar"] = strconv.FormatBool(common.DefaultCollapseSidebar)
@@ -191,7 +197,7 @@ func InitOptionMap() {
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
-	common.OptionMap["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
+	common.OptionMap["AutomaticRetryStatusCodes"] = requestPolicyDefaults["AutomaticRetryStatusCodes"]
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
 	// 自动添加所有注册的模型配置
@@ -199,6 +205,11 @@ func InitOptionMap() {
 	maps.Copy(common.OptionMap, modelConfigs)
 
 	common.OptionMapRWMutex.Unlock()
+	// Startup defaults must reach both the snapshot and legacy runtime readers,
+	// even when initialization is repeated without a saved override.
+	for _, key := range []string{"RetryTimes", "AutomaticRetryStatusCodes"} {
+		_ = updateOptionMap(key, requestPolicyDefaults[key])
+	}
 	loadOptionsFromDatabase()
 }
 
@@ -215,6 +226,9 @@ func loadOptionsFromDatabase() {
 	options, _ := AllOption()
 	passkeyOptions := make(map[string]string)
 	for _, option := range options {
+		if option.Key == requestPolicyRetryDefaultsMigrationKey {
+			continue
+		}
 		if IsPasskeyDomainOption(option.Key) {
 			passkeyOptions[option.Key] = option.Value
 			continue
@@ -236,6 +250,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == requestPolicyRetryDefaultsMigrationKey {
+		return common.NewMessage("Invalid parameters")
+	}
 	if key == "GroupLevels" {
 		_, err := setting.ParseGroupLevels(value)
 		return err
