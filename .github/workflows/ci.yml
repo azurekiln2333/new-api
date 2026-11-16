@@ -77,7 +77,7 @@ jobs:
     env:
       GOWORK: 'off'
       TEST_MYSQL_DSN: 'root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local'
-      TEST_POSTGRES_DSN: 'host=127.0.0.1 port=5432 user=postgres password=integration dbname=relay_policy sslmode=disable'
+      TEST_POSTGRES_DSN: 'postgres://postgres:integration@127.0.0.1:5432/relay_policy?sslmode=disable'
       TEST_REDIS_ADDR: '127.0.0.1:6379'
     services:
       mysql:
