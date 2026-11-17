@@ -1,0 +1,530 @@
+{
+  "Actions": {
+    "zh": "操作",
+    "zh-TW": "操作",
+    "fr": "Actions",
+    "ru": "Операции",
+    "ja": "操作",
+    "vi": "Hành động"
+  },
+  "Batch deleted invitation codes": {
+    "zh": "已批量删除邀请码",
+    "zh-TW": "已批次刪除邀請碼",
+    "fr": "Codes d’invitation supprimés par lot",
+    "ru": "Коды приглашения удалены пакетом",
+    "ja": "招待コードを一括削除しました",
+    "vi": "Đã xóa hàng loạt mã mời"
+  },
+  "Clean invalid codes": {
+    "zh": "清理失效邀请码",
+    "zh-TW": "清理失效邀請碼",
+    "fr": "Nettoyer les codes invalides",
+    "ru": "Удалить недействительные коды",
+    "ja": "無効なコードを削除",
+    "vi": "Xóa mã không hợp lệ"
+  },
+  "Copy": {
+    "zh": "复制",
+    "zh-TW": "複製",
+    "fr": "Copier",
+    "ru": "Копировать",
+    "ja": "コピー",
+    "vi": "Sao chép"
+  },
+  "Copy invitation code": {
+    "zh": "复制邀请码",
+    "zh-TW": "複製邀請碼",
+    "fr": "Copier le code d’invitation",
+    "ru": "Скопировать код приглашения",
+    "ja": "招待コードをコピー",
+    "vi": "Sao chép mã mời"
+  },
+  "Count": {
+    "zh": "数量",
+    "zh-TW": "數量",
+    "fr": "Quantité",
+    "ru": "Количество",
+    "ja": "回数",
+    "vi": "Số lượng"
+  },
+  "Create, edit and delete invitation codes": {
+    "zh": "创建、编辑和删除邀请码",
+    "zh-TW": "建立、編輯和刪除邀請碼",
+    "fr": "Créer, modifier et supprimer des codes d’invitation",
+    "ru": "Создавать, изменять и удалять коды приглашения",
+    "ja": "招待コードの作成・編集・削除",
+    "vi": "Tạo, sửa và xóa mã mời"
+  },
+  "Created invitation codes": {
+    "zh": "已生成邀请码",
+    "zh-TW": "已產生邀請碼",
+    "fr": "Codes d’invitation créés",
+    "ru": "Созданы коды приглашения",
+    "ja": "招待コードを生成しました",
+    "vi": "Đã tạo mã mời"
+  },
+  "Created time": {
+    "zh": "创建时间",
+    "zh-TW": "建立時間",
+    "fr": "Date de création",
+    "ru": "Время создания",
+    "ja": "作成日時",
+    "vi": "Thời gian tạo"
+  },
+  "Database error, please contact the administrator": {
+    "zh": "数据库出错，请联系管理员",
+    "zh-TW": "資料庫出錯，請聯絡管理員",
+    "fr": "Erreur de base de données, veuillez contacter l’administrateur",
+    "ru": "Ошибка базы данных, обратитесь к администратору",
+    "ja": "データベースエラーです。管理者に連絡してください",
+    "vi": "Lỗi cơ sở dữ liệu, vui lòng liên hệ quản trị viên"
+  },
+  "Delete": {
+    "zh": "删除",
+    "zh-TW": "刪除",
+    "fr": "Supprimer",
+    "ru": "Удалить",
+    "ja": "削除",
+    "vi": "Xóa"
+  },
+  "Delete invitation codes": {
+    "zh": "删除邀请码",
+    "zh-TW": "刪除邀請碼",
+    "fr": "Supprimer les codes d’invitation",
+    "ru": "Удалить коды приглашения",
+    "ja": "招待コードを削除",
+    "vi": "Xóa mã mời"
+  },
+  "Deleted an invitation code": {
+    "zh": "已删除邀请码",
+    "zh-TW": "已刪除邀請碼",
+    "fr": "Code d’invitation supprimé",
+    "ru": "Код приглашения удалён",
+    "ja": "招待コードを削除しました",
+    "vi": "Đã xóa mã mời"
+  },
+  "Deleted invalid invitation codes": {
+    "zh": "已清理失效邀请码",
+    "zh-TW": "已清理失效邀請碼",
+    "fr": "Codes d’invitation invalides supprimés",
+    "ru": "Недействительные коды приглашения удалены",
+    "ja": "無効な招待コードを削除しました",
+    "vi": "Đã xóa mã mời không hợp lệ"
+  },
+  "Deleted invitation codes cannot be restored": {
+    "zh": "邀请码删除后无法恢复",
+    "zh-TW": "邀請碼刪除後無法復原",
+    "fr": "Les codes d’invitation supprimés ne peuvent pas être restaurés",
+    "ru": "Удалённые коды приглашения нельзя восстановить",
+    "ja": "削除した招待コードは復元できません",
+    "vi": "Không thể khôi phục mã mời đã xóa"
+  },
+  "Disable": {
+    "zh": "禁用",
+    "zh-TW": "停用",
+    "fr": "Désactiver",
+    "ru": "Отключить",
+    "ja": "無効にする",
+    "vi": "Vô hiệu hóa"
+  },
+  "Disabled": {
+    "zh": "已禁用",
+    "zh-TW": "已停用",
+    "fr": "Désactivé",
+    "ru": "Отключено",
+    "ja": "無効",
+    "vi": "Đã tắt"
+  },
+  "Download": {
+    "zh": "下载",
+    "zh-TW": "下載",
+    "fr": "Télécharger",
+    "ru": "Скачать",
+    "ja": "ダウンロード",
+    "vi": "Tải xuống"
+  },
+  "Edit": {
+    "zh": "编辑",
+    "zh-TW": "編輯",
+    "fr": "Modifier",
+    "ru": "Редактировать",
+    "ja": "編集",
+    "vi": "Chỉnh sửa"
+  },
+  "Edit invitation code": {
+    "zh": "编辑邀请码",
+    "zh-TW": "編輯邀請碼",
+    "fr": "Modifier le code d’invitation",
+    "ru": "Изменить код приглашения",
+    "ja": "招待コードを編集",
+    "vi": "Sửa mã mời"
+  },
+  "Enable": {
+    "zh": "启用",
+    "zh-TW": "啟用",
+    "fr": "Activer",
+    "ru": "Включить",
+    "ja": "有効にする",
+    "vi": "Bật"
+  },
+  "Enroll two-factor authentication or a Passkey first": {
+    "zh": "请先启用两步验证或录入通行密钥",
+    "zh-TW": "請先啟用兩步驗證或登錄通行密鑰",
+    "fr": "Activez d’abord l’authentification à deux facteurs ou une clé d’accès",
+    "ru": "Сначала настройте двухфакторную аутентификацию или ключ доступа",
+    "ja": "先に二要素認証を有効にするか、パスキーを登録してください",
+    "vi": "Trước tiên, hãy bật xác thực hai yếu tố hoặc đăng ký khóa truy cập"
+  },
+  "Expiration time": {
+    "zh": "过期时间",
+    "zh-TW": "到期時間",
+    "fr": "Date d’expiration",
+    "ru": "Срок действия",
+    "ja": "有効期限",
+    "vi": "Thời gian hết hạn"
+  },
+  "Expiration time cannot be earlier than current time": {
+    "zh": "过期时间不能早于当前时间",
+    "zh-TW": "過期時間不能早於當前時間",
+    "fr": "La date d'expiration ne peut pas être antérieure à l'heure actuelle",
+    "ru": "Время истечения не может быть раньше текущего времени",
+    "ja": "有効期限を現在時刻より前にすることはできません",
+    "vi": "Thời gian hết hạn không được sớm hơn thời điểm hiện tại"
+  },
+  "Expired": {
+    "zh": "已过期",
+    "zh-TW": "已過期",
+    "fr": "Expiré",
+    "ru": "Просрочено",
+    "ja": "有効期限切れ",
+    "vi": "Hết hạn"
+  },
+  "Export": {
+    "zh": "导出",
+    "zh-TW": "匯出",
+    "fr": "Exporter",
+    "ru": "Экспорт",
+    "ja": "エクスポート",
+    "vi": "Xuất"
+  },
+  "Export current page": {
+    "zh": "导出当前页",
+    "zh-TW": "匯出目前頁面",
+    "fr": "Exporter la page actuelle",
+    "ru": "Экспортировать текущую страницу",
+    "ja": "現在のページをエクスポート",
+    "vi": "Xuất trang hiện tại"
+  },
+  "Export invitation codes": {
+    "zh": "导出邀请码",
+    "zh-TW": "匯出邀請碼",
+    "fr": "Exporter les codes d’invitation",
+    "ru": "Экспортировать коды приглашения",
+    "ja": "招待コードをエクスポート",
+    "vi": "Xuất mã mời"
+  },
+  "Failed to load invitation codes": {
+    "zh": "加载邀请码失败",
+    "zh-TW": "載入邀請碼失敗",
+    "fr": "Échec du chargement des codes d’invitation",
+    "ru": "Не удалось загрузить коды приглашения",
+    "ja": "招待コードを読み込めませんでした",
+    "vi": "Không thể tải mã mời"
+  },
+  "Failed to load settings": {
+    "zh": "加载设置失败",
+    "zh-TW": "載入設定失敗",
+    "fr": "Échec du chargement des paramètres",
+    "ru": "Не удалось загрузить настройки",
+    "ja": "設定を読み込めませんでした",
+    "vi": "Không thể tải cài đặt"
+  },
+  "Generate invitation codes": {
+    "zh": "生成邀请码",
+    "zh-TW": "產生邀請碼",
+    "fr": "Générer des codes d’invitation",
+    "ru": "Создать коды приглашения",
+    "ja": "招待コードを生成",
+    "vi": "Tạo mã mời"
+  },
+  "ID": {
+    "zh": "ID",
+    "zh-TW": "ID",
+    "fr": "ID",
+    "ru": "ID",
+    "ja": "ID",
+    "vi": "ID"
+  },
+  "Invalid parameters": {
+    "zh": "无效的参数",
+    "zh-TW": "無效的參數",
+    "fr": "Paramètres invalides",
+    "ru": "Недопустимые параметры",
+    "ja": "パラメーターが無効です",
+    "vi": "Tham số không hợp lệ"
+  },
+  "Invitation code": {
+    "zh": "邀请码",
+    "zh-TW": "邀請碼",
+    "fr": "Code d’invitation",
+    "ru": "Код приглашения",
+    "ja": "招待コード",
+    "vi": "Mã mời"
+  },
+  "Invitation code cannot be changed": {
+    "zh": "无法修改此邀请码",
+    "zh-TW": "無法修改此邀請碼",
+    "fr": "Ce code d’invitation ne peut pas être modifié",
+    "ru": "Этот код приглашения нельзя изменить",
+    "ja": "この招待コードは変更できません",
+    "vi": "Không thể thay đổi mã mời này"
+  },
+  "Invitation code is invalid or unavailable": {
+    "zh": "邀请码无效或不可用",
+    "zh-TW": "邀請碼無效或無法使用",
+    "fr": "Code d’invitation invalide ou indisponible",
+    "ru": "Код приглашения недействителен или недоступен",
+    "ja": "招待コードが無効、または利用できません",
+    "vi": "Mã mời không hợp lệ hoặc không khả dụng"
+  },
+  "Invitation codes": {
+    "zh": "邀请码",
+    "zh-TW": "邀請碼",
+    "fr": "Codes d’invitation",
+    "ru": "Коды приглашения",
+    "ja": "招待コード",
+    "vi": "Mã mời"
+  },
+  "Invitation registration": {
+    "zh": "邀请注册",
+    "zh-TW": "邀請註冊",
+    "fr": "Inscription sur invitation",
+    "ru": "Регистрация по приглашению",
+    "ja": "招待による登録",
+    "vi": "Đăng ký bằng lời mời"
+  },
+  "Leave empty for no expiration": {
+    "zh": "留空表示永不过期",
+    "zh-TW": "留空表示永不到期",
+    "fr": "Laisser vide pour une validité illimitée",
+    "ru": "Оставьте пустым для бессрочного действия",
+    "ja": "無期限にする場合は空欄にしてください",
+    "vi": "Để trống nếu không có thời hạn"
+  },
+  "Login verification": {
+    "zh": "登录二次验证",
+    "zh-TW": "登入二次驗證",
+    "fr": "Vérification à la connexion",
+    "ru": "Проверка при входе",
+    "ja": "ログイン時の追加認証",
+    "vi": "Xác minh khi đăng nhập"
+  },
+  "Login verification preference update": {
+    "zh": "登录二次验证偏好变更",
+    "zh-TW": "登入二次驗證偏好變更",
+    "fr": "Modification de la vérification à la connexion",
+    "ru": "Изменение настройки проверки при входе",
+    "ja": "ログイン時の追加認証設定の変更",
+    "vi": "Thay đổi tùy chọn xác minh khi đăng nhập"
+  },
+  "Manage invitation codes": {
+    "zh": "管理邀请码",
+    "zh-TW": "管理邀請碼",
+    "fr": "Gérer les codes d’invitation",
+    "ru": "Управлять кодами приглашения",
+    "ja": "招待コードを管理",
+    "vi": "Quản lý mã mời"
+  },
+  "Name": {
+    "zh": "名称",
+    "zh-TW": "名稱",
+    "fr": "Nom",
+    "ru": "Название",
+    "ja": "名称",
+    "vi": "Tên"
+  },
+  "Never": {
+    "zh": "永不",
+    "zh-TW": "永不",
+    "fr": "Jamais",
+    "ru": "Никогда",
+    "ja": "しない",
+    "vi": "Không bao giờ"
+  },
+  "New user registration has been disabled by administrator": {
+    "zh": "管理员关闭了新用户注册",
+    "zh-TW": "管理員關閉了新使用者註冊",
+    "fr": "L’inscription de nouveaux utilisateurs a été désactivée par l’administrateur",
+    "ru": "Администратор отключил регистрацию новых пользователей",
+    "ja": "管理者により新規ユーザー登録が無効化されています",
+    "vi": "Quản trị viên đã tắt đăng ký người dùng mới"
+  },
+  "No invitation codes found": {
+    "zh": "暂无邀请码",
+    "zh-TW": "暫無邀請碼",
+    "fr": "Aucun code d’invitation trouvé",
+    "ru": "Коды приглашения не найдены",
+    "ja": "招待コードが見つかりません",
+    "vi": "Không tìm thấy mã mời"
+  },
+  "Off: users choose whether to verify at login. On: all users with TOTP or a Passkey must verify.": {
+    "zh": "关闭：用户自行选择是否在登录时二次验证。开启：已录入 TOTP 或通行密钥的用户一律需要验证。",
+    "zh-TW": "關閉：使用者自行選擇是否在登入時二次驗證。開啟：已登錄 TOTP 或通行密鑰的使用者一律需要驗證。",
+    "fr": "Désactivé : chaque utilisateur choisit. Activé : vérification obligatoire pour tous les utilisateurs ayant un TOTP ou une clé d’accès.",
+    "ru": "Выключено: пользователи сами выбирают проверку при входе. Включено: проверка обязательна для всех, кто настроил TOTP или ключ доступа.",
+    "ja": "オフ：ログイン時の追加認証をユーザーが選択します。オン：TOTP またはパスキーを登録済みの全ユーザーに追加認証を要求します。",
+    "vi": "Tắt: người dùng tự chọn xác minh khi đăng nhập. Bật: mọi người dùng đã đăng ký TOTP hoặc khóa truy cập đều phải xác minh."
+  },
+  "Refresh": {
+    "zh": "刷新",
+    "zh-TW": "重新整理",
+    "fr": "Actualiser",
+    "ru": "Обновить",
+    "ja": "更新",
+    "vi": "Làm mới"
+  },
+  "Require a single-use invitation code for every new account. With open registration off, only OAuth or SSO can register.": {
+    "zh": "所有新账号均需一次性邀请码。关闭开放注册后，仅可通过 OAuth 或 SSO 注册。",
+    "zh-TW": "所有新帳號均需一次性邀請碼。關閉開放註冊後，僅可透過 OAuth 或 SSO 註冊。",
+    "fr": "Exiger un code d’invitation à usage unique pour chaque nouveau compte. Si l’inscription ouverte est désactivée, seuls OAuth et SSO permettent de s’inscrire.",
+    "ru": "Для каждого нового аккаунта требуется одноразовый код приглашения. Если открытая регистрация отключена, зарегистрироваться можно только через OAuth или SSO.",
+    "ja": "新規アカウントには使い捨ての招待コードが必要です。一般登録を無効にすると、OAuth または SSO でのみ登録できます。",
+    "vi": "Mỗi tài khoản mới cần một mã mời dùng một lần. Khi tắt đăng ký mở, chỉ có thể đăng ký qua OAuth hoặc SSO."
+  },
+  "Require login verification for enrolled users": {
+    "zh": "已录入因子的用户登录时一律验证",
+    "zh-TW": "已登錄驗證因子的使用者登入時一律驗證",
+    "fr": "Exiger la vérification des utilisateurs ayant configuré un facteur",
+    "ru": "Требовать проверку при входе у пользователей с настроенным фактором",
+    "ja": "認証要素を登録済みのユーザーにログイン時の追加認証を要求",
+    "vi": "Yêu cầu xác minh đăng nhập với người dùng đã đăng ký yếu tố xác thực"
+  },
+  "Require verification at login": {
+    "zh": "登录时需要二次验证",
+    "zh-TW": "登入時需要二次驗證",
+    "fr": "Exiger une vérification à la connexion",
+    "ru": "Требовать проверку при входе",
+    "ja": "ログイン時に追加認証を要求",
+    "vi": "Yêu cầu xác minh khi đăng nhập"
+  },
+  "Save": {
+    "zh": "保存",
+    "zh-TW": "儲存",
+    "fr": "Enregistrer",
+    "ru": "Сохранить",
+    "ja": "保存",
+    "vi": "Lưu"
+  },
+  "Search by name or code": {
+    "zh": "按名称或邀请码搜索",
+    "zh-TW": "依名稱或邀請碼搜尋",
+    "fr": "Rechercher par nom ou code",
+    "ru": "Поиск по названию или коду",
+    "ja": "名前またはコードで検索",
+    "vi": "Tìm theo tên hoặc mã"
+  },
+  "Select all": {
+    "zh": "全选",
+    "zh-TW": "全選",
+    "fr": "Tout sélectionner",
+    "ru": "Выбрать все",
+    "ja": "すべて選択",
+    "vi": "Chọn tất cả"
+  },
+  "Select row": {
+    "zh": "选择行",
+    "zh-TW": "選擇行",
+    "fr": "Sélectionner la ligne",
+    "ru": "Выбрать строку",
+    "ja": "行を選択",
+    "vi": "Chọn hàng"
+  },
+  "Sensitive actions still require verification. Turning this off requires security verification.": {
+    "zh": "高危操作仍需安全验证。关闭此开关前需先完成安全验证。",
+    "zh-TW": "高風險操作仍需安全驗證。關閉此開關前需先完成安全驗證。",
+    "fr": "Les actions sensibles restent soumises à une vérification. Une vérification de sécurité est nécessaire pour désactiver cette option.",
+    "ru": "Для важных действий по-прежнему требуется проверка. Чтобы отключить эту настройку, необходимо пройти проверку безопасности.",
+    "ja": "重要な操作には引き続き認証が必要です。この設定をオフにするにはセキュリティ認証を完了してください。",
+    "vi": "Các thao tác nhạy cảm vẫn cần xác minh. Bạn phải hoàn tất xác minh bảo mật để tắt tùy chọn này."
+  },
+  "Status": {
+    "zh": "状态",
+    "zh-TW": "狀態",
+    "fr": "Statut",
+    "ru": "Статус",
+    "ja": "ステータス",
+    "vi": "Trạng thái"
+  },
+  "The administrator requires login verification for all enrolled users": {
+    "zh": "管理员要求所有已录入因子的用户登录时二次验证",
+    "zh-TW": "管理員要求所有已登錄驗證因子的使用者登入時二次驗證",
+    "fr": "L’administrateur exige une vérification à la connexion pour tous les utilisateurs ayant configuré un facteur",
+    "ru": "Администратор требует проверку при входе для всех пользователей с настроенным фактором",
+    "ja": "管理者は認証要素を登録済みの全ユーザーにログイン時の追加認証を要求しています",
+    "vi": "Quản trị viên yêu cầu xác minh đăng nhập đối với mọi người dùng đã đăng ký yếu tố xác thực"
+  },
+  "Unused": {
+    "zh": "未使用",
+    "zh-TW": "未使用",
+    "fr": "Inutilisé",
+    "ru": "Неиспользованные",
+    "ja": "未使用",
+    "vi": "Chưa sử dụng"
+  },
+  "Updated an invitation code": {
+    "zh": "已更新邀请码",
+    "zh-TW": "已更新邀請碼",
+    "fr": "Code d’invitation mis à jour",
+    "ru": "Код приглашения обновлён",
+    "ja": "招待コードを更新しました",
+    "vi": "Đã cập nhật mã mời"
+  },
+  "Use a name of 1–80 characters and generate 1–100 invitation codes": {
+    "zh": "名称须为 1–80 个字符，每次可生成 1–100 个邀请码",
+    "zh-TW": "名稱須為 1–80 個字元，每次可產生 1–100 個邀請碼",
+    "fr": "Utilisez un nom de 1 à 80 caractères et générez de 1 à 100 codes d’invitation",
+    "ru": "Укажите название длиной 1–80 символов и количество кодов от 1 до 100",
+    "ja": "名前は1～80文字、招待コードの生成数は1～100個で指定してください",
+    "vi": "Tên phải dài 1–80 ký tự và số mã mời tạo mỗi lần phải từ 1 đến 100"
+  },
+  "Used": {
+    "zh": "已使用",
+    "zh-TW": "已使用",
+    "fr": "Utilisé",
+    "ru": "Использовано",
+    "ja": "使用済み",
+    "vi": "Đã sử dụng"
+  },
+  "Used by": {
+    "zh": "使用者",
+    "zh-TW": "使用者",
+    "fr": "Utilisé par",
+    "ru": "Использовал",
+    "ja": "使用者",
+    "vi": "Người sử dụng"
+  },
+  "Used time": {
+    "zh": "使用时间",
+    "zh-TW": "使用時間",
+    "fr": "Date d’utilisation",
+    "ru": "Время использования",
+    "ja": "使用日時",
+    "vi": "Thời gian sử dụng"
+  },
+  "View and export invitation codes": {
+    "zh": "查看和导出邀请码",
+    "zh-TW": "檢視和匯出邀請碼",
+    "fr": "Consulter et exporter les codes d’invitation",
+    "ru": "Просматривать и экспортировать коды приглашения",
+    "ja": "招待コードの表示とエクスポート",
+    "vi": "Xem và xuất mã mời"
+  },
+  "View invitation codes": {
+    "zh": "查看邀请码",
+    "zh-TW": "檢視邀請碼",
+    "fr": "Consulter les codes d’invitation",
+    "ru": "Просматривать коды приглашения",
+    "ja": "招待コードを表示",
+    "vi": "Xem mã mời"
+  }
+}

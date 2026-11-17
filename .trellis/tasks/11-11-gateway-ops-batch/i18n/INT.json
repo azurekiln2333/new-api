@@ -1,0 +1,18 @@
+{
+  "unlimited": {
+    "zh": "不限",
+    "zh-TW": "不限",
+    "fr": "illimité",
+    "ru": "без ограничений",
+    "ja": "無制限",
+    "vi": "không giới hạn"
+  },
+  "Save rate limit": {
+    "zh": "保存速率限制",
+    "zh-TW": "儲存速率限制",
+    "fr": "Enregistrer la limite de débit",
+    "ru": "Сохранить лимит запросов",
+    "ja": "レート制限を保存",
+    "vi": "Lưu giới hạn tốc độ"
+  }
+}

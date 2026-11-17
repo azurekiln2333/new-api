@@ -1,0 +1,9 @@
+Active task: .trellis/tasks/11-16-channel-concurrency-limit
+
+You are the Pi final verification worker. User explicitly re-requested Pi now. Other workers are implementing UI and final backend tests in this shared tree; do not revert or overwrite their files. No git commit/push/tag (main owns release).
+
+FOCUSED TASK: review the current changed service/channel_capacity.go, service/upstream_first_byte_timeout.go, controller/relay.go, relay/responses_websocket.go and their existing regression tests for real failure paths: slot leaks, cross-key counting, Redis owner expiry/release, cancellation, first-body-byte timeout before billing/response, pins and strict sessions. Read the approved design.md and .agents/rules/billing.md fully (billing gate) plus root AGENTS.md. Avoid unrelated repo exploration. Execute focused tests using Go below. If a concrete defect remains, write the precise file:line evidence and recommended fix to report-pi-final-check.md immediately; do NOT edit production files concurrently. If no defect found, say so with actually observed commands/results. This is real review, not planning or another task-creation/approval process. Keep report concise. Do not spawn other workers.
+
+Go executable D:/AppData/Local/Temp/new-api-cx-a-tools/go/bin/go.exe. Use PATH for this shell only. Focused command: go test ./service ./controller ./relay/channel -run 'ChannelCapacity|UpstreamFirstByte|RequestPolicyUpstreamHTTPFailover|FirstByteTimeout' -count=1. Real Redis/MySQL/Postgres are unavailable locally and mandatory gated CI has been configured, so distinguish skipped external fixtures from passing checks.
+
+Write progress-pi-check.md as soon as you have an observation and final report-pi-final-check.md when done. Main will follow your evidence, integrate fixes, perform conventional commit and push, then follow the automatic tag/release CI. Do not claim release happened.

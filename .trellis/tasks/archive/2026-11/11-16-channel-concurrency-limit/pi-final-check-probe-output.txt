@@ -1,0 +1,10 @@
+--- FAIL: TestPiFinalCheckUnlimitedFallbackDoesNotInheritReleasedLease (0.00s)
+    pi_final_check_overlay_test.go:43: 
+        	Error Trace:	D:/My2KProjects/new-api/service/pi_final_check_overlay_test.go:43
+        	Error:      	Not same: 
+        	            	expected: &service.ChannelCapacityLease{ctx:(*context.valueCtx)(0x14148a221e00), control:(*context.cancelCtx)(0x14148a21bdb0), cancel:(context.CancelCauseFunc)(0x7ff663a0aaa0), once:sync.Once{_:sync.noCopy{}, done:atomic.Bool{_:atomic.noCopy{}, v:0x1}, m:sync.Mutex{_:sync.noCopy{}, mu:sync.Mutex{state:0, sema:0x0}}}, channelID:991601, client:(*redis.Client)(nil), key:"", owner:"", done:(chan struct {})(nil)} (*service.ChannelCapacityLease)(0x141489f30310)
+        	            	actual  : (*service.ChannelCapacityLease)(nil) (*service.ChannelCapacityLease)(0x0)
+        	Test:       	TestPiFinalCheckUnlimitedFallbackDoesNotInheritReleasedLease
+FAIL
+FAIL	github.com/QuantumNous/new-api/service	5.708s
+FAIL

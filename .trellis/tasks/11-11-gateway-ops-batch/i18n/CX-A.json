@@ -1,0 +1,170 @@
+{
+  "Failed to load groups": {
+    "zh": "加载分组失败",
+    "zh-TW": "載入分組失敗",
+    "fr": "Impossible de charger les groupes",
+    "ru": "Не удалось загрузить группы",
+    "ja": "グループの読み込みに失敗しました",
+    "vi": "Không thể tải nhóm"
+  },
+  "No groups available": {
+    "zh": "暂无可用分组",
+    "zh-TW": "目前沒有可用分組",
+    "fr": "Aucun groupe disponible",
+    "ru": "Нет доступных групп",
+    "ja": "利用可能なグループはありません",
+    "vi": "Không có nhóm khả dụng"
+  },
+  "Avoid failed channels on retry": {
+    "zh": "重试时避开已失败渠道",
+    "zh-TW": "重試時避開已失敗渠道",
+    "fr": "Éviter les canaux en échec lors des nouvelles tentatives",
+    "ru": "Избегать сбойных каналов при повторах",
+    "ja": "再試行時に失敗したチャネルを避ける",
+    "vi": "Tránh kênh đã lỗi khi thử lại"
+  },
+  "Try unused channels at the same priority before lower priorities. Repeat only after all eligible channels have failed.": {
+    "zh": "先尝试同优先级未失败的渠道，再降级；全部可用渠道均失败后才允许重复。",
+    "zh-TW": "先嘗試同優先級未失敗的渠道，再降級；全部可用渠道均失敗後才允許重複。",
+    "fr": "Essayer les canaux non utilisés de même priorité, puis les priorités inférieures. Réutiliser un canal seulement après l’échec de tous les canaux admissibles.",
+    "ru": "Сначала пробовать другие каналы того же приоритета, затем более низкого. Повторять канал только после сбоя всех подходящих каналов.",
+    "ja": "同じ優先度の未試行チャネルを先に試し、その後で優先度を下げます。対象の全チャネルが失敗した後にのみ再利用します。",
+    "vi": "Thử các kênh chưa dùng cùng mức ưu tiên trước, rồi đến mức thấp hơn. Chỉ lặp lại sau khi mọi kênh phù hợp đều lỗi."
+  },
+  "Unbind after consecutive failures": {
+    "zh": "绑定渠道连续失败多少次后解绑",
+    "zh-TW": "綁定渠道連續失敗多少次後解綁",
+    "fr": "Délier après des échecs consécutifs",
+    "ru": "Отвязать после последовательных сбоев",
+    "ja": "連続失敗後にバインドを解除",
+    "vi": "Hủy liên kết sau các lần lỗi liên tiếp"
+  },
+  "0 disables unbinding after failures. Applies to every session mode; reaching the threshold allows strict sessions to retry on another channel.": {
+    "zh": "0 表示不因失败解绑。对所有会话模式生效；达到阈值后，严格会话也可重试其它渠道。",
+    "zh-TW": "0 表示不因失敗解綁。對所有工作階段模式生效；達到閾值後，嚴格模式也可重試其他渠道。",
+    "fr": "0 conserve les liaisons malgré les échecs. Tous les modes sont concernés ; au seuil, même les sessions strictes peuvent essayer un autre canal.",
+    "ru": "0 сохраняет привязку при сбоях. Действует во всех режимах; при достижении порога даже строгая сессия может попробовать другой канал.",
+    "ja": "0 では失敗による解除を行いません。全セッションモードに適用され、しきい値に達すると厳密モードでも別のチャネルを再試行できます。",
+    "vi": "0 giữ liên kết khi có lỗi. Áp dụng cho mọi chế độ phiên; khi đạt ngưỡng, phiên nghiêm ngặt cũng có thể thử kênh khác."
+  },
+  "Set all rules to inherit defaults": {
+    "zh": "全部改为继承默认",
+    "zh-TW": "全部改為繼承預設",
+    "fr": "Faire hériter toutes les règles",
+    "ru": "Наследовать настройки во всех правилах",
+    "ja": "すべてのルールで既定値を継承",
+    "vi": "Cho mọi quy tắc kế thừa mặc định"
+  },
+  "Legacy strict mode": {
+    "zh": "旧版严格模式",
+    "zh-TW": "舊版嚴格模式",
+    "fr": "Ancien mode strict",
+    "ru": "Устаревший строгий режим",
+    "ja": "従来の厳密モード",
+    "vi": "Chế độ nghiêm ngặt cũ"
+  },
+  "Session binding removed after repeated failures": {
+    "zh": "连续失败达到阈值，已解除会话绑定",
+    "zh-TW": "連續失敗達到閾值，已解除工作階段綁定",
+    "fr": "Liaison supprimée après des échecs répétés",
+    "ru": "Привязка сессии удалена после повторных сбоев",
+    "ja": "連続失敗によりセッションのバインドを解除しました",
+    "vi": "Đã hủy liên kết phiên sau nhiều lần lỗi"
+  },
+  "Skipped channels that already failed": {
+    "zh": "已避开本次请求失败过的渠道",
+    "zh-TW": "已避開本次請求失敗過的渠道",
+    "fr": "Canaux déjà en échec ignorés",
+    "ru": "Каналы с предыдущими сбоями пропущены",
+    "ja": "すでに失敗したチャネルをスキップしました",
+    "vi": "Đã bỏ qua các kênh đã lỗi"
+  },
+  "Response output already started": {
+    "zh": "响应已开始输出，停止重试",
+    "zh-TW": "回應已開始輸出，停止重試",
+    "fr": "L’envoi de la réponse a déjà commencé",
+    "ru": "Отправка ответа уже началась",
+    "ja": "レスポンスの出力はすでに開始されています",
+    "vi": "Đã bắt đầu gửi phản hồi"
+  },
+  "Group levels": {
+    "zh": "分组等级",
+    "zh-TW": "分組等級",
+    "fr": "Niveaux des groupes",
+    "ru": "Уровни групп",
+    "ja": "グループレベル",
+    "vi": "Cấp nhóm"
+  },
+  "Higher levels include all lower levels. Leave blank to keep manual visibility only. Manual grants are always included.": {
+    "zh": "高等级自动包含所有低等级分组。留空则仅按手工配置；手工授予的可用分组始终保留。",
+    "zh-TW": "高等級自動包含所有低等級分組。留空則僅按手動設定；手動授予的可用分組始終保留。",
+    "fr": "Un niveau supérieur inclut les niveaux inférieurs. Laisser vide pour la visibilité manuelle seule. Les accès manuels sont toujours inclus.",
+    "ru": "Высокий уровень включает все низкие. Пустое поле оставляет только ручные настройки. Ручные разрешения всегда учитываются.",
+    "ja": "上位レベルはすべての下位レベルを含みます。空欄では手動設定のみを使用し、手動で許可したグループは常に含まれます。",
+    "vi": "Cấp cao bao gồm mọi cấp thấp hơn. Để trống để chỉ dùng cấu hình thủ công. Quyền cấp thủ công luôn được giữ."
+  },
+  "Level for {{group}}": {
+    "zh": "{{group}} 的等级",
+    "zh-TW": "{{group}} 的等級",
+    "fr": "Niveau de {{group}}",
+    "ru": "Уровень {{group}}",
+    "ja": "{{group}} のレベル",
+    "vi": "Cấp của {{group}}"
+  },
+  "Save group levels": {
+    "zh": "保存分组等级",
+    "zh-TW": "儲存分組等級",
+    "fr": "Enregistrer les niveaux",
+    "ru": "Сохранить уровни групп",
+    "ja": "グループレベルを保存",
+    "vi": "Lưu cấp nhóm"
+  },
+  "Select user group to preview": {
+    "zh": "选择用户分组以预览",
+    "zh-TW": "選擇使用者分組以預覽",
+    "fr": "Choisir le groupe à prévisualiser",
+    "ru": "Выберите группу для предпросмотра",
+    "ja": "プレビューするユーザーグループを選択",
+    "vi": "Chọn nhóm người dùng để xem trước"
+  },
+  "Preview visible groups": {
+    "zh": "预览可用分组",
+    "zh-TW": "預覽可用分組",
+    "fr": "Prévisualiser les groupes visibles",
+    "ru": "Показать доступные группы",
+    "ja": "利用可能なグループをプレビュー",
+    "vi": "Xem trước nhóm khả dụng"
+  },
+  "Group levels must map group names to integers": {
+    "zh": "分组等级必须是分组名到整数的映射",
+    "zh-TW": "分組等級必須是分組名稱到整數的對應",
+    "fr": "Les niveaux doivent associer des noms de groupes à des entiers",
+    "ru": "Уровни групп должны сопоставлять названия групп целым числам",
+    "ja": "グループレベルはグループ名と整数の対応で指定してください",
+    "vi": "Cấp nhóm phải ánh xạ tên nhóm tới số nguyên"
+  },
+  "affinity failure threshold must be an integer between 0 and 1000000": {
+    "zh": "会话失败阈值必须是 0 到 1000000 之间的整数",
+    "zh-TW": "工作階段失敗閾值必須是 0 到 1000000 之間的整數",
+    "fr": "Le seuil d’échec doit être un entier entre 0 et 1000000",
+    "ru": "Порог сбоев должен быть целым числом от 0 до 1000000",
+    "ja": "失敗しきい値は 0～1000000 の整数で指定してください",
+    "vi": "Ngưỡng lỗi phải là số nguyên từ 0 đến 1000000"
+  },
+  "invalid affinity failure threshold": {
+    "zh": "无效的会话失败阈值",
+    "zh-TW": "無效的工作階段失敗閾值",
+    "fr": "Seuil d’échec de session invalide",
+    "ru": "Недопустимый порог сбоев сессии",
+    "ja": "セッション失敗しきい値が無効です",
+    "vi": "Ngưỡng lỗi phiên không hợp lệ"
+  },
+  "invalid failed-channel retry switch": {
+    "zh": "无效的避开失败渠道开关值",
+    "zh-TW": "無效的避開失敗渠道開關值",
+    "fr": "Valeur du réglage d’évitement des canaux invalide",
+    "ru": "Недопустимое значение настройки обхода сбойных каналов",
+    "ja": "失敗チャネル回避設定の値が無効です",
+    "vi": "Giá trị tùy chọn tránh kênh lỗi không hợp lệ"
+  }
+}

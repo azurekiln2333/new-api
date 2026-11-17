@@ -44,3 +44,7 @@ relaykit/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
+
+# Trellis: raw agent session transcripts and Python caches stay local
+.trellis/**/pi-*.jsonl
+.trellis/**/__pycache__/

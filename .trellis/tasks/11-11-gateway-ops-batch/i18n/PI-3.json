@@ -1,0 +1,34 @@
+{
+  "Compact view": {
+    "zh": "紧凑视图",
+    "zh-TW": "精簡檢視",
+    "fr": "Vue compacte",
+    "ru": "Компактный вид",
+    "ja": "コンパクト表示",
+    "vi": "Chế độ thu gọn"
+  },
+  "Unable to measure": {
+    "zh": "无法测量",
+    "zh-TW": "無法測量",
+    "fr": "Mesure impossible",
+    "ru": "Невозможно измерить",
+    "ja": "測定できません",
+    "vi": "Không thể đo"
+  },
+  "Unable to measure (insecure target)": {
+    "zh": "无法测量（目标为不安全的 http 地址）",
+    "zh-TW": "無法測量（目標為不安全的 http 位址）",
+    "fr": "Mesure impossible (cible non sécurisée)",
+    "ru": "Невозможно измерить (незащищённый адрес)",
+    "ja": "測定できません（安全でない http の接続先）",
+    "vi": "Không thể đo (đích không bảo mật)"
+  },
+  "Timed out": {
+    "zh": "测量超时",
+    "zh-TW": "測量逾時",
+    "fr": "Délai dépassé",
+    "ru": "Превышено время ожидания",
+    "ja": "タイムアウト",
+    "vi": "Quá thời gian chờ"
+  }
+}

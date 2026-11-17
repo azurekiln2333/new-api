@@ -1,0 +1,2174 @@
+[
+ {
+  "viewport": "desktop",
+  "scenario": "stream-short",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 80
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 28
+  },
+  "bubble": {
+   "x": 288,
+   "right": 326.328125,
+   "width": 38.328125,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 38,
+  "widestLine": 38.33,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-short",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 80
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 28
+  },
+  "bubble": {
+   "x": 288,
+   "right": 368.28125,
+   "width": 80.28125,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 80,
+  "widestLine": 41.81,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-short",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 80
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 28
+  },
+  "bubble": {
+   "x": 288,
+   "right": 474.359375,
+   "width": 186.359375,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 186,
+  "widestLine": 46.31,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-short",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 80
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 28
+  },
+  "bubble": {
+   "x": 288,
+   "right": 474.328125,
+   "width": 186.328125,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 186,
+  "widestLine": 186.33,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-short",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 80
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 28
+  },
+  "bubble": {
+   "x": 288,
+   "right": 474.328125,
+   "width": 186.328125,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 186,
+  "widestLine": 186.33,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "chunk-1/2",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 164
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 112
+  },
+  "bubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768,
+   "height": 112
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 768,
+  "widestLine": 749.17,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "chunk-2/2",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 220
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 168
+  },
+  "bubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768,
+   "height": 168
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 768,
+  "widestLine": 84.13,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 220
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 168
+  },
+  "bubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768,
+   "height": 168
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 768,
+  "widestLine": 749.17,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 220
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 168
+  },
+  "bubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768,
+   "height": 168
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 768,
+  "widestLine": 749.17,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 80
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 28
+  },
+  "bubble": {
+   "x": 288,
+   "right": 314.59375,
+   "width": 26.59375,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 27,
+  "widestLine": 26.59,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 80
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 28
+  },
+  "bubble": {
+   "x": 288,
+   "right": 826.296875,
+   "width": 538.296875,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 538,
+  "widestLine": 508.22,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 2932,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 1492,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 136
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 84
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2931.890625,
+   "width": 2643.890625,
+   "height": 84
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2644,
+  "widestLine": 2643.89,
+  "codeScrollable": null,
+  "bodyOverflow": 1492
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 2932,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 1492,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 136
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 84
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2931.890625,
+   "width": 2643.890625,
+   "height": 84
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2644,
+  "widestLine": 2643.89,
+  "codeScrollable": null,
+  "bodyOverflow": 1492
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 2932,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 1492,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 136
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 84
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2931.890625,
+   "width": 2643.890625,
+   "height": 84
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2644,
+  "widestLine": 2643.89,
+  "codeScrollable": null,
+  "bodyOverflow": 1492
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 267
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 215
+  },
+  "bubble": {
+   "x": 288,
+   "right": 394.65625,
+   "width": 106.65625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 107,
+  "widestLine": 48.91,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  },
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 267
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 215
+  },
+  "bubble": {
+   "x": 288,
+   "right": 912.484375,
+   "width": 624.484375,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 624,
+  "widestLine": 192.98,
+  "codeScrollable": {
+   "scrollWidth": 622,
+   "clientWidth": 622
+  },
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 2185,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 745,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 267
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 215
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2184.625,
+   "width": 1896.625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 1897,
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  },
+  "bodyOverflow": 745
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 2185,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 745,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 267
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 215
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2184.625,
+   "width": 1896.625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 1897,
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  },
+  "bodyOverflow": 745
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 2185,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 745,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 267
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 215
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2184.625,
+   "width": 1896.625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 1897,
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  },
+  "bodyOverflow": 745
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 267
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 215
+  },
+  "bubble": {
+   "x": 288,
+   "right": 394.65625,
+   "width": 106.65625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 107,
+  "widestLine": 48.91,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  },
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 2463,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 1023,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 267
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 215
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2463.375,
+   "width": 2175.375,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1023
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 2463,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 1023,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 307
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 255
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2463.375,
+   "width": 2175.375,
+   "height": 255
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1023
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 2463,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 1023,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 307
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 255
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2463.375,
+   "width": 2175.375,
+   "height": 255
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1023
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 2463,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 1023,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 307
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 255
+  },
+  "bubble": {
+   "x": 288,
+   "right": 2463.375,
+   "width": 2175.375,
+   "height": 255
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1023
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-short",
+  "step": "chunk-1/1",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 130
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 78
+  },
+  "bubble": {
+   "x": 1113.796875,
+   "right": 1152,
+   "width": 38.203125,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 36,
+  "widestLine": 9.48,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-short",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 130
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 78
+  },
+  "bubble": {
+   "x": 1113.796875,
+   "right": 1152,
+   "width": 38.203125,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 36,
+  "widestLine": 9.48,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-short",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 130
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 78
+  },
+  "bubble": {
+   "x": 1113.796875,
+   "right": 1152,
+   "width": 38.203125,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 36,
+  "widestLine": 9.48,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-multiline",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 130
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 78
+  },
+  "bubble": {
+   "x": 987.953125,
+   "right": 1152,
+   "width": 164.046875,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 162,
+  "widestLine": 63.64,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-multiline",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 158
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 106
+  },
+  "bubble": {
+   "x": 929.640625,
+   "right": 1152,
+   "width": 222.359375,
+   "height": 106
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 220,
+  "widestLine": 63.64,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-multiline",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 186
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 134
+  },
+  "bubble": {
+   "x": 929.640625,
+   "right": 1152,
+   "width": 222.359375,
+   "height": 134
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 220,
+  "widestLine": 63.64,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-multiline",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 186
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 134
+  },
+  "bubble": {
+   "x": 929.671875,
+   "right": 1152,
+   "width": 222.328125,
+   "height": 134
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 220,
+  "widestLine": 184.84,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "user-multiline",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 272,
+   "right": 1168,
+   "width": 896,
+   "height": 186
+  },
+  "column": {
+   "x": 288,
+   "right": 1152,
+   "width": 864,
+   "height": 134
+  },
+  "bubble": {
+   "x": 929.671875,
+   "right": 1152,
+   "width": 222.328125,
+   "height": 134
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 220,
+  "widestLine": 184.84,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-short",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 80
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 28
+  },
+  "bubble": {
+   "x": 16,
+   "right": 53.34375,
+   "width": 37.34375,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 37,
+  "widestLine": 37.34,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-short",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 80
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 28
+  },
+  "bubble": {
+   "x": 16,
+   "right": 94.234375,
+   "width": 78.234375,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 78,
+  "widestLine": 40.75,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-short",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 80
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 28
+  },
+  "bubble": {
+   "x": 16,
+   "right": 197.59375,
+   "width": 181.59375,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 182,
+  "widestLine": 45.13,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-short",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 80
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 28
+  },
+  "bubble": {
+   "x": 16,
+   "right": 197.546875,
+   "width": 181.546875,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 182,
+  "widestLine": 181.55,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-short",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 80
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 28
+  },
+  "bubble": {
+   "x": 16,
+   "right": 197.546875,
+   "width": 181.546875,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 182,
+  "widestLine": 181.55,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "chunk-1/2",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 276
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 224
+  },
+  "bubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 224
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 358,
+  "widestLine": 349.25,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "chunk-2/2",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 388
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 336
+  },
+  "bubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 336
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 358,
+  "widestLine": 81.97,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 388
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 336
+  },
+  "bubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 336
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 358,
+  "widestLine": 349.25,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 388
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 336
+  },
+  "bubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 336
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 358,
+  "widestLine": 349.25,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 80
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 28
+  },
+  "bubble": {
+   "x": 16,
+   "right": 41.90625,
+   "width": 25.90625,
+   "height": 28
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 26,
+  "widestLine": 25.91,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 511,
+  "docScrollWidth": 511,
+  "docClientWidth": 390,
+  "horizontalOverflow": 121,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 108
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 56
+  },
+  "bubble": {
+   "x": 16,
+   "right": 511.1875,
+   "width": 495.1875,
+   "height": 56
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 495,
+  "widestLine": 495.19,
+  "codeScrollable": null,
+  "bodyOverflow": 121
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1560,
+  "docScrollWidth": 2592,
+  "docClientWidth": 390,
+  "horizontalOverflow": 2202,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 136
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 84
+  },
+  "bubble": {
+   "x": 16,
+   "right": 2592.09375,
+   "width": 2576.09375,
+   "height": 84
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2576,
+  "widestLine": 2576.09,
+  "codeScrollable": null,
+  "bodyOverflow": 2202
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1560,
+  "docScrollWidth": 2592,
+  "docClientWidth": 390,
+  "horizontalOverflow": 2202,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 136
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 84
+  },
+  "bubble": {
+   "x": 16,
+   "right": 2592.09375,
+   "width": 2576.09375,
+   "height": 84
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2576,
+  "widestLine": 2576.09,
+  "codeScrollable": null,
+  "bodyOverflow": 2202
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1560,
+  "docScrollWidth": 2592,
+  "docClientWidth": 390,
+  "horizontalOverflow": 2202,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 136
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 84
+  },
+  "bubble": {
+   "x": 16,
+   "right": 2592.09375,
+   "width": 2576.09375,
+   "height": 84
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2576,
+  "widestLine": 2576.09,
+  "codeScrollable": null,
+  "bodyOverflow": 2202
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 267
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 215
+  },
+  "bubble": {
+   "x": 16,
+   "right": 122.65625,
+   "width": 106.65625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 107,
+  "widestLine": 47.66,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  },
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 640,
+  "docScrollWidth": 640,
+  "docClientWidth": 390,
+  "horizontalOverflow": 250,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 267
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 215
+  },
+  "bubble": {
+   "x": 16,
+   "right": 640.484375,
+   "width": 624.484375,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 624,
+  "widestLine": 192.98,
+  "codeScrollable": {
+   "scrollWidth": 622,
+   "clientWidth": 622
+  },
+  "bodyOverflow": 250
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1560,
+  "docScrollWidth": 1913,
+  "docClientWidth": 390,
+  "horizontalOverflow": 1523,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 267
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 215
+  },
+  "bubble": {
+   "x": 16,
+   "right": 1912.625,
+   "width": 1896.625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 1897,
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  },
+  "bodyOverflow": 1523
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1560,
+  "docScrollWidth": 1913,
+  "docClientWidth": 390,
+  "horizontalOverflow": 1523,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 267
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 215
+  },
+  "bubble": {
+   "x": 16,
+   "right": 1912.625,
+   "width": 1896.625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 1897,
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  },
+  "bodyOverflow": 1523
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1560,
+  "docScrollWidth": 1913,
+  "docClientWidth": 390,
+  "horizontalOverflow": 1523,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 267
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 215
+  },
+  "bubble": {
+   "x": 16,
+   "right": 1912.625,
+   "width": 1896.625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 1897,
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  },
+  "bodyOverflow": 1523
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 267
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 215
+  },
+  "bubble": {
+   "x": 16,
+   "right": 122.65625,
+   "width": 106.65625,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 107,
+  "widestLine": 47.66,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  },
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 1560,
+  "docScrollWidth": 2191,
+  "docClientWidth": 390,
+  "horizontalOverflow": 1801,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 267
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 215
+  },
+  "bubble": {
+   "x": 16,
+   "right": 2191.375,
+   "width": 2175.375,
+   "height": 215
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1801
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 1560,
+  "docScrollWidth": 2191,
+  "docClientWidth": 390,
+  "horizontalOverflow": 1801,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 307
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 255
+  },
+  "bubble": {
+   "x": 16,
+   "right": 2191.375,
+   "width": 2175.375,
+   "height": 255
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1801
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 1560,
+  "docScrollWidth": 2191,
+  "docClientWidth": 390,
+  "horizontalOverflow": 1801,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 307
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 255
+  },
+  "bubble": {
+   "x": 16,
+   "right": 2191.375,
+   "width": 2175.375,
+   "height": 255
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1801
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 1560,
+  "docScrollWidth": 2191,
+  "docClientWidth": 390,
+  "horizontalOverflow": 1801,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 307
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 255
+  },
+  "bubble": {
+   "x": 16,
+   "right": 2191.375,
+   "width": 2175.375,
+   "height": 255
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 2175,
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2173,
+   "clientWidth": 2173
+  },
+  "bodyOverflow": 1801
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-short",
+  "step": "chunk-1/1",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 130
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 78
+  },
+  "bubble": {
+   "x": 336.0625,
+   "right": 374,
+   "width": 37.9375,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 36,
+  "widestLine": 9.23,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-short",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 130
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 78
+  },
+  "bubble": {
+   "x": 336.0625,
+   "right": 374,
+   "width": 37.9375,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 36,
+  "widestLine": 9.23,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-short",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 130
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 78
+  },
+  "bubble": {
+   "x": 336.0625,
+   "right": 374,
+   "width": 37.9375,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 36,
+  "widestLine": 9.23,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-multiline",
+  "step": "chunk-1/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 130
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 78
+  },
+  "bubble": {
+   "x": 213.453125,
+   "right": 374,
+   "width": 160.546875,
+   "height": 78
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 159,
+  "widestLine": 62.02,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-multiline",
+  "step": "chunk-2/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 158
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 106
+  },
+  "bubble": {
+   "x": 156.625,
+   "right": 374,
+   "width": 217.375,
+   "height": 106
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 215,
+  "widestLine": 62.02,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-multiline",
+  "step": "chunk-3/3",
+  "status": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 186
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 134
+  },
+  "bubble": {
+   "x": 156.625,
+   "right": 374,
+   "width": 217.375,
+   "height": 134
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 215,
+  "widestLine": 62.02,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-multiline",
+  "step": "complete",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 186
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 134
+  },
+  "bubble": {
+   "x": 156.6875,
+   "right": 374,
+   "width": 217.3125,
+   "height": 134
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 215,
+  "widestLine": 180.11,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "user-multiline",
+  "step": "restored",
+  "status": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "conversation": {
+   "x": 0,
+   "right": 390,
+   "width": 390,
+   "height": 186
+  },
+  "column": {
+   "x": 16,
+   "right": 374,
+   "width": 358,
+   "height": 134
+  },
+  "bubble": {
+   "x": 156.6875,
+   "right": 374,
+   "width": 217.3125,
+   "height": 134
+  },
+  "bubbleTextAlign": "left",
+  "bubbleOverflowWidth": 215,
+  "widestLine": 180.11,
+  "codeScrollable": null,
+  "bodyOverflow": 0
+ }
+]

@@ -1,0 +1,7 @@
+{"file":"AGENTS.md","reason":"Project contracts: independent relaykit, real database matrix, retry/billing/test constraints"}
+{"file":"web/AGENTS.md","reason":"Shared components, permissions, frontend checks and translations"}
+{"file":".agents/rules/billing.md","reason":"Mandatory full read before cancellation/settlement paths; no repeated pre-consume"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Settings serialization and attempt-lifecycle boundaries"}
+{"file":".trellis/tasks/11-16-channel-concurrency-limit/research/initial-findings.md","reason":"Confirmed concurrency routing/storage/UI evidence"}
+{"file":".trellis/tasks/11-16-channel-concurrency-limit/research/timeout-design.md","reason":"First-byte transport design and SDK/keepalive/settlement boundaries"}
+{"file":".trellis/tasks/11-16-channel-concurrency-limit/research/failover-errors.md","reason":"403/404 current behavior and 504/524 exclusion evidence"}

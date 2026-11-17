@@ -1,0 +1,138 @@
+{
+  "Choose one of the groups defined in the group settings.": {
+    "zh": "从分组设置中已有的分组里选择。",
+    "zh-TW": "從分組設定中已有的分組裡選擇。",
+    "fr": "Choisissez l'un des groupes définis dans les paramètres de groupe.",
+    "ru": "Выберите одну из групп, заданных в настройках групп.",
+    "ja": "グループ設定に登録されているグループから選択してください。",
+    "vi": "Chọn một trong các nhóm đã có trong cài đặt nhóm."
+  },
+  "No groups found": {
+    "zh": "未找到分组",
+    "zh-TW": "找不到分組",
+    "fr": "Aucun groupe trouvé",
+    "ru": "Группы не найдены",
+    "ja": "グループが見つかりません",
+    "vi": "Không tìm thấy nhóm"
+  },
+  "Group missing": {
+    "zh": "分组已不存在",
+    "zh-TW": "分組已不存在",
+    "fr": "Groupe absent",
+    "ru": "Группа отсутствует",
+    "ja": "グループが存在しません",
+    "vi": "Nhóm không tồn tại"
+  },
+  "This group no longer exists in the group settings. The entry is kept until you delete it.": {
+    "zh": "该分组已不在分组设置中。此条目会保留，直到你删除它。",
+    "zh-TW": "該分組已不在分組設定中。此條目會保留，直到你刪除它。",
+    "fr": "Ce groupe n'existe plus dans les paramètres de groupe. L'entrée est conservée jusqu'à sa suppression.",
+    "ru": "Этой группы больше нет в настройках групп. Запись сохраняется до удаления.",
+    "ja": "このグループはグループ設定に存在しません。削除するまでこの項目は保持されます。",
+    "vi": "Nhóm này không còn trong cài đặt nhóm. Mục này vẫn được giữ cho đến khi bạn xóa."
+  },
+  "Also clear the manual limits of users in this group": {
+    "zh": "同时清除该分组内用户的手动限流设置",
+    "zh-TW": "同時清除該分組內使用者手動設定的速率限制",
+    "fr": "Effacer aussi les limites manuelles des utilisateurs de ce groupe",
+    "ru": "Также сбросить ручные лимиты пользователей этой группы",
+    "ja": "このグループ内のユーザーの個別制限も解除する",
+    "vi": "Đồng thời xóa giới hạn riêng của người dùng trong nhóm này"
+  },
+  "Users in this group who were given their own rate limit fall back to the group limit.": {
+    "zh": "该分组内已单独设置速率的用户将回到分组速率。",
+    "zh-TW": "該分組內已單獨設定速率的使用者將回到分組速率。",
+    "fr": "Les utilisateurs de ce groupe ayant leur propre limite de débit reviennent à la limite du groupe.",
+    "ru": "Пользователи этой группы с собственным лимитом вернутся к лимиту группы.",
+    "ja": "個別のレート制限が設定されたこのグループのユーザーは、グループの制限に戻ります。",
+    "vi": "Người dùng trong nhóm này đã được đặt giới hạn riêng sẽ quay lại giới hạn của nhóm."
+  },
+  "Cleared the manual rate limits of {{users}} users in this group": {
+    "zh": "已清除该分组内 {{users}} 个用户的手动限流设置",
+    "zh-TW": "已清除該分組內 {{users}} 個使用者手動設定的速率限制",
+    "fr": "Limites manuelles effacées pour {{users}} utilisateurs de ce groupe",
+    "ru": "Ручные лимиты сброшены у {{users}} пользователей этой группы",
+    "ja": "このグループ内の {{users}} 人のユーザーの個別制限を解除しました",
+    "vi": "Đã xóa giới hạn riêng của {{users}} người dùng trong nhóm này"
+  },
+  "Failed to clear the manual rate limits of the group users": {
+    "zh": "清除分组内用户的手动限流设置失败",
+    "zh-TW": "清除分組內使用者手動設定的速率限制失敗",
+    "fr": "Échec de l'effacement des limites manuelles des utilisateurs du groupe",
+    "ru": "Не удалось сбросить ручные лимиты пользователей группы",
+    "ja": "グループ内ユーザーの個別制限の解除に失敗しました",
+    "vi": "Không xóa được giới hạn riêng của người dùng trong nhóm"
+  },
+  "Set a rate limit for this user": {
+    "zh": "为该用户单独设置速率限制",
+    "zh-TW": "為該使用者單獨設定速率限制",
+    "fr": "Définir une limite de débit pour cet utilisateur",
+    "ru": "Задать отдельный лимит для этого пользователя",
+    "ja": "このユーザーに個別のレート制限を設定する",
+    "vi": "Đặt giới hạn riêng cho người dùng này"
+  },
+  "Group limit: {{total}} requests ({{success}} successful) per period": {
+    "zh": "分组速率：每周期 {{total}} 次请求（{{success}} 次成功）",
+    "zh-TW": "分組速率：每周期 {{total}} 次請求（{{success}} 次成功）",
+    "fr": "Limite du groupe : {{total}} requêtes ({{success}} réussies) par période",
+    "ru": "Лимит группы: {{total}} запросов ({{success}} успешных) за период",
+    "ja": "グループ制限：期間あたり {{total}} リクエスト（成功 {{success}} 回）",
+    "vi": "Giới hạn nhóm: {{total}} yêu cầu ({{success}} thành công) mỗi khoảng thời gian"
+  },
+  "This group has no dedicated limit, so the global rate limit applies.": {
+    "zh": "该分组未单独设置速率限制，适用全局限流。",
+    "zh-TW": "該分組未單獨設定速率限制，適用全域限流。",
+    "fr": "Ce groupe n'a pas de limite dédiée ; la limite globale s'applique.",
+    "ru": "У этой группы нет отдельного лимита, действует общий лимит.",
+    "ja": "このグループには個別の制限がないため、全体のレート制限が適用されます。",
+    "vi": "Nhóm này không có giới hạn riêng nên áp dụng giới hạn toàn cục."
+  },
+  "A separate limit overrides the group limit for this user only. The time window is the global limit period.": {
+    "zh": "单独设置只覆盖该用户的分组速率；时间窗沿用全局限流周期。",
+    "zh-TW": "單獨設定只覆蓋該使用者的分組速率；時間窗沿用全域限流週期。",
+    "fr": "Une limite séparée remplace la limite du groupe pour cet utilisateur uniquement. La période est celle de la limite globale.",
+    "ru": "Отдельный лимит заменяет лимит группы только для этого пользователя. Окно времени совпадает с общим периодом.",
+    "ja": "個別設定はこのユーザーのグループ制限のみを上書きします。時間枠は全体の制限周期に従います。",
+    "vi": "Giới hạn riêng chỉ thay thế giới hạn nhóm cho người dùng này. Khoảng thời gian theo chu kỳ giới hạn toàn cục."
+  },
+  "Total requests must be 0 or more, and successful requests must be 1 or more": {
+    "zh": "总请求数必须为 0 或更大，成功请求数必须为 1 或更大",
+    "zh-TW": "總請求數必須為 0 或更大，成功請求數必須為 1 或更大",
+    "fr": "Le nombre total de requêtes doit être ≥ 0 et le nombre de requêtes réussies ≥ 1",
+    "ru": "Общее число запросов должно быть ≥ 0, а успешных — ≥ 1",
+    "ja": "総リクエスト数は 0 以上、成功リクエスト数は 1 以上である必要があります",
+    "vi": "Tổng số yêu cầu phải từ 0 trở lên, số yêu cầu thành công phải từ 1 trở lên"
+  },
+  "Custom rate limit saved": {
+    "zh": "单独速率限制已保存",
+    "zh-TW": "單獨速率限制已儲存",
+    "fr": "Limite de débit personnalisée enregistrée",
+    "ru": "Отдельный лимит сохранён",
+    "ja": "個別のレート制限を保存しました",
+    "vi": "Đã lưu giới hạn riêng"
+  },
+  "Rate limit follows the group again": {
+    "zh": "速率限制已恢复为跟随分组",
+    "zh-TW": "速率限制已恢復為跟隨分組",
+    "fr": "La limite de débit suit de nouveau le groupe",
+    "ru": "Лимит снова соответствует группе",
+    "ja": "レート制限はグループに従う設定に戻りました",
+    "vi": "Giới hạn đã quay lại theo nhóm"
+  },
+  "Failed to save the rate limit": {
+    "zh": "保存速率限制失败",
+    "zh-TW": "儲存速率限制失敗",
+    "fr": "Échec de l'enregistrement de la limite de débit",
+    "ru": "Не удалось сохранить лимит",
+    "ja": "レート制限の保存に失敗しました",
+    "vi": "Không lưu được giới hạn"
+  },
+  "Users follow the rate limit of their group unless an administrator sets a separate limit for the user in User Management.": {
+    "zh": "用户默认遵循所在分组的速率限制；管理员可在用户管理中为单个用户单独设置。",
+    "zh-TW": "使用者預設遵循所在分組的速率限制；管理員可在使用者管理中為單一使用者單獨設定。",
+    "fr": "Les utilisateurs suivent la limite de débit de leur groupe, sauf si un administrateur définit une limite séparée pour l'utilisateur dans la gestion des utilisateurs.",
+    "ru": "Пользователи подчиняются лимиту своей группы, если администратор не задал отдельный лимит в управлении пользователями.",
+    "ja": "ユーザーは所属グループのレート制限に従います。管理者はユーザー管理で個別の制限を設定できます。",
+    "vi": "Người dùng tuân theo giới hạn của nhóm mình trừ khi quản trị viên đặt giới hạn riêng trong phần quản lý người dùng."
+  }
+}

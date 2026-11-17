@@ -1,0 +1,14 @@
+# Task tooling and coordination
+
+Main activated task after final user approval. Original Pi settings process22504 was stopped before product edits because its broad research delayed shared contracts. Main owns ALL backend settings/DTO/migration/status-range files. Pi restarted with worker-ui-only.md, session75240, log pi-ui-active.jsonl, exclusively owns frontend/i18n. Default Google credentials previously failed; Pi capacity received Cloudflare524 and timeout received500/stalled and were replaced with native implement_capacity / implement_timeout. Native failover_regressions completed real HTTP tests and now owns legacy MJ service/midjourney.go plus relay/mjproxy_handler.go and existing relevant tests. Do not wait for stopped Pi workers.
+
+- Go: `D:/AppData/Local/Temp/new-api-cx-a-tools/go/bin/go.exe` (Go1.26.10); gofmt same bin dir. PATH was set for Pi workers at launch. Existing module/cache dirs available.
+- Bun: `D:/AppData/Local/Temp/new-api-playground-layout-tools/bun-windows-x64/bun.exe`. Add that bin dir to PATH inside command when subprocesses need bun; do not change user/machine environment.
+- Existing web/node_modules present. Node available.
+- WSL cannot start (HCS_E_HYPERV_NOT_INSTALLED); do NOT try enabling system features. No local Docker/Postgres/MySQL/Redis currently available. Main owns CI verification infrastructure: adding isolated official MySQL/Postgres/Redis services to existing CI so all three real DB dialects and Redis tests must pass before the release build can proceed.
+- For Redis tests use `TEST_REDIS_ADDR=127.0.0.1:6379`; tests must require successful connection when configured, with precise logs of server version. Local unset may skip ONLY external test; final CI cannot skip.
+- Main owns .github/workflows/ci.yml exclusively. Workers must not touch it.
+- Keep agent ownership from worker-*.md. The authoritative design uses first BODY byte, fail-closed Redis, retry default2 only when missing, and no first-byte pre-read for101.
+- You are already the implement worker. Do not spawn nested subagents or ask lifecycle questions; implement and test your files directly.
+
+2026-11-16 20:30 update: user clarified they meant the four EXISTING Herdr Pi panes. HERDR_ENV is now1, but inherited workspace w37 is stale/unrelated qflistudio; actual live new-api workspace is w4C. Do not use inherited --current. All four explicitly prompted and observed working: w4C:p9 capacity review, w4C:pJ timeout/failover review, w4C:pC UI/i18n review, w4C:pK persistence/CI review. Read results using explicit pane IDs. Existing off-pane Pi final check session2737 remains read-only. Native implement_timeout now owns completed UI+timeout; implement_capacity finishing detached submission lease; final_check native Trellis reviewer active. Pi UI-only session75240/id39172 stopped before edits.

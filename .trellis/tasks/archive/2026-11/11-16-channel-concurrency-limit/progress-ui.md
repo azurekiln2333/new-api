@@ -1,0 +1,5 @@
+# UI progress
+
+Native timeout worker took over after the Pi UI process was stopped before edits. Implemented channel-wide cap and timeout inherit/custom/explicit0 fields, schema/default/load/save, configuration status/error location, sensitive-write protection, global timeout and retry defaults/help. Reused project Form/Input/Select and safeNumberFieldProps inside the existing sensitive fieldset; new ChannelRequestLimits is only feature composition.
+
+Regression tests were added before implementation and observed failing. Completed UI typechecks (1471 files), builds and passes full affected suites (3 files / 166 tests), plus final targeted13 request-limit/permission cases after accessibility cleanup. All16 new UI/backend source keys translated in seven locales through add-missing-keys.mjs and i18n:sync (112 values, no missing/extras); temporary script deleted. Changed-file lint/format and diff checks pass. Full lint has143 pre-existing errors and copyright check has24 pre-existing unchanged-file findings; no unrelated fixes made. Final reports are report-ui.md and report-timeout.md. Root owns review/release/CI.

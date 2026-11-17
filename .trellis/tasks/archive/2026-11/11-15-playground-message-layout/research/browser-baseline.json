@@ -1,0 +1,4689 @@
+{
+  "errors": [],
+  "results": [
+    {
+      "width": 390,
+      "scenario": "prose",
+      "phase": "stream-0",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 107.53125,
+        "width": 81.53125,
+        "client": 82,
+        "scroll": 82,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 107.53125,
+        "width": 81.53125,
+        "client": 82,
+        "scroll": 82,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 107.53125,
+      "textLeft": 26,
+      "code": [],
+      "fade": 3
+    },
+    {
+      "width": 390,
+      "scenario": "prose",
+      "phase": "stream-1",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 345.4375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 14
+    },
+    {
+      "width": 390,
+      "scenario": "prose",
+      "phase": "stream-2",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 363.671875,
+      "textLeft": 26,
+      "code": [],
+      "fade": 88
+    },
+    {
+      "width": 390,
+      "scenario": "prose",
+      "phase": "complete",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 363.609375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "prose",
+      "phase": "restored",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 363.609375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "url",
+      "phase": "stream-0",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 108.234375,
+        "width": 82.234375,
+        "client": 82,
+        "scroll": 82,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 108.234375,
+        "width": 82.234375,
+        "client": 82,
+        "scroll": 82,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 108.234375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 390,
+      "scenario": "url",
+      "phase": "stream-1",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 627,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 627,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 611,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 637.140625,
+        "width": 611.140625,
+        "client": 611,
+        "scroll": 611,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 637.140625,
+        "width": 611.140625,
+        "client": 611,
+        "scroll": 611,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 637.140625,
+      "textLeft": 26,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 390,
+      "scenario": "url",
+      "phase": "stream-2",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3451,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3451,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 3461.109375,
+        "width": 3435.109375,
+        "client": 3435,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 3461.109375,
+        "width": 3435.109375,
+        "client": 3435,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3461.109375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 390,
+      "scenario": "url",
+      "phase": "complete",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3451,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3451,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 3461.109375,
+        "width": 3435.109375,
+        "client": 3435,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 3461.109375,
+        "width": 3435.109375,
+        "client": 3435,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3461.109375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "url",
+      "phase": "restored",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3451,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3451,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 3461.109375,
+        "width": 3435.109375,
+        "client": 3435,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 3461.109375,
+        "width": 3435.109375,
+        "client": 3435,
+        "scroll": 3435,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3461.109375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "inline",
+      "phase": "stream-0",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 116.453125,
+        "width": 90.453125,
+        "client": 90,
+        "scroll": 90,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 116.453125,
+        "width": 90.453125,
+        "client": 90,
+        "scroll": 90,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 112.453125,
+      "textLeft": 26,
+      "code": [],
+      "fade": 1
+    },
+    {
+      "width": 390,
+      "scenario": "inline",
+      "phase": "stream-1",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 626,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 626,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 610,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 635.71875,
+        "width": 609.71875,
+        "client": 610,
+        "scroll": 610,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 635.71875,
+        "width": 609.71875,
+        "client": 610,
+        "scroll": 610,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 631.71875,
+      "textLeft": 26,
+      "code": [],
+      "fade": 1
+    },
+    {
+      "width": 390,
+      "scenario": "inline",
+      "phase": "stream-2",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3033,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3033,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 3042.53125,
+        "width": 3016.53125,
+        "client": 3017,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 3042.53125,
+        "width": 3016.53125,
+        "client": 3017,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3038.53125,
+      "textLeft": 26,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 390,
+      "scenario": "inline",
+      "phase": "complete",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3033,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3033,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 3042.53125,
+        "width": 3016.53125,
+        "client": 3017,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 3042.53125,
+        "width": 3016.53125,
+        "client": 3017,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3045.9375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "inline",
+      "phase": "restored",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3033,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3033,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 3042.53125,
+        "width": 3016.53125,
+        "client": 3017,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 3042.53125,
+        "width": 3016.53125,
+        "client": 3017,
+        "scroll": 3017,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3045.9375,
+      "textLeft": 26,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "fence",
+      "phase": "stream-0",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 90.765625,
+        "width": 64.765625,
+        "client": 65,
+        "scroll": 65,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 90.765625,
+        "width": 64.765625,
+        "client": 65,
+        "scroll": 65,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 90.765625,
+      "textLeft": 26,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 390,
+      "scenario": "fence",
+      "phase": "stream-1",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 583,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 583,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 567,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 593.203125,
+        "width": 567.203125,
+        "client": 567,
+        "scroll": 567,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 593.203125,
+        "width": 567.203125,
+        "client": 567,
+        "scroll": 567,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 90.765625,
+      "textLeft": 26,
+      "code": [
+        {
+          "x": 27,
+          "right": 592.203125,
+          "width": 565.203125,
+          "client": 565,
+          "scroll": 565,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 27,
+          "right": 592.203125,
+          "width": 565.203125,
+          "client": 565,
+          "scroll": 565,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 1
+    },
+    {
+      "width": 390,
+      "scenario": "fence",
+      "phase": "stream-2",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 2056,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 2056,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 2065.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 2065.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 90.765625,
+      "textLeft": 26,
+      "code": [
+        {
+          "x": 27,
+          "right": 2064.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 27,
+          "right": 2064.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 1
+    },
+    {
+      "width": 390,
+      "scenario": "fence",
+      "phase": "complete",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 2056,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 2056,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 2065.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 2065.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 90.765625,
+      "textLeft": 26,
+      "code": [
+        {
+          "x": 27,
+          "right": 2064.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 27,
+          "right": 2064.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "fence",
+      "phase": "restored",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 2056,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 2056,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 26,
+        "right": 2065.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 26,
+        "right": 2065.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 90.765625,
+      "textLeft": 26,
+      "code": [
+        {
+          "x": 27,
+          "right": 2064.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 27,
+          "right": 2064.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "reasoning",
+      "phase": "stream-0",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 370,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 338,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 45,
+        "right": 134.96875,
+        "width": 89.96875,
+        "client": 90,
+        "scroll": 90,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 45,
+        "right": 134.96875,
+        "width": 89.96875,
+        "client": 90,
+        "scroll": 90,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 130.46875,
+      "textLeft": 45,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 390,
+      "scenario": "reasoning",
+      "phase": "stream-1",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 522,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 522,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 506,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 45,
+        "right": 532.3125,
+        "width": 487.3125,
+        "client": 487,
+        "scroll": 487,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 45,
+        "right": 532.3125,
+        "width": 487.3125,
+        "client": 487,
+        "scroll": 487,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 532.3125,
+      "textLeft": 45,
+      "code": [],
+      "fade": 3
+    },
+    {
+      "width": 390,
+      "scenario": "reasoning",
+      "phase": "stream-2",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3199,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3199,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3183,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 45,
+        "right": 3208.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 45,
+        "right": 3208.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 3208.921875,
+      "textLeft": 45,
+      "code": [],
+      "fade": 3
+    },
+    {
+      "width": 390,
+      "scenario": "reasoning",
+      "phase": "complete",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3199,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3199,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3183,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 45,
+        "right": 3208.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 45,
+        "right": 3208.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 3208.921875,
+      "textLeft": 45,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 390,
+      "scenario": "reasoning",
+      "phase": "restored",
+      "doc": {
+        "client": 390,
+        "scroll": 390
+      },
+      "viewport": {
+        "x": 0,
+        "right": 390,
+        "width": 390,
+        "client": 370,
+        "scroll": 3199,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 10,
+        "right": 380,
+        "width": 370,
+        "client": 370,
+        "scroll": 3199,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 26,
+        "right": 364,
+        "width": 338,
+        "client": 338,
+        "scroll": 3183,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 45,
+        "right": 3208.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 26,
+        "right": 313.296875,
+        "width": 287.296875,
+        "client": 287,
+        "scroll": 287,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 83.46875,
+        "right": 313.296875,
+        "width": 229.828125,
+        "client": 228,
+        "scroll": 228,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 45,
+        "right": 3208.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 3208.921875,
+      "textLeft": 45,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "prose",
+      "phase": "stream-0",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 371.671875,
+        "width": 83.671875,
+        "client": 84,
+        "scroll": 84,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 371.671875,
+        "width": 83.671875,
+        "client": 84,
+        "scroll": 84,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 371.671875,
+      "textLeft": 288,
+      "code": [],
+      "fade": 3
+    },
+    {
+      "width": 1440,
+      "scenario": "prose",
+      "phase": "stream-1",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 910.515625,
+        "width": 622.515625,
+        "client": 623,
+        "scroll": 623,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 910.515625,
+        "width": 622.515625,
+        "client": 623,
+        "scroll": 623,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 910.515625,
+      "textLeft": 288,
+      "code": [],
+      "fade": 14
+    },
+    {
+      "width": 1440,
+      "scenario": "prose",
+      "phase": "stream-2",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 1053.765625,
+      "textLeft": 288,
+      "code": [],
+      "fade": 88
+    },
+    {
+      "width": 1440,
+      "scenario": "prose",
+      "phase": "complete",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 1059.453125,
+      "textLeft": 288,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "prose",
+      "phase": "restored",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 1059.453125,
+      "textLeft": 288,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "url",
+      "phase": "stream-0",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 372.390625,
+        "width": 84.390625,
+        "client": 84,
+        "scroll": 84,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 372.390625,
+        "width": 84.390625,
+        "client": 84,
+        "scroll": 84,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 372.390625,
+      "textLeft": 288,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 1440,
+      "scenario": "url",
+      "phase": "stream-1",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 945.296875,
+        "width": 657.296875,
+        "client": 657,
+        "scroll": 657,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 945.296875,
+        "width": 657.296875,
+        "client": 657,
+        "scroll": 657,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 945.296875,
+      "textLeft": 288,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 1440,
+      "scenario": "url",
+      "phase": "stream-2",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3804,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3542,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 3813.515625,
+        "width": 3525.515625,
+        "client": 3526,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 3813.515625,
+        "width": 3525.515625,
+        "client": 3526,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3813.515625,
+      "textLeft": 288,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 1440,
+      "scenario": "url",
+      "phase": "complete",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3804,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3542,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 3813.515625,
+        "width": 3525.515625,
+        "client": 3526,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 3813.515625,
+        "width": 3525.515625,
+        "client": 3526,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3813.515625,
+      "textLeft": 288,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "url",
+      "phase": "restored",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3804,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3542,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 3813.515625,
+        "width": 3525.515625,
+        "client": 3526,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 3813.515625,
+        "width": 3525.515625,
+        "client": 3526,
+        "scroll": 3526,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3813.515625,
+      "textLeft": 288,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "inline",
+      "phase": "stream-0",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 380.625,
+        "width": 92.625,
+        "client": 93,
+        "scroll": 93,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 380.625,
+        "width": 92.625,
+        "client": 93,
+        "scroll": 93,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 376.625,
+      "textLeft": 288,
+      "code": [],
+      "fade": 1
+    },
+    {
+      "width": 1440,
+      "scenario": "inline",
+      "phase": "stream-1",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 944.125,
+        "width": 656.125,
+        "client": 656,
+        "scroll": 656,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 944.125,
+        "width": 656.125,
+        "client": 656,
+        "scroll": 656,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 940.125,
+      "textLeft": 288,
+      "code": [],
+      "fade": 1
+    },
+    {
+      "width": 1440,
+      "scenario": "inline",
+      "phase": "stream-2",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3374,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3112,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 3383.703125,
+        "width": 3095.703125,
+        "client": 3096,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 3383.703125,
+        "width": 3095.703125,
+        "client": 3096,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3379.703125,
+      "textLeft": 288,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 1440,
+      "scenario": "inline",
+      "phase": "complete",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3374,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3112,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 3383.703125,
+        "width": 3095.703125,
+        "client": 3096,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 3383.703125,
+        "width": 3095.703125,
+        "client": 3096,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3387.203125,
+      "textLeft": 288,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "inline",
+      "phase": "restored",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3374,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3112,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 3383.703125,
+        "width": 3095.703125,
+        "client": 3096,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 3383.703125,
+        "width": 3095.703125,
+        "client": 3096,
+        "scroll": 3096,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 3387.203125,
+      "textLeft": 288,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "fence",
+      "phase": "stream-0",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 354.46875,
+        "width": 66.46875,
+        "client": 66,
+        "scroll": 66,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 354.46875,
+        "width": 66.46875,
+        "client": 66,
+        "scroll": 66,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 354.46875,
+      "textLeft": 288,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 1440,
+      "scenario": "fence",
+      "phase": "stream-1",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 855.203125,
+        "width": 567.203125,
+        "client": 567,
+        "scroll": 567,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 855.203125,
+        "width": 567.203125,
+        "client": 567,
+        "scroll": 567,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 354.46875,
+      "textLeft": 288,
+      "code": [
+        {
+          "x": 289,
+          "right": 854.203125,
+          "width": 565.203125,
+          "client": 565,
+          "scroll": 565,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 289,
+          "right": 854.203125,
+          "width": 565.203125,
+          "client": 565,
+          "scroll": 565,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 1
+    },
+    {
+      "width": 1440,
+      "scenario": "fence",
+      "phase": "stream-2",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 2318,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 2056,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 2327.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 2327.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 354.46875,
+      "textLeft": 288,
+      "code": [
+        {
+          "x": 289,
+          "right": 2326.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 289,
+          "right": 2326.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 1
+    },
+    {
+      "width": 1440,
+      "scenario": "fence",
+      "phase": "complete",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 2318,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 2056,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 2327.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 2327.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 354.46875,
+      "textLeft": 288,
+      "code": [
+        {
+          "x": 289,
+          "right": 2326.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 289,
+          "right": 2326.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "fence",
+      "phase": "restored",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 2318,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 2056,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 288,
+        "right": 2327.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 288,
+        "right": 2327.578125,
+        "width": 2039.578125,
+        "client": 2040,
+        "scroll": 2040,
+        "overflow": "visible",
+        "wrap": "break-word",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+      },
+      "textRight": 354.46875,
+      "textLeft": 288,
+      "code": [
+        {
+          "x": 289,
+          "right": 2326.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "code-block-scroll max-w-full overflow-auto transition-[max-height] duration-200 ease-out p-0"
+        },
+        {
+          "x": 289,
+          "right": 2326.578125,
+          "width": 2037.578125,
+          "client": 2038,
+          "scroll": 2038,
+          "overflow": "auto",
+          "wrap": "break-word",
+          "align": "left",
+          "classes": "cm-scroller"
+        }
+      ],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "reasoning",
+      "phase": "stream-0",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 307,
+        "right": 396.96875,
+        "width": 89.96875,
+        "client": 90,
+        "scroll": 90,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 307,
+        "right": 396.96875,
+        "width": 89.96875,
+        "client": 90,
+        "scroll": 90,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 392.46875,
+      "textLeft": 307,
+      "code": [],
+      "fade": 2
+    },
+    {
+      "width": 1440,
+      "scenario": "reasoning",
+      "phase": "stream-1",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 1420,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 896,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 768,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 307,
+        "right": 896.6875,
+        "width": 589.6875,
+        "client": 590,
+        "scroll": 590,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 307,
+        "right": 896.6875,
+        "width": 589.6875,
+        "client": 590,
+        "scroll": 590,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 896.6875,
+      "textLeft": 307,
+      "code": [],
+      "fade": 3
+    },
+    {
+      "width": 1440,
+      "scenario": "reasoning",
+      "phase": "stream-2",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3461,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3199,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3183,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 307,
+        "right": 3470.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 307,
+        "right": 3470.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 3470.921875,
+      "textLeft": 307,
+      "code": [],
+      "fade": 3
+    },
+    {
+      "width": 1440,
+      "scenario": "reasoning",
+      "phase": "complete",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3461,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3199,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3183,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 307,
+        "right": 3470.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 307,
+        "right": 3470.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 3470.921875,
+      "textLeft": 307,
+      "code": [],
+      "fade": 0
+    },
+    {
+      "width": 1440,
+      "scenario": "reasoning",
+      "phase": "restored",
+      "doc": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "viewport": {
+        "x": 0,
+        "right": 1440,
+        "width": 1440,
+        "client": 1420,
+        "scroll": 3461,
+        "overflow": "auto",
+        "wrap": "normal",
+        "align": "start",
+        "classes": ""
+      },
+      "column": {
+        "x": 272,
+        "right": 1168,
+        "width": 896,
+        "client": 896,
+        "scroll": 3199,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "start",
+        "classes": "mx-auto w-full max-w-4xl px-4 py-4"
+      },
+      "aColumn": {
+        "x": 288,
+        "right": 1056,
+        "width": 768,
+        "client": 768,
+        "scroll": 3183,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "flex min-w-0 flex-col w-full max-w-3xl items-start text-left"
+      },
+      "aBubble": {
+        "x": 307,
+        "right": 3470.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "transition-[opacity,transform] duration-200 ease-out group-data-[closed]/reasoning-content:-translate-y-1 group-data-[closed]/reasoning-content:opacity-0 group-data-[open]/reasoning-content:translate-y-0 group-data-[open]/reasoning-content:opacity-100 motion-reduce:transition-none"
+      },
+      "uColumn": {
+        "x": 288,
+        "right": 618.40625,
+        "width": 330.40625,
+        "client": 330,
+        "scroll": 330,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "right",
+        "classes": "flex min-w-0 flex-col w-fit max-w-[85%] sm:max-w-[70%] items-end text-right"
+      },
+      "uBubble": {
+        "x": 354.09375,
+        "right": 618.40625,
+        "width": 264.3125,
+        "client": 262,
+        "scroll": 262,
+        "overflow": "hidden",
+        "wrap": "break-word",
+        "align": "right",
+        "classes": "is-user:dark flex flex-col gap-2 overflow-hidden rounded-lg group-[.is-user]:max-w-[80%] group-[.is-user]:rounded-2xl group-[.is-user]:rounded-br-md group-[.is-user]:border group-[.is-user]:border-border/70 group-[.is-user]:bg-muted/70 group-[.is-user]:px-4 group-[.is-user]:py-2.5 group-[.is-user]:text-foreground group-[.is-user]:shadow-sm group-[.is-user]:shadow-black/5 group-[.is-assistant]:bg-transparent group-[.is-assistant]:p-0 group-[.is-assistant]:rounded-none group-[.is-assistant]:overflow-visible group-[.is-assistant]:[font-family:var(--font-body)] group-[.is-assistant]:text-foreground/90 min-w-0 text-[0.95rem] leading-6 break-words whitespace-pre-wrap sm:text-[0.975rem] sm:leading-7"
+      },
+      "text": {
+        "x": 307,
+        "right": 3470.921875,
+        "width": 3163.921875,
+        "client": 3164,
+        "scroll": 3164,
+        "overflow": "visible",
+        "wrap": "normal",
+        "align": "left",
+        "classes": "size-full min-w-0 text-pretty [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 grid gap-1.5 [&_li]:my-0.5 [&_ol]:my-1.5 [&_p]:my-1.5 [&_p]:leading-5 [&_ul]:my-1.5"
+      },
+      "textRight": 3470.921875,
+      "textLeft": 307,
+      "code": [],
+      "fade": 0
+    }
+  ]
+}

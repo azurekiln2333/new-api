@@ -1,0 +1,18 @@
+{
+  "Cache Hit Rate": {
+    "zh": "缓存命中率",
+    "zh-TW": "緩存命中率",
+    "fr": "Taux de réussite du cache",
+    "ru": "Доля попаданий в кэш",
+    "ja": "キャッシュヒット率",
+    "vi": "Tỷ lệ trúng bộ nhớ đệm"
+  },
+  "Text match mode": {
+    "zh": "文本匹配方式",
+    "zh-TW": "文字比對方式",
+    "fr": "Mode de correspondance du texte",
+    "ru": "Режим сопоставления текста",
+    "ja": "テキスト一致モード",
+    "vi": "Chế độ khớp văn bản"
+  }
+}

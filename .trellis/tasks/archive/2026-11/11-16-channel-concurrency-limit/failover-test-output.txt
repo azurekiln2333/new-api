@@ -1,0 +1,578 @@
+=== RUN   TestRequestPolicyUpstreamHTTPFailover
+[SYS] 2026/11/16 - 20:15:23 | SQL_DSN not set, using SQLite as database 
+
+2026/11/16 20:15:23 [31;1mD:/My2KProjects/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+[0m[33m[0.000ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+[SYS] 2026/11/16 - 20:15:23 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/structured_removed_model
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:23 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | channel error (channel #1, status code: 404): status_code=404, Model gpt-6-astra is not supported by any configured account in this group 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | total tokens is 0, cannot consume quota, userId 5062001, channelId 2, tokenId 1, model upstream-failover-test， pre-consumed quota 0 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/structured_disabled_upstream_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:23 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | channel error (channel #3, status code: 403): status_code=403, API Key 所属分组已停用 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | total tokens is 0, cannot consume quota, userId 5062001, channelId 4, tokenId 1, model upstream-failover-test， pre-consumed quota 0 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/plain_removed_model
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:23 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | bad response status code 404, body: Model gpt-6-astra is not supported 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | channel error (channel #5, status code: 404): status_code=404, bad response status code 404 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | total tokens is 0, cannot consume quota, userId 5062001, channelId 6, tokenId 1, model upstream-failover-test， pre-consumed quota 0 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/plain_disabled_upstream_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:23 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | bad response status code 403, body: API Key 所属分组已停用 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | channel error (channel #7, status code: 403): status_code=403, bad response status code 403 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | total tokens is 0, cannot consume quota, userId 5062001, channelId 8, tokenId 1, model upstream-failover-test， pre-consumed quota 0 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/gateway_timeout
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:23 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | bad response status code 504, body: upstream timed out 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | channel error (channel #9, status code: 504): status_code=504, bad response status code 504 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | total tokens is 0, cannot consume quota, userId 5062001, channelId 10, tokenId 1, model upstream-failover-test， pre-consumed quota 0 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/cloudflare_timeout
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:23 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | bad response status code 524, body: a timeout occurred 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | channel error (channel #11, status code: 524): status_code=524, bad response status code 524 
+[ERR] 2026/11/16 - 20:15:23 | SYSTEM | total tokens is 0, cannot consume quota, userId 5062001, channelId 12, tokenId 1, model upstream-failover-test， pre-consumed quota 0 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/exhaustion_retains_upstream_error
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:24 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | channel error (channel #13, status code: 403): status_code=403, API Key 所属分组已停用 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | channel error (channel #14, status code: 404): status_code=404, last upstream model removed 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | No available channel for model upstream-failover-test under group default (retry) 
+[INFO] 2026/11/16 - 20:15:24 | SYSTEM | retry: 13->14 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | relay error: last upstream model removed 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/saved_zero_budget
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:24 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | channel error (channel #15, status code: 404): status_code=404, model removed 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | relay error: model removed 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/pinned_channel
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:24 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | channel error (channel #17, status code: 403): status_code=403, group disabled 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | relay error: group disabled 
+=== RUN   TestRequestPolicyUpstreamHTTPFailover/strict_session
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.5 (4 handlers)
+[INFO] 2026/11/16 - 20:15:24 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | channel error (channel #19, status code: 404): status_code=404, model removed 
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | relay error: model removed 
+--- PASS: TestRequestPolicyUpstreamHTTPFailover (0.91s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/structured_removed_model (0.06s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/structured_disabled_upstream_group (0.07s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/plain_removed_model (0.06s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/plain_disabled_upstream_group (0.07s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/gateway_timeout (0.06s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/cloudflare_timeout (0.06s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/exhaustion_retains_upstream_error (0.06s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/saved_zero_budget (0.06s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/pinned_channel (0.06s)
+    --- PASS: TestRequestPolicyUpstreamHTTPFailover/strict_session (0.06s)
+=== RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries
+=== RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries/caller_canceled
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries/response_started
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries/local_forbidden_is_not_an_upstream_failure
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+--- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries (0.00s)
+    --- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries/caller_canceled (0.00s)
+    --- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries/response_started (0.00s)
+    --- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries/local_forbidden_is_not_an_upstream_failure (0.00s)
+=== RUN   TestShouldRetryHonorsPinRetryMode
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+--- PASS: TestShouldRetryHonorsPinRetryMode (0.00s)
+=== RUN   TestShouldRetryTaskRelayHonorsPinRetryMode
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+--- PASS: TestShouldRetryTaskRelayHonorsPinRetryMode (0.00s)
+=== RUN   TestSameChannelPinsMergeToStricterRetryMode
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+--- PASS: TestSameChannelPinsMergeToStricterRetryMode (0.00s)
+=== RUN   TestRequestPolicyConfigReturnsSettingsWithoutMigration
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+--- PASS: TestRequestPolicyConfigReturnsSettingsWithoutMigration (0.00s)
+=== RUN   TestChannelAffinityRetryPriorities
+=== RUN   TestChannelAffinityRetryPriorities/sqlite
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/ordinary_routing
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/affinity_miss
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/affinity_hit
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/no_retry_budget
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/one_retry
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/strict_session
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/auto_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/cross_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=false/skip_empty_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/ordinary_routing
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/affinity_miss
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/affinity_hit
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/no_retry_budget
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/one_retry
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/strict_session
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/auto_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/cross_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/sqlite/cache=true/skip_empty_group
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestChannelAffinityRetryPriorities/mysql
+    channel_pin_retry_test.go:327: TEST_MYSQL_DSN not configured
+=== RUN   TestChannelAffinityRetryPriorities/postgres
+    channel_pin_retry_test.go:327: TEST_POSTGRES_DSN not configured
+--- PASS: TestChannelAffinityRetryPriorities (0.15s)
+    --- PASS: TestChannelAffinityRetryPriorities/sqlite (0.15s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/ordinary_routing (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/affinity_miss (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/affinity_hit (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/no_retry_budget (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/one_retry (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/strict_session (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/auto_group (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/cross_group (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=false/skip_empty_group (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/ordinary_routing (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/affinity_miss (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/affinity_hit (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/no_retry_budget (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/one_retry (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/strict_session (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/auto_group (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/cross_group (0.00s)
+        --- PASS: TestChannelAffinityRetryPriorities/sqlite/cache=true/skip_empty_group (0.00s)
+    --- SKIP: TestChannelAffinityRetryPriorities/mysql (0.00s)
+    --- SKIP: TestChannelAffinityRetryPriorities/postgres (0.00s)
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=inherit
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=strict
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=inherit
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=prefer
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=inherit
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=strict
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=inherit
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=prefer
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=inherit
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=strict
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=inherit
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=prefer
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=inherit
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=strict
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:15:24 | SYSTEM | user 0 | strict_session_binding_unavailable 
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=inherit
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=prefer
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql
+    channel_pin_retry_test.go:443: TEST_MYSQL_DSN not configured
+=== RUN   TestRequestPolicyRoutingDatabaseMatrix/postgres
+    channel_pin_retry_test.go:443: TEST_POSTGRES_DSN not configured
+--- PASS: TestRequestPolicyRoutingDatabaseMatrix (0.12s)
+    --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite (0.12s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=strict (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=prefer (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=strict (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=prefer (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=strict (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=prefer (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=strict (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=inherit (0.00s)
+        --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=prefer (0.00s)
+    --- SKIP: TestRequestPolicyRoutingDatabaseMatrix/mysql (0.00s)
+    --- SKIP: TestRequestPolicyRoutingDatabaseMatrix/postgres (0.00s)
+=== RUN   TestAffinityFailoverDatabaseMatrix
+=== RUN   TestAffinityFailoverDatabaseMatrix/sqlite
+=== RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/http
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/task
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/websocket
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/http
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/task
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/websocket
+[SYS] 2026/11/16 - 20:15:24 | channels synced from database 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+=== RUN   TestAffinityFailoverDatabaseMatrix/mysql
+    channel_pin_retry_test.go:536: TEST_MYSQL_DSN not configured
+=== RUN   TestAffinityFailoverDatabaseMatrix/postgres
+    channel_pin_retry_test.go:536: TEST_POSTGRES_DSN not configured
+--- PASS: TestAffinityFailoverDatabaseMatrix (0.11s)
+    --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite (0.11s)
+        --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/http (0.00s)
+        --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/task (0.00s)
+        --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/websocket (0.00s)
+        --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/http (0.00s)
+        --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/task (0.00s)
+        --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/websocket (0.00s)
+    --- SKIP: TestAffinityFailoverDatabaseMatrix/mysql (0.00s)
+    --- SKIP: TestAffinityFailoverDatabaseMatrix/postgres (0.00s)
+PASS
+ok  	github.com/QuantumNous/new-api/controller	7.013s

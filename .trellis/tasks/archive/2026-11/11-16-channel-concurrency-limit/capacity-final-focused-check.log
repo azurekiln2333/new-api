@@ -1,0 +1,197 @@
+ok  	github.com/QuantumNous/new-api/service	0.142s
+[SYS] 2026/11/16 - 20:34:17 | SQL_DSN not set, using SQLite as database 
+
+2026/11/16 20:34:17 [31;1mD:/My2KProjects/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+[0m[33m[0.997ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+[SYS] 2026/11/16 - 20:34:17 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:17 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:17 | SYSTEM | channel error (channel #1, status code: 404): status_code=404, Model gpt-6-astra is not supported by any configured account in this group 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:17 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:17 | SYSTEM | channel error (channel #3, status code: 403): status_code=403, API Key 所属分组已停用 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:18 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | bad response status code 404, body: Model gpt-6-astra is not supported 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | channel error (channel #5, status code: 404): status_code=404, bad response status code 404 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:18 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | bad response status code 403, body: API Key 所属分组已停用 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | channel error (channel #7, status code: 403): status_code=403, bad response status code 403 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:18 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | bad response status code 504, body: upstream timed out 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | channel error (channel #9, status code: 504): status_code=504, bad response status code 504 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:18 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | bad response status code 524, body: a timeout occurred 
+[ERR] 2026/11/16 - 20:34:18 | SYSTEM | channel error (channel #11, status code: 524): status_code=524, bad response status code 524 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:18 | SYSTEM | user 5062001 needs pre-consume ＄0.000002 (funding=wallet) 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | do request failed: Post "http://127.0.0.1:52637/v1/responses": upstream first response body byte timed out 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | channel error (channel #13, status code: 504): status_code=504, upstream first response body byte timed out 
+[INFO] 2026/11/16 - 20:34:19 | SYSTEM | pre-consumed quota matches the actual quota, no adjustment: ＄0.000002 (per-request billing) 
+[INFO] 2026/11/16 - 20:34:19 | SYSTEM | record consume log: userId=5062001, params={"channel_id":14,"prompt_tokens":1,"completion_tokens":1,"model_name":"upstream-failover-test","token_name":"","quota":1,"content":null,"token_id":1,"use_time_seconds":1,"is_stream":false,"group":"default","other":{"admin_info":{"request_policy":[{"attempt":1,"channel_id":13,"group":"default","elapsed_ms":0,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":13,"group":"default","status":504,"error_code":"upstream_first_byte_timeout","error_source":"upstream","elapsed_ms":1027,"decision":{"action":"failure","reason":"upstream_failure","source":"upstream"}},{"attempt":1,"channel_id":13,"group":"default","status":504,"error_code":"upstream_first_byte_timeout","error_source":"upstream","elapsed_ms":1027,"decision":{"action":"retry","reason":"upstream_first_byte_timeout","source":"system"},"health":"unchanged"},{"attempt":1,"channel_id":14,"group":"default","elapsed_ms":1027,"decision":{"action":"select","reason":"avoid_failed_channels","source":"routing"}},{"attempt":2,"channel_id":14,"group":"default","elapsed_ms":1027,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":2,"channel_id":14,"group":"default","elapsed_ms":1049,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["13","14"]},"billing_preference":"wallet_only","billing_source":"wallet","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"frt":-1000,"group_ratio":1,"model_price":0.000002,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","user_group_ratio":-1}} 
+[SYS] 2026/11/16 - 20:34:19 | failed to send quota notify to user 5062001: notification limit exceeded for user 5062001 with type email 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:19 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | channel error (channel #15, status code: 403): status_code=403, API Key 所属分组已停用 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | channel error (channel #16, status code: 404): status_code=404, last upstream model removed 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | No available channel for model upstream-failover-test under group default (retry) 
+[INFO] 2026/11/16 - 20:34:19 | SYSTEM | retry: 15->16 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | relay error: last upstream model removed 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:19 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | channel error (channel #17, status code: 404): status_code=404, model removed 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | relay error: model removed 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:19 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | channel error (channel #19, status code: 403): status_code=403, group disabled 
+[ERR] 2026/11/16 - 20:34:19 | SYSTEM | relay error: group disabled 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+[INFO] 2026/11/16 - 20:34:20 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+[ERR] 2026/11/16 - 20:34:20 | SYSTEM | channel error (channel #21, status code: 404): status_code=404, model removed 
+[ERR] 2026/11/16 - 20:34:20 | SYSTEM | relay error: model removed 
+[SYS] 2026/11/16 - 20:34:20 | SQL_DSN not set, using SQLite as database 
+
+2026/11/16 20:34:20 [31;1mD:/My2KProjects/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+[0m[33m[0.000ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+[SYS] 2026/11/16 - 20:34:20 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func7 (2 handlers)
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func8 (4 handlers)
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | stream ended: reason=eof 
+[ERR] 2026/11/16 - 20:34:20 | responses-http-billing | total tokens is 0, cannot consume quota, userId 5062002, channelId 2, tokenId 1, model ws-billing， pre-consumed quota 0 
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | pre-consumed quota matches the actual quota, no adjustment: ＄0.000000 (per-request billing) 
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | record consume log: userId=5062002, params={"channel_id":2,"prompt_tokens":0,"completion_tokens":0,"model_name":"ws-billing","token_name":"","quota":0,"content":[{"key":"Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"}],"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":15,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","status":429,"error_code":"channel_capacity_saturated","error_source":"local","elapsed_ms":16,"decision":{"action":"select","reason":"channel_capacity_saturated","source":"capacity"},"health":"unchanged"},{"attempt":1,"channel_id":2,"group":"default","elapsed_ms":16,"decision":{"action":"select","reason":"avoid_failed_channels","source":"routing"}},{"attempt":2,"channel_id":2,"group":"default","elapsed_ms":16,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":2,"channel_id":2,"group":"default","elapsed_ms":18,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["2"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cCAqIDA=","frt":-1000,"group_ratio":1,"matched_tier":"","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_reason":"eof","status":"ok"},"user_group_ratio":-1}} 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[ERR] 2026/11/16 - 20:34:20 | responses-http-billing | All eligible channels are at their concurrent request limit. Please retry later. 
+[ERR] 2026/11/16 - 20:34:20 | responses-http-billing | relay error: All eligible channels are at their concurrent request limit. Please retry later. 
+[ERR] 2026/11/16 - 20:34:20 | responses-http-billing | stream ended: reason=client_gone end_error="context canceled", received=1 
+[ERR] 2026/11/16 - 20:34:20 | responses-http-billing | total tokens is 0, cannot consume quota, userId 5062002, channelId 1, tokenId 1, model ws-billing， pre-consumed quota 0 
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | pre-consumed quota matches the actual quota, no adjustment: ＄0.000000 (per-request billing) 
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | record consume log: userId=5062002, params={"channel_id":1,"prompt_tokens":0,"completion_tokens":0,"model_name":"ws-billing","token_name":"","quota":0,"content":[{"key":"Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"}],"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":0,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":14,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":96,"decision":{"action":"stop","reason":"stream_not_successful","source":"system"}}],"usage_billing_path":"upstream","use_channel":["1"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cCAqIDA=","frt":18,"group_ratio":1,"is_model_mapped":true,"matched_tier":"","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_error":"context canceled","end_reason":"client_gone","status":"error"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | stream ended: reason=eof 
+[ERR] 2026/11/16 - 20:34:20 | responses-http-billing | total tokens is 0, cannot consume quota, userId 5062002, channelId 1, tokenId 1, model ws-billing， pre-consumed quota 0 
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | pre-consumed quota matches the actual quota, no adjustment: ＄0.000000 (per-request billing) 
+[INFO] 2026/11/16 - 20:34:20 | responses-http-billing | record consume log: userId=5062002, params={"channel_id":1,"prompt_tokens":0,"completion_tokens":0,"model_name":"ws-billing","token_name":"","quota":0,"content":[{"key":"Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"}],"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":1,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":11,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":92,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["1"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cCAqIDA=","frt":12,"group_ratio":1,"is_model_mapped":true,"matched_tier":"","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_reason":"eof","response_status":"completed","status":"ok"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+--- FAIL: TestChannelCapacityStreamsRouteAroundFullChannelAndRelease (0.79s)
+    relay_stream_test.go:108: 
+        	Error Trace:	D:/My2KProjects/new-api/controller/relay_stream_test.go:108
+        	Error:      	"" does not contain "fallback-B"
+        	Test:       	TestChannelCapacityStreamsRouteAroundFullChannelAndRelease
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[SYS] 2026/11/16 - 20:34:20 | SQL_DSN not set, using SQLite as database 
+
+2026/11/16 20:34:20 [31;1mD:/My2KProjects/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+[0m[33m[0.000ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+[SYS] 2026/11/16 - 20:34:20 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func7 (2 handlers)
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func8 (4 handlers)
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.init.func2.2 (5 handlers)
+[INFO] 2026/11/16 - 20:34:21 | responses-ws-billing-ws-0 | charging the difference after pre-consume: ＄0.002000 (actual ＄0.002000, pre-consumed ＄0.000000) 
+[INFO] 2026/11/16 - 20:34:21 | responses-ws-billing-ws-0 | record consume log: userId=5062003, params={"channel_id":1,"prompt_tokens":1000,"completion_tokens":10,"model_name":"ws-billing","token_name":"","quota":1000,"content":null,"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":0,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":14,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":67,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["1"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cGFyYW0oInNlcnZpY2VfdGllciIpID09ICJwcmlvcml0eSIgPyB0aWVyKCJwcmlvcml0eSIsIHAgKiA0KSA6IHRpZXIoImJhc2UiLCBwICogMik=","frt":15,"group_ratio":1,"is_model_mapped":true,"matched_tier":"base","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","response_model":{"requested_model":"ws-billing","upstream_model":"gpt-4o","returned_model":"ws-billing"},"stream_status":{"end_reason":"done","response_status":"completed","status":"ok"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+[INFO] 2026/11/16 - 20:34:21 | responses-ws-billing-ws-1 | charging the difference after pre-consume: ＄0.004000 (actual ＄0.004000, pre-consumed ＄0.000000) 
+[INFO] 2026/11/16 - 20:34:21 | responses-ws-billing-ws-1 | record consume log: userId=5062003, params={"channel_id":1,"prompt_tokens":1000,"completion_tokens":10,"model_name":"ws-billing","token_name":"","quota":2000,"content":null,"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":0,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":0,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":0,"decision":{"action":"select","reason":"pinned_channel","source":"channel_constraint"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":46,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":null},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cGFyYW0oInNlcnZpY2VfdGllciIpID09ICJwcmlvcml0eSIgPyB0aWVyKCJwcmlvcml0eSIsIHAgKiA0KSA6IHRpZXIoImJhc2UiLCBwICogMik=","frt":1,"group_ratio":1,"is_model_mapped":true,"matched_tier":"priority","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","response_model":{"requested_model":"ws-billing","upstream_model":"gpt-4o","returned_model":"ws-billing"},"stream_status":{"end_reason":"done","response_status":"completed","status":"ok"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+[ERR] 2026/11/16 - 20:34:21 | responses-ws-billing-ws-2 | user 5062003 | Invalid token 
+[SYS] 2026/11/16 - 20:34:21 | SQL_DSN not set, using SQLite as database 
+
+2026/11/16 20:34:21 [31;1mD:/My2KProjects/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+[0m[33m[0.000ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+[SYS] 2026/11/16 - 20:34:21 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func7 (2 handlers)
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func8 (4 handlers)
+[INFO] 2026/11/16 - 20:34:22 | responses-ws-billing-ws-0 | charging the difference after pre-consume: ＄0.002000 (actual ＄0.002000, pre-consumed ＄0.000000) 
+[INFO] 2026/11/16 - 20:34:22 | responses-ws-billing-ws-0 | record consume log: userId=5062004, params={"channel_id":1,"prompt_tokens":1000,"completion_tokens":10,"model_name":"ws-billing","token_name":"","quota":1000,"content":null,"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":0,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":12,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":63,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["1"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"dGllcigiYmFzZSIsIHAgKiAyKQ==","frt":13,"group_ratio":1,"is_model_mapped":true,"matched_tier":"base","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_reason":"done","response_status":"completed","status":"ok"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+[SYS] 2026/11/16 - 20:34:22 | SQL_DSN not set, using SQLite as database 
+
+2026/11/16 20:34:22 [31;1mD:/My2KProjects/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+[0m[33m[0.611ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+[SYS] 2026/11/16 - 20:34:22 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func7 (2 handlers)
+[GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.newResponsesWSBillingTest.func8 (4 handlers)
+[INFO] 2026/11/16 - 20:34:22 | responses-ws-billing-ws-0 | user 5062005 needs pre-consume ＄0.002000 (funding=wallet) 
+[INFO] 2026/11/16 - 20:34:22 | responses-ws-billing-ws-0 | pre-consumed quota matches the actual quota, no adjustment: ＄0.002000 (per-request billing) 
+[INFO] 2026/11/16 - 20:34:22 | responses-ws-billing-ws-0 | record consume log: userId=5062005, params={"channel_id":1,"prompt_tokens":1000,"completion_tokens":0,"model_name":"ws-billing","token_name":"","quota":1000,"content":null,"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":0,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":27,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":48,"decision":{"action":"stop","reason":"stream_not_successful","source":"system"}}],"usage_billing_path":"upstream","use_channel":["1"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"request","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"dGllcigicmVxdWVzdCIsIGZpeGVkKDAuMDAyKSk=","fixed_price":0.002,"frt":29,"group_ratio":1,"is_model_mapped":true,"matched_tier":"request","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_reason":"done","response_status":"cancelled","status":"ok"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+FAIL
+FAIL	github.com/QuantumNous/new-api/controller	5.780s
+ok  	github.com/QuantumNous/new-api/relay	30.177s
+ok  	github.com/QuantumNous/new-api/relay/channel/task/jsplugin	0.166s
+FAIL

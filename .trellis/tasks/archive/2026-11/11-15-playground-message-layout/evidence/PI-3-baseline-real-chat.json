@@ -1,0 +1,1202 @@
+[
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "chunk-1/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1033,
+   "right": 1152,
+   "width": 119
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 26.59,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "chunk-2/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1033,
+   "right": 1152,
+   "width": 119
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 508.22,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "chunk-3/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1033,
+   "right": 1152,
+   "width": 119
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 2643.89,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1033,
+   "right": 1152,
+   "width": 119
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 2643.89,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-url",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1033,
+   "right": 1152,
+   "width": 119
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 2643.89,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-1/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1023,
+   "right": 1152,
+   "width": 129
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 48.91,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-2/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1023,
+   "right": 1152,
+   "width": 129
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 657.58,
+  "codeScrollable": {
+   "scrollWidth": 958,
+   "clientWidth": 958
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-3/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1023,
+   "right": 1152,
+   "width": 129
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1023,
+   "right": 1152,
+   "width": 129
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-unclosed-fence",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1023,
+   "right": 1152,
+   "width": 129
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-1/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1032,
+   "right": 1152,
+   "width": 120
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 48.91,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-2/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1032,
+   "right": 1152,
+   "width": 120
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-3/3",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1032,
+   "right": 1152,
+   "width": 120
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1032,
+   "right": 1152,
+   "width": 120
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-closed-fence",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1032,
+   "right": 1152,
+   "width": 120
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "chunk-1/2",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1026,
+   "right": 1152,
+   "width": 126
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 755.02,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "chunk-2/2",
+  "phase": "streaming",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1026,
+   "right": 1152,
+   "width": 126
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 95.34,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1026,
+   "right": 1152,
+   "width": 126
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 755.02,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "desktop",
+  "scenario": "stream-long-prose",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 1440,
+  "docScrollWidth": 1440,
+  "docClientWidth": 1440,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 288,
+   "right": 1152,
+   "width": 864
+  },
+  "assistantBubble": {
+   "x": 288,
+   "right": 1056,
+   "width": 768
+  },
+  "userBubble": {
+   "x": 1026,
+   "right": 1152,
+   "width": 126
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 755.02,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "chunk-1/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 257,
+   "right": 374,
+   "width": 117
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 77.73,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "chunk-2/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 257,
+   "right": 374,
+   "width": 117
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 495.19,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "chunk-3/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 257,
+   "right": 374,
+   "width": 117
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 2576.09,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 257,
+   "right": 374,
+   "width": 117
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 2576.09,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-url",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 257,
+   "right": 374,
+   "width": 117
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 2576.09,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-1/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 247,
+   "right": 374,
+   "width": 127
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 77.73,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-2/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 247,
+   "right": 374,
+   "width": 127
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 657.58,
+  "codeScrollable": {
+   "scrollWidth": 958,
+   "clientWidth": 958
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "chunk-3/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 247,
+   "right": 374,
+   "width": 127
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 247,
+   "right": 374,
+   "width": 127
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-unclosed-fence",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 247,
+   "right": 374,
+   "width": 127
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1729.69,
+  "codeScrollable": {
+   "scrollWidth": 1895,
+   "clientWidth": 1895
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-1/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 256,
+   "right": 374,
+   "width": 118
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 77.73,
+  "codeScrollable": {
+   "scrollWidth": 105,
+   "clientWidth": 105
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-2/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 256,
+   "right": 374,
+   "width": 118
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "chunk-3/3",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 256,
+   "right": 374,
+   "width": 118
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 256,
+   "right": 374,
+   "width": 118
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-closed-fence",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 256,
+   "right": 374,
+   "width": 118
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 1872.64,
+  "codeScrollable": {
+   "scrollWidth": 2038,
+   "clientWidth": 2038
+  }
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "chunk-1/2",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 251,
+   "right": 374,
+   "width": 123
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 349.25,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "chunk-2/2",
+  "phase": "streaming",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 251,
+   "right": 374,
+   "width": 123
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 92.91,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "complete",
+  "phase": "complete",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 251,
+   "right": 374,
+   "width": 123
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 349.25,
+  "codeScrollable": null
+ },
+ {
+  "viewport": "mobile",
+  "scenario": "stream-long-prose",
+  "step": "restored",
+  "phase": "restored",
+  "innerWidth": 390,
+  "docScrollWidth": 390,
+  "docClientWidth": 390,
+  "horizontalOverflow": 0,
+  "bodyOverflow": 0,
+  "scroller": null,
+  "assistantColumn": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "assistantBubble": {
+   "x": 16,
+   "right": 374,
+   "width": 358
+  },
+  "userBubble": {
+   "x": 251,
+   "right": 374,
+   "width": 123
+  },
+  "bubbleTextAlign": "left",
+  "widestLine": 349.25,
+  "codeScrollable": null
+ }
+]

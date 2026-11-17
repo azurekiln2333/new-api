@@ -1,0 +1,1 @@
+第一波六个工作包都已交报告。现在请你执行第二波 INT 集成：完整读 .trellis/tasks/11-11-gateway-ops-batch/implement.md 末尾的「第二波：INT 集成」一节和 reports/ 下的六份报告，按那一节的 5 个步骤做——合并 i18n 片段到七个语言文件、全量构建与测试、修复跨工作包的冲突和编译错误、对照 prd.md 逐条验收，最后写总报告 .trellis/tasks/11-11-gateway-ops-batch/reports/FINAL.md。这一步你可以改任何人的文件，但改动要写进报告。不要 git commit / push，不要向用户提问，遇到没说清的地方自行决定并写进报告。

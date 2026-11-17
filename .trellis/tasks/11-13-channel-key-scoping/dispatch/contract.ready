@@ -1,0 +1,1 @@
+PI-1: ChannelInfo.MultiKeyModels/MultiKeyUsers + GetNextEnabledKeyFor/PublicModels/UserBoundModels landed in model/channel.go; new error code types.ErrorCodeChannelKeyScopeUnsatisfied ("channel_key_scope_unsatisfied", 503, not IsChannelError) in relaykit/types/error.go. Root+relaykit build pass.

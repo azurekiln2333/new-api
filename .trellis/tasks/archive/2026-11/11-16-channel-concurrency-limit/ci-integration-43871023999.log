@@ -1,0 +1,1663 @@
+﻿2026-11-16T12:55:59.2693172Z Current runner version: '2.338.2'
+2026-11-16T12:55:59.2721126Z ##[group]Runner Image Provisioner
+2026-11-16T12:55:59.2722014Z Hosted Compute Agent
+2026-11-16T12:55:59.2722720Z Version: 20261103.629
+2026-11-16T12:55:59.2723408Z Commit: 15dbd9ccb5dbf34fae002b6ed1a2670f52df37bc
+2026-11-16T12:55:59.2724356Z Build Date: 2026-11-03T17:26:59Z
+2026-11-16T12:55:59.2725132Z Worker ID: {ef58aae3-158a-4d1f-b3b6-173bed27233b}
+2026-11-16T12:55:59.2726194Z Region: us-east-1
+2026-11-16T12:55:59.2726760Z Cloud: AWS
+2026-11-16T12:55:59.2727344Z ##[endgroup]
+2026-11-16T12:55:59.2728916Z ##[group]Operating System
+2026-11-16T12:55:59.2729546Z Ubuntu
+2026-11-16T12:55:59.2730069Z 26.04.1
+2026-11-16T12:55:59.2730591Z LTS
+2026-11-16T12:55:59.2731146Z ##[endgroup]
+2026-11-16T12:55:59.2731717Z ##[group]Runner Image
+2026-11-16T12:55:59.2732388Z Image: ubuntu-26.04
+2026-11-16T12:55:59.2732992Z Version: 20261111.82.6
+2026-11-16T12:55:59.2734397Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261111.82/images/ubuntu/Ubuntu2604-Readme.md
+2026-11-16T12:55:59.2736390Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261111.82
+2026-11-16T12:55:59.2737482Z ##[endgroup]
+2026-11-16T12:55:59.2738711Z ##[group]GITHUB_TOKEN Permissions
+2026-11-16T12:55:59.2741282Z Contents: read
+2026-11-16T12:55:59.2741969Z Metadata: read
+2026-11-16T12:55:59.2742639Z ##[endgroup]
+2026-11-16T12:55:59.2744990Z Secret source: Actions
+2026-11-16T12:55:59.2746239Z Cache mode: write
+2026-11-16T12:55:59.2747091Z Prepare workflow directory
+2026-11-16T12:55:59.3225909Z Prepare all required actions
+2026-11-16T12:55:59.3266247Z Getting action download info
+2026-11-16T12:55:59.4917715Z Download action repository 'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0' (SHA:9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0)
+2026-11-16T12:56:01.4837131Z Download action repository 'actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16' (SHA:924ae3a1cded613372ab5595356fb5720e22ba16)
+2026-11-16T12:56:01.7197426Z Uses: azurekiln2333/new-api/.github/workflows/ci.yml@refs/heads/main (60da6a51296038ed9ad47d60d191daf078423123)
+2026-11-16T12:56:01.7201095Z Complete job name: Validate release commit / Relay policy database and Redis integration
+2026-11-16T12:56:01.7644016Z ##[group]Checking docker version
+2026-11-16T12:56:01.7653844Z ##[command]/usr/bin/docker version --format '{{.Server.APIVersion}}'
+2026-11-16T12:56:04.0256596Z '1.54'
+2026-11-16T12:56:04.0267520Z Docker daemon API version: '1.54'
+2026-11-16T12:56:04.0268038Z ##[command]/usr/bin/docker version --format '{{.Client.APIVersion}}'
+2026-11-16T12:56:04.0398651Z '1.54'
+2026-11-16T12:56:04.0406682Z Docker client API version: '1.54'
+2026-11-16T12:56:04.0411497Z ##[endgroup]
+2026-11-16T12:56:04.0414233Z ##[group]Clean up resources from previous jobs
+2026-11-16T12:56:04.0418912Z ##[command]/usr/bin/docker ps --all --quiet --no-trunc --filter "label=60c2c0"
+2026-11-16T12:56:04.0521085Z ##[command]/usr/bin/docker network prune --force --filter "label=60c2c0"
+2026-11-16T12:56:04.0618984Z ##[endgroup]
+2026-11-16T12:56:04.0619309Z ##[group]Create local container network
+2026-11-16T12:56:04.0626445Z ##[command]/usr/bin/docker network create --label 60c2c0 github_network_9be34d00d58f444c8a35e89602a6824f
+2026-11-16T12:56:04.0917070Z 462a99c49f8cc55ee5a12b05ff67f08b61bbb1e7207ea725035c497fc0887b2a
+2026-11-16T12:56:04.0929116Z ##[endgroup]
+2026-11-16T12:56:04.0950131Z ##[group]Starting mysql service container
+2026-11-16T12:56:04.0966163Z ##[command]/usr/bin/docker pull mysql:8.4
+2026-11-16T12:56:04.3123000Z 8.4: Pulling from library/mysql
+2026-11-16T12:56:04.4207915Z 332288060cf8: Pulling fs layer
+2026-11-16T12:56:04.4208295Z 16ff0dc0f366: Pulling fs layer
+2026-11-16T12:56:04.4208547Z b14917cf1885: Pulling fs layer
+2026-11-16T12:56:04.4208864Z 0b3d5697e820: Pulling fs layer
+2026-11-16T12:56:04.4209115Z 084e06fe4d96: Pulling fs layer
+2026-11-16T12:56:04.4209359Z c3e99775cc39: Pulling fs layer
+2026-11-16T12:56:04.4209629Z 5a7ab34260fd: Pulling fs layer
+2026-11-16T12:56:04.4209892Z a8a79f346bc1: Pulling fs layer
+2026-11-16T12:56:04.4210422Z abda743cff12: Pulling fs layer
+2026-11-16T12:56:04.4210671Z 335c0ba6129f: Pulling fs layer
+2026-11-16T12:56:04.5097423Z 084e06fe4d96: Download complete
+2026-11-16T12:56:04.5101607Z 0b3d5697e820: Download complete
+2026-11-16T12:56:04.5110169Z 5a7ab34260fd: Download complete
+2026-11-16T12:56:04.5112762Z 332288060cf8: Download complete
+2026-11-16T12:56:04.5115588Z 335c0ba6129f: Download complete
+2026-11-16T12:56:04.5116160Z 16ff0dc0f366: Download complete
+2026-11-16T12:56:04.6081258Z abda743cff12: Download complete
+2026-11-16T12:56:04.6082768Z 2047ca069dcd: Download complete
+2026-11-16T12:56:04.8081806Z 6f4c84f51b8c: Download complete
+2026-11-16T12:56:05.0099152Z a8a79f346bc1: Download complete
+2026-11-16T12:56:05.0100502Z c3e99775cc39: Download complete
+2026-11-16T12:56:05.6118240Z 5a7ab34260fd: Pull complete
+2026-11-16T12:56:05.6123110Z 332288060cf8: Pull complete
+2026-11-16T12:56:05.6186429Z c3e99775cc39: Pull complete
+2026-11-16T12:56:05.7086290Z 084e06fe4d96: Pull complete
+2026-11-16T12:56:05.7101339Z 335c0ba6129f: Pull complete
+2026-11-16T12:56:05.7120190Z abda743cff12: Pull complete
+2026-11-16T12:56:05.8084584Z b14917cf1885: Download complete
+2026-11-16T12:56:06.2119555Z 16ff0dc0f366: Pull complete
+2026-11-16T12:56:06.2146058Z a8a79f346bc1: Pull complete
+2026-11-16T12:56:08.4842191Z 0b3d5697e820: Pull complete
+2026-11-16T12:56:08.4866094Z b14917cf1885: Pull complete
+2026-11-16T12:56:08.4875968Z Digest: sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+2026-11-16T12:56:08.4876762Z Status: Downloaded newer image for mysql:8.4
+2026-11-16T12:56:08.4877296Z docker.io/library/mysql:8.4
+2026-11-16T12:56:08.4926875Z ##[command]/usr/bin/docker create --name 45c3d5fa00be43ebbe33db23e28e3a8e_mysql84_706f6c --label 60c2c0 --network github_network_9be34d00d58f444c8a35e89602a6824f --network-alias mysql -p 3306:3306 --health-cmd="mysqladmin ping -h 127.0.0.1 -pintegration" --health-interval=10s --health-timeout=5s --health-retries=12 -e "MYSQL_ROOT_PASSWORD=integration" -e "MYSQL_DATABASE=relay_policy" -e GITHUB_ACTIONS=true -e CI=true mysql:8.4
+2026-11-16T12:56:11.3286224Z d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:56:11.3305012Z ##[command]/usr/bin/docker start d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:56:12.2425557Z d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:56:12.2449423Z ##[command]/usr/bin/docker ps --all --filter id=d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-16T12:56:12.2609246Z d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f Up Less than a second (health: starting)
+2026-11-16T12:56:12.2628425Z ##[command]/usr/bin/docker port d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:56:12.2739960Z 3306/tcp -> 0.0.0.0:3306
+2026-11-16T12:56:12.2740548Z 3306/tcp -> [::]:3306
+2026-11-16T12:56:12.2774997Z ##[endgroup]
+2026-11-16T12:56:12.2776324Z ##[group]Starting postgres service container
+2026-11-16T12:56:12.2777332Z ##[command]/usr/bin/docker pull postgres:16
+2026-11-16T12:56:12.4575527Z 16: Pulling from library/postgres
+2026-11-16T12:56:12.5693461Z 37fb86c2a767: Pulling fs layer
+2026-11-16T12:56:12.5695168Z c21dabdd3f40: Pulling fs layer
+2026-11-16T12:56:12.5695868Z 6a7048238f16: Pulling fs layer
+2026-11-16T12:56:12.5696301Z ea97cbaeb613: Pulling fs layer
+2026-11-16T12:56:12.5696800Z e9b9c168b556: Pulling fs layer
+2026-11-16T12:56:12.5697376Z 373818e56554: Pulling fs layer
+2026-11-16T12:56:12.5697801Z 0b80e0833f2d: Pulling fs layer
+2026-11-16T12:56:12.5698943Z 6f1f66ad722a: Pulling fs layer
+2026-11-16T12:56:12.5699382Z d8948f3622f7: Pulling fs layer
+2026-11-16T12:56:12.5699718Z 0c67d4a9f067: Pulling fs layer
+2026-11-16T12:56:12.5700131Z 3dcaae3150c1: Pulling fs layer
+2026-11-16T12:56:12.5700497Z 8fe89564ad07: Pulling fs layer
+2026-11-16T12:56:12.5700795Z 5dd91dbc2342: Pulling fs layer
+2026-11-16T12:56:12.5701125Z d38145328f88: Pulling fs layer
+2026-11-16T12:56:12.6912824Z d38145328f88: Download complete
+2026-11-16T12:56:12.6918407Z c21dabdd3f40: Download complete
+2026-11-16T12:56:12.6929722Z ea97cbaeb613: Download complete
+2026-11-16T12:56:12.6930756Z 0c67d4a9f067: Download complete
+2026-11-16T12:56:12.6931846Z 8fe89564ad07: Download complete
+2026-11-16T12:56:12.6941512Z 5dd91dbc2342: Download complete
+2026-11-16T12:56:12.6948489Z e9b9c168b556: Download complete
+2026-11-16T12:56:12.6966092Z 373818e56554: Download complete
+2026-11-16T12:56:12.6970515Z 0b80e0833f2d: Download complete
+2026-11-16T12:56:12.6976326Z d8948f3622f7: Download complete
+2026-11-16T12:56:12.6981078Z 6a7048238f16: Download complete
+2026-11-16T12:56:12.7927655Z c6e7de97efe2: Download complete
+2026-11-16T12:56:12.7930156Z 6f1f66ad722a: Download complete
+2026-11-16T12:56:12.7931442Z 6ae229981968: Download complete
+2026-11-16T12:56:12.9900483Z 37fb86c2a767: Download complete
+2026-11-16T12:56:13.4953596Z e9b9c168b556: Pull complete
+2026-11-16T12:56:13.5070478Z 37fb86c2a767: Pull complete
+2026-11-16T12:56:13.7047359Z 373818e56554: Pull complete
+2026-11-16T12:56:13.7057423Z 0b80e0833f2d: Pull complete
+2026-11-16T12:56:13.7973690Z d8948f3622f7: Pull complete
+2026-11-16T12:56:13.7978924Z 6a7048238f16: Pull complete
+2026-11-16T12:56:13.7985737Z 6f1f66ad722a: Pull complete
+2026-11-16T12:56:13.8895249Z 3dcaae3150c1: Download complete
+2026-11-16T12:56:13.8950134Z ea97cbaeb613: Pull complete
+2026-11-16T12:56:15.2726546Z d38145328f88: Pull complete
+2026-11-16T12:56:15.2732075Z c21dabdd3f40: Pull complete
+2026-11-16T12:56:15.2737067Z 0c67d4a9f067: Pull complete
+2026-11-16T12:56:15.2757131Z 8fe89564ad07: Pull complete
+2026-11-16T12:56:15.2794448Z 5dd91dbc2342: Pull complete
+2026-11-16T12:56:15.2802984Z 3dcaae3150c1: Pull complete
+2026-11-16T12:56:15.2808409Z Digest: sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
+2026-11-16T12:56:15.2822321Z Status: Downloaded newer image for postgres:16
+2026-11-16T12:56:15.2827220Z docker.io/library/postgres:16
+2026-11-16T12:56:15.2834112Z ##[command]/usr/bin/docker create --name c2291a226615417593bdbba6c65d29b8_postgres16_a0657c --label 60c2c0 --network github_network_9be34d00d58f444c8a35e89602a6824f --network-alias postgres -p 5432:5432 --health-cmd="pg_isready -U postgres -d relay_policy" --health-interval=10s --health-timeout=5s --health-retries=12 -e "POSTGRES_PASSWORD=integration" -e "POSTGRES_DB=relay_policy" -e GITHUB_ACTIONS=true -e CI=true postgres:16
+2026-11-16T12:56:16.4309105Z f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:56:16.4321323Z ##[command]/usr/bin/docker start f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:56:16.5207916Z f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:56:16.5222314Z ##[command]/usr/bin/docker ps --all --filter id=f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-16T12:56:16.5443459Z f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e Up Less than a second (health: starting)
+2026-11-16T12:56:16.5446736Z ##[command]/usr/bin/docker port f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:56:16.5554637Z 5432/tcp -> 0.0.0.0:5432
+2026-11-16T12:56:16.5555391Z 5432/tcp -> [::]:5432
+2026-11-16T12:56:16.5562356Z ##[endgroup]
+2026-11-16T12:56:16.5563774Z ##[group]Starting redis service container
+2026-11-16T12:56:16.5564697Z ##[command]/usr/bin/docker pull redis:7.4
+2026-11-16T12:56:16.7866978Z 7.4: Pulling from library/redis
+2026-11-16T12:56:16.9049468Z 1af2d1c5b5d7: Pulling fs layer
+2026-11-16T12:56:16.9050244Z b978112db001: Pulling fs layer
+2026-11-16T12:56:16.9051736Z 4f4fb700ef54: Pulling fs layer
+2026-11-16T12:56:16.9058557Z dd051e1b8c92: Pulling fs layer
+2026-11-16T12:56:16.9059502Z f43705d71c46: Pulling fs layer
+2026-11-16T12:56:16.9060325Z 94e14de0ef29: Pulling fs layer
+2026-11-16T12:56:16.9061461Z e68f2e5c8d50: Pulling fs layer
+2026-11-16T12:56:16.9670454Z 94e14de0ef29: Download complete
+2026-11-16T12:56:16.9676494Z e68f2e5c8d50: Download complete
+2026-11-16T12:56:16.9677136Z 1af2d1c5b5d7: Download complete
+2026-11-16T12:56:16.9682051Z 4f4fb700ef54: Already exists
+2026-11-16T12:56:16.9685345Z b978112db001: Download complete
+2026-11-16T12:56:17.0696646Z 997e218b00c5: Download complete
+2026-11-16T12:56:17.0697307Z 713b18672f38: Download complete
+2026-11-16T12:56:17.1671231Z f43705d71c46: Download complete
+2026-11-16T12:56:17.2676526Z dd051e1b8c92: Download complete
+2026-11-16T12:56:17.6697463Z 94e14de0ef29: Pull complete
+2026-11-16T12:56:17.6702539Z e68f2e5c8d50: Pull complete
+2026-11-16T12:56:17.6748786Z dd051e1b8c92: Pull complete
+2026-11-16T12:56:17.8220130Z 1af2d1c5b5d7: Pull complete
+2026-11-16T12:56:17.8238390Z 4f4fb700ef54: Pull complete
+2026-11-16T12:56:17.8250384Z b978112db001: Pull complete
+2026-11-16T12:56:17.8259482Z f43705d71c46: Pull complete
+2026-11-16T12:56:17.8260081Z Digest: sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+2026-11-16T12:56:17.8260822Z Status: Downloaded newer image for redis:7.4
+2026-11-16T12:56:17.8263675Z docker.io/library/redis:7.4
+2026-11-16T12:56:17.8277931Z ##[command]/usr/bin/docker create --name 1b7631f16419465fa795cf5a87a474d3_redis74_693b0d --label 60c2c0 --network github_network_9be34d00d58f444c8a35e89602a6824f --network-alias redis -p 6379:6379 --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=3s --health-retries=12 -e GITHUB_ACTIONS=true -e CI=true redis:7.4
+2026-11-16T12:56:17.9251163Z 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:56:17.9260570Z ##[command]/usr/bin/docker start 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:56:18.0193580Z 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:56:18.0206634Z ##[command]/usr/bin/docker ps --all --filter id=374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892 --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-11-16T12:56:18.0398673Z 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892 Up Less than a second (health: starting)
+2026-11-16T12:56:18.0413690Z ##[command]/usr/bin/docker port 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:56:18.0504119Z 6379/tcp -> 0.0.0.0:6379
+2026-11-16T12:56:18.0504622Z 6379/tcp -> [::]:6379
+2026-11-16T12:56:18.0514020Z ##[endgroup]
+2026-11-16T12:56:18.0522576Z ##[group]Waiting for all services to be ready
+2026-11-16T12:56:18.0532951Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:56:18.0623424Z starting
+2026-11-16T12:56:18.0635748Z mysql service is starting, waiting 2 seconds before checking again.
+2026-11-16T12:56:20.0643072Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:56:20.0751975Z starting
+2026-11-16T12:56:20.0760923Z mysql service is starting, waiting 4 seconds before checking again.
+2026-11-16T12:56:24.3371946Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:56:24.3489590Z healthy
+2026-11-16T12:56:24.3500651Z mysql service is healthy.
+2026-11-16T12:56:24.3501396Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:56:24.3598201Z starting
+2026-11-16T12:56:24.3606315Z postgres service is starting, waiting 2 seconds before checking again.
+2026-11-16T12:56:26.3616294Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:56:26.3722930Z starting
+2026-11-16T12:56:26.3731642Z postgres service is starting, waiting 3 seconds before checking again.
+2026-11-16T12:56:30.0506047Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:56:30.0616281Z healthy
+2026-11-16T12:56:30.0625391Z postgres service is healthy.
+2026-11-16T12:56:30.0626083Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:56:30.0725846Z healthy
+2026-11-16T12:56:30.0735468Z redis service is healthy.
+2026-11-16T12:56:30.0736057Z ##[endgroup]
+2026-11-16T12:56:30.0962961Z ##[group]Run actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+2026-11-16T12:56:30.0963441Z with:
+2026-11-16T12:56:30.0963682Z   repository: azurekiln2333/new-api
+2026-11-16T12:56:30.0963969Z   ref: 60da6a51296038ed9ad47d60d191daf078423123
+2026-11-16T12:56:30.0966122Z   token: ***
+2026-11-16T12:56:30.0966419Z   ssh-strict: true
+2026-11-16T12:56:30.0966650Z   ssh-user: git
+2026-11-16T12:56:30.0966896Z   persist-credentials: true
+2026-11-16T12:56:30.0967142Z   clean: true
+2026-11-16T12:56:30.0967394Z   sparse-checkout-cone-mode: true
+2026-11-16T12:56:30.0967652Z   fetch-depth: 1
+2026-11-16T12:56:30.0967861Z   fetch-tags: false
+2026-11-16T12:56:30.0968108Z   show-progress: true
+2026-11-16T12:56:30.0968332Z   lfs: false
+2026-11-16T12:56:30.0968546Z   submodules: false
+2026-11-16T12:56:30.0968821Z   set-safe-directory: true
+2026-11-16T12:56:30.0969062Z   allow-unsafe-pr-checkout: false
+2026-11-16T12:56:30.0969477Z env:
+2026-11-16T12:56:30.0969676Z   GOWORK: off
+2026-11-16T12:56:30.0970152Z   TEST_MYSQL_DSN: root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local
+2026-11-16T12:56:30.0970748Z   TEST_POSTGRES_DSN: host=127.0.0.1 port=5432 user=postgres *** dbname=relay_policy sslmode=disable
+2026-11-16T12:56:30.0971139Z   TEST_REDIS_ADDR: 127.0.0.1:6379
+2026-11-16T12:56:30.0971446Z ##[endgroup]
+2026-11-16T12:56:33.0544142Z Syncing repository: azurekiln2333/new-api
+2026-11-16T12:56:33.0545763Z ##[group]Getting Git version info
+2026-11-16T12:56:33.0546157Z Working directory is '/home/runner/work/new-api/new-api'
+2026-11-16T12:56:33.0546677Z [command]/usr/bin/git version
+2026-11-16T12:56:33.0558089Z git version 2.56.1
+2026-11-16T12:56:33.0571582Z ##[endgroup]
+2026-11-16T12:56:33.0577999Z Temporarily overriding HOME='/home/runner/work/_temp/2630cae0-be74-48ee-a1fa-f65ac618846c' before making global git config changes
+2026-11-16T12:56:33.0579001Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-16T12:56:33.0581594Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/new-api/new-api
+2026-11-16T12:56:33.0669206Z Deleting the contents of '/home/runner/work/new-api/new-api'
+2026-11-16T12:56:33.0673373Z ##[group]Determining repository object format
+2026-11-16T12:56:33.0676606Z ##[endgroup]
+2026-11-16T12:56:33.0677271Z ##[group]Initializing the repository
+2026-11-16T12:56:33.0682993Z [command]/usr/bin/git init /home/runner/work/new-api/new-api
+2026-11-16T12:56:33.1458581Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-16T12:56:33.1459361Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-16T12:56:33.1459793Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-16T12:56:33.1460151Z hint: call:
+2026-11-16T12:56:33.1460384Z hint:
+2026-11-16T12:56:33.1460664Z hint: 	git config --global init.defaultBranch <name>
+2026-11-16T12:56:33.1460977Z hint:
+2026-11-16T12:56:33.1461445Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-16T12:56:33.1461979Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-16T12:56:33.1462358Z hint:
+2026-11-16T12:56:33.1462589Z hint: 	git branch -m <name>
+2026-11-16T12:56:33.1462842Z hint:
+2026-11-16T12:56:33.1463319Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-16T12:56:33.1482254Z Initialized empty Git repository in /home/runner/work/new-api/new-api/.git/
+2026-11-16T12:56:33.1490166Z [command]/usr/bin/git remote add origin https://github.com/azurekiln2333/new-api
+2026-11-16T12:56:33.1550119Z ##[endgroup]
+2026-11-16T12:56:33.1550618Z ##[group]Disabling automatic garbage collection
+2026-11-16T12:56:33.1552934Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-16T12:56:33.1575533Z ##[endgroup]
+2026-11-16T12:56:33.1576048Z ##[group]Setting up auth
+2026-11-16T12:56:33.1576346Z Removing SSH command configuration
+2026-11-16T12:56:33.1580026Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-16T12:56:33.1604996Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-16T12:56:33.4055690Z Removing HTTP extra header
+2026-11-16T12:56:33.4061103Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-16T12:56:33.4086488Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-16T12:56:33.4260608Z Removing includeIf entries pointing to credentials config files
+2026-11-16T12:56:33.4265423Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-16T12:56:33.4294163Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-16T12:56:33.4467095Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-16T12:56:33.4492838Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/new-api/new-api/.git.path /home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:56:33.4513648Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/new-api/new-api/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:56:33.4540667Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:56:33.4561265Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:56:33.4580061Z ##[endgroup]
+2026-11-16T12:56:33.4580441Z ##[group]Fetching the repository
+2026-11-16T12:56:33.4584488Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 60da6a51296038ed9ad47d60d191daf078423123
+2026-11-16T12:56:34.6905460Z From https://github.com/azurekiln2333/new-api
+2026-11-16T12:56:34.6906245Z  * branch            60da6a51296038ed9ad47d60d191daf078423123 -> FETCH_HEAD
+2026-11-16T12:56:34.6918460Z [command]/usr/bin/git rev-parse --verify --quiet 60da6a51296038ed9ad47d60d191daf078423123^{object}
+2026-11-16T12:56:34.6934373Z 60da6a51296038ed9ad47d60d191daf078423123
+2026-11-16T12:56:34.6937142Z ##[endgroup]
+2026-11-16T12:56:34.6937648Z ##[group]Determining the checkout info
+2026-11-16T12:56:34.6939027Z ##[endgroup]
+2026-11-16T12:56:34.6941065Z [command]/usr/bin/git sparse-checkout disable
+2026-11-16T12:56:34.6989758Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-16T12:56:34.7011265Z ##[group]Checking out the ref
+2026-11-16T12:56:34.7014072Z [command]/usr/bin/git checkout --progress --force 60da6a51296038ed9ad47d60d191daf078423123
+2026-11-16T12:56:34.8422863Z Note: switching to '60da6a51296038ed9ad47d60d191daf078423123'.
+2026-11-16T12:56:34.8423446Z 
+2026-11-16T12:56:34.8423649Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-16T12:56:34.8424081Z changes and commit them, and you can discard any commits you make in this
+2026-11-16T12:56:34.8424542Z state without impacting any branches by switching back to a branch.
+2026-11-16T12:56:34.8424923Z 
+2026-11-16T12:56:34.8425121Z If you want to create a new branch to retain commits you create, you may
+2026-11-16T12:56:34.8425510Z do so (now or later) by using -c with the switch command. Example:
+2026-11-16T12:56:34.8425735Z 
+2026-11-16T12:56:34.8425897Z   git switch -c <new-branch-name>
+2026-11-16T12:56:34.8426204Z 
+2026-11-16T12:56:34.8426449Z Or undo this operation with:
+2026-11-16T12:56:34.8426634Z 
+2026-11-16T12:56:34.8426748Z   git switch -
+2026-11-16T12:56:34.8426931Z 
+2026-11-16T12:56:34.8427145Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-16T12:56:34.8427487Z 
+2026-11-16T12:56:34.8427746Z HEAD is now at 60da6a5 feat(channel): add concurrency limits and upstream timeout failover
+2026-11-16T12:56:34.8439580Z ##[endgroup]
+2026-11-16T12:56:34.8487217Z [command]/usr/bin/git log -1 --format=%H
+2026-11-16T12:56:34.8507922Z 60da6a51296038ed9ad47d60d191daf078423123
+2026-11-16T12:56:34.8704004Z ##[group]Run actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+2026-11-16T12:56:34.8704372Z with:
+2026-11-16T12:56:34.8704609Z   go-version-file: go.mod
+2026-11-16T12:56:34.8705278Z   cache-dependency-path: go.sum
+relaykit/go.sum
+tokenkit/go.sum
+
+2026-11-16T12:56:34.8705627Z   check-latest: false
+2026-11-16T12:56:34.8707495Z   token: ***
+2026-11-16T12:56:34.8707729Z   cache: true
+2026-11-16T12:56:34.8707949Z env:
+2026-11-16T12:56:34.8708157Z   GOWORK: off
+2026-11-16T12:56:34.8708535Z   TEST_MYSQL_DSN: root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local
+2026-11-16T12:56:34.8709142Z   TEST_POSTGRES_DSN: host=127.0.0.1 port=5432 user=postgres *** dbname=relay_policy sslmode=disable
+2026-11-16T12:56:34.8709582Z   TEST_REDIS_ADDR: 127.0.0.1:6379
+2026-11-16T12:56:34.8709834Z ##[endgroup]
+2026-11-16T12:56:34.9705390Z Setup go version spec 1.26.10
+2026-11-16T12:56:34.9711731Z Attempting to download 1.26.10...
+2026-11-16T12:56:35.4328714Z matching 1.26.10...
+2026-11-16T12:56:35.4354211Z Acquiring 1.26.10 from https://github.com/actions/go-versions/releases/download/1.26.10-39437851726/go-1.26.10-linux-x64.tar.gz
+2026-11-16T12:56:35.7979505Z Extracting Go...
+2026-11-16T12:56:35.8086446Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/b0860980-d280-4b55-bb2c-fac0f8f1a78b -f /home/runner/work/_temp/ae5dce72-bc30-45bd-b8c9-13dcb61ee7b8
+2026-11-16T12:56:36.5779231Z Successfully extracted go to /home/runner/work/_temp/b0860980-d280-4b55-bb2c-fac0f8f1a78b
+2026-11-16T12:56:36.5780160Z Adding to the cache ...
+2026-11-16T12:56:39.0363866Z Successfully cached go to /opt/hostedtoolcache/go/1.26.10/x64
+2026-11-16T12:56:39.0364306Z Added go to the path
+2026-11-16T12:56:39.0367253Z Successfully set up Go version 1.26.10
+2026-11-16T12:56:39.0510747Z [command]/opt/hostedtoolcache/go/1.26.10/x64/bin/go env GOMODCACHE
+2026-11-16T12:56:39.0534003Z [command]/opt/hostedtoolcache/go/1.26.10/x64/bin/go env GOCACHE
+2026-11-16T12:56:39.0557259Z /home/runner/go/pkg/mod
+2026-11-16T12:56:39.0569290Z /home/runner/.cache/go-build
+2026-11-16T12:56:39.1117071Z Cache hit for: setup-go-Linux-x64-ubuntu26-go-1.26.10-d083f39ae67499abce5c59c4215c8d14a49f45683aeafc12e1fe3be43c438c6a
+2026-11-16T12:56:40.1677418Z Received 268435456 of 687287915 (39.1%), 256.0 MBs/sec
+2026-11-16T12:56:41.1683434Z Received 562036736 of 687287915 (81.8%), 267.9 MBs/sec
+2026-11-16T12:56:41.6463478Z Received 687287915 of 687287915 (100.0%), 264.5 MBs/sec
+2026-11-16T12:56:41.6463920Z Cache Size: ~655 MB (687287915 B)
+2026-11-16T12:56:41.6555846Z [command]/usr/bin/tar -xf /home/runner/work/_temp/d3855799-a0ee-4a03-87de-e863862af870/cache.tzst -P -C /home/runner/work/new-api/new-api --use-compress-program unzstd
+2026-11-16T12:56:46.0561003Z Cache restored successfully
+2026-11-16T12:56:46.0806394Z Cache restored from key: setup-go-Linux-x64-ubuntu26-go-1.26.10-d083f39ae67499abce5c59c4215c8d14a49f45683aeafc12e1fe3be43c438c6a
+2026-11-16T12:56:46.0824027Z go version go1.26.10 linux/amd64
+2026-11-16T12:56:46.0824294Z 
+2026-11-16T12:56:46.0824637Z ##[group]go env
+2026-11-16T12:56:46.1969646Z AR='ar'
+2026-11-16T12:56:46.1970016Z CC='gcc'
+2026-11-16T12:56:46.1970382Z CGO_CFLAGS='-O2 -g'
+2026-11-16T12:56:46.1970660Z CGO_CPPFLAGS=''
+2026-11-16T12:56:46.1970890Z CGO_CXXFLAGS='-O2 -g'
+2026-11-16T12:56:46.1971187Z CGO_ENABLED='1'
+2026-11-16T12:56:46.1971407Z CGO_FFLAGS='-O2 -g'
+2026-11-16T12:56:46.1971635Z CGO_LDFLAGS='-O2 -g'
+2026-11-16T12:56:46.1971866Z CXX='g++'
+2026-11-16T12:56:46.1972099Z GCCGO='gccgo'
+2026-11-16T12:56:46.1972438Z GO111MODULE=''
+2026-11-16T12:56:46.1972694Z GOAMD64='v1'
+2026-11-16T12:56:46.1972936Z GOARCH='amd64'
+2026-11-16T12:56:46.1973194Z GOAUTH='netrc'
+2026-11-16T12:56:46.1973396Z GOBIN=''
+2026-11-16T12:56:46.1973721Z GOCACHE='/home/runner/.cache/go-build'
+2026-11-16T12:56:46.1974034Z GOCACHEPROG=''
+2026-11-16T12:56:46.1974288Z GODEBUG=''
+2026-11-16T12:56:46.1974516Z GOENV='/home/runner/.config/go/env'
+2026-11-16T12:56:46.1974910Z GOEXE=''
+2026-11-16T12:56:46.1975488Z GOEXPERIMENT=''
+2026-11-16T12:56:46.1975790Z GOFIPS140='off'
+2026-11-16T12:56:46.1976081Z GOFLAGS=''
+2026-11-16T12:56:46.1976659Z GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/tmp/go-build3705622378=/tmp/go-build -gno-record-gcc-switches'
+2026-11-16T12:56:46.1977222Z GOHOSTARCH='amd64'
+2026-11-16T12:56:46.1977532Z GOHOSTOS='linux'
+2026-11-16T12:56:46.1977746Z GOINSECURE=''
+2026-11-16T12:56:46.1978025Z GOMOD='/home/runner/work/new-api/new-api/go.mod'
+2026-11-16T12:56:46.1978336Z GOMODCACHE='/home/runner/go/pkg/mod'
+2026-11-16T12:56:46.1978654Z GONOPROXY=''
+2026-11-16T12:56:46.1979072Z GONOSUMDB=''
+2026-11-16T12:56:46.1979303Z GOOS='linux'
+2026-11-16T12:56:46.1979587Z GOPATH='/home/runner/go'
+2026-11-16T12:56:46.1979850Z GOPRIVATE=''
+2026-11-16T12:56:46.1980150Z GOPROXY='https://proxy.golang.org,direct'
+2026-11-16T12:56:46.1980464Z GOROOT='/opt/hostedtoolcache/go/1.26.10/x64'
+2026-11-16T12:56:46.1980782Z GOSUMDB='sum.golang.org'
+2026-11-16T12:56:46.1981034Z GOTELEMETRY='local'
+2026-11-16T12:56:46.1981318Z GOTELEMETRYDIR='/home/runner/.config/go/telemetry'
+2026-11-16T12:56:46.1981615Z GOTMPDIR=''
+2026-11-16T12:56:46.1981832Z GOTOOLCHAIN='local'
+2026-11-16T12:56:46.1982176Z GOTOOLDIR='/opt/hostedtoolcache/go/1.26.10/x64/pkg/tool/linux_amd64'
+2026-11-16T12:56:46.1982508Z GOVCS=''
+2026-11-16T12:56:46.1982739Z GOVERSION='go1.26.10'
+2026-11-16T12:56:46.1982976Z GOWORK='off'
+2026-11-16T12:56:46.1983238Z PKG_CONFIG='pkg-config'
+2026-11-16T12:56:46.1983373Z 
+2026-11-16T12:56:46.1983815Z ##[endgroup]
+2026-11-16T12:56:46.2194667Z ##[group]Run docker exec d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f mysql -uroot -pintegration -N -e 'SELECT VERSION()'
+2026-11-16T12:56:46.2195820Z [36;1mdocker exec d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f mysql -uroot -pintegration -N -e 'SELECT VERSION()'[0m
+2026-11-16T12:56:46.2196596Z [36;1mdocker exec f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e psql -U postgres -d relay_policy -Atc 'SELECT VERSION()'[0m
+2026-11-16T12:56:46.2197287Z [36;1mdocker exec 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892 redis-server --version[0m
+2026-11-16T12:56:46.2222225Z shell: /usr/bin/bash -e {0}
+2026-11-16T12:56:46.2222740Z env:
+2026-11-16T12:56:46.2223024Z   GOWORK: off
+2026-11-16T12:56:46.2223588Z   TEST_MYSQL_DSN: root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local
+2026-11-16T12:56:46.2224839Z   TEST_POSTGRES_DSN: host=127.0.0.1 port=5432 user=postgres *** dbname=relay_policy sslmode=disable
+2026-11-16T12:56:46.2225456Z   TEST_REDIS_ADDR: 127.0.0.1:6379
+2026-11-16T12:56:46.2225889Z   GOTOOLCHAIN: local
+2026-11-16T12:56:46.2226210Z ##[endgroup]
+2026-11-16T12:56:46.2672909Z mysql: [Warning] Using a password on the command line interface can be insecure.
+2026-11-16T12:56:46.2711679Z 8.4.13
+2026-11-16T12:56:46.3290668Z PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-16T12:56:46.3689800Z Redis server v=7.4.12 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=69f2dd83f1b1edb9
+2026-11-16T12:56:46.3748875Z ##[group]Run go test -p 1 -count=1 -v ./model ./service ./controller -run 'RequestPolicy|Channel.*(Settings|Capacity|Concurrency)|InferencePreset|AffinityFailover|FirstByte|Midjourney'
+2026-11-16T12:56:46.3749850Z [36;1mgo test -p 1 -count=1 -v ./model ./service ./controller -run 'RequestPolicy|Channel.*(Settings|Capacity|Concurrency)|InferencePreset|AffinityFailover|FirstByte|Midjourney'[0m
+2026-11-16T12:56:46.3769731Z shell: /usr/bin/bash -e {0}
+2026-11-16T12:56:46.3770070Z env:
+2026-11-16T12:56:46.3770336Z   GOWORK: off
+2026-11-16T12:56:46.3770735Z   TEST_MYSQL_DSN: root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local
+2026-11-16T12:56:46.3771481Z   TEST_POSTGRES_DSN: host=127.0.0.1 port=5432 user=postgres *** dbname=relay_policy sslmode=disable
+2026-11-16T12:56:46.3771902Z   TEST_REDIS_ADDR: 127.0.0.1:6379
+2026-11-16T12:56:46.3772173Z   GOTOOLCHAIN: local
+2026-11-16T12:56:46.3772534Z ##[endgroup]
+2026-11-16T12:56:55.9062052Z === RUN   TestChannelValidateSettingsRejectsInvalidHTTPTransport
+2026-11-16T12:56:55.9066911Z === RUN   TestChannelValidateSettingsRejectsInvalidHTTPTransport/auto_with_shards_is_valid
+2026-11-16T12:56:55.9067961Z === RUN   TestChannelValidateSettingsRejectsInvalidHTTPTransport/http1_with_shards_greater_than_one_rejected
+2026-11-16T12:56:55.9068872Z --- PASS: TestChannelValidateSettingsRejectsInvalidHTTPTransport (0.00s)
+2026-11-16T12:56:55.9069866Z     --- PASS: TestChannelValidateSettingsRejectsInvalidHTTPTransport/auto_with_shards_is_valid (0.00s)
+2026-11-16T12:56:55.9070910Z     --- PASS: TestChannelValidateSettingsRejectsInvalidHTTPTransport/http1_with_shards_greater_than_one_rejected (0.00s)
+2026-11-16T12:56:55.9072006Z === RUN   TestChannelValidateSettingsRequestLimits
+2026-11-16T12:56:55.9072466Z === RUN   TestChannelValidateSettingsRequestLimits/{}
+2026-11-16T12:56:55.9073181Z === RUN   TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":0,"upstream_first_byte_timeout_seconds":0}
+2026-11-16T12:56:55.9074200Z === RUN   TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":2,"upstream_first_byte_timeout_seconds":null}
+2026-11-16T12:56:55.9075388Z === RUN   TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":1000000,"upstream_first_byte_timeout_seconds":86400}
+2026-11-16T12:56:55.9076343Z === RUN   TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":-1}
+2026-11-16T12:56:55.9077001Z === RUN   TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":1000001}
+2026-11-16T12:56:55.9077808Z === RUN   TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":1.5}
+2026-11-16T12:56:55.9078571Z === RUN   TestChannelValidateSettingsRequestLimits/{"upstream_first_byte_timeout_seconds":-1}
+2026-11-16T12:56:55.9079343Z === RUN   TestChannelValidateSettingsRequestLimits/{"upstream_first_byte_timeout_seconds":86401}
+2026-11-16T12:56:55.9080196Z === RUN   TestChannelValidateSettingsRequestLimits/{"upstream_first_byte_timeout_seconds":1.5}
+2026-11-16T12:56:55.9080788Z --- PASS: TestChannelValidateSettingsRequestLimits (0.00s)
+2026-11-16T12:56:55.9081358Z     --- PASS: TestChannelValidateSettingsRequestLimits/{} (0.00s)
+2026-11-16T12:56:55.9082005Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":0,"upstream_first_byte_timeout_seconds":0} (0.00s)
+2026-11-16T12:56:55.9082812Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":2,"upstream_first_byte_timeout_seconds":null} (0.00s)
+2026-11-16T12:56:55.9083694Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":1000000,"upstream_first_byte_timeout_seconds":86400} (0.00s)
+2026-11-16T12:56:55.9086669Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":-1} (0.00s)
+2026-11-16T12:56:55.9087340Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":1000001} (0.00s)
+2026-11-16T12:56:55.9088125Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"max_concurrent_requests":1.5} (0.00s)
+2026-11-16T12:56:55.9088744Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"upstream_first_byte_timeout_seconds":-1} (0.00s)
+2026-11-16T12:56:55.9089451Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"upstream_first_byte_timeout_seconds":86401} (0.00s)
+2026-11-16T12:56:55.9090123Z     --- PASS: TestChannelValidateSettingsRequestLimits/{"upstream_first_byte_timeout_seconds":1.5} (0.00s)
+2026-11-16T12:56:55.9090617Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip
+2026-11-16T12:56:55.9091057Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/sqlite
+2026-11-16T12:56:55.9137722Z     channel_settings_test.go:172: sqlite version: 3.50.4
+2026-11-16T12:56:55.9252513Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/sqlite/62
+2026-11-16T12:56:55.9275597Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/sqlite/63
+2026-11-16T12:56:55.9299472Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/mysql
+2026-11-16T12:56:55.9409648Z     channel_settings_test.go:172: mysql version: 8.4.13
+2026-11-16T12:56:55.9962311Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/mysql/62
+2026-11-16T12:56:55.9988950Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/mysql/63
+2026-11-16T12:56:56.0044597Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/postgres
+2026-11-16T12:56:56.0156708Z     channel_settings_test.go:172: postgres version: PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-16T12:56:56.1603520Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/postgres/62
+2026-11-16T12:56:56.1620688Z === RUN   TestInferencePresetSettingsAndDatabaseRoundTrip/postgres/63
+2026-11-16T12:56:56.1658866Z --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip (0.26s)
+2026-11-16T12:56:56.1659647Z     --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/sqlite (0.02s)
+2026-11-16T12:56:56.1660585Z         --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/sqlite/62 (0.00s)
+2026-11-16T12:56:56.1661426Z         --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/sqlite/63 (0.00s)
+2026-11-16T12:56:56.1662057Z     --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/mysql (0.07s)
+2026-11-16T12:56:56.1662838Z         --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/mysql/62 (0.00s)
+2026-11-16T12:56:56.1663592Z         --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/mysql/63 (0.00s)
+2026-11-16T12:56:56.1664286Z     --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/postgres (0.16s)
+2026-11-16T12:56:56.1665157Z         --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/postgres/62 (0.00s)
+2026-11-16T12:56:56.1666052Z         --- PASS: TestInferencePresetSettingsAndDatabaseRoundTrip/postgres/63 (0.00s)
+2026-11-16T12:56:56.1667876Z === RUN   TestRequestPolicyDatabaseMatrix
+2026-11-16T12:56:56.1668410Z === RUN   TestRequestPolicyDatabaseMatrix/sqlite
+2026-11-16T12:56:56.1677049Z     request_policy_test.go:79: database version: 3.50.4
+2026-11-16T12:56:56.1677451Z 
+2026-11-16T12:56:56.1678103Z 2026/11/16 12:56:56 [34;1m/home/runner/work/new-api/new-api/model/request_policy_test.go:87
+2026-11-16T12:56:56.1678984Z [0m[35m[warn] [0mremoving callback `reject_retry_migration` from /home/runner/work/new-api/new-api/model/request_policy_test.go:87
+2026-11-16T12:56:56.1679501Z === RUN   TestRequestPolicyDatabaseMatrix/sqlite/fresh
+2026-11-16T12:56:56.1703688Z === RUN   TestRequestPolicyDatabaseMatrix/sqlite/legacy
+2026-11-16T12:56:56.1718178Z === RUN   TestRequestPolicyDatabaseMatrix/sqlite/custom
+2026-11-16T12:56:56.1731171Z === RUN   TestRequestPolicyDatabaseMatrix/sqlite/saved_zero
+2026-11-16T12:56:56.1780207Z 
+2026-11-16T12:56:56.1781164Z 2026/11/16 12:56:56 [34;1m/home/runner/work/new-api/new-api/model/request_policy_test.go:187
+2026-11-16T12:56:56.1782191Z [0m[35m[warn] [0mremoving callback `policy_fail` from /home/runner/work/new-api/new-api/model/request_policy_test.go:187
+2026-11-16T12:56:56.1783772Z === RUN   TestRequestPolicyDatabaseMatrix/mysql
+2026-11-16T12:56:56.1848765Z     request_policy_test.go:79: database version: 8.4.13
+2026-11-16T12:56:56.1866265Z 
+2026-11-16T12:56:56.1867149Z 2026/11/16 12:56:56 [34;1m/home/runner/work/new-api/new-api/model/request_policy_test.go:87
+2026-11-16T12:56:56.1868128Z [0m[35m[warn] [0mremoving callback `reject_retry_migration` from /home/runner/work/new-api/new-api/model/request_policy_test.go:87
+2026-11-16T12:56:56.1872692Z === RUN   TestRequestPolicyDatabaseMatrix/mysql/fresh
+2026-11-16T12:56:56.1982256Z === RUN   TestRequestPolicyDatabaseMatrix/mysql/legacy
+2026-11-16T12:56:56.2106893Z === RUN   TestRequestPolicyDatabaseMatrix/mysql/custom
+2026-11-16T12:56:56.2219425Z === RUN   TestRequestPolicyDatabaseMatrix/mysql/saved_zero
+2026-11-16T12:56:56.2514826Z 
+2026-11-16T12:56:56.2515758Z 2026/11/16 12:56:56 [34;1m/home/runner/work/new-api/new-api/model/request_policy_test.go:187
+2026-11-16T12:56:56.2516637Z [0m[35m[warn] [0mremoving callback `policy_fail` from /home/runner/work/new-api/new-api/model/request_policy_test.go:187
+2026-11-16T12:56:56.2540015Z === RUN   TestRequestPolicyDatabaseMatrix/postgres
+2026-11-16T12:56:56.2611036Z     request_policy_test.go:79: database version: PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-16T12:56:56.2626067Z 
+2026-11-16T12:56:56.2626952Z 2026/11/16 12:56:56 [34;1m/home/runner/work/new-api/new-api/model/request_policy_test.go:87
+2026-11-16T12:56:56.2627845Z [0m[35m[warn] [0mremoving callback `reject_retry_migration` from /home/runner/work/new-api/new-api/model/request_policy_test.go:87
+2026-11-16T12:56:56.2631174Z === RUN   TestRequestPolicyDatabaseMatrix/postgres/fresh
+2026-11-16T12:56:56.3013320Z === RUN   TestRequestPolicyDatabaseMatrix/postgres/legacy
+2026-11-16T12:56:56.3295145Z === RUN   TestRequestPolicyDatabaseMatrix/postgres/custom
+2026-11-16T12:56:56.3544150Z === RUN   TestRequestPolicyDatabaseMatrix/postgres/saved_zero
+2026-11-16T12:56:56.3753894Z 
+2026-11-16T12:56:56.3755286Z 2026/11/16 12:56:56 [34;1m/home/runner/work/new-api/new-api/model/request_policy_test.go:187
+2026-11-16T12:56:56.3756301Z [0m[35m[warn] [0mremoving callback `policy_fail` from /home/runner/work/new-api/new-api/model/request_policy_test.go:187
+2026-11-16T12:56:56.3767825Z --- PASS: TestRequestPolicyDatabaseMatrix (0.21s)
+2026-11-16T12:56:56.3768425Z     --- PASS: TestRequestPolicyDatabaseMatrix/sqlite (0.01s)
+2026-11-16T12:56:56.3769070Z         --- PASS: TestRequestPolicyDatabaseMatrix/sqlite/fresh (0.00s)
+2026-11-16T12:56:56.3769805Z         --- PASS: TestRequestPolicyDatabaseMatrix/sqlite/legacy (0.00s)
+2026-11-16T12:56:56.3770548Z         --- PASS: TestRequestPolicyDatabaseMatrix/sqlite/custom (0.00s)
+2026-11-16T12:56:56.3771277Z         --- PASS: TestRequestPolicyDatabaseMatrix/sqlite/saved_zero (0.00s)
+2026-11-16T12:56:56.3771816Z     --- PASS: TestRequestPolicyDatabaseMatrix/mysql (0.08s)
+2026-11-16T12:56:56.3772444Z         --- PASS: TestRequestPolicyDatabaseMatrix/mysql/fresh (0.01s)
+2026-11-16T12:56:56.3773042Z         --- PASS: TestRequestPolicyDatabaseMatrix/mysql/legacy (0.01s)
+2026-11-16T12:56:56.3773651Z         --- PASS: TestRequestPolicyDatabaseMatrix/mysql/custom (0.01s)
+2026-11-16T12:56:56.3774399Z         --- PASS: TestRequestPolicyDatabaseMatrix/mysql/saved_zero (0.01s)
+2026-11-16T12:56:56.3775173Z     --- PASS: TestRequestPolicyDatabaseMatrix/postgres (0.12s)
+2026-11-16T12:56:56.3775831Z         --- PASS: TestRequestPolicyDatabaseMatrix/postgres/fresh (0.04s)
+2026-11-16T12:56:56.3776463Z         --- PASS: TestRequestPolicyDatabaseMatrix/postgres/legacy (0.03s)
+2026-11-16T12:56:56.3777116Z         --- PASS: TestRequestPolicyDatabaseMatrix/postgres/custom (0.02s)
+2026-11-16T12:56:56.3778108Z         --- PASS: TestRequestPolicyDatabaseMatrix/postgres/saved_zero (0.01s)
+2026-11-16T12:56:56.3778586Z === RUN   TestRequestPolicyFailoverSettings
+2026-11-16T12:56:56.3779191Z --- PASS: TestRequestPolicyFailoverSettings (0.00s)
+2026-11-16T12:56:56.3806062Z PASS
+2026-11-16T12:56:56.3820188Z ok  	github.com/QuantumNous/new-api/model	0.499s
+2026-11-16T12:57:04.6085168Z === RUN   TestMidjourneyPolicyAcceptance
+2026-11-16T12:57:04.6085864Z === RUN   TestMidjourneyPolicyAcceptance/submitted
+2026-11-16T12:57:04.6087044Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6087590Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6087956Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6088222Z 
+2026-11-16T12:57:04.6088422Z === RUN   TestMidjourneyPolicyAcceptance/existing_task
+2026-11-16T12:57:04.6089035Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6089607Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6090021Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6090299Z 
+2026-11-16T12:57:04.6090493Z === RUN   TestMidjourneyPolicyAcceptance/queued
+2026-11-16T12:57:04.6091148Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6091709Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6092206Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6092441Z 
+2026-11-16T12:57:04.6092725Z === RUN   TestMidjourneyPolicyAcceptance/HTTP_200_with_rejected_prompt
+2026-11-16T12:57:04.6093377Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6094097Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6094561Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6094962Z 
+2026-11-16T12:57:04.6095270Z === RUN   TestMidjourneyPolicyAcceptance/failed_existing_task
+2026-11-16T12:57:04.6095904Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6096514Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6096952Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6097186Z 
+2026-11-16T12:57:04.6097412Z === RUN   TestMidjourneyPolicyAcceptance/HTTP_failure
+2026-11-16T12:57:04.6098001Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6098569Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6098968Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6099263Z 
+2026-11-16T12:57:04.6099510Z === RUN   TestMidjourneyPolicyAcceptance/ambiguous_transport_failure
+2026-11-16T12:57:04.6100154Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6100725Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6101031Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6101224Z 
+2026-11-16T12:57:04.6101400Z --- PASS: TestMidjourneyPolicyAcceptance (0.00s)
+2026-11-16T12:57:04.6101858Z     --- PASS: TestMidjourneyPolicyAcceptance/submitted (0.00s)
+2026-11-16T12:57:04.6102286Z     --- PASS: TestMidjourneyPolicyAcceptance/existing_task (0.00s)
+2026-11-16T12:57:04.6102745Z     --- PASS: TestMidjourneyPolicyAcceptance/queued (0.00s)
+2026-11-16T12:57:04.6103222Z     --- PASS: TestMidjourneyPolicyAcceptance/HTTP_200_with_rejected_prompt (0.00s)
+2026-11-16T12:57:04.6103974Z     --- PASS: TestMidjourneyPolicyAcceptance/failed_existing_task (0.00s)
+2026-11-16T12:57:04.6104620Z     --- PASS: TestMidjourneyPolicyAcceptance/HTTP_failure (0.00s)
+2026-11-16T12:57:04.6105418Z     --- PASS: TestMidjourneyPolicyAcceptance/ambiguous_transport_failure (0.00s)
+2026-11-16T12:57:04.6106108Z === RUN   TestChannelCapacityMidjourneySubmissionLifetime
+2026-11-16T12:57:04.6106675Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6107755Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6108203Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6108495Z 
+2026-11-16T12:57:04.6108954Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6109599Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6110308Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6110658Z 
+2026-11-16T12:57:04.6110948Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6111494Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6111932Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6112211Z 
+2026-11-16T12:57:04.6112503Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6113020Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6113388Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6113581Z 
+2026-11-16T12:57:04.6113839Z --- PASS: TestChannelCapacityMidjourneySubmissionLifetime (0.00s)
+2026-11-16T12:57:04.6117280Z === RUN   TestChannelCapacityMidjourneyCoordinationFailure
+2026-11-16T12:57:04.6117815Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6118361Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6118711Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6118901Z 
+2026-11-16T12:57:04.6119193Z --- PASS: TestChannelCapacityMidjourneyCoordinationFailure (0.00s)
+2026-11-16T12:57:04.6119609Z === RUN   TestFirstByteMidjourneyChannelOverride
+2026-11-16T12:57:04.6120001Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:04.6120445Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:04.6120743Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:04.6120896Z 
+2026-11-16T12:57:05.6122137Z --- PASS: TestFirstByteMidjourneyChannelOverride (1.00s)
+2026-11-16T12:57:05.6123114Z === RUN   TestChannelCapacityLocalLifecycle
+2026-11-16T12:57:05.6123572Z --- PASS: TestChannelCapacityLocalLifecycle (0.00s)
+2026-11-16T12:57:05.6124157Z === RUN   TestChannelCapacityCoordinationFailureAndHealth
+2026-11-16T12:57:05.6124673Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6125461Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6125899Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6126153Z 
+2026-11-16T12:57:05.6126374Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6126835Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6127141Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6127321Z 
+2026-11-16T12:57:05.6127610Z --- PASS: TestChannelCapacityCoordinationFailureAndHealth (0.00s)
+2026-11-16T12:57:05.6128186Z === RUN   TestChannelCapacityDetachedSubmissionKeepsLeaseCancellation
+2026-11-16T12:57:05.6128770Z --- PASS: TestChannelCapacityDetachedSubmissionKeepsLeaseCancellation (0.00s)
+2026-11-16T12:57:05.6129354Z === RUN   TestChannelCapacityAdmissionRestrictions
+2026-11-16T12:57:05.6129829Z === RUN   TestChannelCapacityAdmissionRestrictions/ordinary_busy_candidate
+2026-11-16T12:57:05.6130449Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6130919Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6131346Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6131577Z 
+2026-11-16T12:57:05.6131804Z === RUN   TestChannelCapacityAdmissionRestrictions/same_channel_task_pin
+2026-11-16T12:57:05.6132355Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6132825Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6133149Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6133342Z 
+2026-11-16T12:57:05.6133568Z === RUN   TestChannelCapacityAdmissionRestrictions/single_attempt_token_pin
+2026-11-16T12:57:05.6134693Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6135404Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6135917Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6136161Z 
+2026-11-16T12:57:05.6136459Z === RUN   TestChannelCapacityAdmissionRestrictions/strict_session
+2026-11-16T12:57:05.6136917Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6137368Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6137677Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6137939Z 
+2026-11-16T12:57:05.6138168Z === RUN   TestChannelCapacityAdmissionRestrictions/response_started
+2026-11-16T12:57:05.6138777Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6139293Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6139683Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6139893Z 
+2026-11-16T12:57:05.6140082Z === RUN   TestChannelCapacityAdmissionRestrictions/client_cancelled
+2026-11-16T12:57:05.6140731Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6141166Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6141539Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6141762Z 
+2026-11-16T12:57:05.6141965Z --- PASS: TestChannelCapacityAdmissionRestrictions (0.00s)
+2026-11-16T12:57:05.6142584Z     --- PASS: TestChannelCapacityAdmissionRestrictions/ordinary_busy_candidate (0.00s)
+2026-11-16T12:57:05.6143174Z     --- PASS: TestChannelCapacityAdmissionRestrictions/same_channel_task_pin (0.00s)
+2026-11-16T12:57:05.6143861Z     --- PASS: TestChannelCapacityAdmissionRestrictions/single_attempt_token_pin (0.00s)
+2026-11-16T12:57:05.6144532Z     --- PASS: TestChannelCapacityAdmissionRestrictions/strict_session (0.00s)
+2026-11-16T12:57:05.6145422Z     --- PASS: TestChannelCapacityAdmissionRestrictions/response_started (0.00s)
+2026-11-16T12:57:05.6146133Z     --- PASS: TestChannelCapacityAdmissionRestrictions/client_cancelled (0.00s)
+2026-11-16T12:57:05.6146607Z === RUN   TestChannelCapacityRedis
+2026-11-16T12:57:05.6147109Z     channel_capacity_test.go:203: redis_version:7.4.12
+2026-11-16T12:57:05.6147661Z === RUN   TestChannelCapacityRedis/independent_clients_and_owner_release
+2026-11-16T12:57:05.6148632Z === RUN   TestChannelCapacityRedis/renewal_expiry_and_stale_owner
+2026-11-16T12:57:05.6159495Z === RUN   TestChannelCapacityRedis/coordinator_loss_cancels_and_fails_closed
+2026-11-16T12:57:05.6164858Z --- PASS: TestChannelCapacityRedis (0.00s)
+2026-11-16T12:57:05.6165674Z     --- PASS: TestChannelCapacityRedis/independent_clients_and_owner_release (0.00s)
+2026-11-16T12:57:05.6166325Z     --- PASS: TestChannelCapacityRedis/renewal_expiry_and_stale_owner (0.00s)
+2026-11-16T12:57:05.6167017Z     --- PASS: TestChannelCapacityRedis/coordinator_loss_cancels_and_fails_closed (0.00s)
+2026-11-16T12:57:05.6168380Z === RUN   TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt
+2026-11-16T12:57:05.6168970Z === RUN   TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt/headers=false
+2026-11-16T12:57:05.6169621Z === RUN   TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt/headers=true
+2026-11-16T12:57:05.6170270Z --- PASS: TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt (0.00s)
+2026-11-16T12:57:05.6170956Z     --- PASS: TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt/headers=false (0.00s)
+2026-11-16T12:57:05.6171684Z     --- PASS: TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt/headers=true (0.00s)
+2026-11-16T12:57:05.6172325Z === RUN   TestUpstreamFirstBytePreservesPayloadAndLongStream
+2026-11-16T12:57:05.6173402Z --- PASS: TestUpstreamFirstBytePreservesPayloadAndLongStream (0.00s)
+2026-11-16T12:57:05.6173870Z === RUN   TestUpstreamFirstByteCancellationAndDeadlineWinner
+2026-11-16T12:57:05.6174523Z === RUN   TestUpstreamFirstByteCancellationAndDeadlineWinner/parent_before_byte
+2026-11-16T12:57:05.6175513Z === RUN   TestUpstreamFirstByteCancellationAndDeadlineWinner/parent_after_byte
+2026-11-16T12:57:05.6176151Z === RUN   TestUpstreamFirstByteCancellationAndDeadlineWinner/close_after_byte
+2026-11-16T12:57:05.6176794Z === RUN   TestUpstreamFirstByteCancellationAndDeadlineWinner/deadline_before_buffered_byte
+2026-11-16T12:57:05.6177444Z --- PASS: TestUpstreamFirstByteCancellationAndDeadlineWinner (0.00s)
+2026-11-16T12:57:05.6178148Z     --- PASS: TestUpstreamFirstByteCancellationAndDeadlineWinner/parent_before_byte (0.00s)
+2026-11-16T12:57:05.6178826Z     --- PASS: TestUpstreamFirstByteCancellationAndDeadlineWinner/parent_after_byte (0.00s)
+2026-11-16T12:57:05.6179446Z     --- PASS: TestUpstreamFirstByteCancellationAndDeadlineWinner/close_after_byte (0.00s)
+2026-11-16T12:57:05.6180412Z     --- PASS: TestUpstreamFirstByteCancellationAndDeadlineWinner/deadline_before_buffered_byte (0.00s)
+2026-11-16T12:57:05.6181364Z === RUN   TestUpstreamFirstByteEmptyAndUpgradeResponses
+2026-11-16T12:57:05.6182136Z === RUN   TestUpstreamFirstByteEmptyAndUpgradeResponses/no_body
+2026-11-16T12:57:05.6182841Z === RUN   TestUpstreamFirstByteEmptyAndUpgradeResponses/empty_EOF
+2026-11-16T12:57:05.6183552Z === RUN   TestUpstreamFirstByteEmptyAndUpgradeResponses/upgrade
+2026-11-16T12:57:05.6184291Z --- PASS: TestUpstreamFirstByteEmptyAndUpgradeResponses (0.00s)
+2026-11-16T12:57:05.6185318Z     --- PASS: TestUpstreamFirstByteEmptyAndUpgradeResponses/no_body (0.00s)
+2026-11-16T12:57:05.6186250Z     --- PASS: TestUpstreamFirstByteEmptyAndUpgradeResponses/empty_EOF (0.00s)
+2026-11-16T12:57:05.6187084Z     --- PASS: TestUpstreamFirstByteEmptyAndUpgradeResponses/upgrade (0.00s)
+2026-11-16T12:57:05.6187802Z === RUN   TestUpstreamFirstByteTimeoutSDKRetries
+2026-11-16T12:57:05.6188486Z === RUN   TestUpstreamFirstByteTimeoutSDKRetries/timeout=true
+2026-11-16T12:57:05.6189157Z === RUN   TestUpstreamFirstByteTimeoutSDKRetries/timeout=false
+2026-11-16T12:57:05.6189814Z --- PASS: TestUpstreamFirstByteTimeoutSDKRetries (0.00s)
+2026-11-16T12:57:05.6190537Z     --- PASS: TestUpstreamFirstByteTimeoutSDKRetries/timeout=true (0.00s)
+2026-11-16T12:57:05.6191313Z     --- PASS: TestUpstreamFirstByteTimeoutSDKRetries/timeout=false (0.00s)
+2026-11-16T12:57:05.6192369Z === RUN   TestUpstreamFirstByteTimeoutCacheOverrides
+2026-11-16T12:57:05.6201841Z --- PASS: TestUpstreamFirstByteTimeoutCacheOverrides (0.00s)
+2026-11-16T12:57:05.6202365Z === RUN   TestUpstreamFirstByteTimeoutOnlyAppliesToRelayClients
+2026-11-16T12:57:05.6202982Z === RUN   TestUpstreamFirstByteTimeoutOnlyAppliesToRelayClients/relay=false
+2026-11-16T12:57:05.6203863Z === RUN   TestUpstreamFirstByteTimeoutOnlyAppliesToRelayClients/relay=true
+2026-11-16T12:57:05.6204577Z --- PASS: TestUpstreamFirstByteTimeoutOnlyAppliesToRelayClients (0.00s)
+2026-11-16T12:57:05.6205627Z     --- PASS: TestUpstreamFirstByteTimeoutOnlyAppliesToRelayClients/relay=false (0.00s)
+2026-11-16T12:57:05.6206282Z     --- PASS: TestUpstreamFirstByteTimeoutOnlyAppliesToRelayClients/relay=true (0.00s)
+2026-11-16T12:57:05.6209852Z === RUN   TestRequestPolicyEventsReachLogAdminInfo
+2026-11-16T12:57:05.6210741Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6211352Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6211827Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6212151Z 
+2026-11-16T12:57:05.6216393Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:05.6217040Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:05.6217371Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:05.6217585Z 
+2026-11-16T12:57:05.6217756Z --- PASS: TestRequestPolicyEventsReachLogAdminInfo (0.00s)
+2026-11-16T12:57:05.6218255Z === RUN   TestPrepareMidjourneyTaskBillingKeepsUnbilledMarkerClear
+2026-11-16T12:57:05.6218779Z --- PASS: TestPrepareMidjourneyTaskBillingKeepsUnbilledMarkerClear (0.00s)
+2026-11-16T12:57:05.6219280Z === RUN   TestSettleMidjourneyTaskBillingRequiresPersistedTask
+2026-11-16T12:57:05.6223654Z --- PASS: TestSettleMidjourneyTaskBillingRequiresPersistedTask (0.00s)
+2026-11-16T12:57:05.6224264Z === RUN   TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel
+2026-11-16T12:57:05.6240749Z --- PASS: TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel (0.00s)
+2026-11-16T12:57:05.6241440Z === RUN   TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers
+2026-11-16T12:57:05.6247088Z 
+2026-11-16T12:57:05.6248017Z 2026/11/16 12:57:05 [31;1m/home/runner/work/new-api/new-api/model/user.go:1405 [35;1mconstraint failed: forced user quota failure (1811)
+2026-11-16T12:57:05.6248734Z [0m[33m[0.053ms] [34;1m[rows:0][0m UPDATE `users` SET `quota`=quota - 3000 WHERE id = 52 AND `users`.`deleted_at` IS NULL
+2026-11-16T12:57:05.6251486Z --- PASS: TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers (0.00s)
+2026-11-16T12:57:05.6252138Z === RUN   TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable
+2026-11-16T12:57:05.6257655Z 
+2026-11-16T12:57:05.6258446Z 2026/11/16 12:57:05 [31;1m/home/runner/work/new-api/new-api/model/token.go:432 [35;1mconstraint failed: forced token quota failure (1811)
+2026-11-16T12:57:05.6259515Z [0m[33m[0.036ms] [34;1m[rows:0][0m UPDATE `tokens` SET `accessed_time`=1794833825,`remain_quota`=remain_quota - 3000,`used_quota`=used_quota + 3000 WHERE id = 53 AND `tokens`.`deleted_at` IS NULL
+2026-11-16T12:57:05.6266169Z --- PASS: TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable (0.00s)
+2026-11-16T12:57:05.6266970Z === RUN   TestPrepareMidjourneyTaskBillingRejectsSubscriptionBeforeCharge
+2026-11-16T12:57:05.6267566Z --- PASS: TestPrepareMidjourneyTaskBillingRejectsSubscriptionBeforeCharge (0.00s)
+2026-11-16T12:57:05.6268144Z === RUN   TestRefundMidjourneyQuotaUsesLegacyChannelFallbackWithoutTokenAdjustment
+2026-11-16T12:57:05.6287617Z --- PASS: TestRefundMidjourneyQuotaUsesLegacyChannelFallbackWithoutTokenAdjustment (0.00s)
+2026-11-16T12:57:05.6292160Z === RUN   TestUpdateVideoTasksMixedChannelSleepSettings
+2026-11-16T12:57:05.6301366Z [INFO] 2026/11/16 - 12:57:05 | SYSTEM | Channel #301 pending video tasks: 2 
+2026-11-16T12:57:05.6302535Z [INFO] 2026/11/16 - 12:57:05 | SYSTEM | Channel #302 pending video tasks: 2 
+2026-11-16T12:57:05.7305307Z [ERR] 2026/11/16 - 12:57:05 | SYSTEM | Channel #301 failed to update video async tasks: context deadline exceeded 
+2026-11-16T12:57:05.7308453Z --- PASS: TestUpdateVideoTasksMixedChannelSleepSettings (0.10s)
+2026-11-16T12:57:05.7327280Z PASS
+2026-11-16T12:57:05.7343394Z ok  	github.com/QuantumNous/new-api/service	1.146s
+2026-11-16T12:57:16.7845420Z === RUN   TestRequestPolicyUpstreamHTTPFailover
+2026-11-16T12:57:16.7868548Z [SYS] 2026/11/16 - 12:57:16 | SQL_DSN not set, using SQLite as database 
+2026-11-16T12:57:16.7876139Z 
+2026-11-16T12:57:16.7877780Z 2026/11/16 12:57:16 [31;1m/home/runner/work/new-api/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+2026-11-16T12:57:16.7878874Z [0m[33m[0.154ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+2026-11-16T12:57:16.7879772Z [SYS] 2026/11/16 - 12:57:16 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+2026-11-16T12:57:16.8099725Z === RUN   TestRequestPolicyUpstreamHTTPFailover/structured_removed_model
+2026-11-16T12:57:16.8124169Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:16.8125132Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:16.8125737Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:16.8126053Z 
+2026-11-16T12:57:16.8127102Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:16.8134282Z [INFO] 2026/11/16 - 12:57:16 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:16.8142236Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | channel error (channel #1, status code: 404): status_code=404, Model gpt-6-astra is not supported by any configured account in this group 
+2026-11-16T12:57:16.8185297Z === RUN   TestRequestPolicyUpstreamHTTPFailover/structured_disabled_upstream_group
+2026-11-16T12:57:16.8206745Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:16.8207541Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:16.8208411Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:16.8208783Z 
+2026-11-16T12:57:16.8209541Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:16.8215443Z [INFO] 2026/11/16 - 12:57:16 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:16.8220498Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | channel error (channel #3, status code: 403): status_code=403, API Key 所属分组已停用 
+2026-11-16T12:57:16.8252111Z === RUN   TestRequestPolicyUpstreamHTTPFailover/plain_removed_model
+2026-11-16T12:57:16.8275245Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:16.8276067Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:16.8276815Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:16.8277247Z 
+2026-11-16T12:57:16.8277975Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:16.8284635Z [INFO] 2026/11/16 - 12:57:16 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:16.8286230Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | bad response status code 404, body: Model gpt-6-astra is not supported 
+2026-11-16T12:57:16.8287460Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | channel error (channel #5, status code: 404): status_code=404, bad response status code 404 
+2026-11-16T12:57:16.8320349Z === RUN   TestRequestPolicyUpstreamHTTPFailover/plain_disabled_upstream_group
+2026-11-16T12:57:16.8341888Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:16.8346009Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:16.8346551Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:16.8346924Z 
+2026-11-16T12:57:16.8347733Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:16.8353684Z [INFO] 2026/11/16 - 12:57:16 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:16.8355992Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | bad response status code 403, body: API Key 所属分组已停用 
+2026-11-16T12:57:16.8356834Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | channel error (channel #7, status code: 403): status_code=403, bad response status code 403 
+2026-11-16T12:57:16.8387154Z === RUN   TestRequestPolicyUpstreamHTTPFailover/gateway_timeout
+2026-11-16T12:57:16.8407388Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:16.8408145Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:16.8408721Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:16.8409078Z 
+2026-11-16T12:57:16.8409899Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:16.8413370Z [INFO] 2026/11/16 - 12:57:16 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:16.8418407Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | bad response status code 504, body: upstream timed out 
+2026-11-16T12:57:16.8419278Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | channel error (channel #9, status code: 504): status_code=504, bad response status code 504 
+2026-11-16T12:57:16.8449209Z === RUN   TestRequestPolicyUpstreamHTTPFailover/cloudflare_timeout
+2026-11-16T12:57:16.8468731Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:16.8469391Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:16.8470284Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:16.8474668Z 
+2026-11-16T12:57:16.8475875Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:16.8477266Z [INFO] 2026/11/16 - 12:57:16 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:16.8479186Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | bad response status code 524, body: a timeout occurred 
+2026-11-16T12:57:16.8480172Z [ERR] 2026/11/16 - 12:57:16 | SYSTEM | channel error (channel #11, status code: 524): status_code=524, bad response status code 524 
+2026-11-16T12:57:16.8512169Z === RUN   TestRequestPolicyUpstreamHTTPFailover/first_body_byte_timeout
+2026-11-16T12:57:16.8624899Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:16.8625356Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:16.8625699Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:16.8625895Z 
+2026-11-16T12:57:16.8626330Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:16.8631714Z [INFO] 2026/11/16 - 12:57:16 | SYSTEM | user 5062001 needs pre-consume ＄0.000002 (funding=wallet) 
+2026-11-16T12:57:17.8650153Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | do request failed: Post "http://127.0.0.1:41143/v1/responses": upstream first response body byte timed out 
+2026-11-16T12:57:17.8651196Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | channel error (channel #13, status code: 504): status_code=504, upstream first response body byte timed out 
+2026-11-16T12:57:17.8686406Z [INFO] 2026/11/16 - 12:57:17 | SYSTEM | pre-consumed quota matches the actual quota, no adjustment: ＄0.000002 (per-request billing) 
+2026-11-16T12:57:17.8687260Z [SYS] 2026/11/16 - 12:57:17 | failed to send quota notify to user 5062001: notification limit exceeded for user 5062001 with type email 
+2026-11-16T12:57:17.8691767Z [INFO] 2026/11/16 - 12:57:17 | SYSTEM | record consume log: userId=5062001, params={"channel_id":14,"prompt_tokens":1,"completion_tokens":1,"model_name":"upstream-failover-test","token_name":"","quota":1,"content":null,"token_id":1,"use_time_seconds":1,"is_stream":false,"group":"default","other":{"admin_info":{"request_policy":[{"attempt":1,"channel_id":13,"group":"default","elapsed_ms":0,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":13,"group":"default","status":504,"error_code":"upstream_first_byte_timeout","error_source":"upstream","elapsed_ms":1002,"decision":{"action":"failure","reason":"upstream_failure","source":"upstream"}},{"attempt":1,"channel_id":13,"group":"default","status":504,"error_code":"upstream_first_byte_timeout","error_source":"upstream","elapsed_ms":1002,"decision":{"action":"retry","reason":"upstream_first_byte_timeout","source":"system"},"health":"unchanged"},{"attempt":1,"channel_id":14,"group":"default","elapsed_ms":1002,"decision":{"action":"select","reason":"avoid_failed_channels","source":"routing"}},{"attempt":2,"channel_id":14,"group":"default","elapsed_ms":1002,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":2,"channel_id":14,"group":"default","elapsed_ms":1005,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["13","14"]},"billing_preference":"wallet_only","billing_source":"wallet","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"frt":-1000,"group_ratio":1,"model_price":0.000002,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","user_group_ratio":-1}} 
+2026-11-16T12:57:17.8718930Z === RUN   TestRequestPolicyUpstreamHTTPFailover/exhaustion_retains_upstream_error
+2026-11-16T12:57:17.8740716Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8741568Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8742115Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8742414Z 
+2026-11-16T12:57:17.8742960Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:17.8748920Z [INFO] 2026/11/16 - 12:57:17 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:17.8753795Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | channel error (channel #15, status code: 403): status_code=403, API Key 所属分组已停用 
+2026-11-16T12:57:17.8762114Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | channel error (channel #16, status code: 404): status_code=404, last upstream model removed 
+2026-11-16T12:57:17.8764283Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | No available channel for model upstream-failover-test under group default (retry) 
+2026-11-16T12:57:17.8765007Z [INFO] 2026/11/16 - 12:57:17 | SYSTEM | retry: 15->16 
+2026-11-16T12:57:17.8765525Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | relay error: last upstream model removed 
+2026-11-16T12:57:17.8786291Z === RUN   TestRequestPolicyUpstreamHTTPFailover/saved_zero_budget
+2026-11-16T12:57:17.8806643Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8807569Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8807933Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8808156Z 
+2026-11-16T12:57:17.8808579Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:17.8812779Z [INFO] 2026/11/16 - 12:57:17 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:17.8836076Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | channel error (channel #17, status code: 404): status_code=404, model removed 
+2026-11-16T12:57:17.8837051Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | relay error: model removed 
+2026-11-16T12:57:17.8856646Z === RUN   TestRequestPolicyUpstreamHTTPFailover/pinned_channel
+2026-11-16T12:57:17.8877358Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8877847Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8878212Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8878398Z 
+2026-11-16T12:57:17.8878806Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:17.8881593Z [INFO] 2026/11/16 - 12:57:17 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:17.8885901Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | channel error (channel #19, status code: 403): status_code=403, group disabled 
+2026-11-16T12:57:17.8886484Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | relay error: group disabled 
+2026-11-16T12:57:17.8908741Z === RUN   TestRequestPolicyUpstreamHTTPFailover/strict_session
+2026-11-16T12:57:17.8930315Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8930898Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8931224Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8931434Z 
+2026-11-16T12:57:17.8931859Z [GIN-debug] POST   /v1/responses             --> github.com/QuantumNous/new-api/controller.TestRequestPolicyUpstreamHTTPFailover.func2.6 (4 handlers)
+2026-11-16T12:57:17.8936990Z [INFO] 2026/11/16 - 12:57:17 | SYSTEM | model upstream-failover-test is free, skipping pre-consume 
+2026-11-16T12:57:17.8940727Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | channel error (channel #21, status code: 404): status_code=404, model removed 
+2026-11-16T12:57:17.8941321Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | relay error: model removed 
+2026-11-16T12:57:17.8971873Z --- PASS: TestRequestPolicyUpstreamHTTPFailover (1.11s)
+2026-11-16T12:57:17.8972480Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/structured_removed_model (0.01s)
+2026-11-16T12:57:17.8973545Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/structured_disabled_upstream_group (0.01s)
+2026-11-16T12:57:17.8974256Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/plain_removed_model (0.01s)
+2026-11-16T12:57:17.8975113Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/plain_disabled_upstream_group (0.01s)
+2026-11-16T12:57:17.8975833Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/gateway_timeout (0.01s)
+2026-11-16T12:57:17.8976573Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/cloudflare_timeout (0.01s)
+2026-11-16T12:57:17.8977209Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/first_body_byte_timeout (1.02s)
+2026-11-16T12:57:17.8977777Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/exhaustion_retains_upstream_error (0.01s)
+2026-11-16T12:57:17.8978412Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/saved_zero_budget (0.01s)
+2026-11-16T12:57:17.8978912Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/pinned_channel (0.01s)
+2026-11-16T12:57:17.8979421Z     --- PASS: TestRequestPolicyUpstreamHTTPFailover/strict_session (0.01s)
+2026-11-16T12:57:17.8979867Z === RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries
+2026-11-16T12:57:17.8980342Z === RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries/caller_canceled
+2026-11-16T12:57:17.8980848Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8981236Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8981589Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8981757Z 
+2026-11-16T12:57:17.8981998Z === RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries/response_started
+2026-11-16T12:57:17.8982473Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8982864Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8983185Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8983381Z 
+2026-11-16T12:57:17.8983703Z === RUN   TestRequestPolicyParsedUpstreamErrorStopBoundaries/local_forbidden_is_not_an_upstream_failure
+2026-11-16T12:57:17.8984351Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8985008Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8985315Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8985507Z 
+2026-11-16T12:57:17.8985722Z --- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries (0.00s)
+2026-11-16T12:57:17.8986318Z     --- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries/caller_canceled (0.00s)
+2026-11-16T12:57:17.8986940Z     --- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries/response_started (0.00s)
+2026-11-16T12:57:17.8987640Z     --- PASS: TestRequestPolicyParsedUpstreamErrorStopBoundaries/local_forbidden_is_not_an_upstream_failure (0.00s)
+2026-11-16T12:57:17.8988203Z === RUN   TestRequestPolicyConfigReturnsSettingsWithoutMigration
+2026-11-16T12:57:17.8988695Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.8989086Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.8989386Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.8989576Z 
+2026-11-16T12:57:17.8989787Z --- PASS: TestRequestPolicyConfigReturnsSettingsWithoutMigration (0.00s)
+2026-11-16T12:57:17.8990225Z === RUN   TestRequestPolicyRoutingDatabaseMatrix
+2026-11-16T12:57:17.8990610Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite
+2026-11-16T12:57:17.9046231Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=inherit
+2026-11-16T12:57:17.9048639Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9049222Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9049609Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9049880Z 
+2026-11-16T12:57:17.9050259Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9050891Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9051250Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9051523Z 
+2026-11-16T12:57:17.9051751Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9052509Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=strict
+2026-11-16T12:57:17.9053227Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9053701Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9054195Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9054413Z 
+2026-11-16T12:57:17.9054692Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9055337Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9055739Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9055940Z 
+2026-11-16T12:57:17.9056151Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9056764Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=inherit
+2026-11-16T12:57:17.9057510Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9058037Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9058440Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9058681Z 
+2026-11-16T12:57:17.9058934Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9059431Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9059745Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9059914Z 
+2026-11-16T12:57:17.9061177Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=prefer
+2026-11-16T12:57:17.9062557Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9063146Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9063565Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9063826Z 
+2026-11-16T12:57:17.9064039Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9064470Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9064892Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9065094Z 
+2026-11-16T12:57:17.9066484Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=inherit
+2026-11-16T12:57:17.9068691Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9069266Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9069827Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9070073Z 
+2026-11-16T12:57:17.9070359Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9070884Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9071244Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9071440Z 
+2026-11-16T12:57:17.9071629Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9072224Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=strict
+2026-11-16T12:57:17.9072829Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9073273Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9073675Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9073879Z 
+2026-11-16T12:57:17.9074149Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9074650Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9075143Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9075318Z 
+2026-11-16T12:57:17.9075553Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9076212Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=inherit
+2026-11-16T12:57:17.9076916Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9077408Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9077725Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9077914Z 
+2026-11-16T12:57:17.9078135Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9078540Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9078830Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9079030Z 
+2026-11-16T12:57:17.9080172Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=prefer
+2026-11-16T12:57:17.9081973Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9082510Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9082876Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9083050Z 
+2026-11-16T12:57:17.9083283Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9083660Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9083997Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9084157Z 
+2026-11-16T12:57:17.9086315Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=inherit
+2026-11-16T12:57:17.9087442Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9088182Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9088781Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9089229Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9089502Z 
+2026-11-16T12:57:17.9089803Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9090444Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9090876Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9091166Z 
+2026-11-16T12:57:17.9091425Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9092271Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=strict
+2026-11-16T12:57:17.9092949Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9093552Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9094281Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9094882Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9095192Z 
+2026-11-16T12:57:17.9095523Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9096061Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9096552Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9096794Z 
+2026-11-16T12:57:17.9097131Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9097860Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=inherit
+2026-11-16T12:57:17.9098661Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9099211Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9099780Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9100199Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9100439Z 
+2026-11-16T12:57:17.9100782Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9101329Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9101715Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9102017Z 
+2026-11-16T12:57:17.9102687Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=prefer
+2026-11-16T12:57:17.9103424Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9104036Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9104918Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9105465Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9105714Z 
+2026-11-16T12:57:17.9106030Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9106579Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9107062Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9107298Z 
+2026-11-16T12:57:17.9107736Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=inherit
+2026-11-16T12:57:17.9108601Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9109228Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9109809Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9110286Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9110556Z 
+2026-11-16T12:57:17.9110860Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9111510Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9111942Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9112178Z 
+2026-11-16T12:57:17.9112481Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9113213Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=strict
+2026-11-16T12:57:17.9113913Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9114568Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9115347Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9115807Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9116022Z 
+2026-11-16T12:57:17.9116310Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9116789Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9117238Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9117455Z 
+2026-11-16T12:57:17.9117667Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9118296Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=inherit
+2026-11-16T12:57:17.9119028Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9119502Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9119909Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9120253Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9120492Z 
+2026-11-16T12:57:17.9120750Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9121185Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9121545Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9121800Z 
+2026-11-16T12:57:17.9122147Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=prefer
+2026-11-16T12:57:17.9122663Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9123206Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9123595Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9123944Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9124154Z 
+2026-11-16T12:57:17.9124382Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9124965Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9125505Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9125759Z 
+2026-11-16T12:57:17.9125958Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql
+2026-11-16T12:57:17.9141467Z     channel_pin_retry_test.go:517: isolated database: newapi_audit_1794833837911528523 (mysql)
+2026-11-16T12:57:17.9307464Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=strict/rule=inherit
+2026-11-16T12:57:17.9312633Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9313097Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9313471Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9313708Z 
+2026-11-16T12:57:17.9313936Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9314431Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9314906Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9315136Z 
+2026-11-16T12:57:17.9316187Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9316824Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=prefer/rule=strict
+2026-11-16T12:57:17.9320057Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9320678Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9321180Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9321354Z 
+2026-11-16T12:57:17.9321584Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9322038Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9322360Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9322642Z 
+2026-11-16T12:57:17.9323126Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9323779Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=prefer/rule=inherit
+2026-11-16T12:57:17.9328521Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9329245Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9329682Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9329921Z 
+2026-11-16T12:57:17.9330142Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9330621Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9330934Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9331154Z 
+2026-11-16T12:57:17.9341358Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=strict/rule=prefer
+2026-11-16T12:57:17.9346695Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9347302Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9347684Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9347921Z 
+2026-11-16T12:57:17.9348154Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9348645Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9348975Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9349181Z 
+2026-11-16T12:57:17.9360018Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=strict/rule=inherit
+2026-11-16T12:57:17.9365669Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9366094Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9366569Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9366771Z 
+2026-11-16T12:57:17.9367001Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9367496Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9367799Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9368003Z 
+2026-11-16T12:57:17.9369435Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9370406Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=prefer/rule=strict
+2026-11-16T12:57:17.9373387Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9374199Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9374624Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9374969Z 
+2026-11-16T12:57:17.9375307Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9375833Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9376234Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9376501Z 
+2026-11-16T12:57:17.9377816Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9378513Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=prefer/rule=inherit
+2026-11-16T12:57:17.9383376Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9383866Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9384203Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9384506Z 
+2026-11-16T12:57:17.9384864Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9385313Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9385651Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9385878Z 
+2026-11-16T12:57:17.9393899Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=strict/rule=prefer
+2026-11-16T12:57:17.9398848Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9399295Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9399596Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9399823Z 
+2026-11-16T12:57:17.9400031Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9400456Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9400868Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9401073Z 
+2026-11-16T12:57:17.9412526Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=strict/rule=inherit
+2026-11-16T12:57:17.9416483Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9417627Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9418339Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9418820Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9418995Z 
+2026-11-16T12:57:17.9419328Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9419871Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9420461Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9420693Z 
+2026-11-16T12:57:17.9420979Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9421728Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=prefer/rule=strict
+2026-11-16T12:57:17.9424592Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9425351Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9425885Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9426238Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9426451Z 
+2026-11-16T12:57:17.9426684Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9427181Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9427781Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9427980Z 
+2026-11-16T12:57:17.9428186Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9429085Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=prefer/rule=inherit
+2026-11-16T12:57:17.9431760Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9432449Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9433327Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9433763Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9433953Z 
+2026-11-16T12:57:17.9434217Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9434889Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9435306Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9435557Z 
+2026-11-16T12:57:17.9435874Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=strict/rule=prefer
+2026-11-16T12:57:17.9438774Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9439401Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9439898Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9440303Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9440530Z 
+2026-11-16T12:57:17.9440813Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9441219Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9441599Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9441796Z 
+2026-11-16T12:57:17.9442125Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=strict/rule=inherit
+2026-11-16T12:57:17.9446549Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9447123Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9447777Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9448138Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9448373Z 
+2026-11-16T12:57:17.9448612Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9449062Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9449380Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9449587Z 
+2026-11-16T12:57:17.9449844Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9450647Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=prefer/rule=strict
+2026-11-16T12:57:17.9452949Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9453757Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9454552Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9455127Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9455324Z 
+2026-11-16T12:57:17.9455561Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9456026Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9456425Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9456634Z 
+2026-11-16T12:57:17.9456910Z [ERR] 2026/11/16 - 12:57:17 | SYSTEM | user 0 | strict_session_binding_unavailable 
+2026-11-16T12:57:17.9457504Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=prefer/rule=inherit
+2026-11-16T12:57:17.9460461Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9461027Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9461641Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9462007Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9462320Z 
+2026-11-16T12:57:17.9462577Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9463075Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9463662Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9463882Z 
+2026-11-16T12:57:17.9464204Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=strict/rule=prefer
+2026-11-16T12:57:17.9468008Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9468652Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9469154Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9469537Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9469747Z 
+2026-11-16T12:57:17.9470030Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9470528Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9470958Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9471179Z 
+2026-11-16T12:57:17.9471414Z === RUN   TestRequestPolicyRoutingDatabaseMatrix/postgres
+2026-11-16T12:57:17.9471875Z     channel_pin_retry_test.go:517: 
+2026-11-16T12:57:17.9472609Z         	Error Trace:	/home/runner/work/new-api/new-api/controller/access_token_audit_test.go:863
+2026-11-16T12:57:17.9473651Z         	            				/home/runner/work/new-api/new-api/controller/channel_pin_retry_test.go:262
+2026-11-16T12:57:17.9474692Z         	            				/home/runner/work/new-api/new-api/controller/channel_pin_retry_test.go:517
+2026-11-16T12:57:17.9475480Z         	Error:      	Should be true
+2026-11-16T12:57:17.9476079Z         	Test:       	TestRequestPolicyRoutingDatabaseMatrix/postgres
+2026-11-16T12:57:17.9476724Z         	Messages:   	database tests only permit loopback instances
+2026-11-16T12:57:17.9477273Z --- FAIL: TestRequestPolicyRoutingDatabaseMatrix (0.05s)
+2026-11-16T12:57:17.9477791Z     --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite (0.01s)
+2026-11-16T12:57:17.9478530Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9479380Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9480348Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9481442Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=false/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9482341Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9483220Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9484294Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9485568Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=false/keep=true/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9486731Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9487850Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9488878Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9489746Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=false/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9490600Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9491413Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9492167Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9493078Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/sqlite/cache=true/keep=true/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9493640Z     --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql (0.04s)
+2026-11-16T12:57:17.9494571Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9495527Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9496461Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9497254Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=false/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9498021Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9498851Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9499734Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9500543Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=false/keep=true/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9501420Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9502196Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9503135Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9503954Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=false/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9504862Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=strict/rule=inherit (0.00s)
+2026-11-16T12:57:17.9505634Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=prefer/rule=strict (0.00s)
+2026-11-16T12:57:17.9506498Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=prefer/rule=inherit (0.00s)
+2026-11-16T12:57:17.9507324Z         --- PASS: TestRequestPolicyRoutingDatabaseMatrix/mysql/cache=true/keep=true/global=strict/rule=prefer (0.00s)
+2026-11-16T12:57:17.9507914Z     --- FAIL: TestRequestPolicyRoutingDatabaseMatrix/postgres (0.00s)
+2026-11-16T12:57:17.9508359Z === RUN   TestAffinityFailoverDatabaseMatrix
+2026-11-16T12:57:17.9508751Z === RUN   TestAffinityFailoverDatabaseMatrix/sqlite
+2026-11-16T12:57:17.9557303Z === RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/http
+2026-11-16T12:57:17.9559391Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9559898Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9560235Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9560430Z 
+2026-11-16T12:57:17.9560650Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9561040Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9561375Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9561595Z 
+2026-11-16T12:57:17.9562251Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9562744Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9563100Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9563277Z 
+2026-11-16T12:57:17.9566110Z === RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/task
+2026-11-16T12:57:17.9567756Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9568355Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9568665Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9568856Z 
+2026-11-16T12:57:17.9569035Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9569464Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9569914Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9570065Z 
+2026-11-16T12:57:17.9570658Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9571027Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9571345Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9571515Z 
+2026-11-16T12:57:17.9574034Z === RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/websocket
+2026-11-16T12:57:17.9575928Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9576393Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9576721Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9576904Z 
+2026-11-16T12:57:17.9577114Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9577510Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9577827Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9578003Z 
+2026-11-16T12:57:17.9578981Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9579383Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9579725Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9579891Z 
+2026-11-16T12:57:17.9582274Z === RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/http
+2026-11-16T12:57:17.9584304Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9584935Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9585409Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9585818Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9586056Z 
+2026-11-16T12:57:17.9586331Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9586755Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9587076Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9587268Z 
+2026-11-16T12:57:17.9587452Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9587977Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9588333Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9588577Z 
+2026-11-16T12:57:17.9588817Z === RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/task
+2026-11-16T12:57:17.9589295Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9589739Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9590130Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9590488Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9590725Z 
+2026-11-16T12:57:17.9591009Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9591473Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9591774Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9591976Z 
+2026-11-16T12:57:17.9592169Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9592592Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9592928Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9593172Z 
+2026-11-16T12:57:17.9593402Z === RUN   TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/websocket
+2026-11-16T12:57:17.9593932Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9594374Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9595083Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9595534Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9595761Z 
+2026-11-16T12:57:17.9596043Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9596536Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9597000Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9597247Z 
+2026-11-16T12:57:17.9597490Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9597982Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9598346Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9598584Z 
+2026-11-16T12:57:17.9598764Z === RUN   TestAffinityFailoverDatabaseMatrix/mysql
+2026-11-16T12:57:17.9614674Z     channel_pin_retry_test.go:609: isolated database: newapi_audit_1794833837959305805 (mysql)
+2026-11-16T12:57:17.9805058Z === RUN   TestAffinityFailoverDatabaseMatrix/mysql/cached=false/http
+2026-11-16T12:57:17.9809473Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9810079Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9810486Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9810754Z 
+2026-11-16T12:57:17.9811026Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9811494Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9811874Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9812110Z 
+2026-11-16T12:57:17.9822599Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9823301Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9823705Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9824061Z 
+2026-11-16T12:57:17.9832734Z === RUN   TestAffinityFailoverDatabaseMatrix/mysql/cached=false/task
+2026-11-16T12:57:17.9838670Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9839382Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9839708Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9839943Z 
+2026-11-16T12:57:17.9840212Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9840658Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9841024Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9841291Z 
+2026-11-16T12:57:17.9850331Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9850767Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9851236Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9851437Z 
+2026-11-16T12:57:17.9862368Z === RUN   TestAffinityFailoverDatabaseMatrix/mysql/cached=false/websocket
+2026-11-16T12:57:17.9870699Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9871577Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9872164Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9872522Z 
+2026-11-16T12:57:17.9873094Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9873845Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9874472Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9874995Z 
+2026-11-16T12:57:17.9892085Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9892721Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9893280Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9893604Z 
+2026-11-16T12:57:17.9905833Z === RUN   TestAffinityFailoverDatabaseMatrix/mysql/cached=true/http
+2026-11-16T12:57:17.9912373Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9913024Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9913741Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9914168Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9914429Z 
+2026-11-16T12:57:17.9914914Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9915546Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9915899Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9916121Z 
+2026-11-16T12:57:17.9916433Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9916908Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9917240Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9917473Z 
+2026-11-16T12:57:17.9917695Z === RUN   TestAffinityFailoverDatabaseMatrix/mysql/cached=true/task
+2026-11-16T12:57:17.9918876Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9919408Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9919898Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9920256Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9920531Z 
+2026-11-16T12:57:17.9920769Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9921275Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9921702Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9921947Z 
+2026-11-16T12:57:17.9922259Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9922753Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9923146Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9923357Z 
+2026-11-16T12:57:17.9923621Z === RUN   TestAffinityFailoverDatabaseMatrix/mysql/cached=true/websocket
+2026-11-16T12:57:17.9927343Z [SYS] 2026/11/16 - 12:57:17 | channels synced from database 
+2026-11-16T12:57:17.9927951Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9928583Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9929037Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9929281Z 
+2026-11-16T12:57:17.9934893Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9935477Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9935877Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9936082Z 
+2026-11-16T12:57:17.9936295Z [GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+2026-11-16T12:57:17.9936816Z  - using env:	export GIN_MODE=release
+2026-11-16T12:57:17.9937130Z  - using code:	gin.SetMode(gin.ReleaseMode)
+2026-11-16T12:57:17.9937366Z 
+2026-11-16T12:57:17.9937519Z === RUN   TestAffinityFailoverDatabaseMatrix/postgres
+2026-11-16T12:57:17.9937887Z     channel_pin_retry_test.go:609: 
+2026-11-16T12:57:17.9938864Z         	Error Trace:	/home/runner/work/new-api/new-api/controller/access_token_audit_test.go:863
+2026-11-16T12:57:17.9939776Z         	            				/home/runner/work/new-api/new-api/controller/channel_pin_retry_test.go:262
+2026-11-16T12:57:17.9940650Z         	            				/home/runner/work/new-api/new-api/controller/channel_pin_retry_test.go:609
+2026-11-16T12:57:17.9941125Z         	Error:      	Should be true
+2026-11-16T12:57:17.9941531Z         	Test:       	TestAffinityFailoverDatabaseMatrix/postgres
+2026-11-16T12:57:17.9942074Z         	Messages:   	database tests only permit loopback instances
+2026-11-16T12:57:17.9942444Z --- FAIL: TestAffinityFailoverDatabaseMatrix (0.05s)
+2026-11-16T12:57:17.9942995Z     --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite (0.01s)
+2026-11-16T12:57:17.9943577Z         --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/http (0.00s)
+2026-11-16T12:57:17.9944161Z         --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/task (0.00s)
+2026-11-16T12:57:17.9944937Z         --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=false/websocket (0.00s)
+2026-11-16T12:57:17.9945708Z         --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/http (0.00s)
+2026-11-16T12:57:17.9946294Z         --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/task (0.00s)
+2026-11-16T12:57:17.9946951Z         --- PASS: TestAffinityFailoverDatabaseMatrix/sqlite/cached=true/websocket (0.00s)
+2026-11-16T12:57:17.9947530Z     --- PASS: TestAffinityFailoverDatabaseMatrix/mysql (0.03s)
+2026-11-16T12:57:17.9948099Z         --- PASS: TestAffinityFailoverDatabaseMatrix/mysql/cached=false/http (0.00s)
+2026-11-16T12:57:17.9948690Z         --- PASS: TestAffinityFailoverDatabaseMatrix/mysql/cached=false/task (0.00s)
+2026-11-16T12:57:17.9949309Z         --- PASS: TestAffinityFailoverDatabaseMatrix/mysql/cached=false/websocket (0.00s)
+2026-11-16T12:57:17.9949920Z         --- PASS: TestAffinityFailoverDatabaseMatrix/mysql/cached=true/http (0.00s)
+2026-11-16T12:57:17.9950538Z         --- PASS: TestAffinityFailoverDatabaseMatrix/mysql/cached=true/task (0.00s)
+2026-11-16T12:57:17.9951156Z         --- PASS: TestAffinityFailoverDatabaseMatrix/mysql/cached=true/websocket (0.00s)
+2026-11-16T12:57:17.9951675Z     --- FAIL: TestAffinityFailoverDatabaseMatrix/postgres (0.00s)
+2026-11-16T12:57:17.9952117Z === RUN   TestCopyChannelRejectsInvalidLegacyProxySettings
+2026-11-16T12:57:17.9952550Z [SYS] 2026/11/16 - 12:57:17 | SQL_DSN not set, using SQLite as database 
+2026-11-16T12:57:17.9952794Z 
+2026-11-16T12:57:17.9953417Z 2026/11/16 12:57:17 [31;1m/home/runner/work/new-api/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+2026-11-16T12:57:17.9954062Z [0m[33m[0.102ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+2026-11-16T12:57:17.9954600Z [SYS] 2026/11/16 - 12:57:17 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+2026-11-16T12:57:17.9965123Z [SYS] 2026/11/16 - 12:57:17 | failed to validate cloned channel: invalid channel proxy: proxy URL must not include a path 
+2026-11-16T12:57:17.9966349Z --- PASS: TestCopyChannelRejectsInvalidLegacyProxySettings (0.00s)
+2026-11-16T12:57:17.9967931Z === RUN   TestRunChannelTestWorkersHonorsConfiguredConcurrency
+2026-11-16T12:57:17.9968717Z --- PASS: TestRunChannelTestWorkersHonorsConfiguredConcurrency (0.00s)
+2026-11-16T12:57:17.9986069Z === RUN   TestChannelCapacityStreamsRouteAroundFullChannelAndRelease
+2026-11-16T12:57:17.9986721Z [SYS] 2026/11/16 - 12:57:17 | SQL_DSN not set, using SQLite as database 
+2026-11-16T12:57:17.9990806Z 
+2026-11-16T12:57:17.9991774Z 2026/11/16 12:57:17 [31;1m/home/runner/work/new-api/new-api/model/user_access_token.go:307 [35;1msqlite error 1
+2026-11-16T12:57:17.9992433Z [0m[33m[0.075ms] [34;1m[rows:0][0m INSERT INTO `options` (`key`,`value`) VALUES (?,?) ON CONFLICT DO NOTHING
+2026-11-16T12:57:17.9992997Z [SYS] 2026/11/16 - 12:57:17 | initialize legacy access token deadline: SQL logic error: no such table: options (1) 
+2026-11-16T12:57:18.0393799Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | stream ended: reason=eof 
+2026-11-16T12:57:18.0395528Z [ERR] 2026/11/16 - 12:57:18 | responses-http-billing | total tokens is 0, cannot consume quota, userId 5062002, channelId 2, tokenId 1, model ws-billing， pre-consumed quota 0 
+2026-11-16T12:57:18.0396872Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | pre-consumed quota matches the actual quota, no adjustment: ＄0.000000 (per-request billing) 
+2026-11-16T12:57:18.0401935Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | record consume log: userId=5062002, params={"channel_id":2,"prompt_tokens":0,"completion_tokens":0,"model_name":"ws-billing","token_name":"","quota":0,"content":[{"key":"Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"}],"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":0,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","status":429,"error_code":"channel_capacity_saturated","error_source":"local","elapsed_ms":1,"decision":{"action":"select","reason":"channel_capacity_saturated","source":"capacity"},"health":"unchanged"},{"attempt":1,"channel_id":2,"group":"default","elapsed_ms":1,"decision":{"action":"select","reason":"avoid_failed_channels","source":"routing"}},{"attempt":2,"channel_id":2,"group":"default","elapsed_ms":1,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":2,"channel_id":2,"group":"default","elapsed_ms":2,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["2"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cCAqIDA=","frt":2,"group_ratio":1,"matched_tier":"","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_reason":"eof","response_status":"completed","status":"ok"},"user_group_ratio":-1}} 
+2026-11-16T12:57:18.0438359Z [ERR] 2026/11/16 - 12:57:18 | responses-http-billing | All eligible channels are at their concurrent request limit. Please retry later. 
+2026-11-16T12:57:18.0439359Z [ERR] 2026/11/16 - 12:57:18 | responses-http-billing | relay error: All eligible channels are at their concurrent request limit. Please retry later. 
+2026-11-16T12:57:18.0440298Z [ERR] 2026/11/16 - 12:57:18 | responses-http-billing | scanner error: context canceled 
+2026-11-16T12:57:18.0441084Z [ERR] 2026/11/16 - 12:57:18 | responses-http-billing | stream ended: reason=scanner_error end_error="context canceled", received=1 
+2026-11-16T12:57:18.0442480Z [ERR] 2026/11/16 - 12:57:18 | responses-http-billing | total tokens is 0, cannot consume quota, userId 5062002, channelId 1, tokenId 1, model ws-billing， pre-consumed quota 0 
+2026-11-16T12:57:18.0443759Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | pre-consumed quota matches the actual quota, no adjustment: ＄0.000000 (per-request billing) 
+2026-11-16T12:57:18.0447796Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | record consume log: userId=5062002, params={"channel_id":1,"prompt_tokens":0,"completion_tokens":0,"model_name":"ws-billing","token_name":"","quota":0,"content":[{"key":"Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"}],"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":0,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":1,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":11,"decision":{"action":"stop","reason":"client_cancelled","source":"system"}}],"usage_billing_path":"upstream","use_channel":["1"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cCAqIDA=","frt":2,"group_ratio":1,"is_model_mapped":true,"matched_tier":"","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_error":"context canceled","end_reason":"scanner_error","status":"error"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+2026-11-16T12:57:18.0451593Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | stream ended: reason=eof 
+2026-11-16T12:57:18.0452615Z [ERR] 2026/11/16 - 12:57:18 | responses-http-billing | total tokens is 0, cannot consume quota, userId 5062002, channelId 1, tokenId 1, model ws-billing， pre-consumed quota 0 
+2026-11-16T12:57:18.0453660Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | pre-consumed quota matches the actual quota, no adjustment: ＄0.000000 (per-request billing) 
+2026-11-16T12:57:18.0457591Z [INFO] 2026/11/16 - 12:57:18 | responses-http-billing | record consume log: userId=5062002, params={"channel_id":1,"prompt_tokens":0,"completion_tokens":0,"model_name":"ws-billing","token_name":"","quota":0,"content":[{"key":"Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"}],"token_id":1,"use_time_seconds":0,"is_stream":true,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":1,"request_policy":[{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":0,"decision":{"action":"attempt","reason":"channel_selected","source":"routing"}},{"attempt":1,"channel_id":1,"group":"default","elapsed_ms":10,"decision":{"action":"success","reason":"request_completed","source":"upstream"}}],"usage_billing_path":"upstream","use_channel":["1"]},"billing_mode":"tiered_expr","billing_preference":"wallet_only","billing_source":"wallet","billing_unit":"token","cache_ratio":0,"cache_tokens":0,"completion_ratio":0,"expr_b64":"cCAqIDA=","frt":1,"group_ratio":1,"is_model_mapped":true,"matched_tier":"","model_price":0,"model_ratio":0,"request_conversion":["OpenAI Responses"],"request_path":"/v1/responses","stream_status":{"end_reason":"eof","response_status":"completed","status":"ok"},"upstream_model_name":"gpt-4o","user_group_ratio":-1}} 
+2026-11-16T12:57:18.0508748Z --- PASS: TestChannelCapacityStreamsRouteAroundFullChannelAndRelease (0.05s)
+2026-11-16T12:57:18.0549040Z FAIL
+2026-11-16T12:57:18.0571164Z FAIL	github.com/QuantumNous/new-api/controller	1.335s
+2026-11-16T12:57:18.0617770Z FAIL
+2026-11-16T12:57:18.1168104Z ##[error]Process completed with exit code 1.
+2026-11-16T12:57:18.1386815Z Post job cleanup.
+2026-11-16T12:57:18.2010075Z [command]/usr/bin/git version
+2026-11-16T12:57:18.2040042Z git version 2.56.1
+2026-11-16T12:57:18.2062936Z Temporarily overriding HOME='/home/runner/work/_temp/c6774941-8bad-41e3-95b2-52016620eabc' before making global git config changes
+2026-11-16T12:57:18.2063966Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-16T12:57:18.2065954Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/new-api/new-api
+2026-11-16T12:57:18.2089600Z Removing SSH command configuration
+2026-11-16T12:57:18.2093742Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-16T12:57:18.2117732Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-16T12:57:18.2336661Z Removing HTTP extra header
+2026-11-16T12:57:18.2340665Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-16T12:57:18.2363445Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-16T12:57:18.2628292Z Removing includeIf entries pointing to credentials config files
+2026-11-16T12:57:18.2656782Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-16T12:57:18.2667657Z includeif.gitdir:/home/runner/work/new-api/new-api/.git.path
+2026-11-16T12:57:18.2668356Z includeif.gitdir:/home/runner/work/new-api/new-api/.git/worktrees/*.path
+2026-11-16T12:57:18.2668924Z includeif.gitdir:/github/workspace/.git.path
+2026-11-16T12:57:18.2669418Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-16T12:57:18.2674047Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/new-api/new-api/.git.path
+2026-11-16T12:57:18.2690314Z /home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2698029Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/new-api/new-api/.git.path /home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2729293Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/new-api/new-api/.git/worktrees/*.path
+2026-11-16T12:57:18.2762093Z /home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2765893Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/new-api/new-api/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2788693Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-11-16T12:57:18.2804427Z /github/runner_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2809774Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2830951Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-16T12:57:18.2845458Z /github/runner_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2851046Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config
+2026-11-16T12:57:18.2872531Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-16T12:57:18.3042423Z Removing credentials config '/home/runner/work/_temp/git-credentials-7e01d2bc-a10c-4055-807a-bba5b06dfe64.config'
+2026-11-16T12:57:18.3118708Z Print service container logs: 45c3d5fa00be43ebbe33db23e28e3a8e_mysql84_706f6c
+2026-11-16T12:57:18.3121965Z ##[command]/usr/bin/docker logs --details d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:57:18.3225825Z  2026-11-16 12:56:12+00:00 [Note] [Entrypoint]: Entrypoint script for MySQL Server 8.4.13-1.el9 started.
+2026-11-16T12:57:18.3227289Z  2026-11-16T12:56:12.531992Z 0 [System] [MY-015017] [Server] MySQL Server Initialization - start.
+2026-11-16T12:57:18.3228288Z  2026-11-16T12:56:12.532880Z 0 [System] [MY-013169] [Server] /usr/sbin/mysqld (mysqld 8.4.13) initializing of server in progress as process 80
+2026-11-16T12:57:18.3228806Z  2026-11-16 12:56:12+00:00 [Note] [Entrypoint]: Switching to dedicated user 'mysql'
+2026-11-16T12:57:18.3229225Z  2026-11-16T12:56:12.532882Z 0 [System] [MY-015150] [Server] Server version with update: '8.4.13.0'
+2026-11-16T12:57:18.3229678Z  2026-11-16T12:56:12.536069Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-11-16T12:57:18.3230083Z  2026-11-16T12:56:12.686814Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-11-16T12:57:18.3230786Z  2026-11-16T12:56:13.296300Z 6 [Warning] [MY-010453] [Server] root@localhost is created with an empty password ! Please consider switching off the --initialize-insecure option.
+2026-11-16T12:57:18.3231475Z  2026-11-16T12:56:14.613406Z 0 [System] [MY-015018] [Server] MySQL Server Initialization - end.
+2026-11-16T12:57:18.3231861Z  2026-11-16T12:56:14.641460Z 0 [System] [MY-015015] [Server] MySQL Server - start.
+2026-11-16T12:57:18.3232289Z  2026-11-16T12:56:14.866249Z 0 [System] [MY-010116] [Server] /usr/sbin/mysqld (mysqld 8.4.13) starting as process 121
+2026-11-16T12:57:18.3232739Z  2026-11-16T12:56:14.866255Z 0 [System] [MY-015150] [Server] Server version with update: '8.4.13.0'
+2026-11-16T12:57:18.3233154Z  2026-11-16T12:56:14.879146Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-11-16T12:57:18.3233549Z  2026-11-16T12:56:15.000433Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-11-16T12:57:18.3233942Z  2026-11-16T12:56:15.238335Z 0 [Warning] [MY-010068] [Server] CA certificate ca.pem is self signed.
+2026-11-16T12:57:18.3234494Z  2026-11-16T12:56:15.238358Z 0 [System] [MY-013602] [Server] Channel mysql_main configured to support TLS. Encrypted connections are now supported for this channel.
+2026-11-16T12:57:18.3235594Z  2026-11-16T12:56:15.239553Z 0 [Warning] [MY-011810] [Server] Insecure configuration for --pid-file: Location '/var/run/mysqld' in the path is accessible to all OS users. Consider choosing a different directory.
+2026-11-16T12:57:18.3236870Z  2026-11-16T12:56:15.254437Z 0 [System] [MY-011323] [Server] X Plugin ready for connections. Socket: /var/run/mysqld/mysqlx.sock
+2026-11-16T12:57:18.3237929Z  2026-11-16T12:56:15.254460Z 0 [System] [MY-010931] [Server] /usr/sbin/mysqld: ready for connections. Version: '8.4.13'  socket: '/var/run/mysqld/mysqld.sock'  port: 0  MySQL Community Server - GPL.
+2026-11-16T12:57:18.3238918Z  2026-11-16T12:56:16.178530Z 11 [System] [MY-013172] [Server] Received SHUTDOWN from user root. Shutting down mysqld (Version: 8.4.13).
+2026-11-16T12:57:18.3239746Z  2026-11-16T12:56:17.603209Z 0 [System] [MY-010910] [Server] /usr/sbin/mysqld: Shutdown complete (mysqld 8.4.13)  MySQL Community Server - GPL.
+2026-11-16T12:57:18.3240405Z  2026-11-16T12:56:17.603223Z 0 [System] [MY-015016] [Server] MySQL Server - end.
+2026-11-16T12:57:18.3240928Z  2026-11-16T12:56:18.191704Z 0 [System] [MY-015015] [Server] MySQL Server - start.
+2026-11-16T12:57:18.3241515Z  2026-11-16T12:56:18.407021Z 0 [System] [MY-010116] [Server] /usr/sbin/mysqld (mysqld 8.4.13) starting as process 1
+2026-11-16T12:57:18.3242190Z  2026-11-16T12:56:18.407025Z 0 [System] [MY-015150] [Server] Server version with update: '8.4.13.0'
+2026-11-16T12:57:18.3242787Z  2026-11-16T12:56:18.410844Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-11-16T12:57:18.3243710Z  2026-11-16T12:56:18.516821Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-11-16T12:57:18.3244854Z  2026-11-16T12:56:18.659047Z 0 [Warning] [MY-010068] [Server] CA certificate ca.pem is self signed.
+2026-11-16T12:57:18.3245595Z  2026-11-16T12:56:18.659067Z 0 [System] [MY-013602] [Server] Channel mysql_main configured to support TLS. Encrypted connections are now supported for this channel.
+2026-11-16T12:57:18.3246539Z  2026-11-16T12:56:18.660074Z 0 [Warning] [MY-011810] [Server] Insecure configuration for --pid-file: Location '/var/run/mysqld' in the path is accessible to all OS users. Consider choosing a different directory.
+2026-11-16T12:57:18.3247487Z  2026-11-16T12:56:18.673287Z 0 [System] [MY-011323] [Server] X Plugin ready for connections. Bind-address: '::' port: 33060, socket: /var/run/mysqld/mysqlx.sock
+2026-11-16T12:57:18.3248263Z  2026-11-16T12:56:18.673317Z 0 [System] [MY-010931] [Server] /usr/sbin/mysqld: ready for connections. Version: '8.4.13'  socket: '/var/run/mysqld/mysqld.sock'  port: 3306  MySQL Community Server - GPL.
+2026-11-16T12:57:18.3248932Z  2026-11-16 12:56:12+00:00 [Note] [Entrypoint]: Entrypoint script for MySQL Server 8.4.13-1.el9 started.
+2026-11-16T12:57:18.3249319Z  2026-11-16 12:56:12+00:00 [Note] [Entrypoint]: Initializing database files
+2026-11-16T12:57:18.3249641Z  2026-11-16 12:56:14+00:00 [Note] [Entrypoint]: Database files initialized
+2026-11-16T12:57:18.3249965Z  2026-11-16 12:56:14+00:00 [Note] [Entrypoint]: Starting temporary server
+2026-11-16T12:57:18.3250277Z  2026-11-16 12:56:15+00:00 [Note] [Entrypoint]: Temporary server started.
+2026-11-16T12:57:18.3250587Z  '/var/lib/mysql/mysql.sock' -> '/var/run/mysqld/mysqld.sock'
+2026-11-16T12:57:18.3250911Z  2026-11-16 12:56:16+00:00 [Note] [Entrypoint]: Creating database relay_policy
+2026-11-16T12:57:18.3251169Z  
+2026-11-16T12:57:18.3251369Z  2026-11-16 12:56:16+00:00 [Note] [Entrypoint]: Stopping temporary server
+2026-11-16T12:57:18.3251677Z  2026-11-16 12:56:18+00:00 [Note] [Entrypoint]: Temporary server stopped
+2026-11-16T12:57:18.3251927Z  
+2026-11-16T12:57:18.3252163Z  2026-11-16 12:56:18+00:00 [Note] [Entrypoint]: MySQL init process done. Ready for start up.
+2026-11-16T12:57:18.3252456Z  
+2026-11-16T12:57:18.3256711Z Stop and remove container: 45c3d5fa00be43ebbe33db23e28e3a8e_mysql84_706f6c
+2026-11-16T12:57:18.3260131Z ##[command]/usr/bin/docker rm --force d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:57:18.5206919Z d626ea8a53d1b40f93b53bada39d54eab7819f1783b69d5d505d69df7656ec6f
+2026-11-16T12:57:18.5221232Z Print service container logs: c2291a226615417593bdbba6c65d29b8_postgres16_a0657c
+2026-11-16T12:57:18.5222147Z ##[command]/usr/bin/docker logs --details f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:57:18.5323142Z  initdb: warning: enabling "trust" authentication for local connections
+2026-11-16T12:57:18.5323856Z  initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+2026-11-16T12:57:18.5324428Z  The files belonging to this database system will be owned by user "postgres".
+2026-11-16T12:57:18.5324895Z  This user must also own the server process.
+2026-11-16T12:57:18.5325121Z  
+2026-11-16T12:57:18.5325340Z  The database cluster will be initialized with locale "en_US.utf8".
+2026-11-16T12:57:18.5325671Z  The default database encoding has accordingly been set to "UTF8".
+2026-11-16T12:57:18.5325990Z  The default text search configuration will be set to "english".
+2026-11-16T12:57:18.5326247Z  
+2026-11-16T12:57:18.5326411Z  Data page checksums are disabled.
+2026-11-16T12:57:18.5326599Z  
+2026-11-16T12:57:18.5326820Z  fixing permissions on existing directory /var/lib/postgresql/data ... ok
+2026-11-16T12:57:18.5327113Z  creating subdirectories ... ok
+2026-11-16T12:57:18.5327363Z  selecting dynamic shared memory implementation ... posix
+2026-11-16T12:57:18.5327624Z  selecting default max_connections ... 100
+2026-11-16T12:57:18.5327849Z  selecting default shared_buffers ... 128MB
+2026-11-16T12:57:18.5328266Z  selecting default time zone ... Etc/UTC
+2026-11-16T12:57:18.5328495Z  creating configuration files ... ok
+2026-11-16T12:57:18.5328712Z  running bootstrap script ... ok
+2026-11-16T12:57:18.5328953Z  performing post-bootstrap initialization ... ok
+2026-11-16T12:57:18.5329196Z  syncing data to disk ... ok
+2026-11-16T12:57:18.5329383Z  
+2026-11-16T12:57:18.5329524Z  
+2026-11-16T12:57:18.5329716Z  Success. You can now start the database server using:
+2026-11-16T12:57:18.5330009Z  
+2026-11-16T12:57:18.5330427Z  2026-11-16 12:56:17.183 UTC [1] LOG:  starting PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-16T12:57:18.5330935Z  2026-11-16 12:56:17.184 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-11-16T12:57:18.5331275Z  2026-11-16 12:56:17.184 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-11-16T12:57:18.5331655Z  2026-11-16 12:56:17.184 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-16T12:57:18.5332062Z  2026-11-16 12:56:17.186 UTC [64] LOG:  database system was shut down at 2026-11-16 12:56:17 UTC
+2026-11-16T12:57:18.5332475Z  2026-11-16 12:56:17.189 UTC [1] LOG:  database system is ready to accept connections
+2026-11-16T12:57:18.5332790Z      pg_ctl -D /var/lib/postgresql/data -l logfile start
+2026-11-16T12:57:18.5333023Z  
+2026-11-16T12:57:18.5333456Z  waiting for server to start....2026-11-16 12:56:16.903 UTC [48] LOG:  starting PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-11-16T12:57:18.5334136Z  2026-11-16 12:56:16.904 UTC [48] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-11-16T12:57:18.5334555Z  2026-11-16 12:56:16.906 UTC [51] LOG:  database system was shut down at 2026-11-16 12:56:16 UTC
+2026-11-16T12:57:18.5335118Z  2026-11-16 12:56:16.908 UTC [48] LOG:  database system is ready to accept connections
+2026-11-16T12:57:18.5335408Z   done
+2026-11-16T12:57:18.5335573Z  server started
+2026-11-16T12:57:18.5335742Z  CREATE DATABASE
+2026-11-16T12:57:18.5335901Z  
+2026-11-16T12:57:18.5336050Z  
+2026-11-16T12:57:18.5336299Z  /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+2026-11-16T12:57:18.5336598Z  
+2026-11-16T12:57:18.5336866Z  waiting for server to shut down...2026-11-16 12:56:17.068 UTC [48] LOG:  received fast shutdown request
+2026-11-16T12:57:18.5337234Z  .2026-11-16 12:56:17.068 UTC [48] LOG:  aborting any active transactions
+2026-11-16T12:57:18.5337738Z  2026-11-16 12:56:17.070 UTC [48] LOG:  background worker "logical replication launcher" (PID 54) exited with exit code 1
+2026-11-16T12:57:18.5338130Z  2026-11-16 12:56:17.071 UTC [49] LOG:  shutting down
+2026-11-16T12:57:18.5338418Z  2026-11-16 12:56:17.071 UTC [49] LOG:  checkpoint starting: shutdown immediate
+2026-11-16T12:57:18.5339161Z  2026-11-16 12:56:17.085 UTC [49] LOG:  checkpoint complete: wrote 935 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.013 s, sync=0.001 s, total=0.014 s; sync files=301, longest=0.001 s, average=0.001 s; distance=4346 kB, estimate=4346 kB; lsn=0/1943060, redo lsn=0/1943060
+2026-11-16T12:57:18.5339896Z  2026-11-16 12:56:17.088 UTC [48] LOG:  database system is shut down
+2026-11-16T12:57:18.5340125Z   done
+2026-11-16T12:57:18.5340272Z  server stopped
+2026-11-16T12:57:18.5340432Z  
+2026-11-16T12:57:18.5340614Z  PostgreSQL init process complete; ready for start up.
+2026-11-16T12:57:18.5340870Z  
+2026-11-16T12:57:18.5350330Z Stop and remove container: c2291a226615417593bdbba6c65d29b8_postgres16_a0657c
+2026-11-16T12:57:18.5351008Z ##[command]/usr/bin/docker rm --force f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:57:18.6315755Z f672f7593a03ada952d908f0c8ae8f238301e023c6c0d0354512368b47e6f16e
+2026-11-16T12:57:18.6327499Z Print service container logs: 1b7631f16419465fa795cf5a87a474d3_redis74_693b0d
+2026-11-16T12:57:18.6328202Z ##[command]/usr/bin/docker logs --details 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:57:18.6426312Z  1:C 16 Nov 2026 12:56:18.026 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+2026-11-16T12:57:18.6427518Z  1:C 16 Nov 2026 12:56:18.026 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+2026-11-16T12:57:18.6427911Z  1:C 16 Nov 2026 12:56:18.026 * Redis version=7.4.12, bits=64, commit=00000000, modified=0, pid=1, just started
+2026-11-16T12:57:18.6428474Z  1:C 16 Nov 2026 12:56:18.026 # Warning: no config file specified, using the default config. In order to specify a config file use redis-server /path/to/redis.conf
+2026-11-16T12:57:18.6428973Z  1:M 16 Nov 2026 12:56:18.026 * monotonic clock: POSIX clock_gettime
+2026-11-16T12:57:18.6429268Z  1:M 16 Nov 2026 12:56:18.027 * Running mode=standalone, port=6379.
+2026-11-16T12:57:18.6429536Z  1:M 16 Nov 2026 12:56:18.027 * Server initialized
+2026-11-16T12:57:18.6429809Z  1:M 16 Nov 2026 12:56:18.027 * Ready to accept connections tcp
+2026-11-16T12:57:18.6438074Z Stop and remove container: 1b7631f16419465fa795cf5a87a474d3_redis74_693b0d
+2026-11-16T12:57:18.6438615Z ##[command]/usr/bin/docker rm --force 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:57:18.7347397Z 374a09865ed556a2e9d02486b8b004502221b5dd89f912f2172295a587b20892
+2026-11-16T12:57:18.7372503Z Remove container network: github_network_9be34d00d58f444c8a35e89602a6824f
+2026-11-16T12:57:18.7376292Z ##[command]/usr/bin/docker network rm github_network_9be34d00d58f444c8a35e89602a6824f
+2026-11-16T12:57:18.8122288Z github_network_9be34d00d58f444c8a35e89602a6824f
+2026-11-16T12:57:18.8189412Z Cleaning up orphan processes
