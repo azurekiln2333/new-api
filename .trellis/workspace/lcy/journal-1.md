@@ -93,3 +93,25 @@ Implemented whole-channel concurrency, inherited/custom first-byte timeout and f
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Finish Herdr Claude workspace merge
+<!-- trellis-session: v=2 fp=be4b8d9fdcf3bb05 -->
+
+**Date**: 2026-11-18
+**Task**: Finish Herdr Claude workspace merge
+**Branch**: `merge/upstream`
+
+### Summary
+
+Read Herdr workspace w4C Claude pane w4C:pV, resolved all outstanding merge conflicts, repaired the channel form parser error, passed frontend production build and lint, documented unavailable Go/Vitest/database checks, committed and pushed merge/upstream, and pushed custom-20261118-9b21c12.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b21c12d2` | chore: resolve workspace merge and complete pending changes |
+
+### Status
+
+[OK] **Completed**
