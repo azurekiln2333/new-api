@@ -53,6 +53,7 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   frequency_penalty: 0,
   presence_penalty: 0,
   seed: null,
+  reasoning_effort: 'medium',
   stream: true,
 }
 
@@ -63,6 +64,9 @@ export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
   frequency_penalty: true,
   presence_penalty: true,
   seed: false,
+  // Sending an effort to models that do not support it is rejected upstream,
+  // so only an explicit opt-in adds it to the request.
+  reasoning_effort: false,
 }
 
 // Storage keys

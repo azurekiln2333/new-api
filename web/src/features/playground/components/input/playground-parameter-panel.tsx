@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { PromptInputButton } from '@/components/ai-elements/prompt-input'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import {
   Popover,
   PopoverContent,
@@ -46,9 +47,11 @@ import { cn } from '@/lib/utils'
 
 import {
   getParameterControlValueText,
+  isReasoningEffort,
   normalizeParameterNumberValue,
   PLAYGROUND_PARAMETER_CONTROLS,
   PLAYGROUND_PARAMETER_PANEL_SCROLL_CLASS,
+  REASONING_EFFORT_OPTIONS,
   type PlaygroundParameterKey,
 } from '../../lib/parameters/playground-parameters'
 import type { ParameterEnabled, PlaygroundConfig } from '../../types'
@@ -148,7 +151,7 @@ function PlaygroundParameterContent({
               />
             </div>
 
-            {control.valueType === 'slider' ? (
+            {control.valueType === 'slider' && (
               <Slider
                 className='py-1.5'
                 disabled={disabled || !enabled}
@@ -167,7 +170,9 @@ function PlaygroundParameterContent({
                 step={control.step}
                 value={[Number(value)]}
               />
-            ) : (
+            )}
+
+            {control.valueType === 'number' && (
               <Input
                 disabled={disabled || !enabled}
                 id={controlId}
@@ -187,6 +192,25 @@ function PlaygroundParameterContent({
                 type='number'
                 value={value ?? ''}
               />
+            )}
+
+            {control.valueType === 'select' && (
+              <NativeSelect
+                className='w-full'
+                disabled={disabled || !enabled}
+                id={controlId}
+                onChange={(event) => {
+                  if (!isReasoningEffort(event.target.value)) return
+                  onConfigChange('reasoning_effort', event.target.value)
+                }}
+                value={String(value)}
+              >
+                {REASONING_EFFORT_OPTIONS.map((option) => (
+                  <NativeSelectOption key={option.value} value={option.value}>
+                    {t(option.labelKey)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
             )}
           </div>
         )

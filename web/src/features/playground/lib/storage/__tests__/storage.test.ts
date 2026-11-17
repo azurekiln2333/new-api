@@ -22,6 +22,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { STORAGE_KEYS } from '../../../constants'
 import type { Message } from '../../../types'
+import { getInitialParameterEnabled } from '../../state/playground-state-utils'
 import {
   clearPlaygroundData,
   loadConfig,
@@ -106,4 +107,28 @@ test('storage calls without a signed-in user do not persist shared data', () => 
   expect(loadMessages()).toBeNull()
   expect(loadParameterEnabled()).toEqual({})
   expect(localStorage.length).toBe(0)
+})
+
+test('a stored config without reasoning effort loads the default while a saved value is restored', () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'A', role: 1 })
+  localStorage.setItem(
+    `${STORAGE_KEYS.CONFIG}:1`,
+    JSON.stringify({
+      version: 1,
+      data: { model: 'legacy-model', temperature: 0.4 },
+    })
+  )
+  localStorage.setItem(
+    `${STORAGE_KEYS.PARAMETER_ENABLED}:1`,
+    JSON.stringify({ version: 1, data: { seed: true } })
+  )
+
+  expect(loadConfig().reasoning_effort).toBeUndefined()
+  expect(loadParameterEnabled().reasoning_effort).toBeUndefined()
+  expect(getInitialParameterEnabled().reasoning_effort).toBe(false)
+
+  saveConfig({ model: 'legacy-model', reasoning_effort: 'high' })
+  saveParameterEnabled({ reasoning_effort: true })
+  expect(loadConfig().reasoning_effort).toBe('high')
+  expect(loadParameterEnabled().reasoning_effort).toBe(true)
 })

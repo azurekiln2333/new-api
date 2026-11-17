@@ -76,6 +76,7 @@ export interface ChatCompletionRequest {
   frequency_penalty?: number
   presence_penalty?: number
   seed?: number
+  reasoning_effort?: ReasoningEffort
 }
 
 export interface ChatCompletionChunk {
@@ -118,6 +119,15 @@ export interface ChatCompletionResponse {
 }
 
 // Configuration types
+/** Values accepted by the OpenAI-compatible `reasoning_effort` field. */
+export type ReasoningEffort =
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+
 export interface PlaygroundConfig {
   model: string
   group: string
@@ -127,6 +137,7 @@ export interface PlaygroundConfig {
   frequency_penalty: number
   presence_penalty: number
   seed: number | null
+  reasoning_effort: ReasoningEffort
   stream: boolean
 }
 
@@ -137,6 +148,7 @@ export interface ParameterEnabled {
   frequency_penalty: boolean
   presence_penalty: boolean
   seed: boolean
+  reasoning_effort: boolean
 }
 
 // Model and group options

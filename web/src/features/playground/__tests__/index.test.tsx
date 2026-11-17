@@ -66,6 +66,7 @@ const chatState = {
     frequency_penalty: 0,
     presence_penalty: 0,
     seed: null,
+    reasoning_effort: 'medium',
     stream: true,
   },
   parameterEnabled: {
@@ -75,6 +76,7 @@ const chatState = {
     frequency_penalty: true,
     presence_penalty: true,
     seed: false,
+    reasoning_effort: false,
   },
   conversations: [] as PlaygroundConversation[],
   projects: [] as PlaygroundProject[],

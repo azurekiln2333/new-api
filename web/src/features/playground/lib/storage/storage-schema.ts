@@ -18,6 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import { REASONING_EFFORT_OPTIONS } from '../parameters/playground-parameters'
+
+const reasoningEffortSchema = z.enum(
+  REASONING_EFFORT_OPTIONS.map((option) => option.value)
+)
+
 export const STORAGE_VERSION = 1
 export const MAX_STORED_MESSAGES = 100
 export const MAX_STORED_MESSAGES_BYTES = 1024 * 1024
@@ -35,6 +41,9 @@ export const playgroundConfigSchema = z.object({
   frequency_penalty: z.number().optional(),
   presence_penalty: z.number().optional(),
   seed: z.number().nullable().optional(),
+  // Configs written before this field existed simply omit it, and the loader
+  // falls back to the default value.
+  reasoning_effort: reasoningEffortSchema.optional(),
   stream: z.boolean().optional(),
 })
 
@@ -45,6 +54,7 @@ export const parameterEnabledSchema = z.object({
   frequency_penalty: z.boolean().optional(),
   presence_penalty: z.boolean().optional(),
   seed: z.boolean().optional(),
+  reasoning_effort: z.boolean().optional(),
 })
 
 const messageRoleSchema = z.enum(['user', 'assistant', 'system'])
