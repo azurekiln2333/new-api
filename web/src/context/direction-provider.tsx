@@ -19,6 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { DirectionProvider as BaseDirectionProvider } from '@base-ui/react/direction-provider'
 import { createContext, useContext, useEffect, useState } from 'react'
 
+import {
+  useCanEditGlobalTheme,
+  useGlobalTheme,
+  useUpdateGlobalTheme,
+} from '@/hooks/use-global-theme'
 import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
 
 export type Direction = 'ltr' | 'rtl'
@@ -37,23 +42,31 @@ type DirectionContextType = {
 const DirectionContext = createContext<DirectionContextType | null>(null)
 
 export function DirectionProvider({ children }: { children: React.ReactNode }) {
-  const [dir, _setDir] = useState<Direction>(
+  const [dirValue, _setDir] = useState<Direction>(
     () => (getCookie(DIRECTION_COOKIE_NAME) as Direction) || DEFAULT_DIRECTION
   )
+
+  // An administrator-wide direction wins over the local cookie.
+  const globalTheme = useGlobalTheme()
+  const canEditGlobalTheme = useCanEditGlobalTheme()
+  const updateGlobalTheme = useUpdateGlobalTheme()
+  const dir = globalTheme.dir ?? dirValue
 
   useEffect(() => {
     const htmlElement = document.documentElement
     htmlElement.setAttribute('dir', dir)
   }, [dir])
 
-  const setDir = (dir: Direction) => {
-    _setDir(dir)
-    setCookie(DIRECTION_COOKIE_NAME, dir, DIRECTION_COOKIE_MAX_AGE)
+  const setDir = (nextDir: Direction) => {
+    _setDir(nextDir)
+    setCookie(DIRECTION_COOKIE_NAME, nextDir, DIRECTION_COOKIE_MAX_AGE)
+    if (canEditGlobalTheme) updateGlobalTheme({ dir: nextDir })
   }
 
   const resetDir = () => {
     _setDir(DEFAULT_DIRECTION)
     removeCookie(DIRECTION_COOKIE_NAME)
+    if (canEditGlobalTheme) updateGlobalTheme({ dir: DEFAULT_DIRECTION })
   }
 
   return (

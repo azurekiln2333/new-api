@@ -18,6 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createContext, useContext, useState } from 'react'
 
+import {
+  useCanEditGlobalTheme,
+  useGlobalTheme,
+  useUpdateGlobalTheme,
+} from '@/hooks/use-global-theme'
 import { getCookie, setCookie } from '@/lib/cookies'
 
 export type Collapsible = 'offcanvas' | 'icon' | 'none'
@@ -51,15 +56,24 @@ type LayoutProviderProps = {
 }
 
 export function LayoutProvider({ children }: LayoutProviderProps) {
-  const [collapsible, _setCollapsible] = useState<Collapsible>(() => {
+  const [collapsibleValue, _setCollapsible] = useState<Collapsible>(() => {
     const saved = getCookie(LAYOUT_COLLAPSIBLE_COOKIE_NAME)
     return (saved as Collapsible) || DEFAULT_COLLAPSIBLE
   })
 
-  const [variant, _setVariant] = useState<Variant>(() => {
+  const [variantValue, _setVariant] = useState<Variant>(() => {
     const saved = getCookie(LAYOUT_VARIANT_COOKIE_NAME)
     return (saved as Variant) || DEFAULT_VARIANT
   })
+
+  // An administrator-wide layout wins over the local cookie; unset fields keep
+  // the user's own choice.
+  const globalTheme = useGlobalTheme()
+  const canEditGlobalTheme = useCanEditGlobalTheme()
+  const updateGlobalTheme = useUpdateGlobalTheme()
+
+  const collapsible = globalTheme.collapsible ?? collapsibleValue
+  const variant = globalTheme.sidebarVariant ?? variantValue
 
   const setCollapsible = (newCollapsible: Collapsible) => {
     _setCollapsible(newCollapsible)
@@ -68,11 +82,13 @@ export function LayoutProvider({ children }: LayoutProviderProps) {
       newCollapsible,
       LAYOUT_COOKIE_MAX_AGE
     )
+    if (canEditGlobalTheme) updateGlobalTheme({ collapsible: newCollapsible })
   }
 
   const setVariant = (newVariant: Variant) => {
     _setVariant(newVariant)
     setCookie(LAYOUT_VARIANT_COOKIE_NAME, newVariant, LAYOUT_COOKIE_MAX_AGE)
+    if (canEditGlobalTheme) updateGlobalTheme({ sidebarVariant: newVariant })
   }
 
   const resetLayout = () => {

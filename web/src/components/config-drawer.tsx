@@ -52,6 +52,7 @@ import { useDirection } from '@/context/direction-provider'
 import { type Collapsible, useLayout } from '@/context/layout-provider'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useTheme } from '@/context/theme-provider'
+import { useCanEditGlobalTheme } from '@/hooks/use-global-theme'
 import {
   type ContentLayout,
   resolveThemeFont,
@@ -68,6 +69,17 @@ import { useSidebar } from './ui/sidebar'
 const Item = RadioPrimitive.Root
 
 export function ConfigDrawer() {
+  // Every control in this drawer writes the administrator-wide theme, which
+  // only a root user may change (`PUT /api/option/` is root-only). Gating here
+  // rather than at each call site keeps the rule with the component that
+  // depends on it, so no caller can render it by mistake. The early return also
+  // keeps the body's sidebar/layout context requirements out of non-root pages.
+  const canEditGlobalTheme = useCanEditGlobalTheme()
+  if (!canEditGlobalTheme) return null
+  return <ConfigDrawerBody />
+}
+
+function ConfigDrawerBody() {
   const { t } = useTranslation()
   const { setOpen } = useSidebar()
   const { resetDir } = useDirection()

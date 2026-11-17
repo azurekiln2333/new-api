@@ -26,6 +26,11 @@ import {
 } from 'react'
 
 import {
+  useCanEditGlobalTheme,
+  useGlobalTheme,
+  useUpdateGlobalTheme,
+} from '@/hooks/use-global-theme'
+import {
   readThemePreference,
   THEME_STORAGE_KEYS,
   writeThemePreference,
@@ -78,9 +83,17 @@ export function ThemeProvider({
   storageKey = THEME_STORAGE_KEYS.mode,
   ...props
 }: ThemeProviderProps) {
-  const [theme, _setTheme] = useState<Theme>(() =>
+  const [themeValue, _setTheme] = useState<Theme>(() =>
     readThemePreference(storageKey, THEMES, defaultTheme)
   )
+
+  // An administrator-wide mode wins over the local preference; when the
+  // administrator leaves it unset, the user's own choice applies.
+  const globalTheme = useGlobalTheme()
+  const canEditGlobalTheme = useCanEditGlobalTheme()
+  const updateGlobalTheme = useUpdateGlobalTheme()
+  const theme = globalTheme.mode ?? themeValue
+
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
     resolveTheme(theme)
   )
@@ -104,17 +117,19 @@ export function ThemeProvider({
   }, [theme])
 
   const setTheme = useCallback(
-    (theme: Theme) => {
-      writeThemePreference(storageKey, theme)
-      _setTheme(theme)
+    (nextTheme: Theme) => {
+      writeThemePreference(storageKey, nextTheme)
+      _setTheme(nextTheme)
+      if (canEditGlobalTheme) updateGlobalTheme({ mode: nextTheme })
     },
-    [storageKey]
+    [canEditGlobalTheme, storageKey, updateGlobalTheme]
   )
 
   const resetTheme = useCallback(() => {
     writeThemePreference(storageKey, null)
     _setTheme(defaultTheme)
-  }, [defaultTheme, storageKey])
+    if (canEditGlobalTheme) updateGlobalTheme({ mode: defaultTheme })
+  }, [canEditGlobalTheme, defaultTheme, storageKey, updateGlobalTheme])
 
   const contextValue = useMemo(
     () => ({

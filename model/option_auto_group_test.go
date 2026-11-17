@@ -15,3 +15,26 @@ func TestValidateOptionValueRejectsInvalidMaxTokenAutoGroups(t *testing.T) {
 	}
 	require.NoError(t, validateOptionValue("MaxTokenAutoGroups", "999999"))
 }
+
+func TestValidateOptionValueRequiresJSONObjectThemeSettings(t *testing.T) {
+	// Empty means "no global theme", so it must stay accepted.
+	require.NoError(t, validateOptionValue("ThemeSettings", ""))
+	require.NoError(t, validateOptionValue("ThemeSettings", "   "))
+
+	for _, value := range []string{
+		`{"mode":"dark","preset":"anthropic"}`,
+		`{}`,
+		`{"radius":"lg"}`,
+	} {
+		t.Run("accepts "+value, func(t *testing.T) {
+			require.NoError(t, validateOptionValue("ThemeSettings", value))
+		})
+	}
+
+	// Anything that is not a JSON object would reach every user's page load.
+	for _, value := range []string{"dark", "[]", `["dark"]`, "null", "42", "{"} {
+		t.Run("rejects "+value, func(t *testing.T) {
+			assert.Error(t, validateOptionValue("ThemeSettings", value))
+		})
+	}
+}

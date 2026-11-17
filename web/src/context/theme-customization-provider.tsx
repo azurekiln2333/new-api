@@ -26,6 +26,11 @@ import {
 } from 'react'
 
 import {
+  useCanEditGlobalTheme,
+  useGlobalTheme,
+  useUpdateGlobalTheme,
+} from '@/hooks/use-global-theme'
+import {
   CONTENT_LAYOUT_VALUES,
   type ContentLayout,
   DEFAULT_THEME_CUSTOMIZATION,
@@ -89,41 +94,53 @@ const ThemeCustomizationContext =
 export function ThemeCustomizationProvider(props: {
   children: React.ReactNode
 }) {
-  const [preset, _setPreset] = useState<ThemePreset>(() =>
+  const [presetValue, _setPreset] = useState<ThemePreset>(() =>
     readThemePreference<ThemePreset>(
       THEME_STORAGE_KEYS.preset,
       THEME_PRESET_VALUES,
       DEFAULT_THEME_CUSTOMIZATION.preset
     )
   )
-  const [font, _setFont] = useState<ThemeFont>(() =>
+  const [fontValue, _setFont] = useState<ThemeFont>(() =>
     readThemePreference<ThemeFont>(
       THEME_STORAGE_KEYS.font,
       THEME_FONT_VALUES,
       DEFAULT_THEME_CUSTOMIZATION.font
     )
   )
-  const [radius, _setRadius] = useState<ThemeRadius>(() =>
+  const [radiusValue, _setRadius] = useState<ThemeRadius>(() =>
     readThemePreference<ThemeRadius>(
       THEME_STORAGE_KEYS.radius,
       THEME_RADIUS_VALUES,
       DEFAULT_THEME_CUSTOMIZATION.radius
     )
   )
-  const [scale, _setScale] = useState<ThemeScale>(() =>
+  const [scaleValue, _setScale] = useState<ThemeScale>(() =>
     readThemePreference<ThemeScale>(
       THEME_STORAGE_KEYS.scale,
       THEME_SCALE_VALUES,
       DEFAULT_THEME_CUSTOMIZATION.scale
     )
   )
-  const [contentLayout, _setContentLayout] = useState<ContentLayout>(() =>
+  const [contentLayoutValue, _setContentLayout] = useState<ContentLayout>(() =>
     readThemePreference<ContentLayout>(
       THEME_STORAGE_KEYS.contentLayout,
       CONTENT_LAYOUT_VALUES,
       DEFAULT_THEME_CUSTOMIZATION.contentLayout
     )
   )
+
+  // An administrator-wide theme wins over the local preference, field by
+  // field: a field the administrator left unset keeps the user's own choice.
+  const globalTheme = useGlobalTheme()
+  const canEditGlobalTheme = useCanEditGlobalTheme()
+  const updateGlobalTheme = useUpdateGlobalTheme()
+
+  const preset = globalTheme.preset ?? presetValue
+  const font = globalTheme.font ?? fontValue
+  const radius = globalTheme.radius ?? radiusValue
+  const scale = globalTheme.scale ?? scaleValue
+  const contentLayout = globalTheme.contentLayout ?? contentLayoutValue
 
   // Mirror state to the <body> via data-* attributes so theme-presets.css can
   // override CSS variables at the right cascade layer.
@@ -158,53 +175,94 @@ export function ThemeCustomizationProvider(props: {
     applyAttribute('data-theme-content-layout', contentLayout)
   }, [contentLayout])
 
-  const setPreset = useCallback((value: ThemePreset) => {
-    _setPreset(value)
-    writeThemePreference(
-      THEME_STORAGE_KEYS.preset,
-      value === DEFAULT_THEME_CUSTOMIZATION.preset ? null : value
-    )
-  }, [])
+  // A root user's edits become the shared theme; everyone else's stay local.
+  // Local state is updated first so the drawer reflects the click before the
+  // status round-trip completes.
+  const setPreset = useCallback(
+    (value: ThemePreset) => {
+      _setPreset(value)
+      writeThemePreference(
+        THEME_STORAGE_KEYS.preset,
+        value === DEFAULT_THEME_CUSTOMIZATION.preset ? null : value
+      )
+      if (canEditGlobalTheme) updateGlobalTheme({ preset: value })
+    },
+    [canEditGlobalTheme, updateGlobalTheme]
+  )
 
-  const setFont = useCallback((value: ThemeFont) => {
-    _setFont(value)
-    writeThemePreference(
-      THEME_STORAGE_KEYS.font,
-      value === DEFAULT_THEME_CUSTOMIZATION.font ? null : value
-    )
-  }, [])
+  const setFont = useCallback(
+    (value: ThemeFont) => {
+      _setFont(value)
+      writeThemePreference(
+        THEME_STORAGE_KEYS.font,
+        value === DEFAULT_THEME_CUSTOMIZATION.font ? null : value
+      )
+      if (canEditGlobalTheme) updateGlobalTheme({ font: value })
+    },
+    [canEditGlobalTheme, updateGlobalTheme]
+  )
 
-  const setRadius = useCallback((value: ThemeRadius) => {
-    _setRadius(value)
-    writeThemePreference(
-      THEME_STORAGE_KEYS.radius,
-      value === DEFAULT_THEME_CUSTOMIZATION.radius ? null : value
-    )
-  }, [])
+  const setRadius = useCallback(
+    (value: ThemeRadius) => {
+      _setRadius(value)
+      writeThemePreference(
+        THEME_STORAGE_KEYS.radius,
+        value === DEFAULT_THEME_CUSTOMIZATION.radius ? null : value
+      )
+      if (canEditGlobalTheme) updateGlobalTheme({ radius: value })
+    },
+    [canEditGlobalTheme, updateGlobalTheme]
+  )
 
-  const setScale = useCallback((value: ThemeScale) => {
-    _setScale(value)
-    writeThemePreference(
-      THEME_STORAGE_KEYS.scale,
-      value === DEFAULT_THEME_CUSTOMIZATION.scale ? null : value
-    )
-  }, [])
+  const setScale = useCallback(
+    (value: ThemeScale) => {
+      _setScale(value)
+      writeThemePreference(
+        THEME_STORAGE_KEYS.scale,
+        value === DEFAULT_THEME_CUSTOMIZATION.scale ? null : value
+      )
+      if (canEditGlobalTheme) updateGlobalTheme({ scale: value })
+    },
+    [canEditGlobalTheme, updateGlobalTheme]
+  )
 
-  const setContentLayout = useCallback((value: ContentLayout) => {
-    _setContentLayout(value)
-    writeThemePreference(
-      THEME_STORAGE_KEYS.contentLayout,
-      value === DEFAULT_THEME_CUSTOMIZATION.contentLayout ? null : value
-    )
-  }, [])
+  const setContentLayout = useCallback(
+    (value: ContentLayout) => {
+      _setContentLayout(value)
+      writeThemePreference(
+        THEME_STORAGE_KEYS.contentLayout,
+        value === DEFAULT_THEME_CUSTOMIZATION.contentLayout ? null : value
+      )
+      if (canEditGlobalTheme) updateGlobalTheme({ contentLayout: value })
+    },
+    [canEditGlobalTheme, updateGlobalTheme]
+  )
 
   const resetCustomization = useCallback(() => {
-    setPreset(DEFAULT_THEME_CUSTOMIZATION.preset)
-    setFont(DEFAULT_THEME_CUSTOMIZATION.font)
-    setRadius(DEFAULT_THEME_CUSTOMIZATION.radius)
-    setScale(DEFAULT_THEME_CUSTOMIZATION.scale)
-    setContentLayout(DEFAULT_THEME_CUSTOMIZATION.contentLayout)
-  }, [setPreset, setFont, setRadius, setScale, setContentLayout])
+    // Reset local state and storage directly instead of calling the setters:
+    // those would each send a separate patch, and concurrent patches merged
+    // from the same snapshot can leave a stale field behind.
+    _setPreset(DEFAULT_THEME_CUSTOMIZATION.preset)
+    _setFont(DEFAULT_THEME_CUSTOMIZATION.font)
+    _setRadius(DEFAULT_THEME_CUSTOMIZATION.radius)
+    _setScale(DEFAULT_THEME_CUSTOMIZATION.scale)
+    _setContentLayout(DEFAULT_THEME_CUSTOMIZATION.contentLayout)
+    writeThemePreference(THEME_STORAGE_KEYS.preset, null)
+    writeThemePreference(THEME_STORAGE_KEYS.font, null)
+    writeThemePreference(THEME_STORAGE_KEYS.radius, null)
+    writeThemePreference(THEME_STORAGE_KEYS.scale, null)
+    writeThemePreference(THEME_STORAGE_KEYS.contentLayout, null)
+
+    if (canEditGlobalTheme) {
+      updateGlobalTheme({
+        preset: DEFAULT_THEME_CUSTOMIZATION.preset,
+        font: DEFAULT_THEME_CUSTOMIZATION.font,
+        radius: DEFAULT_THEME_CUSTOMIZATION.radius,
+        scale: DEFAULT_THEME_CUSTOMIZATION.scale,
+        contentLayout: DEFAULT_THEME_CUSTOMIZATION.contentLayout,
+      })
+    }
+  }, [canEditGlobalTheme, updateGlobalTheme])
 
   const value = useMemo<ThemeCustomizationContextType>(
     () => ({

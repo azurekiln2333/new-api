@@ -178,3 +178,142 @@ export function resolveThemeFont(
   }
   return font
 }
+
+/**
+ * Administrator-wide theme pushed to every visitor through `/api/status`.
+ *
+ * Every field is optional: an absent field means "not set globally", so the
+ * user's own stored preference (or the built-in default) still applies. An
+ * empty object therefore behaves exactly like no global theme, which is why
+ * clearing the setting is just an empty value.
+ */
+export type ThemeSettings = {
+  mode?: 'system' | 'light' | 'dark'
+  preset?: ThemePreset
+  font?: ThemeFont
+  radius?: ThemeRadius
+  scale?: ThemeScale
+  contentLayout?: ContentLayout
+  sidebarVariant?: 'inset' | 'sidebar' | 'floating'
+  collapsible?: 'offcanvas' | 'icon' | 'none'
+  dir?: 'ltr' | 'rtl'
+}
+
+export const THEME_SETTINGS_OPTION_KEY = 'ThemeSettings'
+
+export const THEME_MODE_VALUES: ReadonlySet<'system' | 'light' | 'dark'> =
+  new Set(['system', 'light', 'dark'])
+
+export const SIDEBAR_VARIANT_VALUES: ReadonlySet<
+  NonNullable<ThemeSettings['sidebarVariant']>
+> = new Set(['inset', 'sidebar', 'floating'])
+
+export const COLLAPSIBLE_VALUES: ReadonlySet<
+  NonNullable<ThemeSettings['collapsible']>
+> = new Set(['offcanvas', 'icon', 'none'])
+
+export const DIRECTION_VALUES: ReadonlySet<NonNullable<ThemeSettings['dir']>> =
+  new Set(['ltr', 'rtl'])
+
+/**
+ * Keep only the fields that are present, correctly typed, and legal values.
+ *
+ * The option is free-form JSON written by an administrator, so a stale or
+ * hand-edited value must not reach CSS attributes. Unknown members are dropped
+ * rather than trusted, which also keeps `preset` etc. inside their unions.
+ */
+export function parseThemeSettings(
+  value: string | null | undefined
+): ThemeSettings {
+  if (!value || value.trim() === '') return {}
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return {}
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return {}
+  }
+
+  const raw = parsed as Record<string, unknown>
+  const settings: ThemeSettings = {}
+
+  if (THEME_MODE_VALUES.has(raw.mode as 'system')) {
+    settings.mode = raw.mode as ThemeSettings['mode']
+  }
+  if (THEME_PRESET_VALUES.has(raw.preset as ThemePreset)) {
+    settings.preset = raw.preset as ThemePreset
+  }
+  if (THEME_FONT_VALUES.has(raw.font as ThemeFont)) {
+    settings.font = raw.font as ThemeFont
+  }
+  if (THEME_RADIUS_VALUES.has(raw.radius as ThemeRadius)) {
+    settings.radius = raw.radius as ThemeRadius
+  }
+  if (THEME_SCALE_VALUES.has(raw.scale as ThemeScale)) {
+    settings.scale = raw.scale as ThemeScale
+  }
+  if (CONTENT_LAYOUT_VALUES.has(raw.contentLayout as ContentLayout)) {
+    settings.contentLayout = raw.contentLayout as ContentLayout
+  }
+  if (SIDEBAR_VARIANT_VALUES.has(raw.sidebarVariant as 'inset')) {
+    settings.sidebarVariant =
+      raw.sidebarVariant as ThemeSettings['sidebarVariant']
+  }
+  if (COLLAPSIBLE_VALUES.has(raw.collapsible as 'icon')) {
+    settings.collapsible = raw.collapsible as ThemeSettings['collapsible']
+  }
+  if (DIRECTION_VALUES.has(raw.dir as 'ltr')) {
+    settings.dir = raw.dir as ThemeSettings['dir']
+  }
+
+  return settings
+}
+
+/** Values that mean "nothing set globally" for each field. */
+const THEME_SETTINGS_DEFAULTS = {
+  mode: 'system',
+  preset: 'default',
+  font: 'default',
+  radius: 'default',
+  scale: 'default',
+  contentLayout: 'full',
+  sidebarVariant: 'inset',
+  collapsible: 'icon',
+  dir: 'ltr',
+} as const satisfies ThemeSettings
+
+/**
+ * Serialise a global theme for the option API.
+ *
+ * Fields left at their built-in default are dropped: writing a default is the
+ * same as not setting the field, and dropping it keeps the stored JSON to what
+ * an administrator actually chose. Resetting everything therefore stores an
+ * empty string, which is what "no global theme" means.
+ */
+export function serializeThemeSettings(settings: ThemeSettings): string {
+  const entries = Object.entries(settings).filter(([key, value]) => {
+    if (value === undefined) return false
+    const field = key as keyof typeof THEME_SETTINGS_DEFAULTS
+    return value !== THEME_SETTINGS_DEFAULTS[field]
+  })
+  if (entries.length === 0) return ''
+  return JSON.stringify(Object.fromEntries(entries))
+}
+
+/**
+ * The theme every visitor sees while a global theme is set.
+ *
+ * Stored settings only hold the fields an administrator moved away from the
+ * defaults, so an active global theme fills every other field with its default
+ * rather than letting a visitor's older local choice show through. No stored
+ * field means no global theme, and visitors keep their own preferences.
+ */
+export function resolveGlobalThemeSettings(
+  settings: ThemeSettings
+): ThemeSettings {
+  if (Object.keys(settings).length === 0) return {}
+  return { ...THEME_SETTINGS_DEFAULTS, ...settings }
+}

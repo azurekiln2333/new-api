@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,6 +27,8 @@ import {
 } from '@/context/theme-customization-provider'
 import { ThemeProvider, useTheme } from '@/context/theme-provider'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
+import { useAuthStore } from '@/stores/auth-store'
 
 const savedPreferences = {
   'newapi:theme:v1:mode': 'dark',
@@ -84,13 +87,24 @@ function ThemeControls() {
   )
 }
 
-function ThemeFixture() {
+function ThemeFixture(props: { status?: Record<string, unknown> }) {
+  // The providers read the shared `/api/status` cache, so the fixture supplies
+  // the same QueryClientProvider the app mounts in `main.tsx`.
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(STATUS_QUERY_KEY, {
+    ...props.status,
+  })
+
   return (
-    <ThemeProvider>
-      <ThemeCustomizationProvider>
-        <ThemeControls />
-      </ThemeCustomizationProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={client}>
+      <ThemeProvider>
+        <ThemeCustomizationProvider>
+          <ThemeControls />
+        </ThemeCustomizationProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -102,6 +116,7 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   localStorage.clear()
+  useAuthStore.getState().auth.setUser(null)
   for (const cookie of document.cookie.split(';')) {
     const name = cookie.trim().split('=')[0]
     document.cookie = `${name}=; path=/; max-age=0`
@@ -249,6 +264,83 @@ describe('theme preference persistence', () => {
       expect(localStorage.getItem(key)).toBe(value)
     }
     expect(localStorage.getItem('stale-ui-cache')).toBeNull()
+  })
+})
+
+describe('global theme settings', () => {
+  it('applies the administrator theme over saved local preferences', () => {
+    for (const [key, value] of Object.entries(savedPreferences)) {
+      localStorage.setItem(key, value)
+    }
+
+    render(
+      <ThemeFixture
+        status={{
+          ThemeSettings: JSON.stringify({
+            mode: 'light',
+            preset: 'ocean-breeze',
+            font: 'sans',
+            radius: 'none',
+            scale: 'xl',
+            contentLayout: 'full',
+          }),
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText('Theme mode')).toHaveTextContent('light')
+    expect(document.documentElement).toHaveClass('light')
+    expect(document.body).toHaveAttribute('data-theme-preset', 'ocean-breeze')
+    expect(document.body).toHaveAttribute('data-theme-font', 'sans')
+    expect(document.body).toHaveAttribute('data-theme-content-layout', 'full')
+    // Radius/scale of 'none'/'xl' are non-default, so both land on the body.
+    expect(document.body).toHaveAttribute('data-theme-radius', 'none')
+    expect(document.body).toHaveAttribute('data-theme-scale', 'xl')
+  })
+
+  it('uses the default instead of local preferences for fields an active global theme leaves unset', () => {
+    localStorage.setItem('newapi:theme:v1:preset', 'rose-garden')
+    localStorage.setItem('newapi:theme:v1:font', 'serif')
+
+    render(
+      <ThemeFixture
+        status={{ ThemeSettings: JSON.stringify({ scale: 'lg' }) }}
+      />
+    )
+
+    // Every visitor sees the same theme, so older local choices do not leak in.
+    expect(document.body).not.toHaveAttribute(
+      'data-theme-preset',
+      'rose-garden'
+    )
+    expect(document.body).not.toHaveAttribute('data-theme-font', 'serif')
+    expect(document.body).toHaveAttribute('data-theme-scale', 'lg')
+  })
+
+  it('ignores unusable global theme values instead of applying them', () => {
+    localStorage.setItem('newapi:theme:v1:preset', 'lake-view')
+
+    render(
+      <ThemeFixture
+        status={{
+          ThemeSettings:
+            '{"preset":"not-a-preset","mode":"purple","radius":42}',
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText('Theme mode')).toHaveTextContent('system')
+    expect(document.body).toHaveAttribute('data-theme-preset', 'lake-view')
+    expect(document.body).not.toHaveAttribute('data-theme-radius')
+  })
+
+  it('treats an empty or absent global theme as unset', () => {
+    localStorage.setItem('newapi:theme:v1:preset', 'rose-garden')
+
+    render(<ThemeFixture status={{ ThemeSettings: '' }} />)
+
+    expect(document.body).toHaveAttribute('data-theme-preset', 'rose-garden')
+    expect(screen.getByLabelText('Theme mode')).toHaveTextContent('system')
   })
 })
 

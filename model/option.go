@@ -300,8 +300,33 @@ func validateOptionValue(key string, value string) error {
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}
+	if key == themeSettingsOptionKey {
+		return validateThemeSettings(value)
+	}
 	if key == "ModelRequestRateLimitUser" {
 		return setting.CheckModelRequestRateLimitUser(value)
+	}
+	return nil
+}
+
+// themeSettingsOptionKey stores the administrator-wide theme as a JSON object.
+// An empty value means no global theme, so every user keeps their own choice.
+const themeSettingsOptionKey = "ThemeSettings"
+
+// validateThemeSettings accepts an empty value or a JSON object. The frontend
+// only reads known theme fields, so unknown members are kept as-is instead of
+// being rejected; the object shape is what keeps a malformed value from
+// reaching every user's page load.
+func validateThemeSettings(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var settings map[string]any
+	if err := common.UnmarshalJsonStr(value, &settings); err != nil {
+		return common.NewMessage("Theme settings must be a JSON object")
+	}
+	if settings == nil {
+		return common.NewMessage("Theme settings must be a JSON object")
 	}
 	return nil
 }
