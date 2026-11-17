@@ -1228,13 +1228,15 @@ export function ChannelMutateDrawer({
   const previewModels =
     !isEditing ||
     (currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && canEditSensitive)
-  // An edited channel whose key was just retyped must be discovered with that
+  const isAdvancedCustom = currentType === CHANNEL_TYPE_ADVANCED_CUSTOM
+  // Any other edited channel whose key was just retyped is discovered with that
   // key: the preview request carries the saved channel id and the draft key.
-  const editedKey = currentKey?.trim() ? currentKey : undefined
-  const editPreviewsDraftKey = isEditing && Boolean(editedKey)
-  // Advanced Custom is the only type where an empty address must be sent as an
-  // empty preview field rather than fall back to the saved channel address.
-  const keepsEmptyPreviewAddress = currentType === CHANNEL_TYPE_ADVANCED_CUSTOM
+  // Advanced Custom keeps reusing the saved credential on the server.
+  const editedKey =
+    isEditing && !isAdvancedCustom && currentKey?.trim()
+      ? currentKey
+      : undefined
+  const editPreviewsDraftKey = Boolean(editedKey)
   const canDiscoverModels = previewModels ? canEditSensitive : canOperateChannel
   const previewKey = isEditing ? editedKey : currentKey
   const previewRequest = useMemo<ChannelModelDiscoveryRequest>(
@@ -1244,7 +1246,7 @@ export function ChannelMutateDrawer({
         type: currentType,
         key: previewKey,
         channel_id: channelId || undefined,
-        base_url: currentBaseUrl || (keepsEmptyPreviewAddress ? '' : undefined),
+        base_url: currentBaseUrl || (isAdvancedCustom ? '' : undefined),
         advanced_custom: currentAdvancedCustom,
         header_override: currentHeaderOverride,
         proxy: currentProxy,
@@ -1255,7 +1257,7 @@ export function ChannelMutateDrawer({
       previewKey,
       channelId,
       currentBaseUrl,
-      keepsEmptyPreviewAddress,
+      isAdvancedCustom,
       currentAdvancedCustom,
       currentHeaderOverride,
       currentProxy,

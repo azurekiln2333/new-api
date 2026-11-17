@@ -1939,9 +1939,7 @@ test('ordinary edits discover models with saved settings and keep removed draft 
   fireEvent.change(screen.getByDisplayValue('https://saved.example'), {
     target: { value: 'https://draft.example' },
   })
-  fireEvent.change(screen.getByLabelText('API Key *'), {
-    target: { value: 'new-key' },
-  })
+  // No key is typed, so discovery keeps using the saved channel.
   await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
   await user.click(
     await screen.findByRole('checkbox', { name: 'upstream-model' })
