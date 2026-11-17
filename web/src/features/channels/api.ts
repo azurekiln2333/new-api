@@ -714,7 +714,8 @@ export async function getTagModels(
  * Fetch models from the current unsaved channel form configuration.
  */
 export async function fetchModels(data: {
-  base_url: string
+  /** Omitted while editing to keep the saved channel address. */
+  base_url?: string
   type: number
   key?: string
   channel_id?: number
