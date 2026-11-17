@@ -2946,6 +2946,7 @@
     "Force format response to OpenAI standard (OpenAI channel only)": "Forcer la réponse au format standard OpenAI (canal OpenAI uniquement)",
     "Force JSON object or schema-conforming output": "Forcer une sortie JSON ou conforme à un schéma",
     "Force operation": "Forcer l’opération",
+    "Force Reasoning Effort": "Forcer l'effort de raisonnement",
     "Force SMTP authentication using AUTH LOGIN method": "Forcer l'authentification SMTP en utilisant la méthode AUTH LOGIN",
     "Force-disabled two-factor authentication for the user": "Authentification à deux facteurs désactivée de force pour l'utilisateur",
     "Forest Whisper": "Murmure forestier",

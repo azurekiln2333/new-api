@@ -2946,6 +2946,7 @@
     "Force format response to OpenAI standard (OpenAI channel only)": "Buộc định dạng phản hồi theo tiêu chuẩn OpenAI (chỉ kênh OpenAI)",
     "Force JSON object or schema-conforming output": "Bắt buộc xuất JSON hoặc theo schema",
     "Force operation": "Buộc thực hiện",
+    "Force Reasoning Effort": "Buộc mức độ suy luận",
     "Force SMTP authentication using AUTH LOGIN method": "Bắt buộc xác thực SMTP sử dụng phương thức AUTH LOGIN",
     "Force-disabled two-factor authentication for the user": "Đã buộc tắt xác thực hai yếu tố của người dùng",
     "Forest Whisper": "Tiếng thì thầm rừng cây",

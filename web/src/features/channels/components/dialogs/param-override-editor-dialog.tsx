@@ -356,6 +356,28 @@ const CLAUDE_CLI_HEADER_PASSTHROUGH_TEMPLATE = buildPassHeadersTemplate(
   CLAUDE_CLI_HEADER_PASSTHROUGH_HEADERS
 )
 
+// Replaces whatever reasoning effort the client sent. Chat Completions bodies
+// carry `messages` and use `reasoning_effort`; Responses bodies carry `input`
+// and use `reasoning.effort`, so each operation only fires for its own format.
+const REASONING_EFFORT_OVERRIDE_TEMPLATE = {
+  operations: [
+    {
+      description: 'Force the reasoning effort of Chat Completions requests.',
+      mode: 'set',
+      path: 'reasoning_effort',
+      value: 'high',
+      conditions: [{ path: 'messages', mode: 'regex', value: '.' }],
+    },
+    {
+      description: 'Force the reasoning effort of Responses requests.',
+      mode: 'set',
+      path: 'reasoning.effort',
+      value: 'high',
+      conditions: [{ path: 'input', mode: 'regex', value: '.' }],
+    },
+  ],
+}
+
 const AWS_BEDROCK_ANTHROPIC_COMPAT_TEMPLATE = {
   operations: [
     {
@@ -430,6 +452,11 @@ const TEMPLATE_PRESET_CONFIG: Record<string, TemplatePresetConfig> = {
     label: 'Gemini Image 4K',
     kind: 'operations',
     payload: GEMINI_IMAGE_4K_TEMPLATE,
+  },
+  reasoning_effort_override: {
+    label: 'Force Reasoning Effort',
+    kind: 'operations',
+    payload: REASONING_EFFORT_OVERRIDE_TEMPLATE,
   },
   claude_cli_headers_passthrough: {
     label: 'Claude CLI Header Passthrough',
@@ -1822,6 +1849,7 @@ export function ParamOverrideEditorDialog(
             {t('Template')}
           </span>
           <Combobox
+            aria-label={t('Template')}
             options={templatePresetOptions.map((o) => ({
               value: o.value,
               label: t(o.label),

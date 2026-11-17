@@ -2946,6 +2946,7 @@
     "Force format response to OpenAI standard (OpenAI channel only)": "Принудительно форматировать ответ в соответствии со стандартом OpenAI (только для канала OpenAI)",
     "Force JSON object or schema-conforming output": "Принудительно вернуть JSON или соответствующий схеме вывод",
     "Force operation": "Выполнить принудительно",
+    "Force Reasoning Effort": "Принудительная интенсивность рассуждений",
     "Force SMTP authentication using AUTH LOGIN method": "Принудительная аутентификация SMTP с использованием метода AUTH LOGIN",
     "Force-disabled two-factor authentication for the user": "Двухфакторная аутентификация пользователя принудительно отключена",
     "Forest Whisper": "Лесной шёпот",

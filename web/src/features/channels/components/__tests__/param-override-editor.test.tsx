@@ -353,3 +353,53 @@ test('prune-object conditions offer Regex and preserve literal and empty pattern
     ],
   })
 })
+
+async function applyReasoningEffortTemplate(
+  mode: 'Fill Template' | 'Append Template'
+) {
+  const user = userEvent.setup()
+  const onSave = await renderPruneRules([
+    { path: 'type', mode: 'full', value: 'legacy' },
+  ])
+  await user.click(screen.getByRole('combobox', { name: 'Template' }))
+  await user.click(
+    screen.getByRole('option', { name: 'Force Reasoning Effort' })
+  )
+  await user.click(screen.getByRole('button', { name: mode }))
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  return JSON.parse(onSave.mock.calls[0][0]).operations as unknown[]
+}
+
+const reasoningEffortOperations = [
+  expect.objectContaining({
+    mode: 'set',
+    path: 'reasoning_effort',
+    value: 'high',
+    conditions: [
+      expect.objectContaining({ path: 'messages', mode: 'regex', value: '.' }),
+    ],
+  }),
+  expect.objectContaining({
+    mode: 'set',
+    path: 'reasoning.effort',
+    value: 'high',
+    conditions: [
+      expect.objectContaining({ path: 'input', mode: 'regex', value: '.' }),
+    ],
+  }),
+]
+
+test('filling the reasoning effort template replaces the rules with one forced effort per request format', async () => {
+  const operations = await applyReasoningEffortTemplate('Fill Template')
+
+  expect(operations).toEqual(reasoningEffortOperations)
+})
+
+test('appending the reasoning effort template keeps the existing rules before the forced effort', async () => {
+  const operations = await applyReasoningEffortTemplate('Append Template')
+
+  expect(operations).toEqual([
+    expect.objectContaining({ mode: 'prune_objects', path: 'messages' }),
+    ...reasoningEffortOperations,
+  ])
+})

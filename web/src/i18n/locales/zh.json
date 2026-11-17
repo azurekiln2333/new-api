@@ -2946,6 +2946,7 @@
     "Force format response to OpenAI standard (OpenAI channel only)": "强制将响应格式化为 OpenAI 标准（仅限 OpenAI 渠道）",
     "Force JSON object or schema-conforming output": "强制输出 JSON 对象或符合 Schema 的结果",
     "Force operation": "强制操作",
+    "Force Reasoning Effort": "强制思考强度",
     "Force SMTP authentication using AUTH LOGIN method": "强制使用 AUTH LOGIN 方法进行 SMTP 认证",
     "Force-disabled two-factor authentication for the user": "强制关闭了用户的两步验证",
     "Forest Whisper": "森林低语",
