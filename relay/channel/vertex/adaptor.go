@@ -165,6 +165,13 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	return geminiAdaptor.ConvertImageRequest(c, info, request)
 }
 
+// OutboundImageCount reads the image count of the Imagen body
+// ConvertImageRequest builds.
+func (a *Adaptor) OutboundImageCount(body []byte) (*uint, error) {
+	geminiAdaptor := gemini.Adaptor{}
+	return geminiAdaptor.OutboundImageCount(body)
+}
+
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 	if info == nil {
 		return

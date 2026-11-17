@@ -82,10 +82,13 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { updateChannel, getMultiKeyStatus } from '../../api'
+import { CHANNEL_TYPE_TASK_PLUGIN } from '../../constants'
+import { useTaskPluginOption } from '../../hooks/use-task-plugin-option'
 import {
   channelsQueryKeys,
   formatResponseTime,
   handleTestChannel,
+  parseChannelSettings,
 } from '../../lib'
 import type {
   Channel,
@@ -173,25 +176,52 @@ function getLatestChannelTestCachePatch(
   return latest?.patch
 }
 
-const endpointTypeOptions: Array<{ value: string; label: string }> = [
+const endpointTypeOptions: Array<{
+  value: string
+  label: string
+  path?: string
+}> = [
   { value: 'auto', label: 'Auto detect (default)' },
-  { value: 'openai', label: 'OpenAI (/v1/chat/completions)' },
-  { value: 'openai-response', label: 'OpenAI Responses (/v1/responses)' },
+  {
+    value: 'openai',
+    label: 'OpenAI (/v1/chat/completions)',
+    path: '/v1/chat/completions',
+  },
+  {
+    value: 'openai-response',
+    label: 'OpenAI Responses (/v1/responses)',
+    path: '/v1/responses',
+  },
   {
     value: 'openai-response-compact',
     label: 'OpenAI Response Compaction (/v1/responses/compact)',
+    path: '/v1/responses/compact',
   },
-  { value: 'anthropic', label: 'Anthropic (/v1/messages)' },
+  {
+    value: 'anthropic',
+    label: 'Anthropic (/v1/messages)',
+    path: '/v1/messages',
+  },
   {
     value: 'gemini',
     label: 'Gemini (/v1beta/models/{model}:generateContent)',
+    path: '/v1beta/models/{model}:generateContent',
   },
-  { value: 'jina-rerank', label: 'Jina Rerank (/v1/rerank)' },
+  {
+    value: 'jina-rerank',
+    label: 'Jina Rerank (/v1/rerank)',
+    path: '/v1/rerank',
+  },
   {
     value: 'image-generation',
     label: 'Image Generation (/v1/images/generations)',
+    path: '/v1/images/generations',
   },
-  { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
+  {
+    value: 'embeddings',
+    label: 'Embeddings (/v1/embeddings)',
+    path: '/v1/embeddings',
+  },
 ]
 
 const STREAM_INCOMPATIBLE_ENDPOINTS = new Set([
@@ -368,13 +398,24 @@ function ChannelTestDialogContent({
     pageIndex: 0,
     pageSize: 30,
   })
+  const plugin = useTaskPluginOption(
+    currentRow.type === CHANNEL_TYPE_TASK_PLUGIN
+      ? parseChannelSettings(currentRow.setting)?.task_plugin_key
+      : undefined
+  )
+  const relayPaths = plugin?.relayPaths
   const endpointSelectItems = useMemo(
     () =>
-      endpointTypeOptions.map((option) => ({
-        value: option.value,
-        label: t(option.label),
-      })),
-    [t]
+      endpointTypeOptions
+        .filter(
+          (option) =>
+            !relayPaths || !option.path || relayPaths.includes(option.path)
+        )
+        .map((option) => ({
+          value: option.value,
+          label: t(option.label),
+        })),
+    [relayPaths, t]
   )
 
   // Only a multi-key channel has keys to choose from; the key list is already
