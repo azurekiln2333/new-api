@@ -1228,16 +1228,23 @@ export function ChannelMutateDrawer({
   const previewModels =
     !isEditing ||
     (currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && canEditSensitive)
+  // An edited channel whose key was just retyped must be discovered with that
+  // key: the preview request carries the saved channel id and the draft key.
+  const editedKey = currentKey?.trim() ? currentKey : undefined
+  const editPreviewsDraftKey = isEditing && Boolean(editedKey)
+  // Advanced Custom is the only type where an empty address must be sent as an
+  // empty preview field rather than fall back to the saved channel address.
+  const keepsEmptyPreviewAddress = currentType === CHANNEL_TYPE_ADVANCED_CUSTOM
   const canDiscoverModels = previewModels ? canEditSensitive : canOperateChannel
-  const previewKey = isEditing ? undefined : currentKey
+  const previewKey = isEditing ? editedKey : currentKey
   const previewRequest = useMemo<ChannelModelDiscoveryRequest>(
     () => ({
       kind: 'preview',
       data: {
         type: currentType,
         key: previewKey,
-        channel_id: isEditing ? channelId || undefined : undefined,
-        base_url: currentBaseUrl || '',
+        channel_id: channelId || undefined,
+        base_url: currentBaseUrl || (keepsEmptyPreviewAddress ? '' : undefined),
         advanced_custom: currentAdvancedCustom,
         header_override: currentHeaderOverride,
         proxy: currentProxy,
@@ -1246,9 +1253,9 @@ export function ChannelMutateDrawer({
     [
       currentType,
       previewKey,
-      isEditing,
       channelId,
       currentBaseUrl,
+      keepsEmptyPreviewAddress,
       currentAdvancedCustom,
       currentHeaderOverride,
       currentProxy,
@@ -1258,13 +1265,14 @@ export function ChannelMutateDrawer({
     () => ({ kind: 'saved', channelId: channelId || 0 }),
     [channelId]
   )
+  const usesSavedConnection = !previewModels && !editPreviewsDraftKey
   const discovery = useChannelModelDiscovery({
     enabled:
       open &&
       canDiscoverModels &&
       MODEL_FETCHABLE_TYPES.has(currentType) &&
       (!isEditing || Boolean(channelData?.data)),
-    request: previewModels ? previewRequest : savedRequest,
+    request: usesSavedConnection ? savedRequest : previewRequest,
   })
   const upstreamModelList =
     discovery.status === 'success' ? discovery.models : NO_UPSTREAM_MODELS
@@ -3515,7 +3523,7 @@ export function ChannelMutateDrawer({
                       </div>
                     </div>
                   )}
-                {isEditing && !previewModels && (
+                {isEditing && usesSavedConnection && (
                   <p className='text-muted-foreground text-xs'>
                     {t(
                       'Model discovery uses the saved channel connection settings.'

@@ -233,3 +233,150 @@ test('binding a user posts the parsed user ID and rejects an invalid one', async
     )
   )
 })
+
+test('fetching a key upstream shows the models that key serves and its unrouted ones', async () => {
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
+    if (url !== '/api/channel/multi_key/manage') {
+      return { data: { success: true } }
+    }
+    const params = body as { action: string }
+    if (params.action === 'fetch_key_models') {
+      return {
+        data: { success: true, data: { models: ['model-a', 'model-c'] } },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          keys: [keyStatus({ index: 0 })],
+          total: 1,
+          page: 1,
+          page_size: 10,
+          total_pages: 1,
+          enabled_count: 1,
+          manual_disabled_count: 0,
+          auto_disabled_count: 0,
+        },
+      },
+    }
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DialogHarness />
+    </I18nextProvider>
+  )
+  await screen.findByText('Allowed Models')
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'Set Models' }))
+  await user.click(screen.getByRole('button', { name: 'Fetch from upstream' }))
+
+  expect(
+    await screen.findByText('Models this key serves upstream:')
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Models this key serves upstream but the channel does not provide yet:'
+    )
+  ).toBeVisible()
+  expect(post).toHaveBeenCalledWith(
+    '/api/channel/multi_key/manage',
+    expect.objectContaining({
+      channel_id: 7,
+      action: 'fetch_key_models',
+      key_index: 0,
+    }),
+    expect.anything()
+  )
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+})
+
+test('syncing models from upstream previews per-key counts before applying', async () => {
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
+    if (url !== '/api/channel/multi_key/manage') {
+      return { data: { success: true } }
+    }
+    const params = body as { action: string; apply?: boolean }
+    if (params.action === 'sync_key_models' && params.apply) {
+      return {
+        data: {
+          success: true,
+          data: {
+            results: [
+              { key_index: 0, models: ['model-a'] },
+              { key_index: 1, skipped: true },
+            ],
+            added_models: ['model-b'],
+            applied: true,
+          },
+        },
+      }
+    }
+    if (params.action === 'sync_key_models') {
+      return {
+        data: {
+          success: true,
+          data: {
+            results: [
+              { key_index: 0, models: ['model-a'] },
+              { key_index: 1, skipped: true },
+              { key_index: 2, models: [], error: 'Bad key' },
+            ],
+            added_models: ['model-b'],
+            applied: false,
+          },
+        },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          keys: [keyStatus({ index: 0 }), keyStatus({ index: 1 })],
+          total: 2,
+          page: 1,
+          page_size: 10,
+          total_pages: 1,
+          enabled_count: 1,
+          manual_disabled_count: 1,
+          auto_disabled_count: 0,
+        },
+      },
+    }
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DialogHarness />
+    </I18nextProvider>
+  )
+  await screen.findByText('Allowed Models')
+  const user = userEvent.setup()
+
+  await user.click(
+    screen.getByRole('button', { name: 'Sync models from upstream' })
+  )
+
+  expect(await screen.findByText('Models added to the channel')).toBeVisible()
+  expect(screen.getByText('model-b')).toBeVisible()
+  expect(screen.getByText('#3: Bad key')).toBeVisible()
+  expect(screen.getByText(/Disabled keys are skipped/)).toBeVisible()
+  expect(post).toHaveBeenCalledWith(
+    '/api/channel/multi_key/manage',
+    expect.objectContaining({ channel_id: 7, action: 'sync_key_models' }),
+    expect.anything()
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+  expect(await screen.findByText('Models synced')).toBeVisible()
+  expect(post).toHaveBeenCalledWith(
+    '/api/channel/multi_key/manage',
+    expect.objectContaining({
+      channel_id: 7,
+      action: 'sync_key_models',
+      apply: true,
+    }),
+    expect.anything()
+  )
+})

@@ -2224,6 +2224,66 @@ test('advanced custom edits preview draft connection settings with the saved key
   )
 })
 
+test('editing with a newly typed key discovers models with that key instead of the saved one', async () => {
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValue({ data: { success: true, data: ['typed-key-model'] } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  fireEvent.change(screen.getByLabelText('API Key *'), {
+    target: { value: 'new-secret-key' },
+  })
+  await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
+  expect(
+    await screen.findByRole('checkbox', { name: 'typed-key-model' })
+  ).toBeVisible()
+  expect(post).toHaveBeenCalledWith(
+    '/api/channel/fetch_models',
+    expect.objectContaining({
+      type: 1,
+      channel_id: 42,
+      key: 'new-secret-key',
+    }),
+    expect.anything()
+  )
+  expect(api.get).not.toHaveBeenCalledWith(
+    '/api/channel/fetch_models/42',
+    expect.anything()
+  )
+  expect(
+    screen.queryByText(
+      'Model discovery uses the saved channel connection settings.'
+    )
+  ).not.toBeInTheDocument()
+})
+
+test('editing with an empty key keeps discovering models from the saved channel', async () => {
+  const post = vi.spyOn(api, 'post')
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  expect(
+    screen.getByText(
+      'Model discovery uses the saved channel connection settings.'
+    )
+  ).toBeVisible()
+  expect(screen.getByLabelText('API Key *')).toHaveValue('')
+  await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
+  expect(
+    await screen.findByRole('checkbox', { name: 'upstream-model' })
+  ).toBeVisible()
+  expect(api.get).toHaveBeenCalledWith(
+    '/api/channel/fetch_models/42',
+    expect.anything()
+  )
+  expect(post).not.toHaveBeenCalledWith(
+    '/api/channel/fetch_models',
+    expect.anything(),
+    expect.anything()
+  )
+})
+
 test('an operator without sensitive write permission can discover saved models and update routing', async () => {
   useAuthStore.setState({
     auth: {

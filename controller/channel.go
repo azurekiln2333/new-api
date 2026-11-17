@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -1497,7 +1498,47 @@ func FetchModels(c *gin.Context) {
 	}
 
 	var channel *model.Channel
-	if req.Type == constant.ChannelTypeAdvancedCustom || req.ChannelID > 0 {
+	if req.ChannelID > 0 {
+		savedChannel, err := model.GetChannelById(req.ChannelID, true)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if savedChannel.Type == constant.ChannelTypeAdvancedCustom {
+			channel, err = buildAdvancedCustomModelPreviewChannel(req)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		} else {
+			// The saved channel is the base and every field the request carries
+			// replaces its saved value, so a key typed while editing is used
+			// instead of the stored one. An explicit empty value clears it.
+			channel = savedChannel
+			if req.Type > 0 {
+				channel.Type = req.Type
+			}
+			if req.BaseURL != nil {
+				baseURL := strings.TrimSpace(*req.BaseURL)
+				channel.BaseURL = &baseURL
+			}
+			if req.HeaderOverride != nil {
+				headerOverride := strings.TrimSpace(*req.HeaderOverride)
+				channel.HeaderOverride = &headerOverride
+			}
+			if req.Proxy != nil {
+				channelSettings := channel.GetSetting()
+				channelSettings.Proxy = strings.TrimSpace(*req.Proxy)
+				channel.SetSetting(channelSettings)
+			}
+			if key := strings.TrimSpace(req.Key); key != "" {
+				if channel.Type != constant.ChannelTypeCodex {
+					key = strings.Split(key, "\n")[0]
+				}
+				channel = newSingleKeyChannel(channel, key)
+			}
+		}
+	} else if req.Type == constant.ChannelTypeAdvancedCustom {
 		var err error
 		channel, err = buildAdvancedCustomModelPreviewChannel(req)
 		if err != nil {
@@ -1523,7 +1564,6 @@ func FetchModels(c *gin.Context) {
 			BaseURL: &baseURL,
 		}
 	}
-
 	models, err := fetchChannelUpstreamModelIDs(channel)
 	if err != nil {
 		common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
@@ -1678,13 +1718,43 @@ func CopyChannel(c *gin.Context) {
 // MultiKeyManageRequest represents the request for multi-key management operations
 type MultiKeyManageRequest struct {
 	ChannelId int      `json:"channel_id"`
-	Action    string   `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status", "set_key_models", "set_key_user"
-	KeyIndex  *int     `json:"key_index,omitempty"` // for disable_key, enable_key, delete_key, set_key_models and set_key_user actions
+	Action    string   `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status", "set_key_models", "set_key_user", "fetch_key_models", "sync_key_models"
+	KeyIndex  *int     `json:"key_index,omitempty"` // for disable_key, enable_key, delete_key, fetch_key_models, set_key_models and set_key_user actions
 	Models    []string `json:"models,omitempty"`    // for set_key_models: the models this key may serve, empty clears the limit
 	UserId    *int     `json:"user_id,omitempty"`   // for set_key_user: the user this key is bound to, 0 unbinds
+	Apply     bool     `json:"apply,omitempty"`     // for sync_key_models: persist the discovered models and key scopes instead of previewing them
 	Page      int      `json:"page,omitempty"`      // for get_key_status pagination
 	PageSize  int      `json:"page_size,omitempty"` // for get_key_status pagination
 	Status    *int     `json:"status,omitempty"`    // for get_key_status filtering: 1=enabled, 2=manual_disabled, 3=auto_disabled, nil=all
+}
+
+// MultiKeyModelsResult reports the upstream models discovered with one key of a
+// multi-key channel. Skipped marks a key that was not contacted at all.
+type MultiKeyModelsResult struct {
+	KeyIndex int      `json:"key_index"`
+	Models   []string `json:"models,omitempty"`
+	Error    string   `json:"error,omitempty"`
+	Skipped  bool     `json:"skipped,omitempty"`
+}
+
+// multiKeyModelSyncConcurrency bounds how many keys of one channel are queried
+// upstream at the same time; a channel may hold hundreds of keys.
+const multiKeyModelSyncConcurrency = 4
+
+// newSingleKeyChannel returns a copy of the channel that holds only the given
+// key, so upstream discovery uses exactly that key: multi-key polling, key
+// status and a key's own model scope cannot pick or filter another one. The
+// original channel is left untouched.
+func newSingleKeyChannel(channel *model.Channel, key string) *model.Channel {
+	singleKeyChannel := *channel
+	singleKeyChannel.Key = key
+	singleKeyChannel.Keys = nil
+	singleKeyChannel.ChannelInfo.IsMultiKey = false
+	singleKeyChannel.ChannelInfo.MultiKeySize = 0
+	singleKeyChannel.ChannelInfo.MultiKeyStatusList = nil
+	singleKeyChannel.ChannelInfo.MultiKeyModels = nil
+	singleKeyChannel.ChannelInfo.MultiKeyUsers = nil
+	return &singleKeyChannel
 }
 
 // MultiKeyStatusResponse represents the response for key status query
@@ -2257,6 +2327,108 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 		return
 
+	case "fetch_key_models":
+		if request.KeyIndex == nil {
+			common.ApiErrorT(c, "No key index specified to fetch models")
+			return
+		}
+		keyIndex := *request.KeyIndex
+		keys := channel.GetKeys()
+		if keyIndex < 0 || keyIndex >= len(keys) {
+			common.ApiErrorT(c, "Key index out of range")
+			return
+		}
+		models, err := fetchChannelUpstreamModelIDs(newSingleKeyChannel(channel, keys[keyIndex]))
+		if err != nil {
+			common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    gin.H{"models": models},
+		})
+		return
+
+	case "sync_key_models":
+		keys := channel.GetKeys()
+		results := make([]MultiKeyModelsResult, len(keys))
+		var wg sync.WaitGroup
+		capacity := make(chan struct{}, multiKeyModelSyncConcurrency)
+		for keyIndex, key := range keys {
+			results[keyIndex] = MultiKeyModelsResult{KeyIndex: keyIndex}
+			// A disabled key is reported without contacting the upstream: the
+			// operator sees it was left alone, and a failing credential is not
+			// exercised again.
+			if status, ok := channel.ChannelInfo.MultiKeyStatusList[keyIndex]; ok && status != common.ChannelStatusEnabled {
+				results[keyIndex].Skipped = true
+				continue
+			}
+			wg.Go(func() {
+				capacity <- struct{}{}
+				defer func() { <-capacity }()
+				models, err := fetchChannelUpstreamModelIDs(newSingleKeyChannel(channel, key))
+				if err != nil {
+					results[keyIndex].Error = err.Error()
+					return
+				}
+				results[keyIndex].Models = models
+			})
+		}
+		wg.Wait()
+
+		channelModels := normalizeModelNames(channel.GetModels())
+		discovered := make([]string, 0, len(results))
+		for _, result := range results {
+			if result.Error != "" || len(result.Models) == 0 {
+				continue
+			}
+			discovered = append(discovered, result.Models...)
+		}
+		addedModels := subtractModelNames(normalizeModelNames(discovered), channelModels)
+
+		response := gin.H{
+			"results":        results,
+			"added_models":   addedModels,
+			"applied":        false,
+			"channel_models": channelModels,
+		}
+		if !request.Apply {
+			c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
+			return
+		}
+
+		channel.Models = strings.Join(mergeModelNames(channelModels, addedModels), ",")
+		for _, result := range results {
+			if result.Error != "" || len(result.Models) == 0 {
+				continue
+			}
+			if channel.ChannelInfo.MultiKeyModels == nil {
+				channel.ChannelInfo.MultiKeyModels = make(map[int][]string)
+			}
+			channel.ChannelInfo.MultiKeyModels[result.KeyIndex] = result.Models
+		}
+		// Prune before persisting: a scope may name models that the channel list
+		// lost while this key's upstream no longer serves them.
+		nextModels := normalizeModelNames(channel.GetModels())
+		for keyIndex, scope := range channel.ChannelInfo.MultiKeyModels {
+			scope = intersectModelNames(scope, nextModels)
+			if len(scope) == 0 {
+				delete(channel.ChannelInfo.MultiKeyModels, keyIndex)
+				continue
+			}
+			channel.ChannelInfo.MultiKeyModels[keyIndex] = scope
+		}
+		err = channel.Update()
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		model.InitChannelCache()
+		response["applied"] = true
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
+		return
+
 	default:
 		common.ApiErrorT(c, "Unsupported operation")
 		return
@@ -2265,9 +2437,10 @@ func ManageMultiKeys(c *gin.Context) {
 
 func multiKeyActionRequiresSensitiveWrite(action string) bool {
 	// Binding a key to a user and narrowing a key's models change who may reach
-	// the channel, so they need the same permission as deleting a key.
+	// the channel, so they need the same permission as deleting a key. Applying
+	// an upstream model sync changes the channel model list the same way.
 	switch action {
-	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_user":
+	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_user", "sync_key_models":
 		return true
 	default:
 		return false

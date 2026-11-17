@@ -643,3 +643,166 @@ func TestChannelTestNamedKeyFailureOnlyDisablesThatKey(t *testing.T) {
 	assert.Equal(t, 1, index)
 	assert.Equal(t, "sk-second", key)
 }
+
+// newMultiKeyModelServer serves an OpenAI-compatible /v1/models whose answer
+// depends on the bearer key, so a test can prove which key reached the upstream.
+func newMultiKeyModelServer(t *testing.T, modelsByKey map[string][]string, failingKeys ...string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		for _, failingKey := range failingKeys {
+			if key == failingKey {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+		}
+		models, ok := modelsByKey[key]
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		data := make([]map[string]string, 0, len(models))
+		for _, modelName := range models {
+			data = append(data, map[string]string{"id": modelName})
+		}
+		body, err := common.Marshal(map[string]any{"object": "list", "data": data})
+		require.NoError(t, err)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// TestMultiKeyModelDiscoveryUsesOneKey pins the per-key discovery actions: the
+// models of one key are read with that key only, and the channel keeps its own
+// model scope / status out of the upstream request.
+func TestMultiKeyModelDiscoveryUsesOneKey(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	server := newMultiKeyModelServer(t, map[string][]string{
+		"sk-alpha": {"model-a", "model-shared"},
+		"sk-beta":  {"model-b", "model-shared"},
+	})
+	baseURL := server.URL
+	channel := &model.Channel{Name: "multi-key-fetch", Type: constant.ChannelTypeOpenAI, Key: "sk-alpha\nsk-beta", Models: "model-a", Group: "default", BaseURL: &baseURL,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyModels: map[int][]string{1: {"model-a"}}},
+	}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+
+	// The second key is scoped to model-a, which must not narrow what its
+	// upstream account reports.
+	recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "fetch_key_models", KeyIndex: common.GetPointer(1)})
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Data    struct {
+			Models []string `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"model-b", "model-shared"}, response.Data.Models)
+
+	loaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "model-a", loaded.Models, "a read-only discovery never changes the channel")
+	assert.Equal(t, map[int][]string{1: {"model-a"}}, loaded.ChannelInfo.MultiKeyModels)
+
+	for _, request := range []MultiKeyManageRequest{
+		{ChannelId: channel.Id, Action: "fetch_key_models"},
+		{ChannelId: channel.Id, Action: "fetch_key_models", KeyIndex: common.GetPointer(2)},
+	} {
+		recorder := postMultiKeyManage(t, rootID, request)
+		var rejected struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &rejected))
+		assert.False(t, rejected.Success)
+		assert.NotEmpty(t, rejected.Message)
+	}
+}
+
+// TestMultiKeyModelSyncPreviewAndApply pins the channel-wide sync: a preview
+// reports every key without touching the channel (a disabled key is skipped, a
+// failing key is reported), and apply extends the channel models once while each
+// successful key keeps the models it actually serves.
+func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	server := newMultiKeyModelServer(t, map[string][]string{
+		"sk-alpha": {"model-a", "model-shared"},
+		"sk-beta":  {"model-b", "model-shared"},
+	}, "sk-broken")
+	baseURL := server.URL
+	channel := &model.Channel{Name: "multi-key-sync", Type: constant.ChannelTypeOpenAI, Key: "sk-alpha\nsk-disabled\nsk-beta\nsk-broken", Models: "model-a,model-shared", Group: "default", BaseURL: &baseURL,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 4, MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled},
+			MultiKeyModels:     map[int][]string{1: {"model-a"}, 3: {"model-shared"}}},
+	}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+
+	type syncResponse struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Data    struct {
+			Results []struct {
+				KeyIndex int      `json:"key_index"`
+				Models   []string `json:"models"`
+				Error    string   `json:"error"`
+				Skipped  bool     `json:"skipped"`
+			} `json:"results"`
+			AddedModels []string `json:"added_models"`
+			Applied     bool     `json:"applied"`
+		} `json:"data"`
+	}
+
+	recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "sync_key_models"})
+	var preview syncResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &preview))
+	require.True(t, preview.Success, preview.Message)
+	require.Len(t, preview.Data.Results, 4)
+	assert.Equal(t, []string{"model-a", "model-shared"}, preview.Data.Results[0].Models)
+	assert.Equal(t, 0, preview.Data.Results[0].KeyIndex)
+	assert.True(t, preview.Data.Results[1].Skipped, "a disabled key is reported without being contacted")
+	assert.Empty(t, preview.Data.Results[1].Models)
+	assert.Empty(t, preview.Data.Results[1].Error)
+	assert.Equal(t, []string{"model-b", "model-shared"}, preview.Data.Results[2].Models)
+	assert.NotEmpty(t, preview.Data.Results[3].Error, "a failing key is reported with its reason")
+	assert.False(t, preview.Data.Applied)
+	assert.Equal(t, []string{"model-b"}, preview.Data.AddedModels)
+
+	loaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "model-a,model-shared", loaded.Models, "a preview never changes the channel")
+	assert.Equal(t, map[int][]string{1: {"model-a"}, 3: {"model-shared"}}, loaded.ChannelInfo.MultiKeyModels)
+
+	recorder = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "sync_key_models", Apply: true})
+	var applied syncResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &applied))
+	require.True(t, applied.Success, applied.Message)
+	assert.True(t, applied.Data.Applied)
+	assert.Equal(t, []string{"model-b"}, applied.Data.AddedModels)
+
+	loaded, err = model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "model-a,model-shared,model-b", loaded.Models, "existing models keep their order and new ones are appended once")
+	assert.Equal(t, map[int][]string{
+		0: {"model-a", "model-shared"},
+		1: {"model-a"},
+		2: {"model-b", "model-shared"},
+		3: {"model-shared"},
+	}, loaded.ChannelInfo.MultiKeyModels, "only the keys that answered take a new scope, and the skipped key keeps its own")
+
+	// The extended model list really reaches the routing table, and the skipped
+	// key keeps its own scope.
+	var abilities []model.Ability
+	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Order("model").Find(&abilities).Error)
+	require.Len(t, abilities, 3)
+	for i, modelName := range []string{"model-a", "model-b", "model-shared"} {
+		assert.Equal(t, modelName, abilities[i].Model)
+		assert.True(t, abilities[i].Enabled, "a synced model must be routable")
+	}
+}

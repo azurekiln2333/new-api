@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { Loader2, RefreshCw, Trash2, Power, PowerOff } from 'lucide-react'
+import {
+  Loader2,
+  RefreshCw,
+  Trash2,
+  Power,
+  PowerOff,
+  CloudDownload,
+} from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -25,7 +32,6 @@ import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
-import { MultiSelect } from '@/components/multi-select'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -56,6 +62,7 @@ import {
   deleteDisabledMultiKeys,
   setMultiKeyModels,
   setMultiKeyUser,
+  syncMultiKeyModels,
 } from '../../api'
 import { MULTI_KEY_FILTER_OPTIONS } from '../../constants'
 import {
@@ -66,9 +73,15 @@ import {
   isDestructiveAction,
   parseModelsList,
 } from '../../lib'
-import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
+import type {
+  KeyStatus,
+  MultiKeyConfirmAction,
+  MultiKeyModelSyncResult,
+} from '../../types'
 import { useChannels } from '../channels-provider'
+import { MultiKeyModelsEditor } from './multi-key-models-editor'
 import { StatisticsCard } from './multi-key-statistics-card'
+import { MultiKeySyncDialog } from './multi-key-sync-dialog'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
 
 // The table scrolls inside its own region, so the header sticks to that region
@@ -126,11 +139,15 @@ export function MultiKeyManageDialog({
   const [unbindKeyIndex, setUnbindKeyIndex] = useState<number | null>(null)
   const [isSavingAssignment, setIsSavingAssignment] = useState(false)
 
+  // Upstream model sync preview
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [isApplyingSync, setIsApplyingSync] = useState(false)
+  const [syncPreview, setSyncPreview] =
+    useState<MultiKeyModelSyncResult | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
+
   const channelModels = parseModelsList(currentRow?.models ?? '')
-  const modelOptions = channelModels.map((model) => ({
-    value: model,
-    label: model,
-  }))
   const parsedUserId = Number.parseInt(userEditor?.userId ?? '')
   const userIdValid = Number.isInteger(parsedUserId) && parsedUserId > 0
 
@@ -269,9 +286,9 @@ export function MultiKeyManageDialog({
     }
   }
 
-  const saveModels = () => {
+  const saveModels = (models: string[]) => {
     if (!modelsEditor || !currentRow) return
-    const { keyIndex, models } = modelsEditor
+    const { keyIndex } = modelsEditor
     void saveKeyAssignment(() =>
       setMultiKeyModels(currentRow.id, keyIndex, models)
     )
@@ -290,6 +307,53 @@ export function MultiKeyManageDialog({
     const keyIndex = unbindKeyIndex
     setUnbindKeyIndex(null)
     await saveKeyAssignment(() => setMultiKeyUser(currentRow.id, keyIndex, 0))
+  }
+
+  // Preview which models every enabled key serves before writing anything.
+  const openSync = async () => {
+    if (!currentRow) return
+    setSyncOpen(true)
+    setSyncPreview(null)
+    setSyncError(null)
+    setIsSyncing(true)
+    try {
+      const response = await syncMultiKeyModels(currentRow.id, false)
+      if (!response.success || !response.data) {
+        setSyncError(response.message || t('Failed to fetch models'))
+        return
+      }
+      setSyncPreview(response.data)
+    } catch (error: unknown) {
+      setSyncError(getServerMessage(error) || t('Failed to fetch models'))
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  const applySync = async () => {
+    if (!currentRow) return
+    setIsApplyingSync(true)
+    try {
+      const response = await syncMultiKeyModels(currentRow.id, true)
+      if (!response.success || !response.data) {
+        handleServerError(response, t('Operation failed'))
+        return
+      }
+      setSyncPreview(response.data)
+      toast.success(
+        t('Added {{count}} model(s) to the channel', {
+          count: response.data.added_models.length,
+        })
+      )
+      // The applied sync edits the channel models, so the list and its usage
+      // summaries must be refetched as well.
+      queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all })
+      await loadKeyStatus()
+    } catch (error: unknown) {
+      handleServerError(error, t('Operation failed'))
+    } finally {
+      setIsApplyingSync(false)
+    }
   }
 
   const renderStatusBadge = (status: number) => {
@@ -400,6 +464,27 @@ export function MultiKeyManageDialog({
                 <RefreshCw className='h-4 w-4' />
               </Button>
 
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => void openSync()}
+                disabled={isLoading || isSyncing}
+                title={
+                  isLoading
+                    ? t('Wait for the key status to load')
+                    : t(
+                        'Fetch the upstream models of every enabled key before changing anything'
+                      )
+                }
+              >
+                {isSyncing ? (
+                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                ) : (
+                  <CloudDownload className='mr-2 h-4 w-4' />
+                )}
+                {t('Sync models from upstream')}
+              </Button>
+
               {manualDisabledCount + autoDisabledCount > 0 && (
                 <Button
                   variant='default'
@@ -450,48 +535,18 @@ export function MultiKeyManageDialog({
           )}
 
           {/* Per-key model scope, edited in place to keep the key list visible */}
-          {modelsEditor && (
-            <div className='shrink-0 space-y-2 rounded-md border p-3'>
-              <div className='flex items-center justify-between gap-2'>
-                <p className='text-sm font-medium'>
-                  {t('Allowed Models')} #{modelsEditor.keyIndex + 1}
-                </p>
-                <div className='flex items-center gap-2'>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={isSavingAssignment}
-                    onClick={() => setModelsEditor(null)}
-                  >
-                    {t('Cancel')}
-                  </Button>
-                  <Button
-                    size='sm'
-                    disabled={isSavingAssignment || modelOptions.length === 0}
-                    onClick={saveModels}
-                  >
-                    {isSavingAssignment && (
-                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                    )}
-                    {t('Save')}
-                  </Button>
-                </div>
-              </div>
-              <MultiSelect
-                options={modelOptions}
-                selected={modelsEditor.models}
-                onChange={(selected) =>
-                  setModelsEditor((current) =>
-                    current ? { ...current, models: selected } : current
-                  )
-                }
-                placeholder={t('All models')}
-                emptyText={t('No channel models yet')}
-                disabled={isSavingAssignment}
+          {modelsEditor && currentRow && (
+            <div className='shrink-0'>
+              <MultiKeyModelsEditor
+                key={`${modelsEditor.keyIndex}:${modelsEditor.models.join(',')}`}
+                channelId={currentRow.id}
+                keyIndex={modelsEditor.keyIndex}
+                channelModels={channelModels}
+                initialModels={modelsEditor.models}
+                isSaving={isSavingAssignment}
+                onCancel={() => setModelsEditor(null)}
+                onSave={saveModels}
               />
-              <p className='text-muted-foreground text-xs'>
-                {t('Leave empty to let this key serve every channel model.')}
-              </p>
             </div>
           )}
 
@@ -705,6 +760,21 @@ export function MultiKeyManageDialog({
         destructive={isDestructiveAction(confirmAction)}
         isLoading={isPerformingAction}
         handleConfirm={performAction}
+      />
+
+      {/* Upstream model sync preview */}
+      <MultiKeySyncDialog
+        open={syncOpen}
+        onOpenChange={(next) => {
+          if (isApplyingSync) return
+          setSyncOpen(next)
+          if (!next) setSyncPreview(null)
+        }}
+        isFetching={isSyncing}
+        isApplying={isApplyingSync}
+        preview={syncPreview}
+        error={syncError}
+        onApply={() => void applySync()}
       />
 
       {/* Unbind confirmation */}

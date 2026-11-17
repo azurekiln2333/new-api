@@ -40,6 +40,7 @@ import type {
   GetChannelsParams,
   GetChannelsResponse,
   MultiKeyManageParams,
+  MultiKeyModelSyncResult,
   MultiKeyStatusResponse,
   SearchChannelsParams,
   SearchChannelsResponse,
@@ -590,6 +591,51 @@ export async function setMultiKeyModels(
     key_index: keyIndex,
     models,
   }) as Promise<{ success: boolean; message?: string }>
+}
+
+/**
+ * Fetch the upstream model list with one key only. Read-only.
+ */
+export async function fetchMultiKeyModels(
+  channelId: number,
+  keyIndex: number
+): Promise<{
+  success: boolean
+  message?: string
+  data?: { models: string[] }
+}> {
+  return manageMultiKeys({
+    channel_id: channelId,
+    action: 'fetch_key_models',
+    key_index: keyIndex,
+  }) as Promise<{
+    success: boolean
+    message?: string
+    data?: { models: string[] }
+  }>
+}
+
+/**
+ * Fetch the upstream models of every enabled key. Preview by default; `apply`
+ * writes the channel models and each successful key's model scope.
+ */
+export async function syncMultiKeyModels(
+  channelId: number,
+  apply: boolean
+): Promise<{
+  success: boolean
+  message?: string
+  data?: MultiKeyModelSyncResult
+}> {
+  return manageMultiKeys({
+    channel_id: channelId,
+    action: 'sync_key_models',
+    apply,
+  }) as Promise<{
+    success: boolean
+    message?: string
+    data?: MultiKeyModelSyncResult
+  }>
 }
 
 /**

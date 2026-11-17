@@ -339,6 +339,8 @@ export type MultiKeyManageAction =
   | 'delete_disabled_keys'
   | 'set_key_models'
   | 'set_key_user'
+  | 'fetch_key_models'
+  | 'sync_key_models'
 
 export interface MultiKeyManageParams {
   channel_id: number
@@ -349,6 +351,22 @@ export interface MultiKeyManageParams {
   status?: number // 1=enabled, 2=manual_disabled, 3=auto_disabled
   models?: string[] // set_key_models: empty array clears the restriction
   user_id?: number // set_key_user: 0 unbinds
+  apply?: boolean // sync_key_models: write the previewed result
+}
+
+/** Upstream models reported for one key by `fetch_key_models` / `sync_key_models`. */
+export interface MultiKeyModelFetchResult {
+  key_index: number
+  models?: string[]
+  error?: string
+  skipped?: boolean
+}
+
+/** `sync_key_models` preview: per-key results plus the models it would add. */
+export interface MultiKeyModelSyncResult {
+  results: MultiKeyModelFetchResult[]
+  added_models: string[]
+  applied: boolean
 }
 
 export interface BatchDeleteParams {

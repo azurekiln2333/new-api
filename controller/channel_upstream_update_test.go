@@ -361,6 +361,72 @@ func TestFailedAdvancedCustomDetectionDoesNotStageFullRemoval(t *testing.T) {
 	require.Equal(t, "gpt-4.1,o3", reloaded.Models)
 }
 
+// TestFetchModelsUsesTypedKeyForSavedChannel pins the edit-form discovery of a
+// saved non-Advanced-Custom channel: the key the operator typed is used (never
+// the stored one) together with the saved base URL, and a field the request omits
+// keeps its saved value, while an explicit empty value clears it.
+func TestFetchModelsUsesTypedKeyForSavedChannel(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+
+	received := make(chan http.Header, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		received <- r.Header.Clone()
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4.1"},{"id":"gpt-4.1-mini"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	savedBaseURL := server.URL
+	savedHeaderOverride := `{"X-Saved":"saved"}`
+	saved := &model.Channel{Name: "saved single key", Type: constant.ChannelTypeOpenAI, Key: "sk-stored", Models: "gpt-4.1", Group: "default", BaseURL: &savedBaseURL}
+	saved.HeaderOverride = &savedHeaderOverride
+	require.NoError(t, db.Create(saved).Error)
+
+	// A request that only carries the typed key discovers through the saved base
+	// URL and the typed key, never the stored one.
+	body, err := common.Marshal(map[string]any{"channel_id": saved.Id, "key": "sk-typed\nsk-ignored"})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/fetch_models", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	FetchModels(ctx)
+
+	var response struct {
+		Success bool     `json:"success"`
+		Message string   `json:"message"`
+		Data    []string `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+	assert.Equal(t, []string{"gpt-4.1", "gpt-4.1-mini"}, response.Data)
+
+	headers := <-received
+	assert.Equal(t, "Bearer sk-typed", headers.Get("Authorization"), "the typed key must be the one sent upstream")
+	assert.Equal(t, "saved", headers.Get("X-Saved"), "an omitted field keeps its saved value")
+
+	// Without a typed key the stored key is used, and an explicit empty
+	// header_override clears the saved one instead of keeping it.
+	body, err = common.Marshal(map[string]any{"channel_id": saved.Id, "key": "", "header_override": ""})
+	require.NoError(t, err)
+	recorder = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/fetch_models", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	FetchModels(ctx)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+
+	headers = <-received
+	assert.Equal(t, "Bearer sk-stored", headers.Get("Authorization"), "a request without a key keeps the saved key")
+	assert.Empty(t, headers.Get("X-Saved"), "an explicit empty header_override clears the saved one")
+
+	reloaded, err := model.GetChannelById(saved.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "sk-stored", reloaded.Key, "discovery never changes the saved channel")
+	assert.Equal(t, savedHeaderOverride, *reloaded.HeaderOverride)
+}
+
 func TestFetchModelsUsesSharedChannelFetchBehavior(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
