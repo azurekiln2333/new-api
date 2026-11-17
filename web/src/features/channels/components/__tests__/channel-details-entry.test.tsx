@@ -24,7 +24,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
@@ -214,10 +214,12 @@ it('shows a dash instead of tokens when the channel has no usage record', async 
   ).not.toBeInTheDocument()
 })
 
-it('opens the channel details when the channel card body is clicked', async () => {
+it('opens the channel details when content inside the channel card body is clicked', async () => {
   const card = await renderCardView()
 
-  await userEvent.setup().click(card)
+  // Click plain card content, not the outer grid wrapper: the card body is a
+  // [role=button] itself and must not be mistaken for an inner control.
+  await userEvent.setup().click(within(card).getByText('Used tokens'))
 
   expect(
     screen.getByRole('status', { name: 'Dialog state' })
@@ -230,7 +232,9 @@ it('opens the channel details when the channel card body is clicked', async () =
 it('keeps a click on an inner action button from opening the channel details', async () => {
   const card = await renderCardView()
 
-  await userEvent.setup().click(card.querySelector('button') as HTMLElement)
+  await userEvent
+    .setup()
+    .click(within(card).getByRole('button', { name: 'Open menu' }))
 
   expect(
     screen.getByRole('status', { name: 'Dialog state' })

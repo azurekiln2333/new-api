@@ -420,7 +420,15 @@ export function ChannelsTable() {
     if (reorderActive) return
     const target = event.target as HTMLElement
     if (!event.currentTarget.contains(target)) return
-    if (target.closest(ROW_INTERACTIVE_SELECTOR)) return
+    // The focusable card body is itself a [role=button]; only controls inside
+    // it keep their own click behaviour.
+    const interactiveTarget = target.closest(ROW_INTERACTIVE_SELECTOR)
+    if (
+      interactiveTarget &&
+      !interactiveTarget.hasAttribute('data-activates-channel-details')
+    ) {
+      return
+    }
     if (window.getSelection()?.toString()) return
     const channelId = getChannelRowId(target)
     const channel = pageChannels?.find((item) => item.id === channelId)

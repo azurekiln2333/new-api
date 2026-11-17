@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadgeTypeContext } from '@/components/status-badge'
+import { cn } from '@/lib/utils'
 
 import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow, parseGroupsList } from '../lib'
@@ -100,16 +101,33 @@ function ChannelCardComponent({
         role={interactive ? 'button' : undefined}
         tabIndex={interactive ? 0 : undefined}
         data-activates-channel-details={interactive ? true : undefined}
-        className='focus-visible:ring-ring flex min-w-0 flex-col gap-3 rounded-sm focus-visible:ring-2 focus-visible:outline-none'
+        className='focus-visible:ring-ring flex min-w-0 flex-col gap-2 rounded-sm focus-visible:ring-2 focus-visible:outline-none'
       >
-        {/* Row 1: selection + type, with status badge + actions menu */}
-        <div className='flex items-center justify-between gap-2'>
+        {/* Row 1: selection, type logo (its name shows on hover), channel name
+          and id, with the status badge and actions menu on the right. */}
+        <div className='flex items-start justify-between gap-2'>
           <div className='flex min-w-0 flex-1 items-center gap-2'>
             {reorderCell}
             {!isTagRow && selectCell && (
               <span className='shrink-0'>{selectCell}</span>
             )}
-            <div className='min-w-0 overflow-hidden'>{typeCell}</div>
+            <div
+              className={cn(
+                'min-w-0 shrink-0 overflow-hidden',
+                !isTagRow &&
+                  '[&_[data-slot=provider-badge]>[data-slot=status-badge]]:sr-only'
+              )}
+            >
+              {typeCell}
+            </div>
+            <div className='min-w-0 flex-1 overflow-hidden text-sm'>
+              {nameCell}
+              {!isTagRow && (
+                <div className={labelClass}>
+                  #{sensitiveVisible ? row.original.id : SENSITIVE_MASK}
+                </div>
+              )}
+            </div>
           </div>
           <div className='flex shrink-0 items-center gap-1.5'>
             {showStatusBadge && statusCell}
@@ -117,63 +135,7 @@ function ChannelCardComponent({
           </div>
         </div>
 
-        {/* Both rows share their columns: identity/balance on the left,
-          used tokens/response and weight/last tested on the right. */}
-        <StatusBadgeTypeContext.Provider value='text'>
-          <div className='grid grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-3'>
-            <div className='min-w-0 overflow-hidden text-sm'>
-              {!isTagRow && (
-                <div className={labelClass}>
-                  #{sensitiveVisible ? row.original.id : SENSITIVE_MASK}
-                </div>
-              )}
-              {nameCell}
-            </div>
-            <div className='flex min-w-0 flex-col gap-1'>
-              <span className={labelClass}>{t('Priority')}</span>
-              <div data-column-id='priority'>{priorityCell}</div>
-            </div>
-            <div className='flex min-w-0 flex-col gap-1'>
-              <span className={labelClass}>{t('Weight')}</span>
-              {weightCell}
-            </div>
-            {/* Two balanced rows of four: every slot spans two subgrid rows. */}
-            <dl className='col-span-3 grid grid-cols-subgrid gap-y-1'>
-              <div className='row-span-2 grid min-w-0 grid-rows-subgrid'>
-                <dt className={labelClass}>{t('Used / Remaining')}</dt>
-                <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0 [&>div]:ml-0 [&>div]:flex-wrap [&>div]:gap-x-3'>
-                  {balanceCell ?? (
-                    <span className='text-muted-foreground'>-</span>
-                  )}
-                </dd>
-              </div>
-              <div className='row-span-2 grid min-w-0 grid-rows-subgrid'>
-                <dt className={labelClass}>{t('Used tokens')}</dt>
-                <dd className='min-w-0 text-sm tabular-nums'>
-                  {usedTokensCell ?? (
-                    <span className='text-muted-foreground'>-</span>
-                  )}
-                </dd>
-              </div>
-              <div className='row-span-2 grid min-w-0 grid-rows-subgrid'>
-                <dt className={labelClass}>{t('Response')}</dt>
-                <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0'>
-                  {responseCell ?? (
-                    <span className='text-muted-foreground'>-</span>
-                  )}
-                </dd>
-              </div>
-              <div className='row-span-2 grid min-w-0 grid-rows-subgrid'>
-                <dt className={labelClass}>{t('Last Tested')}</dt>
-                <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
-                  {testCell ?? <span className='text-muted-foreground'>-</span>}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        </StatusBadgeTypeContext.Provider>
-
-        {/* Groups retain their compact, full-width footer. */}
+        {/* Groups sit right under the identity row. */}
         <div className='min-w-0'>
           {groups.length > 0 ? (
             <div className='-ml-1.5 flex min-w-0 flex-wrap gap-1'>
@@ -190,6 +152,51 @@ function ChannelCardComponent({
             <span className='text-muted-foreground text-sm'>-</span>
           )}
         </div>
+
+        {/* Usage on the left, priority/weight in the middle, response and last
+          test on the right; each column holds two stacked slots. */}
+        <StatusBadgeTypeContext.Provider value='text'>
+          <dl className='grid grid-flow-col grid-cols-[minmax(0,1fr)_auto_auto] grid-rows-2 gap-x-4 gap-y-2'>
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <dt className={labelClass}>{t('Used / Remaining')}</dt>
+              <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0 [&>div]:ml-0 [&>div]:flex-wrap [&>div]:gap-x-3'>
+                {balanceCell ?? (
+                  <span className='text-muted-foreground'>-</span>
+                )}
+              </dd>
+            </div>
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <dt className={labelClass}>{t('Used tokens')}</dt>
+              <dd className='min-w-0 text-sm tabular-nums'>
+                {usedTokensCell ?? (
+                  <span className='text-muted-foreground'>-</span>
+                )}
+              </dd>
+            </div>
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <dt className={labelClass}>{t('Priority')}</dt>
+              <dd data-column-id='priority'>{priorityCell}</dd>
+            </div>
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <dt className={labelClass}>{t('Weight')}</dt>
+              <dd>{weightCell}</dd>
+            </div>
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <dt className={labelClass}>{t('Response')}</dt>
+              <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0'>
+                {responseCell ?? (
+                  <span className='text-muted-foreground'>-</span>
+                )}
+              </dd>
+            </div>
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <dt className={labelClass}>{t('Last Tested')}</dt>
+              <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
+                {testCell ?? <span className='text-muted-foreground'>-</span>}
+              </dd>
+            </div>
+          </dl>
+        </StatusBadgeTypeContext.Provider>
       </div>
     </ChannelRowActionsLayoutContext.Provider>
   )
