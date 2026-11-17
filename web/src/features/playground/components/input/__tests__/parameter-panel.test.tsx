@@ -18,17 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import i18next from 'i18next'
 import { expect, test, vi } from 'vitest'
 
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../../../constants'
 import { PlaygroundParameterPanel } from '../playground-parameter-panel'
-
-// The test i18next instance has no resources, so a missing key falls back to
-// the key itself; interpolation still fills in the placeholder.
-const enableLabel = i18next.t('Enable {{parameter}}', {
-  parameter: 'Reasoning Effort',
-})
 
 test('changing reasoning effort reports the selected value', async () => {
   const onConfigChange = vi.fn()
@@ -71,7 +64,9 @@ test('the reasoning effort control follows the parameter enable switch', async (
   const select = await screen.findByLabelText('Reasoning Effort')
 
   expect(select).toBeDisabled()
-  await user.click(screen.getByRole('switch', { name: enableLabel }))
+  await user.click(
+    screen.getByRole('switch', { name: 'Enable Reasoning Effort' })
+  )
 
   expect(onParameterEnabledChange).toHaveBeenCalledWith(
     'reasoning_effort',
