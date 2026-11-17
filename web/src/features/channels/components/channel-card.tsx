@@ -43,10 +43,17 @@ function ChannelCardComponent({
   row,
   isSelected,
   reorderEnabled = false,
+  interactive = false,
 }: {
   row: Row<Channel>
   isSelected: boolean
   reorderEnabled?: boolean
+  /**
+   * Makes the card body a keyboard target for opening channel details; the
+   * pointer click is handled by the table region. Disabled for tag rows and
+   * while reordering.
+   */
+  interactive?: boolean
 }) {
   const { t } = useTranslation()
   const { sensitiveVisible } = useChannels()
@@ -72,6 +79,7 @@ function ChannelCardComponent({
   const priorityCell = renderCell('priority')
   const weightCell = renderCell('weight')
   const balanceCell = renderCell('balance')
+  const usedTokensCell = renderCell('used_tokens')
   const responseCell = renderCell('response_time')
   const testCell = renderCell('test_time')
 
@@ -89,7 +97,10 @@ function ChannelCardComponent({
     <ChannelRowActionsLayoutContext.Provider value='card'>
       <div
         data-state={isSelected ? 'selected' : undefined}
-        className='flex min-w-0 flex-col gap-3'
+        role={interactive ? 'button' : undefined}
+        tabIndex={interactive ? 0 : undefined}
+        data-activates-channel-details={interactive ? true : undefined}
+        className='focus-visible:ring-ring flex min-w-0 flex-col gap-3 rounded-sm focus-visible:ring-2 focus-visible:outline-none'
       >
         {/* Row 1: selection + type, with status badge + actions menu */}
         <div className='flex items-center justify-between gap-2'>
@@ -107,7 +118,7 @@ function ChannelCardComponent({
         </div>
 
         {/* Both rows share their columns: identity/balance on the left,
-          priority/response and weight/last tested on the right. */}
+          used tokens/response and weight/last tested on the right. */}
         <StatusBadgeTypeContext.Provider value='text'>
           <div className='grid grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-3'>
             <div className='min-w-0 overflow-hidden text-sm'>
@@ -118,22 +129,28 @@ function ChannelCardComponent({
               )}
               {nameCell}
             </div>
-            <div
-              data-column-id='priority'
-              className='flex min-w-0 flex-col gap-1'
-            >
+            <div className='flex min-w-0 flex-col gap-1'>
               <span className={labelClass}>{t('Priority')}</span>
-              {priorityCell}
+              <div data-column-id='priority'>{priorityCell}</div>
             </div>
             <div className='flex min-w-0 flex-col gap-1'>
               <span className={labelClass}>{t('Weight')}</span>
               {weightCell}
             </div>
+            {/* Two balanced rows of four: every slot spans two subgrid rows. */}
             <dl className='col-span-3 grid grid-cols-subgrid gap-y-1'>
               <div className='row-span-2 grid min-w-0 grid-rows-subgrid'>
                 <dt className={labelClass}>{t('Used / Remaining')}</dt>
                 <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0 [&>div]:ml-0 [&>div]:flex-wrap [&>div]:gap-x-3'>
                   {balanceCell ?? (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
+                </dd>
+              </div>
+              <div className='row-span-2 grid min-w-0 grid-rows-subgrid'>
+                <dt className={labelClass}>{t('Used tokens')}</dt>
+                <dd className='min-w-0 text-sm tabular-nums'>
+                  {usedTokensCell ?? (
                     <span className='text-muted-foreground'>-</span>
                   )}
                 </dd>

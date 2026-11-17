@@ -27,13 +27,11 @@ type StatisticsCardProps = {
 export function StatisticsCard({ label, count, total }: StatisticsCardProps) {
   const { t } = useTranslation()
   return (
-    <div className='rounded-md border p-3'>
-      <div className='text-muted-foreground mb-1 text-xs font-medium'>
-        {label}
-      </div>
-      <div className='flex items-baseline gap-2'>
-        <span className='text-foreground text-2xl font-semibold'>{count}</span>
-        <span className='text-muted-foreground text-sm'>
+    <div className='flex items-baseline justify-between gap-2 rounded-md border px-3 py-2'>
+      <div className='text-muted-foreground text-xs font-medium'>{label}</div>
+      <div className='flex items-baseline gap-1.5'>
+        <span className='text-foreground text-lg font-semibold'>{count}</span>
+        <span className='text-muted-foreground text-xs'>
           {t('of')} {total}
         </span>
       </div>

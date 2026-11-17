@@ -31,6 +31,8 @@ import type {
   ChannelOpsResponse,
   ChannelTestResponse,
   ChannelUpdateRequest,
+  ChannelUsageDetail,
+  ChannelUsageSummary,
   CopyChannelParams,
   CopyChannelResponse,
   FetchModelsResponse,
@@ -79,6 +81,32 @@ export async function getInferenceStatus(
     `/api/channel/${channelId}/${provider}/status`,
     { signal, disableDuplicate: true }
   )
+  return requireServerSuccess(response.data).data
+}
+
+export async function getChannelUsageSummaries(
+  ids: number[],
+  signal?: AbortSignal
+): Promise<ChannelUsageSummary[]> {
+  const response = await api.get<{
+    success: boolean
+    data: { items: ChannelUsageSummary[] }
+  }>('/api/channel/usage', {
+    params: { ids: ids.join(',') },
+    signal,
+    disableDuplicate: true,
+  })
+  return requireServerSuccess(response.data).data.items ?? []
+}
+
+export async function getChannelUsageDetail(
+  channelId: number,
+  signal?: AbortSignal
+): Promise<ChannelUsageDetail> {
+  const response = await api.get<{
+    success: boolean
+    data: ChannelUsageDetail
+  }>(`/api/channel/${channelId}/usage`, { signal, disableDuplicate: true })
   return requireServerSuccess(response.data).data
 }
 

@@ -44,6 +44,7 @@ type DialogType =
   | 'fetch-models'
   | 'ollama-models'
   | 'inference-status'
+  | 'channel-details'
   | 'multi-key-manage'
   | 'tag-batch-edit'
   | 'edit-tag'

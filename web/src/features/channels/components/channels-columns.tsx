@@ -90,6 +90,7 @@ import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { TaskPluginChannelBadge } from './channel-type-badge'
+import { ChannelUsedTokens } from './channel-usage-context'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
@@ -624,7 +625,7 @@ export function useChannelsColumns(
   } = {}
 ): ColumnDef<Channel>[] {
   const { t, i18n } = useTranslation()
-  const { sensitiveVisible } = useChannels()
+  const { sensitiveVisible, setCurrentRow, setOpen } = useChannels()
   const enableSelection = options.enableSelection ?? true
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   // The column definitions only depend on the translation function, the active
@@ -734,11 +735,22 @@ export function useChannelsColumns(
             <div className='flex max-w-full min-w-0 items-center gap-2'>
               <div className='flex max-w-full min-w-0 flex-col gap-1'>
                 <div className='flex max-w-full min-w-0 items-center gap-1.5'>
-                  <TruncatedText
-                    text={sensitiveVisible ? name : SENSITIVE_MASK}
-                    className='font-medium'
-                    maxWidth='max-w-full'
-                  />
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    className='h-auto min-w-0 justify-start p-0 font-medium hover:bg-transparent hover:underline'
+                    aria-haspopup='dialog'
+                    onClick={() => {
+                      setCurrentRow(channel)
+                      setOpen('channel-details')
+                    }}
+                  >
+                    <TruncatedText
+                      text={sensitiveVisible ? name : SENSITIVE_MASK}
+                      className='font-medium'
+                      maxWidth='max-w-full'
+                    />
+                  </Button>
                   {isPassThrough && (
                     <TooltipProvider delay={100}>
                       <Tooltip>
@@ -1176,8 +1188,24 @@ export function useChannelsColumns(
       {
         accessorKey: 'balance',
         header: t('Used / Remaining'),
+        meta: { mobileHidden: true },
         cell: ({ row }) => <BalanceCell channel={row.original} />,
         size: 180,
+      },
+
+      // Tokens consumed through the channel, loaded in one batch per page
+      {
+        id: 'used_tokens',
+        header: t('Used tokens'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => {
+          if (isTagAggregateRow(row.original)) {
+            return <span className='text-muted-foreground'>-</span>
+          }
+          return <ChannelUsedTokens channelId={row.original.id} />
+        },
+        size: 110,
+        enableSorting: false,
       },
 
       // Response Time column
@@ -1268,6 +1296,6 @@ export function useChannelsColumns(
         meta: { pinned: 'right' as const },
       },
     ],
-    [enableSelection, t, locale, sensitiveVisible]
+    [enableSelection, t, locale, sensitiveVisible, setCurrentRow, setOpen]
   )
 }

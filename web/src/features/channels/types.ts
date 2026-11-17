@@ -424,3 +424,31 @@ export interface AddChannelRequest {
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
 }
+
+// ============================================================================
+// Channel usage (consume-log aggregates)
+// ============================================================================
+
+export interface ChannelUsageSummary {
+  channel_id: number
+  request_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  quota: number
+}
+
+export interface ChannelModelUsage {
+  model_name: string
+  enabled: boolean
+  request_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  quota: number
+  last_used_at: number
+}
+
+export interface ChannelUsageDetail extends ChannelUsageSummary {
+  models: ChannelModelUsage[]
+}

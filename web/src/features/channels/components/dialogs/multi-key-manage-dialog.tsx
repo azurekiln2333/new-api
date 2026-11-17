@@ -37,7 +37,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
@@ -71,6 +70,13 @@ import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
 import { useChannels } from '../channels-provider'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
+
+// The table scrolls inside its own region, so the header sticks to that region
+// and the actions column stays reachable without scrolling horizontally.
+const stickyHeadClassName = 'sticky top-0 z-10 bg-popover'
+const stickyActionsHeadClassName = `${stickyHeadClassName} right-0 z-20 text-right`
+const stickyActionsCellClassName =
+  'sticky right-0 z-10 w-auto max-w-none overflow-visible bg-popover text-right shadow-[-8px_0_10px_-10px_hsl(var(--foreground))] group-hover:[background-color:color-mix(in_oklch,var(--muted)_50%,var(--popover))]'
 
 type MultiKeyManageDialogProps = {
   open: boolean
@@ -334,13 +340,13 @@ export function MultiKeyManageDialog({
         description={t(
           'Manage multi-key status and configuration for this channel'
         )}
-        contentClassName='flex max-h-[min(90dvh,var(--dialog-available-height))] max-w-5xl flex-col'
+        contentClassName='flex max-h-[min(90dvh,var(--dialog-available-height))] max-w-[calc(100%-2rem)] flex-col sm:max-w-[min(90vw,72rem)]'
         titleClassName='flex items-center gap-2'
-        contentHeight='min(72vh, 720px)'
-        bodyClassName='space-y-4'
+        contentHeight='min(78dvh, 760px)'
+        bodyClassName='flex h-full min-h-0 flex-col overflow-hidden'
       >
-        <div className='flex min-h-0 flex-1 flex-col space-y-4 overflow-hidden'>
-          {/* Statistics */}
+        <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-hidden'>
+          {/* Statistics stay pinned above the scrolling key list */}
           <div className='grid shrink-0 grid-cols-3 gap-3'>
             <StatisticsCard
               label={t('Enabled')}
@@ -359,10 +365,8 @@ export function MultiKeyManageDialog({
             />
           </div>
 
-          <Separator className='shrink-0' />
-
           {/* Toolbar */}
-          <div className='flex shrink-0 items-center justify-between'>
+          <div className='flex shrink-0 flex-wrap items-center justify-between gap-2'>
             <Select
               items={MULTI_KEY_FILTER_OPTIONS.map((option) => ({
                 value: option.value,
@@ -391,6 +395,7 @@ export function MultiKeyManageDialog({
                 size='sm'
                 onClick={() => loadKeyStatus()}
                 disabled={isLoading}
+                aria-label={t('Refresh')}
               >
                 <RefreshCw className='h-4 w-4' />
               </Button>
@@ -544,8 +549,13 @@ export function MultiKeyManageDialog({
             </div>
           )}
 
-          {/* Table */}
-          <div className='min-h-0 flex-1 overflow-auto rounded-md border'>
+          {/* Table: the only scrolling region of the dialog body */}
+          <div
+            role='region'
+            aria-label={t('API Keys')}
+            tabIndex={0}
+            className='min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border'
+          >
             {isLoading && (
               <div className='flex items-center justify-center py-12'>
                 <Loader2 className='text-muted-foreground h-8 w-8 animate-spin' />
@@ -558,15 +568,16 @@ export function MultiKeyManageDialog({
             )}
             {!isLoading && !(keys.length === 0) && (
               <StaticDataTable
-                className='rounded-none border-0'
+                className='overflow-visible rounded-none border-0'
                 tableClassName='min-w-[800px]'
+                tableProps={{ withContainer: false }}
                 data={keys}
                 getRowKey={(key) => key.index}
                 columns={[
                   {
                     id: 'index',
                     header: t('Index'),
-                    className: 'w-40',
+                    className: `${stickyHeadClassName} w-40`,
                     cellClassName: 'font-mono text-xs sm:text-sm',
                     cell: (key) =>
                       `${key.index + 1}. ${key.key_preview || '-'}`,
@@ -574,13 +585,13 @@ export function MultiKeyManageDialog({
                   {
                     id: 'status',
                     header: t('Status'),
-                    className: 'w-32',
+                    className: `${stickyHeadClassName} w-32`,
                     cell: (key) => renderStatusBadge(key.status),
                   },
                   {
                     id: 'models',
                     header: t('Allowed Models'),
-                    className: 'min-w-[160px]',
+                    className: `${stickyHeadClassName} min-w-[160px]`,
                     cellClassName: 'text-sm',
                     cell: (key) =>
                       key.models?.length
@@ -590,7 +601,7 @@ export function MultiKeyManageDialog({
                   {
                     id: 'user',
                     header: t('Bound User'),
-                    className: 'min-w-[140px]',
+                    className: `${stickyHeadClassName} min-w-[140px]`,
                     cellClassName: 'text-sm',
                     cell: (key) => {
                       if (!key.user_id) return '-'
@@ -602,21 +613,22 @@ export function MultiKeyManageDialog({
                   {
                     id: 'reason',
                     header: t('Disabled Reason'),
-                    className: 'min-w-[200px]',
+                    className: `${stickyHeadClassName} min-w-[200px]`,
                     cellClassName: 'max-w-xs truncate text-sm',
                     cell: (key) => key.reason || '-',
                   },
                   {
                     id: 'disabled-time',
                     header: t('Disabled Time'),
-                    className: 'w-44',
+                    className: `${stickyHeadClassName} w-44`,
                     cellClassName: 'text-muted-foreground text-sm',
                     cell: (key) => formatKeyTimestamp(key.disabled_time),
                   },
                   {
                     id: 'actions',
                     header: t('Actions'),
-                    className: 'text-right',
+                    className: stickyActionsHeadClassName,
+                    cellClassName: stickyActionsCellClassName,
                     cell: (key) => (
                       <MultiKeyTableRowActions
                         keyIndex={key.index}

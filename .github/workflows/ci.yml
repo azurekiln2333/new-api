@@ -138,7 +138,7 @@ jobs:
       # These packages use process-wide fixtures. Keep them sequential against
       # the isolated service databases, and require configured external engines.
       - name: Verify channel settings, failover and shared capacity
-        run: go test -p 1 -count=1 -v ./model ./service ./controller -run 'RequestPolicy|Channel.*(Settings|Capacity|Concurrency)|InferencePreset|AffinityFailover|FirstByte|Midjourney'
+        run: go test -p 1 -count=1 -v ./model ./service ./controller -run 'RequestPolicy|Channel.*(Settings|Capacity|Concurrency)|ChannelUsage|InferencePreset|AffinityFailover|FirstByte|Midjourney'
 
       - name: Check concurrent admission and timeout races
         env:

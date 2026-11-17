@@ -50,7 +50,7 @@ export function MultiKeyTableRowActions({
     : t('No permission to perform this action')
 
   return (
-    <div className='flex flex-wrap justify-end gap-2'>
+    <div className='flex flex-nowrap justify-end gap-2'>
       {isEnabled ? (
         <Button
           variant='outline'
