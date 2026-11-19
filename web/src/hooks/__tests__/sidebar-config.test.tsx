@@ -20,6 +20,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
+  createRoute,
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
@@ -31,10 +32,14 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { NavGroup } from '@/components/layout/components/nav-group'
 import { checkIsActive } from '@/components/layout/lib/url-utils'
+import type { NavGroup as SidebarNavGroup } from '@/components/layout/types'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import { invalidateModelPricing } from '@/features/model-pricing/api'
 import {
   parseSidebarModulesAdmin,
@@ -94,6 +99,14 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   return result
 }
 
+function logItems(groups: SidebarNavGroup[]) {
+  return (
+    groups
+      .find((group) => group.id === 'general')
+      ?.items.find((item) => item.title === 'Logs')?.items ?? []
+  )
+}
+
 describe('security sidebar visibility', () => {
   it('old configurations show Security & Access immediately after Profile and keep API Keys', () => {
     const { result } = sidebarFor(
@@ -141,7 +154,7 @@ describe('security sidebar visibility', () => {
   })
 })
 
-describe('audit log sidebar entry', () => {
+describe('log sidebar menu', () => {
   it('admin settings default Audit Logs to visible and preserve its independent toggle when saved', () => {
     const config = parseSidebarModulesAdmin(
       '{"console":{"enabled":true,"log":true}}'
@@ -150,29 +163,31 @@ describe('audit log sidebar entry', () => {
     config.console.audit = false
     const saved = parseSidebarModulesAdmin(serializeSidebarModulesAdmin(config))
     const { result } = sidebarFor(saved)
-    const titles = result.current
-      .flatMap((group) => group.items)
-      .map((item) => item.title)
+    const titles = logItems(result.current).map((item) => item.title)
     expect(titles).not.toContain('Audit Logs')
     expect(titles).toContain('Usage Logs')
   })
 
-  it('legacy configurations show a separate Audit Logs link immediately after Usage Logs', () => {
+  it('legacy configurations show four independent log links in one collapsible menu', () => {
     const { result } = sidebarFor(
       { console: { enabled: true, log: true } },
       { console: { enabled: true, log: true } }
     )
-    const items =
-      result.current.find((group) => group.id === 'general')?.items ?? []
-    const usageIndex = items.findIndex((item) => item.title === 'Usage Logs')
-    expect(items[usageIndex + 1]).toMatchObject({
-      title: 'Audit Logs',
-      url: '/usage-logs/audit',
-    })
-    const selected = items.filter((item) =>
-      checkIsActive('/usage-logs/audit', item)
+    expect(logItems(result.current)).toMatchObject([
+      { title: 'Usage Logs', url: '/usage-logs/common' },
+      { title: 'Audit Logs', url: '/usage-logs/audit' },
+      { title: 'Drawing Logs', url: '/usage-logs/drawing' },
+      { title: 'Task Logs', url: '/usage-logs/task' },
+    ])
+    expect(
+      result.current
+        .flatMap((group) => group.items)
+        .filter((item) => item.url?.startsWith('/usage-logs'))
+    ).toHaveLength(0)
+    const selected = logItems(result.current).filter((item) =>
+      checkIsActive('/usage-logs/drawing?model=test', item)
     )
-    expect(selected.map((item) => item.title)).toEqual(['Audit Logs'])
+    expect(selected.map((item) => item.title)).toEqual(['Drawing Logs'])
   })
 
   it.each([
@@ -185,20 +200,155 @@ describe('audit log sidebar entry', () => {
     (admin, user) => {
       const { result } = sidebarFor(admin, user)
       expect(
-        result.current
-          .flatMap((group) => group.items)
-          .some((item) => item.title === 'Audit Logs')
+        logItems(result.current).some((item) => item.title === 'Audit Logs')
       ).toBe(false)
     }
   )
 
   it('hiding Usage Logs does not hide the independently configured Audit Logs entry', () => {
     const { result } = sidebarFor({ console: { enabled: true, log: false } })
-    const titles = result.current
-      .flatMap((group) => group.items)
-      .map((item) => item.title)
+    const titles = logItems(result.current).map((item) => item.title)
     expect(titles).not.toContain('Usage Logs')
     expect(titles).toContain('Audit Logs')
+  })
+
+  it.each([
+    [{ console: { midjourney: false } }, undefined],
+    [undefined, { console: { midjourney: false } }],
+  ])(
+    'hides only Drawing Logs when its module is disabled (%j, %j)',
+    (admin, user) => {
+      const { result } = sidebarFor(admin, user)
+      expect(logItems(result.current).map((item) => item.title)).toEqual([
+        'Usage Logs',
+        'Audit Logs',
+        'Task Logs',
+      ])
+    }
+  )
+
+  it('retains Drawing Logs when the other three modules are disabled', () => {
+    const { result } = sidebarFor({
+      console: { log: false, audit: false, task: false },
+    })
+    expect(logItems(result.current)).toMatchObject([
+      { title: 'Drawing Logs', url: '/usage-logs/drawing' },
+    ])
+  })
+
+  it.each([
+    [
+      { console: { log: false, audit: false, midjourney: false, task: false } },
+      undefined,
+    ],
+    [
+      undefined,
+      { console: { log: false, audit: false, midjourney: false, task: false } },
+    ],
+    [{ console: { enabled: false } }, undefined],
+  ])('hides the empty Logs menu (%j, %j)', (admin, user) => {
+    const { result } = sidebarFor(admin, user)
+    expect(
+      result.current
+        .flatMap((group) => group.items)
+        .some((item) => item.title === 'Logs')
+    ).toBe(false)
+  })
+})
+
+describe('log menu interaction', () => {
+  function GeneralNavigation() {
+    const { navGroups } = useSidebarView()
+    const general = navGroups.find((group) => group.id === 'general')
+    return general ? <NavGroup {...general} /> : null
+  }
+
+  async function renderLogMenu(role: number, collapsed = false) {
+    vi.stubGlobal('scrollTo', vi.fn())
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    client.setQueryData(['status'], { SidebarModulesAdmin: '' })
+    useAuthStore.getState().auth.setUser({ id: 1, username: 'alice', role })
+    const root = createRootRoute({ component: GeneralNavigation })
+    const route = createRoute({ getParentRoute: () => root, path: '$' })
+    const router = createRouter({
+      routeTree: root.addChildren([route]),
+      history: createMemoryHistory({ initialEntries: ['/usage-logs/drawing'] }),
+    })
+    await router.load()
+    const view = render(
+      <QueryClientProvider client={client}>
+        <SidebarProvider defaultOpen={!collapsed}>
+          <RouterProvider router={router} />
+        </SidebarProvider>
+      </QueryClientProvider>
+    )
+    return {
+      router,
+      cleanup: () => {
+        view.unmount()
+        client.clear()
+      },
+    }
+  }
+
+  it.each([
+    { role: ROLE.USER, width: 1024 },
+    { role: ROLE.ADMIN, width: 1024 },
+    { role: ROLE.USER, width: 390 },
+  ])(
+    'expands the active log menu and supports keyboard collapse/navigation (%j)',
+    async ({ role, width }) => {
+      vi.stubGlobal('innerWidth', width)
+      const user = userEvent.setup()
+      const view = await renderLogMenu(role)
+      try {
+        const trigger = screen.getByRole('button', { name: 'Logs' })
+        expect(trigger).toHaveAttribute('aria-expanded', 'true')
+        expect(
+          screen.getByRole('link', { name: 'Drawing Logs' })
+        ).toHaveAttribute('data-active')
+        expect(
+          screen.getByRole('link', { name: 'Task Logs' })
+        ).not.toHaveAttribute('data-active')
+        trigger.focus()
+        await user.keyboard('{Enter}')
+        expect(trigger).toHaveAttribute('aria-expanded', 'false')
+        await user.keyboard('{Enter}')
+        expect(trigger).toHaveAttribute('aria-expanded', 'true')
+        await user.click(screen.getByRole('link', { name: 'Task Logs' }))
+        await waitFor(() =>
+          expect(view.router.state.location.pathname).toBe('/usage-logs/task')
+        )
+        expect(screen.getByRole('link', { name: 'Task Logs' })).toHaveAttribute(
+          'data-active'
+        )
+        expect(
+          screen.getByRole('link', { name: 'Drawing Logs' })
+        ).not.toHaveAttribute('data-active')
+      } finally {
+        view.cleanup()
+      }
+    }
+  )
+
+  it('offers all four log destinations when the desktop sidebar is collapsed', async () => {
+    vi.stubGlobal('innerWidth', 1024)
+    const user = userEvent.setup()
+    const view = await renderLogMenu(ROLE.USER, true)
+    try {
+      await user.click(screen.getByRole('button', { name: 'Logs' }))
+      expect(
+        screen.getAllByRole('menuitem').map((item) => item.textContent)
+      ).toEqual(['Usage Logs', 'Audit Logs', 'Drawing Logs', 'Task Logs'])
+      await user.click(screen.getByRole('menuitem', { name: 'Audit Logs' }))
+      await waitFor(() =>
+        expect(view.router.state.location.pathname).toBe('/usage-logs/audit')
+      )
+    } finally {
+      view.cleanup()
+    }
   })
 })
 

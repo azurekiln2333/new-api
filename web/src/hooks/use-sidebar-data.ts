@@ -23,6 +23,7 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  Image,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -90,21 +91,30 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: Key,
           },
           {
-            title: t('Usage Logs'),
-            url: '/usage-logs/common',
+            title: t('Logs'),
             icon: FileText,
-          },
-          {
-            title: t('Audit Logs'),
-            url: '/usage-logs/audit',
-            icon: ClipboardList,
-          },
-          {
-            title: t('Task Logs'),
-            url: '/usage-logs/task',
-            activeUrls: ['/usage-logs/drawing'],
-            configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
-            icon: ListTodo,
+            items: [
+              {
+                title: t('Usage Logs'),
+                url: '/usage-logs/common',
+                icon: FileText,
+              },
+              {
+                title: t('Audit Logs'),
+                url: '/usage-logs/audit',
+                icon: ClipboardList,
+              },
+              {
+                title: t('Drawing Logs'),
+                url: '/usage-logs/drawing',
+                icon: Image,
+              },
+              {
+                title: t('Task Logs'),
+                url: '/usage-logs/task',
+                icon: ListTodo,
+              },
+            ],
           },
         ],
       },
