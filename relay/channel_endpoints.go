@@ -32,7 +32,7 @@ func resolveTextUpstreamEndpoint(c *gin.Context, info *relaycommon.RelayInfo) (t
 		return info.RelayFormat, nil
 	}
 	if err := common.ValidateChannelSupportedEndpoints(info.ChannelType, settings); err != nil {
-		return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, "relay.channel_endpoint_invalid")), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 
 	chatSupported := slices.Contains(settings.SupportedEndpoints, dto.ChannelEndpointChat)
@@ -63,10 +63,10 @@ func resolveTextUpstreamEndpoint(c *gin.Context, info *relaycommon.RelayInfo) (t
 		target = ""
 	}
 	if target == "" {
-		return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, "relay.channel_endpoint_unsupported")), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointUnsupported)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	if passthrough && target != info.RelayFormat {
-		return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, "relay.channel_endpoint_passthrough_conflict")), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointPassthroughConflict)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	return target, nil
 }
