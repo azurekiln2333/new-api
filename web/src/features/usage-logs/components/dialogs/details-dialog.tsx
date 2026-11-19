@@ -667,10 +667,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
     other && Array.isArray(other.request_conversion)
       ? other.request_conversion.filter(Boolean)
       : []
-  const conversionLabel =
-    conversionChain.length <= 1
-      ? t('Native format')
-      : conversionChain.join(' -> ')
+  let conversionLabel = t('Unknown')
+  if (conversionChain.length === 1) {
+    conversionLabel = t('Native format')
+  } else if (conversionChain.length > 1) {
+    conversionLabel = conversionChain.join(' -> ')
+  }
   const showConversion =
     props.isAdmin &&
     props.log.type !== 6 &&
