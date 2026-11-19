@@ -15,6 +15,8 @@ on:
 jobs:
   build_single_arch:
     name: Build & push (${{ matrix.arch }})
+    # This fork publishes to GHCR through docker-fork.yml after validation.
+    if: github.repository != 'azurekiln2333/new-api'
     strategy:
       fail-fast: false
       matrix:

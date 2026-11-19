@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: [merge/upstream]
   pull_request:
     types: [opened, synchronize, closed]
   workflow_call:
@@ -137,8 +139,21 @@ jobs:
 
       # These packages use process-wide fixtures. Keep them sequential against
       # the isolated service databases, and require configured external engines.
-      - name: Verify channel settings, failover and shared capacity
-        run: go test -p 1 -count=1 -v ./model ./service ./controller -run 'RequestPolicy|Channel.*(Settings|Capacity|Concurrency)|ChannelUsage|InferencePreset|AffinityFailover|FirstByte|Midjourney'
+      - name: Verify database contracts, channel settings and relay policies
+        run: go test -p 1 -count=1 -v ./model ./service ./controller
+
+      - name: Verify scheduled channel locks on MySQL and PostgreSQL
+        run: |
+          for DIALECT in mysql postgres; do
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run 'TestScheduledChannel'
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestExecuteTaskSubmission|TestImmediateTaskSettlementDatabase'
+          done
+
+      - name: Verify channel configuration and key binding on MySQL and PostgreSQL
+        run: |
+          for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelSyncPreviewAndApply'
+          done
 
       - name: Check concurrent admission and timeout races
         env:
