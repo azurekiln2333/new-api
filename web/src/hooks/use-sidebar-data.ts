@@ -159,15 +159,22 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: Users,
           },
           {
-            title: t('Invitation codes'),
-            url: '/invitation-codes',
+            title: t('Codes'),
             icon: Ticket,
             requiredRole: ROLE.ADMIN,
-          },
-          {
-            title: t('Redemption Codes'),
-            url: '/redemption-codes',
-            icon: Ticket,
+            items: [
+              {
+                title: t('Invitation codes'),
+                url: '/invitation-codes',
+                icon: Ticket,
+                requiredRole: ROLE.ADMIN,
+              },
+              {
+                title: t('Redemption Codes'),
+                url: '/redemption-codes',
+                icon: Ticket,
+              },
+            ],
           },
           {
             title: t('Subscriptions'),

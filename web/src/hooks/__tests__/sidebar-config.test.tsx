@@ -107,6 +107,55 @@ function logItems(groups: SidebarNavGroup[]) {
   )
 }
 
+function codeItems(groups: SidebarNavGroup[]) {
+  return (
+    groups
+      .find((group) => group.id === 'admin')
+      ?.items.find((item) => item.title === 'Codes')?.items ?? []
+  )
+}
+
+async function renderSidebarMenu(
+  groupId: string,
+  path: string,
+  role: number,
+  collapsed = false
+) {
+  vi.stubGlobal('scrollTo', vi.fn())
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  })
+  client.setQueryData(['status'], { SidebarModulesAdmin: '' })
+  client.setQueryData(MODEL_PRICING_ISSUES_QUERY_KEY, [])
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'alice', role })
+  function Navigation() {
+    const { navGroups } = useSidebarView()
+    const group = navGroups.find((group) => group.id === groupId)
+    return group ? <NavGroup {...group} /> : null
+  }
+  const root = createRootRoute({ component: Navigation })
+  const route = createRoute({ getParentRoute: () => root, path: '$' })
+  const router = createRouter({
+    routeTree: root.addChildren([route]),
+    history: createMemoryHistory({ initialEntries: [path] }),
+  })
+  await router.load()
+  const view = render(
+    <QueryClientProvider client={client}>
+      <SidebarProvider defaultOpen={!collapsed}>
+        <RouterProvider router={router} />
+      </SidebarProvider>
+    </QueryClientProvider>
+  )
+  return {
+    router,
+    cleanup: () => {
+      view.unmount()
+      client.clear()
+    },
+  }
+}
+
 describe('security sidebar visibility', () => {
   it('old configurations show Security & Access immediately after Profile and keep API Keys', () => {
     const { result } = sidebarFor(
@@ -257,42 +306,6 @@ describe('log sidebar menu', () => {
 })
 
 describe('log menu interaction', () => {
-  function GeneralNavigation() {
-    const { navGroups } = useSidebarView()
-    const general = navGroups.find((group) => group.id === 'general')
-    return general ? <NavGroup {...general} /> : null
-  }
-
-  async function renderLogMenu(role: number, collapsed = false) {
-    vi.stubGlobal('scrollTo', vi.fn())
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    })
-    client.setQueryData(['status'], { SidebarModulesAdmin: '' })
-    useAuthStore.getState().auth.setUser({ id: 1, username: 'alice', role })
-    const root = createRootRoute({ component: GeneralNavigation })
-    const route = createRoute({ getParentRoute: () => root, path: '$' })
-    const router = createRouter({
-      routeTree: root.addChildren([route]),
-      history: createMemoryHistory({ initialEntries: ['/usage-logs/drawing'] }),
-    })
-    await router.load()
-    const view = render(
-      <QueryClientProvider client={client}>
-        <SidebarProvider defaultOpen={!collapsed}>
-          <RouterProvider router={router} />
-        </SidebarProvider>
-      </QueryClientProvider>
-    )
-    return {
-      router,
-      cleanup: () => {
-        view.unmount()
-        client.clear()
-      },
-    }
-  }
-
   it.each([
     { role: ROLE.USER, width: 1024 },
     { role: ROLE.ADMIN, width: 1024 },
@@ -302,7 +315,11 @@ describe('log menu interaction', () => {
     async ({ role, width }) => {
       vi.stubGlobal('innerWidth', width)
       const user = userEvent.setup()
-      const view = await renderLogMenu(role)
+      const view = await renderSidebarMenu(
+        'general',
+        '/usage-logs/drawing',
+        role
+      )
       try {
         const trigger = screen.getByRole('button', { name: 'Logs' })
         expect(trigger).toHaveAttribute('aria-expanded', 'true')
@@ -336,7 +353,12 @@ describe('log menu interaction', () => {
   it('offers all four log destinations when the desktop sidebar is collapsed', async () => {
     vi.stubGlobal('innerWidth', 1024)
     const user = userEvent.setup()
-    const view = await renderLogMenu(ROLE.USER, true)
+    const view = await renderSidebarMenu(
+      'general',
+      '/usage-logs/drawing',
+      ROLE.USER,
+      true
+    )
     try {
       await user.click(screen.getByRole('button', { name: 'Logs' }))
       expect(
@@ -345,6 +367,155 @@ describe('log menu interaction', () => {
       await user.click(screen.getByRole('menuitem', { name: 'Audit Logs' }))
       await waitFor(() =>
         expect(view.router.state.location.pathname).toBe('/usage-logs/audit')
+      )
+    } finally {
+      view.cleanup()
+    }
+  })
+})
+
+describe('code administration menu', () => {
+  it('groups both existing destinations under an administrator-only parent', () => {
+    const { result } = sidebarFor({
+      admin: { enabled: true, redemption: true },
+    })
+    const adminItems =
+      result.current.find((group) => group.id === 'admin')?.items ?? []
+    expect(adminItems.find((item) => item.title === 'Codes')).toMatchObject({
+      requiredRole: ROLE.ADMIN,
+      items: [
+        {
+          title: 'Invitation codes',
+          url: '/invitation-codes',
+          requiredRole: ROLE.ADMIN,
+        },
+        { title: 'Redemption Codes', url: '/redemption-codes' },
+      ],
+    })
+    expect(
+      adminItems.some(
+        (item) =>
+          item.url === '/invitation-codes' || item.url === '/redemption-codes'
+      )
+    ).toBe(false)
+  })
+
+  it.each([
+    [{ admin: { invitation: false } }, undefined, 'Redemption Codes'],
+    [undefined, { admin: { invitation: false } }, 'Redemption Codes'],
+    [{ admin: { redemption: false } }, undefined, 'Invitation codes'],
+    [undefined, { admin: { redemption: false } }, 'Invitation codes'],
+  ])(
+    'preserves the independent module switches (%j, %j)',
+    (admin, user, remaining) => {
+      const { result } = sidebarFor(admin, user)
+      expect(codeItems(result.current).map((item) => item.title)).toEqual([
+        remaining,
+      ])
+    }
+  )
+
+  it.each([
+    [
+      { admin: { invitation: false, redemption: false } },
+      { admin: { invitation: true, redemption: true } },
+    ],
+    [undefined, { admin: { invitation: false, redemption: false } }],
+    [{ admin: { enabled: false } }, undefined],
+  ])(
+    'hides the parent when neither child is available (%j, %j)',
+    (admin, user) => {
+      const { result } = sidebarFor(admin, user)
+      expect(
+        result.current
+          .flatMap((group) => group.items)
+          .some((item) => item.title === 'Codes')
+      ).toBe(false)
+    }
+  )
+
+  it.each([ROLE.GUEST, ROLE.USER, ROLE.ADMIN, ROLE.SUPER_ADMIN])(
+    'preserves administrator visibility for role %s',
+    async (role) => {
+      const view = await renderSidebarMenu('admin', '/invitation-codes', role)
+      try {
+        const visible = role >= ROLE.ADMIN
+        expect(Boolean(screen.queryByRole('button', { name: 'Codes' }))).toBe(
+          visible
+        )
+        expect(
+          Boolean(screen.queryByRole('link', { name: 'Invitation codes' }))
+        ).toBe(visible)
+        expect(
+          Boolean(screen.queryByRole('link', { name: 'Redemption Codes' }))
+        ).toBe(visible)
+      } finally {
+        view.cleanup()
+      }
+    }
+  )
+
+  it.each([1024, 390])(
+    'supports keyboard expansion and active child navigation at width %s',
+    async (width) => {
+      vi.stubGlobal('innerWidth', width)
+      const user = userEvent.setup()
+      const view = await renderSidebarMenu(
+        'admin',
+        '/invitation-codes',
+        ROLE.ADMIN
+      )
+      try {
+        const trigger = screen.getByRole('button', { name: 'Codes' })
+        expect(trigger).toHaveAttribute('aria-expanded', 'true')
+        expect(
+          screen.getByRole('link', { name: 'Invitation codes' })
+        ).toHaveAttribute('data-active')
+        expect(
+          screen.getByRole('link', { name: 'Redemption Codes' })
+        ).not.toHaveAttribute('data-active')
+        trigger.focus()
+        await user.keyboard('{Enter}')
+        expect(trigger).toHaveAttribute('aria-expanded', 'false')
+        await user.keyboard('{Enter}')
+        expect(trigger).toHaveAttribute('aria-expanded', 'true')
+        await user.click(screen.getByRole('link', { name: 'Redemption Codes' }))
+        await waitFor(() =>
+          expect(view.router.state.location.pathname).toBe('/redemption-codes')
+        )
+        expect(
+          screen.getByRole('link', { name: 'Redemption Codes' })
+        ).toHaveAttribute('data-active')
+        expect(
+          screen.getByRole('link', { name: 'Invitation codes' })
+        ).not.toHaveAttribute('data-active')
+      } finally {
+        view.cleanup()
+      }
+    }
+  )
+
+  it('keeps both destinations accessible from the collapsed sidebar', async () => {
+    vi.stubGlobal('innerWidth', 1024)
+    const user = userEvent.setup()
+    const view = await renderSidebarMenu(
+      'admin',
+      '/redemption-codes',
+      ROLE.ADMIN,
+      true
+    )
+    try {
+      const trigger = screen.getByRole('button', { name: 'Codes' })
+      expect(trigger).toHaveAttribute('data-active')
+      await user.click(trigger)
+      expect(
+        screen.getAllByRole('menuitem').map((item) => item.textContent)
+      ).toEqual(['Invitation codes', 'Redemption Codes'])
+      await user.click(
+        screen.getByRole('menuitem', { name: 'Invitation codes' })
+      )
+      await waitFor(() =>
+        expect(view.router.state.location.pathname).toBe('/invitation-codes')
       )
     } finally {
       view.cleanup()

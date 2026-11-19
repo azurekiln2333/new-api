@@ -35,7 +35,13 @@ import { useAuthStore } from '@/stores/auth-store'
 import { CommandMenu } from '../command-menu'
 import { Search } from '../search'
 
-const adminEntries = ['Channels', 'Models', 'Users', 'Redemption Codes']
+const adminEntries = [
+  'Channels',
+  'Models',
+  'Users',
+  'Codes Invitation codes',
+  'Codes Redemption Codes',
+]
 const superAdminEntries = [
   'System Info',
   'Plugins',
@@ -101,14 +107,19 @@ async function searchEntriesFor(role: number, sidebarModulesAdmin = '') {
 
   await userEvent.click(await screen.findByRole('button', { name: 'Search' }))
   const options = await screen.findAllByRole('option')
-  return options.map((option) => option.textContent)
+  return options.map((option) => option.textContent?.replace(/\s+/g, ' ').trim())
 }
 
 test('regular users only find their own console pages in search', async () => {
   const entries = await searchEntriesFor(ROLE.USER)
 
   expect(entries).toEqual(
-    expect.arrayContaining(['API Keys', 'Usage Logs', 'Wallet', 'Profile'])
+    expect.arrayContaining([
+      'API Keys',
+      expect.stringMatching(/(?:^|\s)Usage Logs$/),
+      'Wallet',
+      'Profile',
+    ])
   )
   for (const entry of [...adminEntries, ...superAdminEntries]) {
     expect(entries).not.toContain(entry)
