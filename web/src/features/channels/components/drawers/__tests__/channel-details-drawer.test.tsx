@@ -260,4 +260,94 @@ describe('ChannelDetailsDrawer', () => {
     expect(await screen.findByRole('table')).toBeVisible()
     expect(get).toHaveBeenCalledTimes(2)
   })
+
+  it('lists every channel group with the models it reaches', async () => {
+    mockDetailApi(usageWithModels)
+    renderDrawer({
+      channel: {
+        ...channel,
+        group: 'default,vip',
+        models: 'gpt-4o,gpt-4o-mini',
+        settings: JSON.stringify({
+          group_models: { vip: ['gpt-4o-mini'] },
+        }),
+      },
+    })
+
+    const groups = await screen.findByRole('region', { name: 'Groups' })
+    expect(within(groups).getByText('default')).toBeVisible()
+    expect(within(groups).getByText('vip')).toBeVisible()
+
+    // The unscoped group reaches both channel models; the scoped one only the
+    // model it is restricted to.
+    const rows = within(groups).getAllByRole('definition')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText('gpt-4o')).toBeVisible()
+    expect(within(rows[0]).getByText('gpt-4o-mini')).toBeVisible()
+    expect(within(rows[1]).queryByText('gpt-4o')).not.toBeInTheDocument()
+    expect(within(rows[1]).getByText('gpt-4o-mini')).toBeVisible()
+  })
+
+  it('does not list a model the restricted group cannot reach', async () => {
+    mockDetailApi(usageWithModels)
+    renderDrawer({
+      channel: {
+        ...channel,
+        group: 'vip',
+        settings: JSON.stringify({
+          group_models: { vip: ['gpt-4o', 'retired-model'] },
+        }),
+      },
+    })
+
+    const groups = await screen.findByRole('region', { name: 'Groups' })
+    expect(within(groups).getByText('gpt-4o')).toBeVisible()
+    expect(within(groups).queryByText('retired-model')).not.toBeInTheDocument()
+    // The channel model that is not whitelisted stays hidden.
+    expect(within(groups).queryByText('gpt-4o-mini')).not.toBeInTheDocument()
+  })
+
+  it('shows an empty model list instead of widening a group restricted to private keys', async () => {
+    mockDetailApi(usageWithModels)
+    renderDrawer({
+      channel: {
+        ...channel,
+        group: 'default',
+        models: 'gpt-4o,gpt-4o-mini',
+        // The group may only use the second model, but the channel's public key
+        // serves the first one, so this group reaches nothing here.
+        settings: JSON.stringify({ group_models: { default: ['gpt-4o-mini'] } }),
+        channel_info: {
+          is_multi_key: true,
+          multi_key_size: 2,
+          multi_key_models: { '0': ['gpt-4o'], '1': ['gpt-4o-mini'] },
+          multi_key_users: { '1': 7 },
+          multi_key_polling_index: 0,
+          multi_key_mode: 'random',
+        },
+      },
+    })
+
+    const groups = await screen.findByRole('region', { name: 'Groups' })
+    expect(within(groups).getByText('default')).toBeVisible()
+    const definition = within(groups).getByRole('definition')
+    expect(within(definition).queryByText('gpt-4o')).not.toBeInTheDocument()
+    expect(
+      within(definition).queryByText('gpt-4o-mini')
+    ).not.toBeInTheDocument()
+    expect(within(definition).getByText('-')).toBeVisible()
+  })
+
+  it('shows the group section while the usage request is still loading', async () => {
+    vi.spyOn(api, 'get').mockImplementation(
+      () => new Promise(() => undefined) as never
+    )
+    renderDrawer({
+      channel: { ...channel, group: 'vip', models: 'gpt-4o' },
+    })
+
+    const groups = screen.getByRole('region', { name: 'Groups' })
+    expect(within(groups).getByText('vip')).toBeVisible()
+    expect(within(groups).getByText('gpt-4o')).toBeVisible()
+  })
 })

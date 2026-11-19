@@ -46,6 +46,7 @@ import {
   getChannelTypeLabel,
 } from '../../lib/channel-utils'
 import type { Channel } from '../../types'
+import { ChannelGroupModels } from './channel-group-models'
 import { ChannelUsageSummary } from './channel-usage-summary'
 
 export interface ChannelDetailsDrawerProps {
@@ -155,7 +156,14 @@ export function ChannelDetailsDrawer(props: ChannelDetailsDrawerProps) {
         </SheetHeader>
 
         <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5'>
-          {body}
+          {props.channel ? (
+            <div className='space-y-6'>
+              <ChannelGroupModels channel={props.channel} />
+              {body}
+            </div>
+          ) : (
+            body
+          )}
         </div>
       </SheetContent>
     </Sheet>

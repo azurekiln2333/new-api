@@ -20,12 +20,11 @@ import { flexRender, type Row } from '@tanstack/react-table'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { GroupBadge } from '@/components/group-badge'
 import { StatusBadgeTypeContext } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 
 import { CHANNEL_STATUS } from '../constants'
-import { isTagAggregateRow, parseGroupsList } from '../lib'
+import { isTagAggregateRow } from '../lib'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels } from './channels-provider'
@@ -36,9 +35,10 @@ const SENSITIVE_MASK = '••••'
  * Bespoke channel card for the card view. Reuses every column's existing cell
  * renderer via `flexRender`, so the table's information and interactions are
  * preserved: row selection, provider/multi-key/IO.NET type badge, id,
- * name/remark + warning icons, status (with tooltips), groups, inline
+ * name/remark + warning icons, status (with tooltips), inline
  * priority/weight spinners, balance refresh, response/test times, tag
- * expand-collapse, and the per-row (or per-tag) actions menu.
+ * expand-collapse, and the per-row (or per-tag) actions menu. Channel groups
+ * and the models each group reaches live in the details drawer.
  */
 function ChannelCardComponent({
   row,
@@ -68,8 +68,6 @@ function ChannelCardComponent({
     }
     return flexRender(cell.column.columnDef.cell, cell.getContext())
   }
-
-  const groups = parseGroupsList(row.original.group ?? '')
 
   const reorderCell = reorderEnabled ? renderCell('reorder') : null
   const selectCell = renderCell('select')
@@ -133,24 +131,6 @@ function ChannelCardComponent({
             {showStatusBadge && statusCell}
             {actionsCell}
           </div>
-        </div>
-
-        {/* Groups sit right under the identity row. */}
-        <div className='min-w-0'>
-          {groups.length > 0 ? (
-            <div className='-ml-1.5 flex min-w-0 flex-wrap gap-1'>
-              {groups.map((g) => (
-                <GroupBadge
-                  key={g}
-                  group={g}
-                  label={sensitiveVisible ? undefined : SENSITIVE_MASK}
-                  size='sm'
-                />
-              ))}
-            </div>
-          ) : (
-            <span className='text-muted-foreground text-sm'>-</span>
-          )}
         </div>
 
         {/* Metrics: the usage pair, then the priority/weight pair, then a

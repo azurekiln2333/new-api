@@ -382,3 +382,10 @@ it('lets each card metric row wrap instead of overflowing a narrow card', async 
     expect(row.className).toContain('min-w-0')
   }
 })
+
+it('keeps the channel group out of the card and leaves it to the details', async () => {
+  const card = await renderCardView()
+
+  expect(within(card).queryByText('vip')).not.toBeInTheDocument()
+  expect(card.querySelector('[data-group-model-row]')).toBeNull()
+})
