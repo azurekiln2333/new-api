@@ -670,6 +670,7 @@ func DropPluginCredentials(channel *model.Channel) {
 		keys := channel.GetKeys()
 		kept := make([]string, 0, len(keys))
 		statusList, reasons, times := map[int]int{}, map[int]string{}, map[int]int64{}
+		models, users := map[int][]string{}, map[int]int{}
 		for index, key := range keys {
 			if _, ok := jsplugin.ParseCredential(key); ok {
 				continue
@@ -684,6 +685,12 @@ func DropPluginCredentials(channel *model.Channel) {
 			if at, ok := info.MultiKeyDisabledTime[index]; ok {
 				times[next] = at
 			}
+			if scope, ok := info.MultiKeyModels[index]; ok {
+				models[next] = slices.Clone(scope)
+			}
+			if userID, ok := info.MultiKeyUsers[index]; ok {
+				users[next] = userID
+			}
 			kept = append(kept, key)
 		}
 		if len(kept) == len(keys) {
@@ -693,6 +700,7 @@ func DropPluginCredentials(channel *model.Channel) {
 		channel.Keys = nil
 		info.MultiKeySize = len(kept)
 		info.MultiKeyStatusList, info.MultiKeyDisabledReason, info.MultiKeyDisabledTime = statusList, reasons, times
+		info.MultiKeyModels, info.MultiKeyUsers = models, users
 		info.MultiKeyPollingIndex = 0
 		channel.ChannelInfo = info
 	}

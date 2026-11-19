@@ -4,7 +4,6 @@ import (
 	"context"
 	"hash/fnv"
 	"maps"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MoeForge/moego/ojson"
+	"github.com/MoeForge/moego/regexp"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
@@ -332,11 +332,11 @@ func extractChannelAffinityValue(c *gin.Context, src operation_setting.ChannelAf
 		if err != nil {
 			return ""
 		}
-		body, err := storage.Bytes()
-		if err != nil || len(body) == 0 {
+		values, err := common.ReadBodyJSONFields(storage, src.Path)
+		if err != nil {
 			return ""
 		}
-		res := ojson.GetBytes(body, src.Path)
+		res := values[0]
 		if !res.Exists() {
 			return ""
 		}

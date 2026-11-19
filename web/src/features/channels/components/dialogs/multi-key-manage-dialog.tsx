@@ -25,7 +25,7 @@ import {
   PowerOff,
   CloudDownload,
 } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -43,13 +43,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { toIntlLocale } from '@/i18n/languages'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
-import { getServerMessage } from '@/lib/server-error-message'
+import {
+  getServerMessage,
+  translateServerText,
+} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -64,7 +68,10 @@ import {
   setMultiKeyUser,
   syncMultiKeyModels,
 } from '../../api'
-import { MULTI_KEY_FILTER_OPTIONS } from '../../constants'
+import {
+  CHANNEL_TYPE_TASK_PLUGIN,
+  MULTI_KEY_FILTER_OPTIONS,
+} from '../../constants'
 import {
   channelsQueryKeys,
   formatTimestamp,
@@ -73,11 +80,13 @@ import {
   isDestructiveAction,
   parseModelsList,
 } from '../../lib'
+import { formatChannelBalanceSummary } from '../../lib/channel-balance'
 import type {
   KeyStatus,
   MultiKeyConfirmAction,
   MultiKeyModelSyncResult,
 } from '../../types'
+import { ChannelBalanceDetails } from '../channel-balance-details'
 import { useChannels } from '../channels-provider'
 import { MultiKeyModelsEditor } from './multi-key-models-editor'
 import { StatisticsCard } from './multi-key-statistics-card'
@@ -100,8 +109,14 @@ export function MultiKeyManageDialog({
   open,
   onOpenChange,
 }: MultiKeyManageDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { currentRow } = useChannels()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  // A plugin channel queries the balance of each key.
+  const keyBalances =
+    currentRow?.type === CHANNEL_TYPE_TASK_PLUGIN
+      ? currentRow.balance_detail?.keys
+      : undefined
   const queryClient = useQueryClient()
   const currentUser = useAuthStore((s) => s.auth.user)
   const canEditSensitive = hasPermission(
@@ -126,6 +141,24 @@ export function MultiKeyManageDialog({
   const [confirmAction, setConfirmAction] =
     useState<MultiKeyConfirmAction | null>(null)
   const [isPerformingAction, setIsPerformingAction] = useState(false)
+  // A confirmed action reloads the table, which can remove the button that
+  // asked for it. Focus then comes back into this dialog rather than to
+  // whatever opened the dialog, so the next Escape closes only this dialog.
+  const confirmOpenerRef = useRef<HTMLElement | null>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+
+  const openConfirm = (action: MultiKeyConfirmAction) => {
+    const opener = document.activeElement
+    confirmOpenerRef.current = opener instanceof HTMLElement ? opener : null
+    setConfirmAction(action)
+  }
+
+  const getConfirmFinalFocus = () => {
+    const opener = confirmOpenerRef.current
+    return opener && bodyRef.current?.contains(opener)
+      ? opener
+      : bodyRef.current
+  }
 
   // Per-key model scope and user binding editors
   const [modelsEditor, setModelsEditor] = useState<{
@@ -242,6 +275,10 @@ export function MultiKeyManageDialog({
       if (response?.success) {
         toast.success(getServerMessage(response) || t('Operation successful'))
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+        // A plugin channel's edit drawer lists the same lines beside this dialog.
+        queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.pluginCredentials(currentRow.id),
+        })
 
         // Reload data - reset to page 1 for bulk actions
         const isBulkAction = type.includes('all') || type === 'delete-disabled'
@@ -409,7 +446,10 @@ export function MultiKeyManageDialog({
         contentHeight='min(78dvh, 760px)'
         bodyClassName='flex h-full min-h-0 flex-col overflow-hidden'
       >
-        <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-hidden'>
+        <div
+          ref={bodyRef}
+          className='flex min-h-0 flex-1 flex-col gap-3 overflow-hidden'
+        >
           {/* Statistics stay pinned above the scrolling key list */}
           <div className='grid shrink-0 grid-cols-3 gap-3'>
             <StatisticsCard
@@ -489,7 +529,7 @@ export function MultiKeyManageDialog({
                 <Button
                   variant='default'
                   size='sm'
-                  onClick={() => setConfirmAction({ type: 'enable-all' })}
+                  onClick={() => openConfirm({ type: 'enable-all' })}
                 >
                   <Power className='mr-2 h-4 w-4' />
                   {t('Enable All')}
@@ -500,7 +540,7 @@ export function MultiKeyManageDialog({
                 <Button
                   variant='destructive'
                   size='sm'
-                  onClick={() => setConfirmAction({ type: 'disable-all' })}
+                  onClick={() => openConfirm({ type: 'disable-all' })}
                 >
                   <PowerOff className='mr-2 h-4 w-4' />
                   {t('Disable All')}
@@ -513,7 +553,7 @@ export function MultiKeyManageDialog({
                   size='sm'
                   onClick={() => {
                     if (!canEditSensitive) return
-                    setConfirmAction({ type: 'delete-disabled' })
+                    openConfirm({ type: 'delete-disabled' })
                   }}
                   disabled={!canEditSensitive}
                   title={
@@ -643,6 +683,37 @@ export function MultiKeyManageDialog({
                     className: `${stickyHeadClassName} w-32`,
                     cell: (key) => renderStatusBadge(key.status),
                   },
+                  ...(keyBalances
+                    ? [
+                        {
+                          id: 'balance',
+                          header: t('Balance'),
+                          className: `${stickyHeadClassName} w-48`,
+                          cellClassName: 'text-sm',
+                          cell: (key: KeyStatus) => {
+                            const result = keyBalances[String(key.index)]
+                            if (!result) return '-'
+                            // Wraps, so the key actions stay in view.
+                            return (
+                              <div className='max-w-56 space-y-0.5 whitespace-normal'>
+                                <div className='font-medium'>
+                                  {/* A key has no USD balance of its own. */}
+                                  {formatChannelBalanceSummary(
+                                    result,
+                                    Number.NaN,
+                                    { locale }
+                                  )}
+                                </div>
+                                <ChannelBalanceDetails
+                                  result={result}
+                                  className='text-muted-foreground'
+                                />
+                              </div>
+                            )
+                          },
+                        },
+                      ]
+                    : []),
                   {
                     id: 'models',
                     header: t('Allowed Models'),
@@ -670,7 +741,8 @@ export function MultiKeyManageDialog({
                     header: t('Disabled Reason'),
                     className: `${stickyHeadClassName} min-w-[200px]`,
                     cellClassName: 'max-w-xs truncate text-sm',
-                    cell: (key) => key.reason || '-',
+                    cell: (key) =>
+                      key.reason ? translateServerText(t, key.reason) : '-',
                   },
                   {
                     id: 'disabled-time',
@@ -690,7 +762,7 @@ export function MultiKeyManageDialog({
                         status={key.status}
                         boundUserId={key.user_id}
                         canManage={canEditSensitive}
-                        onAction={setConfirmAction}
+                        onAction={openConfirm}
                         onEditModels={(keyIndex) => {
                           setUserEditor(null)
                           setModelsEditor({
@@ -760,6 +832,7 @@ export function MultiKeyManageDialog({
         destructive={isDestructiveAction(confirmAction)}
         isLoading={isPerformingAction}
         handleConfirm={performAction}
+        finalFocus={getConfirmFinalFocus}
       />
 
       {/* Upstream model sync preview */}

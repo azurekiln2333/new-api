@@ -176,14 +176,16 @@ test('after a key is deleted, Escape closes Manage Keys and not the dialog that 
   const manage = await screen.findByRole('dialog', {
     name: /Multi-Key Management/,
   })
-  const row = await within(manage).findByRole('row', { name: /^#2\s/ })
+  const row = await within(manage).findByRole('row', { name: /^2\./ })
   await user.click(within(row).getByRole('button', { name: 'Delete' }))
   await user.click(await screen.findByRole('button', { name: 'Continue' }))
 
   await waitFor(() =>
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   )
-  expect(within(manage).queryByText('#2')).not.toBeInTheDocument()
+  expect(
+    within(manage).queryByRole('row', { name: /^2\./ })
+  ).not.toBeInTheDocument()
   expect(post).toHaveBeenNthCalledWith(
     2,
     '/api/channel/multi_key/manage',
@@ -244,9 +246,9 @@ test('a plugin channel shows each key its own balance', async () => {
     </QueryClientProvider>
   )
 
-  const first = await screen.findByRole('row', { name: /^#1\s/ })
+  const first = await screen.findByRole('row', { name: /^1\./ })
   expect(within(first).getByText('CN¥42')).toBeInTheDocument()
-  const second = screen.getByRole('row', { name: /^#2\s/ })
+  const second = screen.getByRole('row', { name: /^2\./ })
   expect(within(second).getByText('75% used')).toBeInTheDocument()
   expect(within(second).getByText('Daily: 30 / 40')).toBeInTheDocument()
   expect(
@@ -255,7 +257,7 @@ test('a plugin channel shows each key its own balance', async () => {
   const balanceColumn = screen
     .getAllByRole('columnheader')
     .findIndex((header) => header.textContent === 'Balance')
-  const third = screen.getByRole('row', { name: /^#3\s/ })
+  const third = screen.getByRole('row', { name: /^3\./ })
   expect(within(third).getAllByRole('cell')[balanceColumn]).toHaveTextContent(
     /^-$/
   )

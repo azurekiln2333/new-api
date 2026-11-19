@@ -58,6 +58,8 @@ func UpdateChannelLocked(channelID int, update func(channel *Channel) error) (*C
 	// changes runs update on channel and returns the columns it changed.
 	changes := func() (map[string]any, error) {
 		key, status, otherInfo := channel.Key, channel.Status, channel.OtherInfo
+		channel.Keys = nil
+		previousKeys := channel.GetKeys()
 		info, err := common.Marshal(channel.ChannelInfo)
 		if err != nil {
 			return nil, err
@@ -66,6 +68,9 @@ func UpdateChannelLocked(channelID int, update func(channel *Channel) error) (*C
 			return nil, err
 		}
 		channel.Keys = nil
+		if channel.ChannelInfo.IsMultiKey && channel.Key != key {
+			channel.ChannelInfo.remapKeyScopes(previousKeys, channel.GetKeys())
+		}
 		updates := map[string]any{}
 		if channel.Key != key {
 			updates["key"], keyChanged = channel.Key, true
@@ -172,11 +177,17 @@ func UpdateTaskPluginChannelLocked(channelID int, update func(channel *Channel, 
 			return gorm.ErrRecordNotFound
 		}
 		status := target.Status
+		key := target.Key
+		target.Keys = nil
+		previousKeys := target.GetKeys()
 		if err := update(target, others); err != nil {
 			return err
 		}
 		statusChanged, enabled = target.Status != status, target.Status == common.ChannelStatusEnabled
 		target.Keys = nil
+		if target.ChannelInfo.IsMultiKey && target.Key != key {
+			target.ChannelInfo.remapKeyScopes(previousKeys, target.GetKeys())
+		}
 		updates := map[string]any{
 			"key":          target.Key,
 			"status":       target.Status,
@@ -256,6 +267,8 @@ func UpdateScheduledChannelLocked(ctx context.Context, channelID int, update fun
 			return err
 		}
 		key, status, otherInfo := channel.Key, channel.Status, channel.OtherInfo
+		channel.Keys = nil
+		previousKeys := channel.GetKeys()
 		info, err := common.Marshal(channel.ChannelInfo)
 		if err != nil {
 			return err
@@ -264,6 +277,9 @@ func UpdateScheduledChannelLocked(ctx context.Context, channelID int, update fun
 			return err
 		}
 		channel.Keys = nil
+		if channel.ChannelInfo.IsMultiKey && channel.Key != key {
+			channel.ChannelInfo.remapKeyScopes(previousKeys, channel.GetKeys())
+		}
 		updates := map[string]any{}
 		if channel.Key != key {
 			updates["key"], keyChanged = channel.Key, true

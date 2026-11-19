@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -49,7 +50,10 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 		return PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}
 	}
-	if IsChannelFailure(err) {
+	// A credential that needs a new login only leaves another candidate on a
+	// multi-key channel. A single-key channel remains a failed channel.
+	keyCanFailOver := c != nil && common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) && errors.Is(err, ErrPluginCredentialNeedsLogin)
+	if IsChannelFailure(err) && !keyCanFailOver {
 		RecordChannelFailure(c)
 	}
 	if c != nil && c.Writer != nil && c.Writer.Written() {

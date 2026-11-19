@@ -459,6 +459,7 @@ var reservedRouteNamespaces = []string{
 	"/sign-in",
 	"/sign-up",
 	"/forgot-password",
+	"/invitation-codes",
 	"/oauth",
 	"/otp",
 	"/register",

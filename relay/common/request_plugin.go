@@ -277,6 +277,9 @@ func markRequestPluginOverrides(info *RelayInfo, before, after []byte) {
 // MarkRequestPluginHeaderOverrides marks the attempt's header changes to the
 // lowercase names the channel's header override replaced.
 func (info *RelayInfo) MarkRequestPluginHeaderOverrides(names []string) {
+	if info == nil {
+		return
+	}
 	for _, entry := range info.attemptRequestPluginRecord() {
 		if entry.Headers == nil {
 			continue

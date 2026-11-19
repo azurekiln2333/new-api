@@ -250,7 +250,10 @@ func TestChannelKeyShowsCredentialSummaries(t *testing.T) {
 func TestCopyChannelDropsCredentials(t *testing.T) {
 	setupProviderPluginControllerTest(t, "ctl-copy")
 	single := insertPluginChannel(t, "ctl-copy", "https://vendor.example", pluginCredentialLine(t, "ctl-copy", "one"), false)
-	multi := insertPluginChannel(t, "ctl-copy", "https://vendor.example", "sk-static\n"+pluginCredentialLine(t, "ctl-copy", "two"), true)
+	multi := insertPluginChannel(t, "ctl-copy", "https://vendor.example", pluginCredentialLine(t, "ctl-copy", "two")+"\nsk-static", true)
+	multi.ChannelInfo.MultiKeyModels = map[int][]string{1: {"m"}}
+	multi.ChannelInfo.MultiKeyUsers = map[int]int{1: 42}
+	require.NoError(t, model.DB.Model(multi).Update("channel_info", multi.ChannelInfo).Error)
 
 	copyOf := func(id int) *model.Channel {
 		t.Helper()
@@ -273,6 +276,12 @@ func TestCopyChannelDropsCredentials(t *testing.T) {
 	assert.Equal(t, "sk-static", copied.Key)
 	assert.Equal(t, 1, copied.ChannelInfo.MultiKeySize)
 	assert.Equal(t, common.ChannelStatusEnabled, copied.Status)
+	assert.Equal(t, map[int][]string{0: {"m"}}, copied.ChannelInfo.MultiKeyModels)
+	assert.Equal(t, map[int]int{0: 42}, copied.ChannelInfo.MultiKeyUsers, "dropping a credential must not unbind the remaining static key")
+	stored, err := model.GetChannelById(multi.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, multi.Key, stored.Key, "copying must leave the source credential in place")
+	assert.Equal(t, map[int]int{1: 42}, stored.ChannelInfo.MultiKeyUsers)
 }
 
 func TestRemovingCredentialsRevokesThem(t *testing.T) {

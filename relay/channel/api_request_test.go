@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/QuantumNous/new-api/pkg/requestpatch"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -341,6 +342,27 @@ func TestProcessHeaderOverride_OverridesUserAgentOnUpstreamRequest(t *testing.T)
 
 	require.Equal(t, "codex_cli_rs/0.164.0 (Windows 10.0.19045; x86_64)", upstreamReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex_cli_rs", upstreamReq.Header.Get("Originator"))
+}
+
+func TestApplyHeaderOverrideKeepsPluginHeaderReplacementAudit(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	info := &relaycommon.RelayInfo{
+		RequestPluginHeaders: []requestpatch.Effect{{Set: map[string]string{"X-Vendor": "plugin-value"}}},
+		RequestPluginRecord: []relaycommon.RequestPluginRecord{{
+			Stage:   "outbound",
+			Headers: &relaycommon.RequestPluginHeaderChange{Set: []string{"x-vendor"}},
+		}},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{"X-Vendor": "channel-value"},
+		},
+	}
+	upstreamReq := httptest.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", nil)
+
+	require.NoError(t, ApplyHeaderOverride(info, ctx, upstreamReq))
+
+	assert.Equal(t, "channel-value", upstreamReq.Header.Get("X-Vendor"))
+	assert.Equal(t, []string{"x-vendor"}, info.RequestPluginRecord[0].Headers.Overridden)
 }
 
 func TestToWebSocketURL(t *testing.T) {

@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
@@ -318,6 +319,98 @@ func TestMultiKeyManageKeepsKeyScopesOnTheirKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[int][]string{0: {"model-a"}}, loaded.ChannelInfo.MultiKeyModels)
 	assert.Equal(t, map[int]int{0: rootID}, loaded.ChannelInfo.MultiKeyUsers)
+}
+
+func TestUpdateChannelKeepsCurrentKeyState(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	for _, tc := range []struct {
+		name       string
+		reorder    bool
+		changeMode bool
+		concurrent bool
+	}{
+		{name: "reordered keys retain scopes and bindings", reorder: true},
+		{name: "configuration preserves a concurrent metadata edit", concurrent: true},
+		{name: "explicit mode preserves a concurrent metadata edit", changeMode: true, concurrent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channel := &model.Channel{Name: "key-state-edit", Type: constant.ChannelTypeOpenAI,
+				Key: "sk-first\nsk-second", Models: "model-a,model-b", Group: "default",
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
+					MultiKeyModels: map[int][]string{0: {"model-a"}, 1: {"model-b"}}, MultiKeyUsers: map[int]int{1: rootID}},
+			}
+			require.NoError(t, channel.Insert())
+			t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+			body := map[string]any{"id": channel.Id, "name": "renamed-key-state", "type": channel.Type,
+				"models": channel.Models, "group": channel.Group}
+			if tc.reorder {
+				body["key"], body["key_mode"] = "sk-second\nsk-first", "replace"
+			}
+			if tc.changeMode {
+				body["multi_key_mode"] = "polling"
+			}
+			injected := false
+			if tc.concurrent {
+				// Change the stored metadata immediately before the configuration
+				// write, after its reads and any explicit mode merge. Map-based
+				// writes in UpdateChannelLocked do not re-enter this callback.
+				const callback = "test:channel-edit-current-key-state"
+				require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+					editing, ok := tx.Statement.Dest.(*model.Channel)
+					if !ok || editing.Id != channel.Id || injected {
+						return
+					}
+					injected = true
+					_, err := model.UpdateChannelLocked(channel.Id, func(stored *model.Channel) error {
+						stored.ChannelInfo.MultiKeyModels = map[int][]string{1: {"model-a"}}
+						stored.ChannelInfo.MultiKeyUsers = map[int]int{0: rootID}
+						stored.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled}
+						stored.ChannelInfo.MultiKeyPollingIndex = 1
+						return nil
+					})
+					if err != nil {
+						tx.AddError(err)
+					}
+				}))
+				t.Cleanup(func() { require.NoError(t, model.DB.Callback().Update().Remove(callback)) })
+			}
+			payload, err := common.Marshal(body)
+			require.NoError(t, err)
+			response := putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
+			var result struct {
+				Success bool          `json:"success"`
+				Data    model.Channel `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.True(t, result.Success, response.Body.String())
+			loaded, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, "renamed-key-state", loaded.Name)
+			assert.Equal(t, 2, loaded.ChannelInfo.MultiKeySize)
+			if tc.reorder {
+				assert.Equal(t, "sk-second\nsk-first", loaded.Key)
+				assert.Equal(t, map[int][]string{0: {"model-b"}, 1: {"model-a"}}, loaded.ChannelInfo.MultiKeyModels)
+				assert.Equal(t, map[int]int{0: rootID}, loaded.ChannelInfo.MultiKeyUsers)
+				key, index, apiErr := loaded.GetNextEnabledKeyFor("model-b", rootID)
+				require.Nil(t, apiErr)
+				assert.Equal(t, "sk-second", key)
+				assert.Zero(t, index)
+			}
+			if tc.concurrent {
+				require.True(t, injected)
+				assert.Equal(t, map[int][]string{1: {"model-a"}}, loaded.ChannelInfo.MultiKeyModels)
+				assert.Equal(t, map[int]int{0: rootID}, loaded.ChannelInfo.MultiKeyUsers)
+				assert.Equal(t, map[int]int{0: common.ChannelStatusManuallyDisabled}, loaded.ChannelInfo.MultiKeyStatusList)
+				assert.Equal(t, 1, loaded.ChannelInfo.MultiKeyPollingIndex)
+			}
+			mode := constant.MultiKeyModeRandom
+			if tc.changeMode {
+				mode = constant.MultiKeyModePolling
+			}
+			assert.Equal(t, mode, loaded.ChannelInfo.MultiKeyMode)
+			assert.Equal(t, loaded.ChannelInfo, result.Data.ChannelInfo)
+		})
+	}
 }
 
 // TestUpdateChannelConvertsSingleKeyChannel pins the single-key to multi-key

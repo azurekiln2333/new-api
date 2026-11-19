@@ -1172,8 +1172,14 @@ func TestPluginConverterMapsVendorErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			previous := common.RetryTimes
+			affinity := operation_setting.GetChannelAffinitySetting()
+			previousAvoidFailedChannels := affinity.RetryAvoidFailedChannels
 			common.RetryTimes = 1
-			t.Cleanup(func() { common.RetryTimes = previous })
+			affinity.RetryAvoidFailedChannels = false
+			t.Cleanup(func() {
+				common.RetryTimes = previous
+				affinity.RetryAvoidFailedChannels = previousAvoidFailedChannels
+			})
 			harness := newRelayHarness(t)
 			registerRelayPlugin(t, strings.ReplaceAll(vendorPlugin, "%KEY%", "relay-vendor"))
 			harness.upstream.respond = respondWith(tc.status, "application/json", tc.reply)
