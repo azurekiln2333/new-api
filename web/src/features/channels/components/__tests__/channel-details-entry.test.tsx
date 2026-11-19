@@ -24,7 +24,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
@@ -257,4 +257,73 @@ it('opens the channel details when the channel name button is activated by keybo
   expect(
     screen.getByRole('dialog', { name: 'Channel details' })
   ).toHaveTextContent('prod')
+})
+
+it('commits the inline priority on Enter without opening the channel details', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true, data: {} } } as never)
+  const card = await renderCardView()
+  const user = userEvent.setup()
+  const priorityCell = card.querySelector<HTMLElement>(
+    '[data-column-id="priority"]'
+  )
+  expect(priorityCell).not.toBeNull()
+  const cell = within(priorityCell as HTMLElement)
+
+  // Click the idle value to start inline editing, then commit with Enter: the
+  // drawer must stay closed while the spinner keeps the key it handled.
+  await user.click(cell.getByRole('button', { name: '0' }))
+  expect(cell.getByRole('textbox')).toHaveFocus()
+
+  await user.clear(cell.getByRole('textbox'))
+  await user.type(cell.getByRole('textbox'), '42')
+  await user.keyboard('{Enter}')
+
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(put).toHaveBeenCalledWith(
+    '/api/channel/',
+    expect.objectContaining({ id: 3, priority: 42 }),
+    expect.anything()
+  )
+  expect(
+    screen.getByRole('status', { name: 'Dialog state' })
+  ).toHaveTextContent('none:-')
+  expect(
+    screen.queryByRole('dialog', { name: 'Channel details' })
+  ).not.toBeInTheDocument()
+})
+
+it('opens the channel details from the focused card body by keyboard', async () => {
+  const card = await renderCardView()
+  const user = userEvent.setup()
+  const body = card.querySelector<HTMLElement>(
+    '[role=button][data-activates-channel-details]'
+  )
+  expect(body).not.toBeNull()
+  body?.focus()
+  expect(body).toHaveFocus()
+
+  await user.keyboard('{Enter}')
+
+  expect(
+    screen.getByRole('status', { name: 'Dialog state' })
+  ).toHaveTextContent('channel-details:3')
+  expect(
+    screen.getByRole('dialog', { name: 'Channel details' })
+  ).toHaveTextContent('prod')
+})
+
+it('opens the channel details from the focused card body with Space', async () => {
+  const card = await renderCardView()
+  const user = userEvent.setup()
+  card
+    .querySelector<HTMLElement>('[role=button][data-activates-channel-details]')
+    ?.focus()
+
+  await user.keyboard(' ')
+
+  expect(
+    screen.getByRole('status', { name: 'Dialog state' })
+  ).toHaveTextContent('channel-details:3')
 })

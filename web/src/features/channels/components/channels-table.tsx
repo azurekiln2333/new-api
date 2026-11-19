@@ -437,18 +437,20 @@ export function ChannelsTable() {
     setOpen('channel-details')
   }
 
-  // Keyboard equivalent for the card view: the card body itself is focusable,
-  // so Enter/Space on focused card space opens the same drawer as a click. In
-  // the table view the channel-name button in the name column handles keys.
+  // Keyboard equivalent for the card view: only the focused card body itself
+  // opens the drawer. Keys pressed inside a nested control (inline spinner,
+  // action menu, status toggle, select box) belong to that control and must
+  // not bubble into detail activation, and an event a control already handled
+  // must never reopen the drawer. The table view handles keys on the
+  // channel-name button in the name column instead.
   const handleCardKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (reorderActive) return
     if (event.key !== 'Enter' && event.key !== ' ') return
-    const card = (event.target as HTMLElement).closest(
-      '[role=button][data-activates-channel-details]'
-    )
-    if (!card) return
+    if (event.defaultPrevented) return
+    const target = event.target as HTMLElement
+    if (!target.matches('[role=button][data-activates-channel-details]')) return
     event.preventDefault()
-    const channelId = getChannelRowId(card as HTMLElement)
+    const channelId = getChannelRowId(target)
     const channel = pageChannels?.find((item) => item.id === channelId)
     if (!channel) return
     setCurrentRow(channel)
