@@ -18,8 +18,6 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -46,25 +44,27 @@ func TestRedemptionBatchLimit(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		for _, upgrade := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/upgrade=%t", dialect, upgrade), func(t *testing.T) {
-				var driver gorm.Dialector
+				var db *gorm.DB
+				var err error
 				dbType := common.DatabaseTypeSQLite
 				switch dialect {
 				case "sqlite":
-					driver = sqlite.Open(filepath.Join(t.TempDir(), "batch.db") + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+					db, err = gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "batch.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"), &gorm.Config{})
 				case "mysql":
 					dsn := os.Getenv("TEST_MYSQL_DSN")
 					if dsn == "" {
 						t.Skip("TEST_MYSQL_DSN is not configured")
 					}
-					driver, dbType = mysql.Open(dsn), common.DatabaseTypeMySQL
+					db, _ = newAuditTestDatabase(t, dialect, dsn)
+					dbType = common.DatabaseTypeMySQL
 				case "postgres":
 					dsn := os.Getenv("TEST_POSTGRES_DSN")
 					if dsn == "" {
 						t.Skip("TEST_POSTGRES_DSN is not configured")
 					}
-					driver, dbType = postgres.Open(dsn), common.DatabaseTypePostgreSQL
+					db, _ = newAuditTestDatabase(t, dialect, dsn)
+					dbType = common.DatabaseTypePostgreSQL
 				}
-				db, err := gorm.Open(driver, &gorm.Config{})
 				require.NoError(t, err)
 				sqlDB, err := db.DB()
 				require.NoError(t, err)
@@ -249,38 +249,39 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 	t.Cleanup(func() { common.IsMasterNode = previousMaster })
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
-			var driver, logDriver gorm.Dialector
+			var db, logDB *gorm.DB
+			var err error
 			dbType := common.DatabaseTypeSQLite
 			switch dialect {
 			case "sqlite":
-				driver = sqlite.Open(":memory:")
-				logDriver = sqlite.Open(":memory:")
+				db, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+				require.NoError(t, err)
+				logDB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 			case "mysql":
 				dsn := os.Getenv("TEST_MYSQL_DSN")
 				if dsn == "" {
 					t.Skip("TEST_MYSQL_DSN is not configured")
 				}
-				driver = mysql.Open(dsn)
+				db, _ = newAuditTestDatabase(t, dialect, dsn)
 				logDSN := os.Getenv("TEST_MYSQL_LOG_DSN")
 				if logDSN == "" {
 					logDSN = dsn
 				}
-				logDriver = mysql.Open(logDSN)
+				logDB, _ = newAuditTestDatabase(t, dialect, logDSN)
 				dbType = common.DatabaseTypeMySQL
 			case "postgres":
 				dsn := os.Getenv("TEST_POSTGRES_DSN")
 				if dsn == "" {
 					t.Skip("TEST_POSTGRES_DSN is not configured")
 				}
-				driver = postgres.Open(dsn)
+				db, _ = newAuditTestDatabase(t, dialect, dsn)
 				logDSN := os.Getenv("TEST_POSTGRES_LOG_DSN")
 				if logDSN == "" {
 					logDSN = dsn
 				}
-				logDriver = postgres.Open(logDSN)
+				logDB, _ = newAuditTestDatabase(t, dialect, logDSN)
 				dbType = common.DatabaseTypePostgreSQL
 			}
-			db, err := gorm.Open(driver, &gorm.Config{})
 			require.NoError(t, err)
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
@@ -294,8 +295,6 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Logf("database version: %s", version)
 
-			logDB, err := gorm.Open(logDriver, &gorm.Config{})
-			require.NoError(t, err)
 			logSQL, err := logDB.DB()
 			require.NoError(t, err)
 			logSQL.SetMaxOpenConns(1)
