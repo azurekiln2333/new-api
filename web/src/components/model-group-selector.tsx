@@ -75,6 +75,19 @@ interface ModelOption {
   description?: string
 }
 
+const modelNameCollator = new Intl.Collator('en', {
+  numeric: true,
+  sensitivity: 'base',
+})
+
+function compareModelsByName(left: ModelOption, right: ModelOption): number {
+  const nameOrder = modelNameCollator.compare(left.label, right.label)
+  if (nameOrder !== 0) return nameOrder
+  if (left.value < right.value) return -1
+  if (left.value > right.value) return 1
+  return 0
+}
+
 interface GroupOption {
   label: string
   value: string
@@ -188,21 +201,23 @@ export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
     )
 
     // Group models by category
-    const groupedModels = useMemo(
-      () =>
-        models.reduce(
-          (acc, model) => {
-            const category = model.category || t('Other')
-            if (!acc[category]) {
-              acc[category] = []
-            }
-            acc[category].push(model)
-            return acc
-          },
-          {} as Record<string, ModelOption[]>
-        ),
-      [models, t]
-    )
+    const groupedModels = useMemo(() => {
+      const grouped = models.reduce(
+        (acc, model) => {
+          const category = model.category || t('Other')
+          if (!acc[category]) {
+            acc[category] = []
+          }
+          acc[category].push(model)
+          return acc
+        },
+        {} as Record<string, ModelOption[]>
+      )
+      for (const categoryModels of Object.values(grouped)) {
+        categoryModels.sort(compareModelsByName)
+      }
+      return grouped
+    }, [models, t])
 
     // Filter models by search query
     const filteredModels = useMemo(() => {
@@ -587,13 +602,17 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
     () => groups.find((group) => group.value === selectedGroup),
     [groups, selectedGroup]
   )
+  const sortedModels = useMemo(
+    () => [...models].sort(compareModelsByName),
+    [models]
+  )
   const filteredModels = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     if (!query) {
-      return models
+      return sortedModels
     }
 
-    return models.filter((model) => {
+    return sortedModels.filter((model) => {
       const searchableText = [
         model.label,
         model.value,
@@ -605,7 +624,7 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
 
       return searchableText.includes(query)
     })
-  }, [models, searchQuery])
+  }, [sortedModels, searchQuery])
 
   const handleModelChange = useCallback(
     (value: string) => {
