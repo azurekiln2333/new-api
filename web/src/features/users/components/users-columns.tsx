@@ -32,7 +32,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { getCurrencyDisplay } from '@/lib/currency'
+import { formatQuotaWithCurrency, getCurrencyDisplay } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -193,6 +193,20 @@ export function useUsersColumns(): ColumnDef<User>[] {
         size: 180,
         minSize: 160,
         meta: { mobileOrder: 40 },
+      },
+      {
+        accessorKey: 'used_quota',
+        header: `${t('Total Used')} (${quotaUnit})`,
+        cell: ({ row }) => (
+          <span className='text-sm tabular-nums'>
+            {formatQuotaWithCurrency(row.original.used_quota, {
+              showSymbol: false,
+            })}
+          </span>
+        ),
+        size: 160,
+        minSize: 140,
+        meta: { mobileOrder: 41 },
       },
       {
         accessorKey: 'group',

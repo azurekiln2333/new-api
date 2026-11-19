@@ -82,6 +82,7 @@ export type UserSortBy =
   | 'id'
   | 'username'
   | 'quota'
+  | 'used_quota'
   | 'group'
   | 'created_at'
   | 'last_login_at'

@@ -23,6 +23,7 @@ var userSortColumns = map[string]string{
 	"id":            "id",
 	"username":      "username",
 	"quota":         "quota",
+	"used_quota":    "used_quota",
 	"group":         "group",
 	"created_at":    "created_at",
 	"last_login_at": "last_login_at",

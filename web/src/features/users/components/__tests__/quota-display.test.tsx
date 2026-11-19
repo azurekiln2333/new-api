@@ -134,7 +134,7 @@ afterEach(() => {
     .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
 })
 
-it('shows balance above secondary usage text and opens quota details on click', async () => {
+it('shows balance and total used in separate sortable columns and opens quota details on click', async () => {
   render(
     <I18nextProvider i18n={i18n}>
       <QuotaTable remaining={1900} used={1100} />
@@ -143,19 +143,19 @@ it('shows balance above secondary usage text and opens quota details on click', 
   expect(
     screen.getByRole('columnheader', { name: 'Available Balance ($)' })
   ).toHaveAttribute('data-sortable', 'true')
-  expect(screen.getAllByRole('columnheader')).toHaveLength(1)
+  expect(
+    screen.getByRole('columnheader', { name: 'Total Used ($)' })
+  ).toHaveAttribute('data-sortable', 'true')
+  expect(screen.getAllByRole('columnheader')).toHaveLength(2)
   const cells = screen.getAllByRole('cell')
   expect(within(cells[0]).getByText('0.0038')).toBeInTheDocument()
-  expect(cells).toHaveLength(1)
+  expect(cells).toHaveLength(2)
   expect(
     within(cells[0]).queryByText('Available Balance')
   ).not.toBeInTheDocument()
-  expect(within(cells[0]).getByText('0.0022')).toBeInTheDocument()
-  expect(screen.getByText('0.0038').parentElement).toHaveClass('grid-cols-1')
-  expect(screen.getByText('Used amount').parentElement).toHaveAttribute(
-    'data-table-text',
-    'secondary'
-  )
+  expect(within(cells[0]).queryByText('0.0022')).not.toBeInTheDocument()
+  expect(within(cells[1]).getByText('0.0022')).toBeInTheDocument()
+  expect(screen.queryByText('Used amount')).not.toBeInTheDocument()
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
   expect(screen.queryByText('0.006')).not.toBeInTheDocument()
   const trigger = screen.getByRole('button', {
@@ -176,7 +176,7 @@ it('shows balance above secondary usage text and opens quota details on click', 
 })
 
 it.each([0, 500000])(
-  'shows usage for a zero balance only when used quota is nonzero (used=%s)',
+  'keeps zero balances and usage visible in their own columns (used=%s)',
   async (used) => {
     render(
       <I18nextProvider i18n={i18n}>
@@ -185,6 +185,7 @@ it.each([0, 500000])(
     )
     if (used === 0) {
       expect(screen.getAllByRole('cell')[0]).toHaveTextContent(/^No Quota$/)
+      expect(screen.getAllByRole('cell')[1]).toHaveTextContent(/^0$/)
       expect(screen.queryByText('Used amount')).not.toBeInTheDocument()
       await userEvent.click(screen.getByRole('button', { name: 'No Quota' }))
       const detail = await screen.findByRole('dialog', { name: 'Quota ($)' })
@@ -196,7 +197,7 @@ it.each([0, 500000])(
       within(screen.getAllByRole('cell')[0]).getByText('0')
     ).toBeInTheDocument()
     expect(
-      within(screen.getAllByRole('cell')[0]).getByText('1')
+      within(screen.getAllByRole('cell')[1]).getByText('1')
     ).toBeInTheDocument()
   }
 )
@@ -233,6 +234,9 @@ it('shows the custom symbol only in the column header', () => {
   expect(
     screen.getByRole('columnheader', { name: 'Available Balance (🐱)' })
   ).toBeInTheDocument()
+  expect(
+    screen.getByRole('columnheader', { name: 'Total Used (🐱)' })
+  ).toBeInTheDocument()
   for (const cell of screen.getAllByRole('cell')) {
     expect(cell).not.toHaveTextContent('🐱')
   }
@@ -240,7 +244,7 @@ it('shows the custom symbol only in the column header', () => {
     within(screen.getAllByRole('cell')[0]).getByText('0.0038')
   ).toBeInTheDocument()
   expect(
-    within(screen.getAllByRole('cell')[0]).getByText('0.0022')
+    within(screen.getAllByRole('cell')[1]).getByText('0.0022')
   ).toBeInTheDocument()
 })
 
@@ -254,7 +258,11 @@ function UsersPage() {
   )
 }
 
-async function renderUsersList(emptyInvitation = false) {
+async function renderUsersList(
+  emptyInvitation = false,
+  initialEntry = '/users/',
+  total = 1
+) {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 100 })
   const usersResponse = {
     data: {
@@ -278,7 +286,7 @@ async function renderUsersList(emptyInvitation = false) {
             inviter_id: emptyInvitation ? 0 : 42,
           },
         ],
-        total: 1,
+        total,
       },
     },
   }
@@ -298,7 +306,7 @@ async function renderUsersList(emptyInvitation = false) {
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([users])]),
-    history: createMemoryHistory({ initialEntries: ['/users/'] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -331,13 +339,71 @@ it('sends balance sorting to the server and keeps invitation details on two line
     })
   )
   expect(
-    screen.queryByRole('button', { name: 'Total Used' })
-  ).not.toBeInTheDocument()
+    screen.getByRole('button', { name: 'Total Used ($)' })
+  ).toBeInTheDocument()
   expect(screen.getByText('Inviter ID: 42')).toBeInTheDocument()
   expect(screen.getByText(/Invited 2 users · Earnings:/)).toBeInTheDocument()
 })
 
-it('shows balance above usage on mobile cards in Chinese', async () => {
+it('sends used balance sorting to the server and resets pagination', async () => {
+  const get = await renderUsersList(false, '/users/?page=2&pageSize=20', 42)
+  expect(get).toHaveBeenCalledWith('/api/user/', {
+    params: expect.objectContaining({ p: 2, page_size: 20 }),
+  })
+  for (const [label, order] of [
+    ['Asc', 'asc'],
+    ['Desc', 'desc'],
+  ] as const) {
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Total Used ($)' })
+    )
+    await userEvent.click(screen.getByRole('menuitem', { name: label }))
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith('/api/user/', {
+        params: expect.objectContaining({
+          p: 1,
+          page_size: 20,
+          sort_by: 'used_quota',
+          sort_order: order,
+        }),
+      })
+    )
+  }
+})
+
+it('preserves search and column filters when sorting used balance', async () => {
+  const search = new URLSearchParams({
+    page: '2',
+    pageSize: '20',
+    filter: 'long-user',
+    group: '["default"]',
+    role: '["1"]',
+    status: '["1"]',
+  })
+  const get = await renderUsersList(false, `/users/?${search}`, 42)
+  await userEvent.click(screen.getByRole('button', { name: 'Total Used ($)' }))
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Asc' }))
+  await waitFor(() => {
+    const request = get.mock.calls
+      .map(([url]) => String(url))
+      .reverse()
+      .find((url) => url.includes('sort_by=used_quota'))
+    expect(request).toBeDefined()
+    const params = new URL(request ?? '', 'http://localhost').searchParams
+    expect(Object.fromEntries(params)).toEqual({
+      p: '1',
+      page_size: '20',
+      keyword: 'long-user',
+      group: 'default',
+      role: '1',
+      status: '1',
+      sort_by: 'used_quota',
+      sort_order: 'asc',
+    })
+  })
+})
+
+it('shows separate balance and usage fields on mobile cards in Chinese', async () => {
   const originalMatchMedia = window.matchMedia
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
     ...originalMatchMedia(query),
@@ -348,7 +414,7 @@ it('shows balance above usage on mobile cards in Chinese', async () => {
   try {
     await renderUsersList()
     expect(screen.getByText('可用余额 ($)')).toBeInTheDocument()
-    expect(screen.getByText('已用')).toBeInTheDocument()
+    expect(screen.getByText('累计已用 ($)')).toBeInTheDocument()
     expect(screen.getByText('0.0038')).toBeInTheDocument()
     expect(screen.getByText('0.0022')).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
@@ -413,10 +479,13 @@ it('updates the header unit and converted amounts together when currency setting
     screen.getByRole('columnheader', { name: 'Available Balance (¥)' })
   ).toBeInTheDocument()
   expect(
+    screen.getByRole('columnheader', { name: 'Total Used (¥)' })
+  ).toBeInTheDocument()
+  expect(
     within(screen.getAllByRole('cell')[0]).getByText('7')
   ).toBeInTheDocument()
   expect(
-    within(screen.getAllByRole('cell')[0]).getByText('14')
+    within(screen.getAllByRole('cell')[1]).getByText('14')
   ).toBeInTheDocument()
   for (const cell of screen.getAllByRole('cell')) {
     expect(cell).not.toHaveTextContent('¥')
@@ -436,9 +505,12 @@ it('labels raw quota mode as tokens without introducing a currency symbol', () =
     screen.getByRole('columnheader', { name: 'Available Balance (Tokens)' })
   ).toBeInTheDocument()
   expect(
+    screen.getByRole('columnheader', { name: 'Total Used (Tokens)' })
+  ).toBeInTheDocument()
+  expect(
     within(screen.getAllByRole('cell')[0]).getByText('100')
   ).toBeInTheDocument()
   expect(
-    within(screen.getAllByRole('cell')[0]).getByText('200')
+    within(screen.getAllByRole('cell')[1]).getByText('200')
   ).toBeInTheDocument()
 })

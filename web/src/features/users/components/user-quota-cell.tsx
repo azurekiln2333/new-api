@@ -57,22 +57,14 @@ export function UserQuotaCell(props: UserQuotaCellProps) {
       ]}
     >
       {hasQuota ? (
-        <span className='grid min-w-0 grid-cols-1 gap-y-1 text-sm tabular-nums'>
-          <span
-            className={cn(
-              props.remaining < 0 && 'text-destructive',
-              props.remaining === 0 && 'text-muted-foreground'
-            )}
-          >
-            {formattedRemaining}
-          </span>
-          <span
-            data-table-text='secondary'
-            className='text-muted-foreground flex items-baseline gap-1 text-xs font-normal'
-          >
-            <span>{t('Used amount')}</span>
-            <span>{formattedUsed}</span>
-          </span>
+        <span
+          className={cn(
+            'text-sm tabular-nums',
+            props.remaining < 0 && 'text-destructive',
+            props.remaining === 0 && 'text-muted-foreground'
+          )}
+        >
+          {formattedRemaining}
         </span>
       ) : (
         <StatusBadge
