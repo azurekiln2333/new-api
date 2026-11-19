@@ -64,6 +64,175 @@ import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
 const originalAuth = useAuthStore.getState().auth
 
+test.each([
+  { endpoints: undefined, expected: [] },
+  { endpoints: null, expected: [] },
+  { endpoints: [], expected: [] },
+  { endpoints: ['chat'], expected: ['chat'] },
+  { endpoints: ['responses'], expected: ['responses'] },
+  { endpoints: ['chat', 'responses'], expected: ['chat', 'responses'] },
+])(
+  'upstream endpoints $endpoints preserve their routing choice through save and reload',
+  ({ endpoints, expected }) => {
+    const channel = {
+      ...editingChannel,
+      setting: JSON.stringify({ supported_endpoints: endpoints }),
+    }
+    const values = transformChannelToFormDefaults(channel)
+    const saved = JSON.parse(buildSettingJSON(values))
+    expect(values.supported_endpoints).toEqual(expected)
+    expect(channelFormSchema.safeParse(values).success).toBe(true)
+    if (expected.length) {
+      expect(saved.supported_endpoints).toEqual(expected)
+    } else {
+      expect(saved).not.toHaveProperty('supported_endpoints')
+    }
+    expect(
+      transformChannelToFormDefaults({
+        ...channel,
+        setting: JSON.stringify(saved),
+      }).supported_endpoints
+    ).toEqual(expected)
+    expect(
+      getChannelConfigurationState(values, {}, true).sections.request
+    ).toBe(expected.length ? 'configured' : 'idle')
+  }
+)
+
+test.each([
+  {
+    setting: { supported_endpoints: ['messages'] },
+    type: 1,
+    error: 'supported_endpoints must contain only chat or responses',
+  },
+  {
+    setting: { supported_endpoints: 'responses' },
+    type: 1,
+    error: 'supported_endpoints must contain only chat or responses',
+  },
+  {
+    setting: { supported_endpoints: ['chat', 'chat'] },
+    type: 1,
+    error: 'supported_endpoints must not contain duplicates',
+  },
+  {
+    setting: {
+      supported_endpoints: ['responses'],
+      pass_through_body_enabled: true,
+    },
+    type: 1,
+    error:
+      'supported_endpoints cannot be combined with pass_through_body_enabled',
+  },
+  {
+    setting: { supported_endpoints: ['responses'] },
+    type: 14,
+    error: 'supported_endpoints is not supported for this channel type',
+  },
+])(
+  'upstream endpoints reject $error without silently discarding stored configuration',
+  ({ setting, type, error }) => {
+    const values = transformChannelToFormDefaults({
+      ...editingChannel,
+      type,
+      setting: JSON.stringify(setting),
+    })
+    const result = channelFormSchema.safeParse(values)
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: expect.arrayContaining(['supported_endpoints']),
+            message: error,
+          }),
+        ])
+      )
+    }
+    expect(getChannelConfigurationSection('supported_endpoints')).toBe(
+      'request'
+    )
+  }
+)
+
+test.each([
+  { label: 'Inherit existing routing', expected: undefined },
+  { label: 'Chat Completions only', expected: ['chat'] },
+  { label: 'Responses only', expected: ['responses'] },
+  { label: 'Chat Completions and Responses', expected: ['chat', 'responses'] },
+])(
+  'upstream endpoints save the $label selection',
+  async ({ label, expected }) => {
+    editingChannel.setting = '{"supported_endpoints":["responses"]}'
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+    const select = screen.getByRole('combobox', {
+      name: 'Supported upstream endpoints',
+    })
+    expect(select).toHaveTextContent('Responses only')
+    select.focus()
+    await user.keyboard('{Enter}')
+    await user.click(screen.getByRole('option', { name: label }))
+    expect(select).toHaveTextContent(label)
+    await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    const saved = JSON.parse(
+      (put.mock.calls[0][1] as { setting: string }).setting
+    )
+    expect(saved.supported_endpoints).toEqual(expected)
+  }
+)
+
+test('changing to an unsupported provider clears and disables upstream endpoints', async () => {
+  editingChannel.setting = '{"supported_endpoints":["responses"]}'
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('button', { name: 'Change provider' }))
+  await user.click(screen.getByRole('option', { name: /^Anthropic / }))
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  const select = screen.getByRole('combobox', {
+    name: 'Supported upstream endpoints',
+  })
+  expect(select).toBeDisabled()
+  expect(select).toHaveTextContent('Inherit existing routing')
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  const payload = put.mock.calls[0][1] as { type: number; setting: string }
+  expect(payload.type).toBe(14)
+  expect(JSON.parse(payload.setting)).not.toHaveProperty('supported_endpoints')
+})
+
+test('explicit upstream endpoints prevent saving a channel with body passthrough', async () => {
+  editingChannel.setting = '{"pass_through_body_enabled":true}'
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  await user.click(screen.getByRole('tab', { name: /Request & Response/ }))
+  await user.click(
+    screen.getByRole('combobox', { name: 'Supported upstream endpoints' })
+  )
+  await user.click(screen.getByRole('option', { name: 'Responses only' }))
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  expect(
+    await screen.findByText(
+      'supported_endpoints cannot be combined with pass_through_body_enabled'
+    )
+  ).toBeVisible()
+  expect(put).not.toHaveBeenCalled()
+})
+
 test.each([undefined, null, 0, 15])(
   'channel request limits preserve timeout %s through save and reload',
   (timeout) => {

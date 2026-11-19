@@ -5,10 +5,51 @@ import (
 	"testing"
 
 	"github.com/MoeForge/moego/regexp"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChannelSettingsSupportedEndpoints(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, wantError string
+		wantEndpoints         []string
+	}{
+		{name: "legacy", body: `{}`},
+		{name: "null", body: `{"supported_endpoints":null}`},
+		{name: "empty", body: `{"supported_endpoints":[]}`, wantEndpoints: []string{}},
+		{name: "chat", body: `{"supported_endpoints":["chat"]}`, wantEndpoints: []string{"chat"}},
+		{name: "responses", body: `{"supported_endpoints":["responses"]}`, wantEndpoints: []string{"responses"}},
+		{name: "both", body: `{"supported_endpoints":["chat","responses"]}`, wantEndpoints: []string{"chat", "responses"}},
+		{name: "unknown", body: `{"supported_endpoints":["messages"]}`, wantError: "supported_endpoints must contain only chat or responses"},
+		{name: "duplicates", body: `{"supported_endpoints":["chat","chat"]}`, wantError: "supported_endpoints must not contain duplicates"},
+		{name: "passthrough conflict", body: `{"supported_endpoints":["responses"],"pass_through_body_enabled":true}`, wantError: "supported_endpoints cannot be combined with pass_through_body_enabled"},
+		{name: "legacy passthrough", body: `{"pass_through_body_enabled":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var settings ChannelSettings
+			require.NoError(t, kitutil.Unmarshal([]byte(tc.body), &settings))
+			err := settings.ValidateSupportedEndpoints()
+			if tc.wantError != "" {
+				require.EqualError(t, err, tc.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantEndpoints, settings.SupportedEndpoints)
+			encoded, err := kitutil.Marshal(settings)
+			require.NoError(t, err)
+			var restored ChannelSettings
+			require.NoError(t, kitutil.Unmarshal(encoded, &restored))
+			assert.Equal(t, settings.PassThroughBodyEnabled, restored.PassThroughBodyEnabled)
+			if len(tc.wantEndpoints) == 0 {
+				assert.NotContains(t, string(encoded), "supported_endpoints")
+			} else {
+				assert.Equal(t, tc.wantEndpoints, restored.SupportedEndpoints)
+			}
+		})
+	}
+}
 
 func TestAdvancedCustomValidateResponsesToChatConverterPath(t *testing.T) {
 	valid := &AdvancedCustomConfig{

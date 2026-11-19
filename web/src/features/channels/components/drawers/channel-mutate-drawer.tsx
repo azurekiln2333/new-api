@@ -176,6 +176,7 @@ import {
   channelsQueryKeys,
   getAdvancedCustomStats,
   transformChannelToFormDefaults,
+  supportsChannelEndpointSelection,
   type ChannelFormValues,
   deduplicateKeys,
   getKeyPromptForType,
@@ -345,6 +346,7 @@ const SENSITIVE_FORM_FIELDS = [
   'aws_api_type',
   'azure_responses_version',
   'force_format',
+  'supported_endpoints',
   'thinking_to_content',
   'proxy',
   'max_concurrent_requests',
@@ -980,6 +982,15 @@ export function ChannelMutateDrawer({
           )?.label
           form.setValue('name', label ? t(label) : `#${target.type}`)
         }
+      }
+      if (
+        target.kind === 'plugin' ||
+        !supportsChannelEndpointSelection(target.type)
+      ) {
+        form.setValue('supported_endpoints', [], {
+          shouldDirty: true,
+          shouldValidate: true,
+        })
       }
       setProviderTarget(target)
       setChoosingProvider(false)
@@ -2101,6 +2112,88 @@ export function ChannelMutateDrawer({
           </FormControl>
         </FormItem>
       )}
+    />
+  )
+
+  const supportedEndpointFields = (
+    <FormField
+      control={form.control}
+      name='supported_endpoints'
+      render={({ field }) => {
+        const endpoints = Array.isArray(field.value) ? field.value : []
+        let selection = 'inherit'
+        if (endpoints.includes('chat') && endpoints.includes('responses')) {
+          selection = 'both'
+        } else if (endpoints.includes('chat')) {
+          selection = 'chat'
+        } else if (endpoints.includes('responses')) {
+          selection = 'responses'
+        }
+        const supported = supportsChannelEndpointSelection(currentType)
+        return (
+          <FormItem>
+            <FormLabel>{t('Supported upstream endpoints')}</FormLabel>
+            <Select
+              disabled={sensitiveLocked || isSubmitting || !supported}
+              items={[
+                { value: 'inherit', label: t('Inherit existing routing') },
+                { value: 'chat', label: t('Chat Completions only') },
+                { value: 'responses', label: t('Responses only') },
+                { value: 'both', label: t('Chat Completions and Responses') },
+              ]}
+              value={selection}
+              onValueChange={(value) => {
+                if (value === 'both') {
+                  field.onChange(['chat', 'responses'])
+                } else if (value === 'chat' || value === 'responses') {
+                  field.onChange([value])
+                } else {
+                  field.onChange([])
+                }
+              }}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  <SelectItem value='inherit'>
+                    {t('Inherit existing routing')}
+                  </SelectItem>
+                  <SelectItem value='chat'>
+                    {t('Chat Completions only')}
+                  </SelectItem>
+                  <SelectItem value='responses'>
+                    {t('Responses only')}
+                  </SelectItem>
+                  <SelectItem value='both'>
+                    {t('Chat Completions and Responses')}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FormDescription>
+              {supported
+                ? t(
+                    'Responses only converts Chat Completions and Messages requests. Chat Completions only rejects native Responses requests.'
+                  )
+                : t(
+                    'Available for OpenAI, Azure, OpenAIMax, OpenRouter, and Xinference channels.'
+                  )}
+            </FormDescription>
+            {supported && (
+              <FormDescription>
+                {t(
+                  'Inherit keeps existing routing rules. Explicit endpoints cannot be combined with body passthrough.'
+                )}
+              </FormDescription>
+            )}
+            <FormMessage />
+          </FormItem>
+        )
+      }}
     />
   )
 
@@ -5240,6 +5333,7 @@ export function ChannelMutateDrawer({
                 disabled={sensitiveLocked}
                 className='space-y-4 disabled:opacity-60'
               >
+                {supportedEndpointFields}
                 <ResponsesWebSocketSetting
                   channelType={currentType}
                   supported={responsesWebsocketSupported}

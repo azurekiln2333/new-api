@@ -1247,14 +1247,24 @@ func UpdateChannel(c *gin.Context) {
 
 	baseURLFromPluginDefault := channel.Type == constant.ChannelTypeTaskPlugin &&
 		(channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "")
-	// 使用统一的校验函数
-	if err := validateChannel(&channel.Channel, false); err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	channelToValidate := &channel.Channel
+	if channel.Type == 0 && channel.Setting != nil {
+		var setting dto.ChannelSettings
+		if common.UnmarshalJsonStr(*channel.Setting, &setting) == nil && len(setting.SupportedEndpoints) > 0 {
+			// Partial updates retain the stored provider. Resolve its endpoint
+			// capabilities without turning the omitted type into a type update.
+			checked := channel.Channel
+			checked.Type = originChannel.Type
+			channelToValidate = &checked
+		}
+	}
+	if err := validateChannel(channelToValidate, false); err != nil {
 		common.ApiError(c, err)
 		return
 	}

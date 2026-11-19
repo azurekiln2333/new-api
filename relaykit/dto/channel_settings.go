@@ -13,6 +13,9 @@ import (
 )
 
 type ChannelSettings struct {
+	// SupportedEndpoints declares upstream text API capabilities. Empty preserves
+	// legacy routing; it does not restrict the protocols accepted from clients.
+	SupportedEndpoints []string `json:"supported_endpoints,omitempty"`
 	// MaxConcurrentRequests limits active attempts across all keys of this channel.
 	// Nil and zero leave admission unlimited.
 	MaxConcurrentRequests *int `json:"max_concurrent_requests,omitempty"`
@@ -72,12 +75,32 @@ func (s ChannelSettings) TaskPluginBindings() []string {
 }
 
 const (
+	ChannelEndpointChat                = "chat"
+	ChannelEndpointResponses           = "responses"
 	HTTPProtocolAuto                   = "auto"
 	HTTPProtocolHTTP1                  = "http1"
 	MaxHTTP2ConnectionShards           = 8
 	MaxChannelConcurrentRequests       = 1_000_000
 	MaxUpstreamFirstByteTimeoutSeconds = 86_400
 )
+
+func (s *ChannelSettings) ValidateSupportedEndpoints() error {
+	if s == nil || len(s.SupportedEndpoints) == 0 {
+		return nil
+	}
+	for i, endpoint := range s.SupportedEndpoints {
+		if endpoint != ChannelEndpointChat && endpoint != ChannelEndpointResponses {
+			return fmt.Errorf("supported_endpoints must contain only chat or responses")
+		}
+		if slices.Contains(s.SupportedEndpoints[:i], endpoint) {
+			return fmt.Errorf("supported_endpoints must not contain duplicates")
+		}
+	}
+	if s.PassThroughBodyEnabled {
+		return fmt.Errorf("supported_endpoints cannot be combined with pass_through_body_enabled")
+	}
+	return nil
+}
 
 // ValidateRequestLimits preserves the distinction between inheritance and zero.
 func (s *ChannelSettings) ValidateRequestLimits() error {

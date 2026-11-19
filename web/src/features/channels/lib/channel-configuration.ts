@@ -65,6 +65,7 @@ const CONFIGURATION_BLOCKS = {
     section: 'request',
     fields: [
       'force_format',
+      'supported_endpoints',
       'thinking_to_content',
       'pass_through_body_enabled',
       'responses_websocket_enabled',
@@ -173,6 +174,7 @@ export function getChannelConfigurationState(
       Boolean(values.request_plugins?.length) ||
       hasConfiguredJson(values.header_override),
     requestProcessing: Boolean(
+      values.supported_endpoints?.length ||
       (values.type === 1 && values.force_format) ||
       values.thinking_to_content ||
       (values.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&

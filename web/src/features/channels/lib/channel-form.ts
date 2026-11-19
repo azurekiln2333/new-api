@@ -31,7 +31,7 @@ import {
   MODEL_FETCHABLE_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
-import type { Channel } from '../types'
+import type { Channel, ChannelSettings } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
@@ -83,6 +83,10 @@ function isOptionalProxyURL(value: string | undefined): boolean {
 export const HTTP_PROTOCOL_AUTO = 'auto'
 export const HTTP_PROTOCOL_HTTP1 = 'http1'
 export const MAX_HTTP2_CONNECTION_SHARDS = 8
+
+export function supportsChannelEndpointSelection(channelType: number): boolean {
+  return [1, 3, 6, 20, 47].includes(channelType)
+}
 
 export function normalizeHttpProtocol(
   value: string | undefined | null
@@ -281,6 +285,14 @@ export const channelFormSchema = z
       .optional(),
     upstream_first_byte_timeout_mode: z.enum(['inherit', 'custom']).optional(),
     upstream_first_byte_timeout_seconds: z.number().optional(),
+    supported_endpoints: z
+      .array(
+        z.enum(['chat', 'responses'], {
+          error: 'supported_endpoints must contain only chat or responses',
+        }),
+        { error: 'supported_endpoints must contain only chat or responses' }
+      )
+      .optional(),
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
     proxy: z
@@ -325,6 +337,32 @@ export const channelFormSchema = z
       .optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.supported_endpoints?.length) {
+      if (!supportsChannelEndpointSelection(data.type)) {
+        addRequiredIssue(
+          ctx,
+          'supported_endpoints',
+          'supported_endpoints is not supported for this channel type'
+        )
+      }
+      if (
+        new Set(data.supported_endpoints).size !==
+        data.supported_endpoints.length
+      ) {
+        addRequiredIssue(
+          ctx,
+          'supported_endpoints',
+          'supported_endpoints must not contain duplicates'
+        )
+      }
+      if (data.pass_through_body_enabled) {
+        addRequiredIssue(
+          ctx,
+          'supported_endpoints',
+          'supported_endpoints cannot be combined with pass_through_body_enabled'
+        )
+      }
+    }
     if (
       data.upstream_first_byte_timeout_mode === 'custom' &&
       (!Number.isInteger(data.upstream_first_byte_timeout_seconds) ||
@@ -505,6 +543,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   max_concurrent_requests: 0,
   upstream_first_byte_timeout_mode: 'inherit',
   upstream_first_byte_timeout_seconds: 0,
+  supported_endpoints: [],
   force_format: false,
   thinking_to_content: false,
   proxy: '',
@@ -556,6 +595,9 @@ export function transformChannelToFormDefaults(
     max_concurrent_requests: 0,
     upstream_first_byte_timeout_mode: 'inherit' as 'inherit' | 'custom',
     upstream_first_byte_timeout_seconds: 0,
+    supported_endpoints: [] as NonNullable<
+      ChannelSettings['supported_endpoints']
+    >,
     task_plugin_key: '',
     task_extend_plugin_keys: [] as string[],
     request_plugins: [] as string[],
@@ -586,6 +628,7 @@ export function transformChannelToFormDefaults(
             : 'custom',
         upstream_first_byte_timeout_seconds:
           parsed.upstream_first_byte_timeout_seconds ?? 0,
+        supported_endpoints: parsed.supported_endpoints ?? [],
         task_plugin_key: parsed.task_plugin_key || '',
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
         request_plugins: Array.isArray(parsed.request_plugins)
@@ -752,6 +795,9 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
         : undefined,
     request_plugins: formData.request_plugins?.length
       ? formData.request_plugins
+      : undefined,
+    supported_endpoints: formData.supported_endpoints?.length
+      ? formData.supported_endpoints
       : undefined,
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,

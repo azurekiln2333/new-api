@@ -22,6 +22,9 @@ import (
 
 func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	if _, apiErr := resolveTextUpstreamEndpoint(c, info); apiErr != nil {
+		return apiErr
+	}
 
 	geminiReq, ok := info.Request.(*dto.GeminiChatRequest)
 	if !ok {

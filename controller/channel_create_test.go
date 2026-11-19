@@ -51,6 +51,108 @@ func setupChannelCreateTest(t *testing.T) int {
 	return root.Id
 }
 
+func TestChannelSupportedEndpointsPersistThroughCreateAndUpdate(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	for _, tc := range []struct {
+		name          string
+		initial       string
+		initialType   int
+		update        string
+		updateType    int
+		omitType      bool
+		createError   string
+		updateError   string
+		wantEndpoints []string
+	}{
+		{name: "responses to chat", initial: `{"supported_endpoints":["responses"]}`, update: `{"supported_endpoints":["chat"]}`, wantEndpoints: []string{"chat"}},
+		{name: "chat to both", initial: `{"supported_endpoints":["chat"]}`, update: `{"supported_endpoints":["chat","responses"]}`, wantEndpoints: []string{"chat", "responses"}},
+		{name: "both to inherited", initial: `{"supported_endpoints":["chat","responses"]}`, update: `{}`},
+		{name: "clear with null", initial: `{"supported_endpoints":["responses"]}`, update: `{"supported_endpoints":null}`},
+		{name: "clear with empty", initial: `{"supported_endpoints":["responses"]}`, update: `{"supported_endpoints":[]}`, wantEndpoints: []string{}},
+		{name: "legacy to responses", initial: `{}`, update: `{"supported_endpoints":["responses"]}`, wantEndpoints: []string{"responses"}},
+		{name: "invalid create", initial: `{"supported_endpoints":["messages"]}`, createError: "supported_endpoints must contain only chat or responses"},
+		{name: "invalid update duplicate", initial: `{"supported_endpoints":["responses"]}`, update: `{"supported_endpoints":["chat","chat"]}`, updateError: "supported_endpoints must not contain duplicates", wantEndpoints: []string{"responses"}},
+		{name: "invalid update passthrough", initial: `{"supported_endpoints":["responses"]}`, update: `{"supported_endpoints":["responses"],"pass_through_body_enabled":true}`, updateError: "supported_endpoints cannot be combined with pass_through_body_enabled", wantEndpoints: []string{"responses"}},
+		{name: "invalid update provider", initial: `{"supported_endpoints":["responses"]}`, update: `{"supported_endpoints":["responses"]}`, updateType: constant.ChannelTypeAnthropic, updateError: "supported_endpoints is not supported for this channel type", wantEndpoints: []string{"responses"}},
+		{name: "partial update uses stored provider", initial: `{"supported_endpoints":["chat"]}`, update: `{"supported_endpoints":["responses"]}`, omitType: true, wantEndpoints: []string{"responses"}},
+		{name: "partial update rejects unsupported stored provider", initial: `{}`, initialType: constant.ChannelTypeAnthropic, update: `{"supported_endpoints":["responses"]}`, omitType: true, updateError: "supported_endpoints is not supported for this channel type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name := "endpoint-persistence-" + tc.name
+			t.Cleanup(func() {
+				var ids []int
+				require.NoError(t, model.DB.Model(&model.Channel{}).Where("name IN ?", []string{name, "updated-" + name}).Pluck("id", &ids).Error)
+				_, err := model.BatchDeleteChannels(ids)
+				require.NoError(t, err)
+			})
+			initialType := tc.initialType
+			if initialType == 0 {
+				initialType = constant.ChannelTypeOpenAI
+			}
+			request, err := common.Marshal(AddChannelRequest{Mode: "single", Channel: &model.Channel{
+				Name: name, Type: initialType, Key: "sk-endpoint-persistence-fixture", Models: "test-model", Group: "default", Setting: &tc.initial,
+			}})
+			require.NoError(t, err)
+			response := postAddChannel(t, rootID, common.RoleRootUser, string(request))
+			require.Equal(t, http.StatusOK, response.Code)
+			var result struct {
+				Success bool `json:"success"`
+				Data    struct {
+					ID int `json:"id"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			if tc.createError != "" {
+				assert.False(t, result.Success)
+				assert.Contains(t, response.Body.String(), tc.createError)
+				var count int64
+				require.NoError(t, model.DB.Model(&model.Channel{}).Where("name = ?", name).Count(&count).Error)
+				assert.Zero(t, count, "invalid settings must not create a channel")
+				return
+			}
+			require.True(t, result.Success, response.Body.String())
+			require.Positive(t, result.Data.ID)
+			created, err := model.GetChannelById(result.Data.ID, true)
+			require.NoError(t, err)
+			require.NotNil(t, created.Setting)
+			assert.JSONEq(t, tc.initial, *created.Setting)
+
+			channelType := tc.updateType
+			if channelType == 0 {
+				channelType = constant.ChannelTypeOpenAI
+			}
+			patch := map[string]any{
+				"id": created.Id, "name": "updated-" + name,
+				"models": "test-model", "group": "default", "setting": tc.update,
+			}
+			if !tc.omitType {
+				patch["type"] = channelType
+			}
+			request, err = common.Marshal(patch)
+			require.NoError(t, err)
+			response = putUpdateChannel(t, rootID, common.RoleRootUser, string(request))
+			require.Equal(t, http.StatusOK, response.Code)
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.Equal(t, tc.updateError == "", result.Success, response.Body.String())
+			stored, err := model.GetChannelById(created.Id, true)
+			require.NoError(t, err)
+			require.NotNil(t, stored.Setting)
+			if tc.updateError != "" {
+				assert.Contains(t, response.Body.String(), tc.updateError)
+				assert.JSONEq(t, tc.initial, *stored.Setting)
+				assert.Equal(t, name, stored.Name, "rejected updates must not modify other fields")
+				assert.Equal(t, initialType, stored.Type)
+			} else {
+				assert.JSONEq(t, tc.update, *stored.Setting)
+				assert.Equal(t, "updated-"+name, stored.Name)
+				assert.Equal(t, channelType, stored.Type)
+			}
+			assert.Equal(t, tc.wantEndpoints, stored.GetSetting().SupportedEndpoints)
+			assert.Equal(t, created.Key, stored.Key)
+		})
+	}
+}
+
 func TestAddChannelReturnsCreatedIDs(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
 	const firstKey, secondKey = "sk-create-id-first", "sk-create-id-second"

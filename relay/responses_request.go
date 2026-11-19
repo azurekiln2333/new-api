@@ -24,6 +24,9 @@ import (
 // The returned adaptor retains route/conversion state for DoRequest/DoResponse.
 func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *dto.OpenAIResponsesRequest) (relaychannel.Adaptor, common.ReplayableBody, io.Closer, *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	if _, apiErr := resolveTextUpstreamEndpoint(c, info); apiErr != nil {
+		return nil, nil, nil, apiErr
+	}
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact &&
 		!common.SupportsResponsesCompact(info.ChannelType, info.ApiType) {
 		return nil, nil, nil, types.NewErrorWithStatusCode(
