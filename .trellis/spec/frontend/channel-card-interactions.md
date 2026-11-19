@@ -11,3 +11,10 @@ Keep explicit name/detail buttons usable. Regression coverage in
 `channel-details-entry.test.tsx` must verify priority Enter saves without
 opening details, focused card Enter/Space opens details, and explicit name
 activation still works.
+
+Card metrics use three wrapping rows: used balance with tokens, priority with
+weight, and response time with last-tested time. Use a description list for
+each row, with direct dt/dd pairs inside its metric groups. Normal-width cards
+keep paired values side by side; narrow cards wrap without truncating controls.
+Retain the priority event target and accessible card/name actions when changing
+the layout. Shared cells remain the source of values and formatting.

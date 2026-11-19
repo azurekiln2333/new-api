@@ -327,3 +327,58 @@ it('opens the channel details from the focused card body with Space', async () =
     screen.getByRole('status', { name: 'Dialog state' })
   ).toHaveTextContent('channel-details:3')
 })
+
+it('pairs the card metrics into usage, priority/weight and response rows', async () => {
+  const card = await renderCardView()
+  const rows = [
+    ...card.querySelectorAll<HTMLElement>('[data-card-metric-row]'),
+  ]
+  expect(rows.map((row) => row.dataset.cardMetricRow)).toEqual([
+    'usage',
+    'priority',
+    'response',
+  ])
+
+  // Each row is a description list whose terms and values stay direct
+  // siblings, so the label/value pairing survives assistive technology.
+  for (const row of rows) {
+    expect(row.tagName).toBe('DL')
+    for (const term of row.querySelectorAll('dt')) {
+      expect(term.parentElement?.querySelector(':scope > dd')).not.toBeNull()
+    }
+  }
+
+  // Used amount and used tokens share one row, in that order.
+  const usageLabels = [...rows[0].querySelectorAll('dt')].map(
+    (label) => label.textContent
+  )
+  expect(usageLabels).toEqual(['Used / Remaining', 'Used tokens'])
+
+  // Priority and weight are side by side in the same row.
+  const priorityLabels = [...rows[1].querySelectorAll('dt')].map(
+    (label) => label.textContent
+  )
+  expect(priorityLabels).toEqual(['Priority', 'Weight'])
+  expect(
+    rows[1].querySelectorAll('[data-slot="numeric-spinner-value"]')
+  ).toHaveLength(2)
+  expect(rows[1].querySelector('[data-column-id="priority"]')).not.toBeNull()
+
+  // Response metrics stay in their own compact row.
+  const responseLabels = [...rows[2].querySelectorAll('dt')].map(
+    (label) => label.textContent
+  )
+  expect(responseLabels).toEqual(['Response', 'Last Tested'])
+})
+
+it('lets each card metric row wrap instead of overflowing a narrow card', async () => {
+  const card = await renderCardView()
+  const rows = card.querySelectorAll<HTMLElement>('[data-card-metric-row]')
+  expect(rows).toHaveLength(3)
+  for (const row of rows) {
+    // Wrapping is the narrow-width fallback: pair members stack instead of
+    // pushing past the card edge.
+    expect(row.className).toContain('flex-wrap')
+    expect(row.className).toContain('min-w-0')
+  }
+})

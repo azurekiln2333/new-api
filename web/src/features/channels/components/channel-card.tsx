@@ -153,49 +153,68 @@ function ChannelCardComponent({
           )}
         </div>
 
-        {/* Usage on the left, priority/weight in the middle, response and last
-          test on the right; each column holds two stacked slots. */}
+        {/* Metrics: the usage pair, then the priority/weight pair, then a
+          compact response row. Each pair is its own list, so it stays on a
+          single line at normal card widths and degrades to stacked metrics in
+          a narrow card instead of overflowing it. */}
         <StatusBadgeTypeContext.Provider value='text'>
-          <dl className='grid grid-flow-col grid-cols-[minmax(0,1fr)_auto_auto] grid-rows-2 gap-x-4 gap-y-2'>
-            <div className='flex min-w-0 flex-col gap-0.5'>
-              <dt className={labelClass}>{t('Used / Remaining')}</dt>
-              <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0 [&>div]:ml-0 [&>div]:flex-wrap [&>div]:gap-x-3'>
-                {balanceCell ?? (
-                  <span className='text-muted-foreground'>-</span>
-                )}
-              </dd>
-            </div>
-            <div className='flex min-w-0 flex-col gap-0.5'>
-              <dt className={labelClass}>{t('Used tokens')}</dt>
-              <dd className='min-w-0 text-sm tabular-nums'>
-                {usedTokensCell ?? (
-                  <span className='text-muted-foreground'>-</span>
-                )}
-              </dd>
-            </div>
-            <div className='flex min-w-0 flex-col gap-0.5'>
-              <dt className={labelClass}>{t('Priority')}</dt>
-              <dd data-column-id='priority'>{priorityCell}</dd>
-            </div>
-            <div className='flex min-w-0 flex-col gap-0.5'>
-              <dt className={labelClass}>{t('Weight')}</dt>
-              <dd>{weightCell}</dd>
-            </div>
-            <div className='flex min-w-0 flex-col gap-0.5'>
-              <dt className={labelClass}>{t('Response')}</dt>
-              <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0'>
-                {responseCell ?? (
-                  <span className='text-muted-foreground'>-</span>
-                )}
-              </dd>
-            </div>
-            <div className='flex min-w-0 flex-col gap-0.5'>
-              <dt className={labelClass}>{t('Last Tested')}</dt>
-              <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
-                {testCell ?? <span className='text-muted-foreground'>-</span>}
-              </dd>
-            </div>
-          </dl>
+          <div className='flex min-w-0 flex-col gap-2'>
+            <dl
+              data-card-metric-row='usage'
+              className='flex min-w-0 flex-wrap gap-x-6 gap-y-1.5'
+            >
+              <div className='flex min-w-0 flex-[1_1_7rem] flex-col gap-0.5'>
+                <dt className={labelClass}>{t('Used / Remaining')}</dt>
+                <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0 [&>div]:ml-0 [&>div]:flex-wrap [&>div]:gap-x-3'>
+                  {balanceCell ?? (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
+                </dd>
+              </div>
+              <div className='flex min-w-0 flex-[1_1_7rem] flex-col gap-0.5'>
+                <dt className={labelClass}>{t('Used tokens')}</dt>
+                <dd className='min-w-0 text-sm tabular-nums'>
+                  {usedTokensCell ?? (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
+                </dd>
+              </div>
+            </dl>
+
+            <dl
+              data-card-metric-row='priority'
+              className='flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1'
+            >
+              <div className='flex min-w-0 items-center gap-1.5'>
+                <dt className={labelClass}>{t('Priority')}</dt>
+                <dd data-column-id='priority'>{priorityCell}</dd>
+              </div>
+              <div className='flex min-w-0 items-center gap-1.5'>
+                <dt className={labelClass}>{t('Weight')}</dt>
+                <dd>{weightCell}</dd>
+              </div>
+            </dl>
+
+            <dl
+              data-card-metric-row='response'
+              className='flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1'
+            >
+              <div className='flex min-w-0 items-center gap-1.5'>
+                <dt className={labelClass}>{t('Response')}</dt>
+                <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0'>
+                  {responseCell ?? (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
+                </dd>
+              </div>
+              <div className='flex min-w-0 items-center gap-1.5'>
+                <dt className={labelClass}>{t('Last Tested')}</dt>
+                <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
+                  {testCell ?? <span className='text-muted-foreground'>-</span>}
+                </dd>
+              </div>
+            </dl>
+          </div>
         </StatusBadgeTypeContext.Provider>
       </div>
     </ChannelRowActionsLayoutContext.Provider>
