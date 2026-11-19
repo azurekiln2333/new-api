@@ -213,6 +213,22 @@ func TestConvertRequestToTargetRecordsConversionChain(t *testing.T) {
 	assert.Equal(t, []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses}, info.ConversionChain)
 }
 
+func TestConvertRequestDoesNotRecordRejectedToolConversion(t *testing.T) {
+	info := &convmeta.Values{
+		OriginModelName: "gpt-test",
+		ConversionChain: []types.RelayFormat{types.RelayFormatGemini},
+		Options:         &convmeta.Options{ToolLossPolicy: types.ConversionLossPolicySafe},
+	}
+	request := &dto.GeminiChatRequest{
+		Contents: []dto.GeminiChatContent{{Role: "user", Parts: []dto.GeminiPart{{Text: "run this"}}}},
+		Tools:    json.RawMessage(`[{"codeExecution":{}}]`),
+	}
+	_, err := ConvertRequest(context.Background(), info, types.RelayFormatOpenAI, request)
+	var loss *types.ConversionLossError
+	require.ErrorAs(t, err, &loss)
+	assert.Equal(t, []types.RelayFormat{types.RelayFormatGemini}, info.ConversionChain)
+}
+
 func TestConvertRequestClaudeToResponsesUsesDirectPath(t *testing.T) {
 	info := &convmeta.Values{
 		ConversionChain: []types.RelayFormat{types.RelayFormatClaude},

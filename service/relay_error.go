@@ -139,6 +139,8 @@ func RecordRelayErrorLog(c *gin.Context, channelId int, err *types.NewAPIError, 
 	other.SetPublic("error_code", err.GetErrorCode())
 	other.SetPublic("status_code", err.StatusCode)
 	AppendRelayLogAdminInfo(c, relayInfo, other)
+	appendRequestConversionChain(relayInfo, other)
+	appendFinalRequestFormat(relayInfo, other)
 	appendRequestPluginRecord(relayInfo, other)
 	AppendResponseModelLogInfo(relayInfo, other)
 	AppendTaskPluginContextAuditInfo(c, other)

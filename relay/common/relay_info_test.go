@@ -344,6 +344,8 @@ func TestInitChannelMetaResetsPerAttemptStreamStateAndPreservesRequestState(t *t
 	require.NoError(t, err)
 
 	info.SendResponseCount = 3
+	info.AppendRequestConversion(types.RelayFormatClaude)
+	info.FinalRequestRelayFormat = types.RelayFormatClaude
 	info.ClaudeToChatStreamState = claudeState
 	info.ChatToGeminiStreamState = geminiState
 	info.LastError = types.NewError(assert.AnError, types.ErrorCodeBadResponseBody)
@@ -360,6 +362,8 @@ func TestInitChannelMetaResetsPerAttemptStreamStateAndPreservesRequestState(t *t
 	info.InitChannelMeta(ctx)
 
 	assert.Zero(t, info.SendResponseCount)
+	assert.Equal(t, []types.RelayFormat{types.RelayFormatOpenAI}, info.RequestConversionChain)
+	assert.Equal(t, types.RelayFormat(types.RelayFormatOpenAI), info.GetFinalRequestRelayFormat())
 	assert.Nil(t, info.ClaudeToChatStreamState)
 	assert.Nil(t, info.ChatToGeminiStreamState)
 

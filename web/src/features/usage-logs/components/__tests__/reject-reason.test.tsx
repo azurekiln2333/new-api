@@ -26,12 +26,12 @@ import { DetailsDialog } from '../dialogs/details-dialog'
 
 const queryClients: QueryClient[] = []
 
-function makeLog(other: LogOtherData): UsageLog {
+function makeLog(other: LogOtherData, type = 5): UsageLog {
   return {
     id: 1,
     user_id: 1,
     created_at: 1,
-    type: 5,
+    type,
     content: 'request rejected',
     username: 'user',
     token_name: 'token',
@@ -52,7 +52,13 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(isAdmin: boolean): void {
+function renderDetails(
+  isAdmin: boolean,
+  other: LogOtherData = {
+    admin_info: { reject_reason: 'blocked by channel policy' },
+  },
+  type = 5
+): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -63,11 +69,7 @@ function renderDetails(isAdmin: boolean): void {
   render(
     <QueryClientProvider client={queryClient}>
       <DetailsDialog
-        log={makeLog({
-          admin_info: {
-            reject_reason: 'blocked by channel policy',
-          },
-        })}
+        log={makeLog(other, type)}
         isAdmin={isAdmin}
         isRoot={false}
         open
@@ -97,5 +99,46 @@ describe('usage log reject reason', () => {
 
     expect(screen.queryByText('Reject Reason')).toBeNull()
     expect(screen.queryByText('blocked by channel policy')).toBeNull()
+  })
+})
+
+describe.each([2, 5])('request conversion for log type %s', (type) => {
+  test.each([
+    { name: 'absent metadata', chain: undefined, label: 'Unknown' },
+    { name: 'empty metadata', chain: [], label: 'Unknown' },
+    {
+      name: 'native request',
+      chain: ['Claude Messages'],
+      label: 'Native format',
+    },
+    {
+      name: 'converted request',
+      chain: ['Claude Messages', 'OpenAI Compatible', 'OpenAI Responses'],
+      label: 'Claude Messages -> OpenAI Compatible -> OpenAI Responses',
+    },
+  ])('shows $name accurately', ({ chain, label }) => {
+    renderDetails(
+      true,
+      { request_path: '/v1/messages', request_conversion: chain },
+      type
+    )
+
+    expect(screen.getByText('Request Conversion')).toBeVisible()
+    expect(screen.getByText(label)).toBeVisible()
+    if (chain?.length !== 1) {
+      expect(screen.queryByText('Native format')).toBeNull()
+    }
+  })
+
+  test('keeps conversion details admin only', () => {
+    renderDetails(
+      false,
+      {
+        request_path: '/v1/messages',
+        request_conversion: ['Claude Messages', 'OpenAI Responses'],
+      },
+      type
+    )
+    expect(screen.queryByText('Request Conversion')).toBeNull()
   })
 })

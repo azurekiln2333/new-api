@@ -268,6 +268,7 @@ func TestChannelEndpointResponsesConversionPreservesClientFormat(t *testing.T) {
 				assert.Equal(t, 2, usage.PromptTokens)
 				assert.Equal(t, 3, usage.CompletionTokens)
 				assert.Equal(t, 5, usage.TotalTokens)
+				assert.Equal(t, []relaytypes.RelayFormat{info.RelayFormat, relaytypes.RelayFormatOpenAIResponses}, info.RequestConversionChain)
 				if stream {
 					if client == "messages" {
 						assert.Contains(t, recorder.Body.String(), "event: message_stop")

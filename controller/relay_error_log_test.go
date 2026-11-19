@@ -10,7 +10,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -95,5 +98,84 @@ func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing
 	assert.NotContains(t, userOther, "admin_info")
 	for _, key := range []string{"channel_id", "channel_name", "channel_type"} {
 		assert.NotContains(t, userOther, key)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		inbound   types.RelayFormat
+		request   any
+		path      []types.RelayFormat
+		wantChain []any
+		wantError string
+		claude    bool
+	}{
+		{name: "native", inbound: types.RelayFormatClaude, wantChain: []any{"Claude Messages"}, claude: true},
+		{
+			name: "direct conversion", inbound: types.RelayFormatClaude,
+			request: &dto.ClaudeRequest{Model: "gpt-test", Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}}},
+			path:    []types.RelayFormat{types.RelayFormatOpenAIResponses}, wantChain: []any{"Claude Messages", "OpenAI Responses"},
+		},
+		{
+			name: "intermediate conversion", inbound: types.RelayFormatClaude,
+			request:   &dto.ClaudeRequest{Model: "gpt-test", Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}}},
+			path:      []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses},
+			wantChain: []any{"Claude Messages", "OpenAI Compatible", "OpenAI Responses"},
+		},
+		{
+			name: "converted Claude upstream", inbound: types.RelayFormatOpenAI,
+			request: &dto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []dto.Message{{Role: "user", Content: "hello"}}},
+			path:    []types.RelayFormat{types.RelayFormatClaude}, wantChain: []any{"OpenAI Compatible", "Claude Messages"}, claude: true,
+		},
+		{
+			name: "conversion rejected before first hop", inbound: types.RelayFormatOpenAI,
+			request: &dto.GeneralOpenAIRequest{}, path: []types.RelayFormat{types.RelayFormatOpenAIResponses},
+			wantChain: []any{"OpenAI Compatible"}, wantError: "model is required",
+		},
+		{
+			name: "conversion rejected after intermediate hop", inbound: types.RelayFormatClaude,
+			request:   &dto.ClaudeRequest{Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}}},
+			path:      []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses},
+			wantChain: []any{"Claude Messages", "OpenAI Compatible"}, wantError: "model is required",
+		},
+		{name: "missing historical metadata"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{RelayFormat: tc.inbound, ChannelMeta: &relaycommon.ChannelMeta{}}
+			info.InitRequestConversionChain()
+			recordedErr := types.WithOpenAIError(types.OpenAIError{
+				Message: "Client not allowed", Type: "permission_error", Code: "client_not_allowed",
+			}, http.StatusForbidden)
+			if len(tc.path) > 0 {
+				_, err := service.ConvertRequestVia(ctx, info, tc.request, tc.path...)
+				if tc.wantError != "" {
+					require.ErrorContains(t, err, tc.wantError)
+					recordedErr = types.NewErrorWithStatusCode(err, types.ErrorCodeConvertRequestFailed, http.StatusBadRequest)
+				} else {
+					require.NoError(t, err)
+				}
+			}
+			processChannelError(ctx, channelSnapshot, recordedErr, info)
+			var errorLog model.Log
+			require.NoError(t, database.Last(&errorLog).Error)
+			errorOther, err := common.StrToMap(errorLog.Other)
+			require.NoError(t, err)
+			assert.Equal(t, float64(recordedErr.StatusCode), errorOther["status_code"])
+			assert.Equal(t, string(recordedErr.GetErrorCode()), errorOther["error_code"])
+			if tc.wantChain == nil {
+				assert.NotContains(t, errorOther, "request_conversion")
+			} else {
+				assert.Equal(t, tc.wantChain, errorOther["request_conversion"])
+			}
+			assert.Equal(t, tc.claude, errorOther["claude"] == true)
+			if tc.wantError == "" {
+				consume := service.GenerateTextOtherInfo(ctx, info, 1, 1, 1, 0, 0, 0, 1)
+				payload, err := common.Marshal(consume.Snapshot())
+				require.NoError(t, err)
+				var consumeOther map[string]any
+				require.NoError(t, common.Unmarshal(payload, &consumeOther))
+				assert.Equal(t, consumeOther["request_conversion"], errorOther["request_conversion"])
+				assert.Equal(t, consumeOther["claude"], errorOther["claude"])
+			}
+		})
 	}
 }

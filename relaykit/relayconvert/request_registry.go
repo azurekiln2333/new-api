@@ -248,13 +248,18 @@ func executeRequestSteps(c context.Context, info convmeta.Meta, from types.Relay
 		return nil, err
 	}
 	steps := make([]RequestStep, 0, len(specs))
-	for _, spec := range specs {
+	for i, spec := range specs {
 		var step RequestStep
 		current, step, err = executeRequestStep(c, info, spec, current)
 		if err != nil {
 			return nil, err
 		}
 		steps = append(steps, step)
+		// Retain completed intermediate hops if a later conversion fails.
+		// The final hop also needs successful tool attachment below.
+		if info != nil && i < len(specs)-1 {
+			info.AppendRequestConversion(step.To)
+		}
 	}
 
 	tools.Model = convmeta.UpstreamModelName(info)
@@ -279,8 +284,8 @@ func executeRequestSteps(c context.Context, info convmeta.Meta, from types.Relay
 		}, err
 	}
 	if info != nil {
-		for _, step := range steps {
-			info.AppendRequestConversion(step.To)
+		if len(steps) > 0 {
+			info.AppendRequestConversion(steps[len(steps)-1].To)
 		}
 		if from == types.RelayFormatOpenAIResponses {
 			info.SetResponsesToolState(responsesToolState(tools))
