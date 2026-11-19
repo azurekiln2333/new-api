@@ -1,0 +1,18 @@
+{"file":"web/AGENTS.md","reason":"UI reuse, i18n, permissions and verification"}
+{"file":".agents/rules/billing.md","reason":"Mandatory billing and usage safety"}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guidance"}
+{"file":".trellis/spec/frontend/chat-message-layout.md","reason":"Streaming message/source presentation"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/code-findings.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/upstream-verification.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/channel-ui.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/stream-failover.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/channel-failover.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/channel-capacity.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/channel-queue.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/admin-ui.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/price-sync-performance.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/goal-routing.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/keys-cors.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/status-fingerprint.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/linuxdo-avatar.md","reason":"Cross-feature primary evidence and known limits"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/release-delivery.md","reason":"Cross-feature primary evidence and known limits"}

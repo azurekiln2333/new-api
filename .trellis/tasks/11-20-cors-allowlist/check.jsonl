@@ -1,0 +1,4 @@
+{"file":"web/AGENTS.md","reason":"Frontend reuse and verification rules"}
+{"file":".trellis/spec/backend/index.md","reason":"Backend checklist"}
+{"file":".agents/rules/billing.md","reason":"Mandatory billing/usage safety before affected work"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/keys-cors.md","reason":"Evidence for R20; parent design resolves alternatives"}

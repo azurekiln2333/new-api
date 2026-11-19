@@ -1,0 +1,237 @@
+{
+  "head": "ed21eb3d4030a639e2f44bf2c79ced9e6dc251bd",
+  "branch": "merge/upstream",
+  "scope": "Pre-existing tracked working-tree changes; no product edits in this planning task. Full patch retained only in .git/task-baselines/playground-capabilities.",
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "exists": true,
+      "sha256": "cc19085235fa74d06b86545863a83fdfa471eb4421c59359225cf0742ffaf3a2"
+    },
+    {
+      "path": ".github/workflows/docker-build.yml",
+      "exists": true,
+      "sha256": "898bcb395e4ef7a0c60c9a2e6fb216854b0f82c94ac9daff4b796381edd58ecb"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "exists": true,
+      "sha256": "47b0434323e65b4334e9eb72394120c8b9aeff2aead87dbde926d5fc3404266d"
+    },
+    {
+      "path": ".trellis/spec/backend/index.md",
+      "exists": true,
+      "sha256": "9d6496fb41c2e90274d87edc28d2fb5094e506a84c4faa624aab9bcc18ef480e"
+    },
+    {
+      "path": ".trellis/spec/guides/cross-layer-thinking-guide.md",
+      "exists": true,
+      "sha256": "04bf174c19c380c7d9f5c19cce19ad751f96241c600c7593108dbbc336e12827"
+    },
+    {
+      "path": ".trellis/tasks/archive/2026-11/11-18-finish-workspace-changes/check.jsonl",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": ".trellis/tasks/archive/2026-11/11-18-finish-workspace-changes/design.md",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": ".trellis/tasks/archive/2026-11/11-18-finish-workspace-changes/implement.jsonl",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": ".trellis/tasks/archive/2026-11/11-18-finish-workspace-changes/implement.md",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": ".trellis/tasks/archive/2026-11/11-18-finish-workspace-changes/prd.md",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": ".trellis/tasks/archive/2026-11/11-18-finish-workspace-changes/report.md",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": ".trellis/tasks/archive/2026-11/11-18-finish-workspace-changes/task.json",
+      "exists": false,
+      "sha256": null
+    },
+    {
+      "path": "controller/channel.go",
+      "exists": true,
+      "sha256": "ae35cf70fe13dd2fd57d1eb39fbd8e8247a045903873f708ca1ac1ee30115007"
+    },
+    {
+      "path": "controller/provider_plugin_test.go",
+      "exists": true,
+      "sha256": "01d3f7542de69a12ae690e4f9d501b346441c0057a542027c697f8401a069b0c"
+    },
+    {
+      "path": "controller/relay.go",
+      "exists": true,
+      "sha256": "070cacd75ae89075b77ffeabb09ad8ab45428f7bfad5374a1a446f2344876e84"
+    },
+    {
+      "path": "i18n/keys.go",
+      "exists": true,
+      "sha256": "cb0d5f1b7fa5211f89c87544c7fecae2f00ed0e093ee250ec59a5f39f17a0007"
+    },
+    {
+      "path": "model/channel.go",
+      "exists": true,
+      "sha256": "b7d34166193a27fd4fdee44efe7d447599769369c4881f86410704aeddb52f4c"
+    },
+    {
+      "path": "model/channel_cache.go",
+      "exists": true,
+      "sha256": "e1cf88917037fd58aa0c543e8b3accc270fc2a4a82608a518a1cd90c9d93cf8f"
+    },
+    {
+      "path": "model/channel_constraint.go",
+      "exists": true,
+      "sha256": "f113f4739bdf622eab0ac1651e17aa8245c5f26e550b08a086f4a95b09b07557"
+    },
+    {
+      "path": "model/channel_plugin_credential.go",
+      "exists": true,
+      "sha256": "b0807e976cf598ad98d8152b44fe0c2d85b7d43f4e82a49f873a9c87a57e1753"
+    },
+    {
+      "path": "model/option.go",
+      "exists": true,
+      "sha256": "527d1ebd26759b60adfd56cbd5930a9e19f6a9975ac0b81d645a6979192c95f5"
+    },
+    {
+      "path": "model/option_auto_group_test.go",
+      "exists": true,
+      "sha256": "ea92e30e3a213c5cd41c550a66f1caef78c79b4351815b26d80bffb97fe94e86"
+    },
+    {
+      "path": "model/request_policy.go",
+      "exists": true,
+      "sha256": "9af08fbcb978e5cba76feb6e7bfdbe352976371bdeacd0cfe43abebf30d4b1c3"
+    },
+    {
+      "path": "model/request_policy_test.go",
+      "exists": true,
+      "sha256": "5eac8031033faa787f15ffeb5f6234214231c67fa30838cc509de1b805d4fd9e"
+    },
+    {
+      "path": "pkg/jsplugin/routing.go",
+      "exists": true,
+      "sha256": "76f9fba2593aeefd04da0c7ee1ac30bd237a760e037fe6f7bb33400ed402bcd1"
+    },
+    {
+      "path": "relay/channel/api_request.go",
+      "exists": true,
+      "sha256": "ea76e355b7772f9953422180b0c772cf17e93f359e62be181d2c0d0fa91563d3"
+    },
+    {
+      "path": "relay/channel/api_request_test.go",
+      "exists": true,
+      "sha256": "e8e57d9289f52a272a7fcfcbf9ed8627e26d5f2ee421700e31bf93ccf3695eda"
+    },
+    {
+      "path": "relay/common/request_plugin.go",
+      "exists": true,
+      "sha256": "fe06d8c91aa9cb2072a479a18c346f2e38e580d30436c0ae936707638eca33fa"
+    },
+    {
+      "path": "relaykit/dto/channel_settings.go",
+      "exists": true,
+      "sha256": "9dbb551669373bdfda861c1f6dc3d02ef2ed96ddae1d5a571c7f63a598e43c9f"
+    },
+    {
+      "path": "router/provider_plugin_relay_test.go",
+      "exists": true,
+      "sha256": "983707a6ccc7d3bfc5756f21358e8bc136b8e37f38d4887a2ccf9f9d553858d5"
+    },
+    {
+      "path": "service/channel_affinity.go",
+      "exists": true,
+      "sha256": "83dab54cc57d1df1218377e51a7e9e74c93fcfc3089f670a9a05eb54380b9abf"
+    },
+    {
+      "path": "service/provider_plugin.go",
+      "exists": true,
+      "sha256": "d69c866b1877c120076d28e777faadadfda4d68232dfd05d6330b94522c28dac"
+    },
+    {
+      "path": "service/relay_error.go",
+      "exists": true,
+      "sha256": "6eb7a8f4004a40fadad8ae6e6364bb5203e79dccca938de0289edcc62d9b5ed6"
+    },
+    {
+      "path": "service/request_policy.go",
+      "exists": true,
+      "sha256": "471320ff4f3bf52a30484e3bde471039c90dd1d160131adf3635be90c6c9c286"
+    },
+    {
+      "path": "web/src/features/auth/sign-up/components/sign-up-form.tsx",
+      "exists": true,
+      "sha256": "745c342a3074f95f79c02bebbfdd056763abb61af61ecae0490ba38f38bf8e38"
+    },
+    {
+      "path": "web/src/features/channels/components/__tests__/channel-configuration.test.tsx",
+      "exists": true,
+      "sha256": "5c0955b0cbdb6d613b284171aa0ba08afadd5e5b24d039c11df37e9c6b8f6d5e"
+    },
+    {
+      "path": "web/src/features/channels/components/__tests__/multi-key-manage-dialog.test.tsx",
+      "exists": true,
+      "sha256": "3e9a8d52aeb693b8b63d811e0fc5c5843dda32e6d35f21e12b9b729308d79a72"
+    },
+    {
+      "path": "web/src/features/channels/components/dialogs/multi-key-manage-dialog.tsx",
+      "exists": true,
+      "sha256": "bdbc66796af073c04877f2dca48a5ec8c93b04017fa1726997c5f30edc46909c"
+    },
+    {
+      "path": "web/src/features/channels/components/drawers/channel-mutate-drawer.tsx",
+      "exists": true,
+      "sha256": "af03e6f6aac91fd0fc85508181c8c2f5f14630e27c158395ca32edfcc1f37c6c"
+    },
+    {
+      "path": "web/src/i18n/locales/en.json",
+      "exists": true,
+      "sha256": "c72c30b33f0ef809bbbf226e35583543ac85e7706ffc4b26441ffbb572c79942"
+    },
+    {
+      "path": "web/src/i18n/locales/fr.json",
+      "exists": true,
+      "sha256": "ee741a636d70325f0034a4d1f0120a7d28cfa1ecea215f82b7a1af38a1304457"
+    },
+    {
+      "path": "web/src/i18n/locales/ja.json",
+      "exists": true,
+      "sha256": "25df9d3cb5626f9432fc5e3201d0d7c12f7d239603ecb006491eb805b1780e65"
+    },
+    {
+      "path": "web/src/i18n/locales/ru.json",
+      "exists": true,
+      "sha256": "87d843abb2c7aa7a156b0f8a5d4d229fec3243f46316a60f9cdab3339f532758"
+    },
+    {
+      "path": "web/src/i18n/locales/vi.json",
+      "exists": true,
+      "sha256": "55642c89353eff7e84f1dbf481ea64f6e060494b75da501f83cb4248a852ed58"
+    },
+    {
+      "path": "web/src/i18n/locales/zh-TW.json",
+      "exists": true,
+      "sha256": "db592b7cd534656f84411599d0f82e7e833b16871ee189b8ffad4c3fb62b1d83"
+    },
+    {
+      "path": "web/src/i18n/locales/zh.json",
+      "exists": true,
+      "sha256": "167226ab7e8ac4f45a12926c05073a2575d09f69488bc422b9773093eb6b5df8"
+    }
+  ]
+}

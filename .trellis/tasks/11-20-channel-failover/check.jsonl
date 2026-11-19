@@ -1,0 +1,5 @@
+{"file":"web/AGENTS.md","reason":"Frontend reuse and verification rules"}
+{"file":".trellis/spec/backend/index.md","reason":"Backend checklist"}
+{"file":".agents/rules/billing.md","reason":"Mandatory billing/usage safety before affected work"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/stream-failover.md","reason":"Evidence for R7; parent design resolves alternatives"}
+{"file":".trellis/tasks/11-19-playground-capabilities/research/channel-failover.md","reason":"Evidence for R7; parent design resolves alternatives"}
