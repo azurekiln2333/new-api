@@ -94,6 +94,8 @@ not become valid again when a delayed reader publishes an older snapshot.
 - `GetTokenByKey(key string, fromDB bool) (*Token, error)` in `model/token.go`.
 - `lockTokenCredentialSnapshot(tx *gorm.DB) (*gorm.DB, error)` locks before reading.
 - `RotateTokenKey(id, userId int) (*Token, error)` changes the existing row's key.
+- `RotateTokenKeyWithSecret(id, userId int, customKey string)` accepts an optional
+  validated custom value; `NormalizeCustomTokenKey` strips only a leading `sk-`.
 - `tokenCacheReadGeneration(key string) (string, error)` captures a nonce before
   the database read; `cacheInitToken(token Token, generation string)` publishes
   only if that same generation is still current.
@@ -118,6 +120,17 @@ not become valid again when a delayed reader publishes an older snapshot.
 - Rotation checks ownership inside the locked transaction and changes only the
   key. Its cache invalidation must succeed before the database update. Credential
   queries and writes use a scoped `logger.Discard`, including when DB.Debug is on.
+- Custom values are 32–128 ASCII letters/digits with at least eight distinct
+  characters; predictable sequences, short repetitions and common weak prefixes
+  are rejected. Never trim a secret. The existing unique index is authoritative
+  across users, including concurrent inserts and rotations.
+- Custom creation requires the expiring, single-use browser-session proof
+  `token.key.custom_create`. By the explicitly approved product policy on
+  2026-11-20, rotation uses the authenticated browser session without an extra
+  security-proof challenge. Both operations enforce ownership, browser-origin
+  protection, rate limiting and secret-free audit on the server. Personal access
+  tokens cannot authorize either operation; ordinary random creation retains its
+  existing PAT behavior. Do not describe this policy as full ASVS compliance.
 
 ### 4. Validation & Error Matrix
 
@@ -129,6 +142,10 @@ not become valid again when a delayed reader publishes an older snapshot.
 | Rotation cannot invalidate Redis | Roll back, return a value-free database error |
 | Old key queried after committed rotation | Not found; no old hash is republished |
 | SQL/driver error includes a key value | Return a stable error; do not log raw SQL/error |
+| Custom key is invalid, unchanged, or already in use | Value-free error; existing credential is unchanged |
+| Custom creation lacks a valid scoped session proof | Reject before credential mutation |
+| Rotation uses a valid owner browser session without an extra proof | Regenerate once and revoke the old credential |
+| Rotation uses a PAT or another user's browser session | Reject before credential mutation |
 
 ### 5. Good / Base / Bad Cases
 
@@ -149,7 +166,11 @@ services are explicit skipped gates, not database compatibility evidence.
 
 Keep `TestAuthCacheIntegrityDatabaseMatrix`'s no-database cache-hit assertion and
 `TestAuthCacheKeysShareClusterHashTag`. Controller tests cover owner checks,
-single-use token-bound security proofs, and value-free SQL logs under DB.Debug.
+session-only rotation, scoped single-use custom-creation proofs, and value-free
+SQL logs under DB.Debug.
+Run `TestNormalizeCustomTokenKey`, `TestRotateTokenKey`, `TestAddToken.*CustomKey`
+and `TestTokenKeyUniquenessErrorsStayValueFree` with each
+`TEST_SECURITY_DIALECT=mysql|postgres`; the default fixture covers SQLite.
 
 ### 7. Wrong vs Correct
 

@@ -126,17 +126,18 @@ export async function fetchTokenKey(
 }
 
 // Rotate the credential of one token in place. The record id, permissions and
-// usage history are preserved.
+// usage history are preserved. Rotation is authorized by the authenticated
+// console session plus the server-side ownership check; it no longer asks for
+// an extra security proof. The request stays single-use-authorized so a 401
+// cannot refresh and replay the mutation, which would rotate twice.
 export async function rotateApiKey(
   id: number,
-  proofToken: string,
   signal: AbortSignal,
   key?: string
 ): Promise<{ key: string; token: ApiKey }> {
   return authResult(
     api.post(`/api/token/${id}/key/rotate`, key === undefined ? {} : { key }, {
       ...authRequestOptions,
-      headers: { 'X-Security-Proof': proofToken },
       singleUseAuthorization: true,
       signal,
     }),

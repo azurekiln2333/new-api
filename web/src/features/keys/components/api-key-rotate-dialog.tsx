@@ -25,26 +25,20 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  SecureVerificationDialog,
-  useSecureVerification,
-} from '@/features/auth/secure-verification'
 import { handleServerError } from '@/lib/handle-server-error'
-import { AuthOperationError } from '@/lib/secure-verification'
 
 import { rotateApiKey } from '../api'
 import { SUCCESS_MESSAGES } from '../constants'
 import { useApiKeys } from './api-keys-provider'
 
-// The replacement secret is shown once, after a verified rotation, and is never
-// stored in the API-key cache.
+// The replacement secret is shown once, after a confirmed rotation, and is
+// never stored in the API-key cache. Rotation uses the authenticated console
+// session plus an explicit confirmation; no additional proof is requested.
 export function ApiKeyRotateDialog() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow, triggerRefresh, forgetResolvedKey } =
     useApiKeys()
   const isOpen = open === 'rotate'
-  const verification = useSecureVerification()
-  const { requestVerification, cancel: cancelVerification } = verification
   const [pending, setPending] = useState(false)
   const [customKey, setCustomKey] = useState('')
   const [rotatedKey, setRotatedKey] = useState('')
@@ -56,12 +50,11 @@ export function ApiKeyRotateDialog() {
       const current = operation.current
       operation.current = null
       current?.abort()
-      cancelVerification()
       setPending(false)
       setCustomKey('')
       setRotatedKey('')
     }
-  }, [isOpen, cancelVerification])
+  }, [isOpen])
 
   const handleRotate = useCallback(async () => {
     if (!currentRow || operation.current) return
@@ -69,21 +62,11 @@ export function ApiKeyRotateDialog() {
     operation.current = controller
     setPending(true)
     try {
-      const proof = await requestVerification({
-        scope: 'token.key.rotate',
-        context: { token_id: currentRow.id },
-        title: t('Rotate API key'),
-        description: t(
-          'Verify your identity to replace this API key. The old key stops working immediately.'
-        ),
-      })
-      if (operation.current !== controller || !proof) return
       // Revoke local reveals before sending: closing/unmounting after submission
       // cannot prove the server cancelled the mutation.
       forgetResolvedKey(currentRow.id)
       const rotated = await rotateApiKey(
         currentRow.id,
-        proof.proof_token,
         controller.signal,
         customKey === '' ? undefined : customKey
       )
@@ -96,27 +79,18 @@ export function ApiKeyRotateDialog() {
       triggerRefresh()
     } catch (error) {
       if (operation.current !== controller) return
-      const failure = AuthOperationError.from(error)
-      if (failure.code !== 'AUTH_CANCELLED') handleServerError(failure)
+      handleServerError(error)
     } finally {
       if (operation.current === controller) {
         operation.current = null
         setPending(false)
       }
     }
-  }, [
-    currentRow,
-    customKey,
-    forgetResolvedKey,
-    requestVerification,
-    t,
-    triggerRefresh,
-  ])
+  }, [currentRow, customKey, forgetResolvedKey, t, triggerRefresh])
 
   const close = () => {
     operation.current?.abort()
     operation.current = null
-    cancelVerification()
     setPending(false)
     setCustomKey('')
     setRotatedKey('')
@@ -181,8 +155,6 @@ export function ApiKeyRotateDialog() {
           <CopyButton value={rotatedKey} aria-label={t('Copy Key')} />
         </div>
       </ConfirmDialog>
-
-      <SecureVerificationDialog {...verification.dialogProps} />
     </>
   )
 }

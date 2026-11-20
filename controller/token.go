@@ -212,9 +212,14 @@ func GetTokenKey(c *gin.Context) {
 
 // RotateTokenKey replaces the credential of one existing API token. The token
 // keeps its id, name, quota, limits and usage history; only the key changes and
-// the previous credential stops authenticating. The action is owner-scoped and
-// requires a step-up proof bound to this exact token id, so neither another
-// user nor a stale proof can rotate it.
+// the previous credential stops authenticating. The action is owner-scoped, so
+// another user's token id is indistinguishable from a missing one.
+//
+// The route is browser-session only (middleware/access_token_routes.go) and is
+// not CORS-enabled: the dashboard credential must be the concrete access-token
+// Authorization header, which a cross-site form cannot set, so an ambient
+// session cookie alone cannot trigger a rotation. The route also carries
+// CriticalRateLimit and DisableCache.
 func RotateTokenKey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
@@ -222,8 +227,8 @@ func RotateTokenKey(c *gin.Context) {
 		return
 	}
 	userId := c.GetInt("id")
-	// Resolve ownership first: a missing or foreign token must not consume a
-	// proof or reveal whether the id exists.
+	// Resolve ownership first: a missing or foreign token must not reveal whether
+	// the id exists.
 	token, err := model.GetTokenByIds(id, userId)
 	if err != nil {
 		common.ApiError(c, err)
@@ -231,14 +236,11 @@ func RotateTokenKey(c *gin.Context) {
 	}
 	params := tokenAuditParams(c)
 	params["id"], params["name"] = token.Id, token.Name
-	proofContext, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
-	if err != nil {
-		writeSecurityOperationError(c, err)
-		return
-	}
-	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTokenKeyRotate, Context: proofContext}) == nil {
-		return
-	}
+	// Rotation keeps the browser session, ownership and rate-limit checks and
+	// deliberately asks for no additional proof. Re-authentication for this
+	// sensitive action is waived by product decision; OWASP recommendations and
+	// the accepted trade-off are recorded in the backend spec. The handler must
+	// not be described as satisfying those ASVS requirements.
 	// An empty key keeps the secure random generator. A supplied key is validated
 	// and stored server-side; it is never echoed into logs or audit payloads.
 	request := struct {

@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
-  fireEvent,
   render,
   screen,
   waitFor,
@@ -88,42 +87,18 @@ function renderRotation() {
       </ApiKeysProvider>
     </QueryClientProvider>
   )
-  vi.spyOn(api, 'get').mockResolvedValue({
-    data: {
-      success: true,
-      data: {
-        scope: 'token.key.rotate',
-        methods: [{ method: 'password', available: true }],
-        oauth_providers: [],
-        password_encryption_enabled: false,
-      },
-    },
-  })
 }
-
-const proofResponse = () => ({
-  data: {
-    success: true,
-    data: {
-      proof_token: 'rotation-proof',
-      method: 'password',
-      scope: 'token.key.rotate',
-      expires_at: Math.floor(Date.now() / 1000) + 300,
-    },
-  },
-})
 
 afterEach(() => {
   for (const client of clients.splice(0)) client.clear()
 })
 
-it('verifies the selected token, shows the replacement once and clears a previously revealed key', async () => {
+it('rotates the selected token from the console session without an extra proof', async () => {
   const user = userEvent.setup()
   const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
     if (url === '/api/token/7/key') {
       return { data: { success: true, data: { key: 'old' } } }
     }
-    if (url === '/api/verify') return proofResponse()
     if (url === '/api/token/7/key/rotate') {
       return { data: { success: true, data: { key: 'replacement', token } } }
     }
@@ -136,30 +111,18 @@ it('verifies the selected token, shows the replacement once and clears a previou
   )
   await user.click(screen.getByRole('button', { name: 'Open rotation' }))
   await user.click(await screen.findByRole('button', { name: 'Rotate' }))
-  await user.type(
-    await screen.findByLabelText('Password', { selector: 'input' }),
-    'current-password'
-  )
-  await user.click(screen.getByRole('button', { name: 'Verify' }))
+
   expect(await screen.findByText('sk-replacement')).toBeVisible()
   expect(screen.getByLabelText('Current revealed key')).toBeEmptyDOMElement()
-  expect(post).toHaveBeenCalledWith(
-    '/api/verify',
-    expect.objectContaining({
-      scope: 'token.key.rotate',
-      context: { token_id: 7 },
-    }),
-    expect.anything()
-  )
   expect(post).toHaveBeenCalledWith(
     '/api/token/7/key/rotate',
     {},
     expect.objectContaining({
-      headers: { 'X-Security-Proof': 'rotation-proof' },
       singleUseAuthorization: true,
       signal: expect.any(AbortSignal),
     })
   )
+  expect(post).toHaveBeenCalledTimes(2)
   await user.click(screen.getByRole('button', { name: 'Copy Key' }))
   expect(await navigator.clipboard.readText()).toBe('sk-replacement')
   await user.click(screen.getByRole('button', { name: 'Done' }))
@@ -171,31 +134,33 @@ it('verifies the selected token, shows the replacement once and clears a previou
   expect(screen.queryByText('sk-replacement')).not.toBeInTheDocument()
 })
 
-it('keeps the current credential when verification is cancelled', async () => {
+it('sends no mutation when the confirmation is cancelled', async () => {
   const user = userEvent.setup()
   const post = vi.spyOn(api, 'post')
   renderRotation()
   await user.click(screen.getByRole('button', { name: 'Open rotation' }))
-  await user.click(await screen.findByRole('button', { name: 'Rotate' }))
-  const password = await screen.findByLabelText('Password', {
-    selector: 'input',
-  })
-  const dialog = password.closest('[role="dialog"]')
+  const dialog = (await screen.findByRole('button', { name: 'Rotate' })).closest(
+    '[role="dialog"]'
+  )
   expect(dialog).not.toBeNull()
-  fireEvent.click(
+  await user.click(
     within(dialog as HTMLElement).getByRole('button', { name: 'Cancel' })
   )
   await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
+    expect(
+      screen.queryByRole('button', { name: 'Rotate' })
+    ).not.toBeInTheDocument()
   )
   expect(post).not.toHaveBeenCalled()
 })
 
-it('keeps rotation open after a server rejection and requires a fresh proof on retry', async () => {
+it('keeps rotation open after a server rejection and allows a plain retry', async () => {
   const user = userEvent.setup()
   let attempts = 0
   const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
-    if (url === '/api/verify') return proofResponse()
+    if (url !== '/api/token/7/key/rotate') {
+      throw new Error(`Unexpected POST ${url}`)
+    }
     attempts++
     if (attempts === 1) {
       return { data: { success: false, message: 'Please try again later.' } }
@@ -204,30 +169,22 @@ it('keeps rotation open after a server rejection and requires a fresh proof on r
   })
   renderRotation()
   await user.click(screen.getByRole('button', { name: 'Open rotation' }))
-  for (let index = 0; index < 2; index++) {
-    await user.click(await screen.findByRole('button', { name: 'Rotate' }))
-    await user.type(
-      await screen.findByLabelText('Password', { selector: 'input' }),
-      'current-password'
-    )
-    await user.click(screen.getByRole('button', { name: 'Verify' }))
-    if (index === 0) {
-      await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
-      )
-    }
-  }
-  expect(await screen.findByText('sk-replacement')).toBeVisible()
-  expect(post.mock.calls.filter(([url]) => url === '/api/verify')).toHaveLength(
-    2
+  await user.click(await screen.findByRole('button', { name: 'Rotate' }))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
   )
+  await user.click(screen.getByRole('button', { name: 'Rotate' }))
+  expect(await screen.findByText('sk-replacement')).toBeVisible()
+  expect(post).toHaveBeenCalledTimes(2)
 })
 
 it('sends a custom rotation secret exactly as typed and clears it when the dialog closes', async () => {
   const user = userEvent.setup()
   const customKey = ' sk-M7qR2zT9bV4nX6kP8sD3hF5jL0wC1yA9 '
   const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
-    if (url === '/api/verify') return proofResponse()
+    if (url !== '/api/token/7/key/rotate') {
+      throw new Error(`Unexpected POST ${url}`)
+    }
     return {
       data: {
         success: false,
@@ -242,12 +199,6 @@ it('sends a custom rotation secret exactly as typed and clears it when the dialo
     customKey
   )
   await user.click(screen.getByRole('button', { name: 'Rotate' }))
-  expect(screen.getByLabelText('Custom key (optional)')).toBeDisabled()
-  await user.type(
-    await screen.findByLabelText('Password', { selector: 'input' }),
-    'current-password'
-  )
-  await user.click(screen.getByRole('button', { name: 'Verify' }))
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
   )

@@ -627,15 +627,8 @@ func TestRotateTokenKeyRejectsWhenTheCacheCannotBeRevoked(t *testing.T) {
 		common.RedisEnabled, common.RDB = previousEnabled, previousClient
 	})
 
-	issueProof := func() string {
-		t.Helper()
-		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
-		require.NoError(t, err)
-		return issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
-		}, service.VerificationMethodPassword)
-	}
-
+	// Rotation needs no additional proof: the authenticated same-origin console
+	// credential is the only authorization. These cases exercise the cache path.
 	// Prime the cache and the fence the way a relay request would, using the
 	// same derived key names so the assertions do not depend on column quoting.
 	cacheKey := "token:" + common.GenerateHMAC("fenced-credential-0123456789")
@@ -649,7 +642,7 @@ func TestRotateTokenKeyRejectsWhenTheCacheCannotBeRevoked(t *testing.T) {
 
 	t.Run("a failed fence leaves the old credential in place", func(t *testing.T) {
 		server.Close()
-		response := securityEnrollmentRequest(http.MethodPost, path, "", issueProof(), identity, handler)
+		response := securityEnrollmentRequest(http.MethodPost, path, "", "", identity, handler)
 		assert.False(t, decodeAPIResponse(t, response).Success)
 
 		stored, err := model.GetTokenById(token.Id)
@@ -667,7 +660,7 @@ func TestRotateTokenKeyRejectsWhenTheCacheCannotBeRevoked(t *testing.T) {
 		t.Cleanup(func() { _ = recoveredClient.Close() })
 		primeCache(t)
 
-		response := securityEnrollmentRequest(http.MethodPost, path, "", issueProof(), identity, handler)
+		response := securityEnrollmentRequest(http.MethodPost, path, "", "", identity, handler)
 		body := decodeAPIResponse(t, response)
 		require.True(t, body.Success, body.Message)
 
@@ -794,7 +787,7 @@ func TestTokenKeyUniquenessErrorsStayValueFree(t *testing.T) {
 	assert.NotContains(t, sqlLogs.String(), custom)
 }
 
-func TestRotateTokenKeyRequiresOwnershipAndProof(t *testing.T) {
+func TestRotateTokenKeyRequiresOwnership(t *testing.T) {
 	user, identity := setupSecurityEnrollmentTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
 	token := seedToken(t, model.DB, user.Id, "rotate-me", "original-credential-0123456789")
@@ -807,72 +800,8 @@ func TestRotateTokenKeyRequiresOwnershipAndProof(t *testing.T) {
 	path := fmt.Sprintf("/api/token/%d/key/rotate", token.Id)
 	handler := withAccessTokenID(RotateTokenKey, token.Id)
 
-	assertKeyUnchanged := func(t *testing.T) {
-		t.Helper()
-		stored, err := model.GetTokenById(token.Id)
-		require.NoError(t, err)
-		assert.Equal(t, "original-credential-0123456789", stored.Key)
-	}
-
-	t.Run("a missing proof does not rotate", func(t *testing.T) {
+	t.Run("the browser session rotates without an additional proof", func(t *testing.T) {
 		response := securityEnrollmentRequest(http.MethodPost, path, "", "", identity, handler)
-		assert.Equal(t, http.StatusForbidden, response.Code)
-		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_REQUIRED"`)
-		assertKeyUnchanged(t)
-	})
-
-	t.Run("a proof for another token does not rotate", func(t *testing.T) {
-		otherContext, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id + 1})
-		require.NoError(t, err)
-		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-			Scope: service.VerificationScopeTokenKeyRotate, Context: otherContext,
-		}, service.VerificationMethodPassword)
-
-		response := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
-		assert.Equal(t, http.StatusForbidden, response.Code)
-		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_CONTEXT_MISMATCH"`)
-		assertKeyUnchanged(t)
-	})
-
-	t.Run("an expired authorization does not rotate", func(t *testing.T) {
-		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
-		require.NoError(t, err)
-		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
-		}, service.VerificationMethodPassword)
-		require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("user_id = ? AND purpose = ?", user.Id, model.AuthFlowPurposeSecurityProof).Update("expires_at", time.Now().Add(-time.Minute)).Error)
-		response := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
-		assert.Equal(t, http.StatusForbidden, response.Code)
-		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_EXPIRED"`)
-		assertKeyUnchanged(t)
-	})
-
-	t.Run("a foreign token is not found before any proof is consumed", func(t *testing.T) {
-		foreign := seedToken(t, model.DB, user.Id+1000, "foreign", "foreign-credential-0123456789")
-		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: foreign.Id})
-		require.NoError(t, err)
-		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
-		}, service.VerificationMethodPassword)
-
-		response := securityEnrollmentRequest(http.MethodPost, fmt.Sprintf("/api/token/%d/key/rotate", foreign.Id), "", proof, identity, withAccessTokenID(RotateTokenKey, foreign.Id))
-		assert.False(t, decodeAPIResponse(t, response).Success)
-
-		stored, err := model.GetTokenById(foreign.Id)
-		require.NoError(t, err)
-		assert.Equal(t, "foreign-credential-0123456789", stored.Key)
-		// The proof was never consumed, so the owner could still use it.
-		assert.Contains(t, response.Body.String(), "not found")
-	})
-
-	t.Run("a valid proof rotates the credential in place", func(t *testing.T) {
-		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
-		require.NoError(t, err)
-		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
-		}, service.VerificationMethodPassword)
-
-		response := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
 		body := decodeAPIResponse(t, response)
 		require.True(t, body.Success, body.Message)
 
@@ -910,15 +839,52 @@ func TestRotateTokenKeyRequiresOwnershipAndProof(t *testing.T) {
 		require.NoError(t, model.DB.Where(map[string]any{"key": result.Key}).First(&byNewKey).Error)
 		assert.Equal(t, token.Id, byNewKey.Id)
 
-		// A replayed proof is rejected and changes nothing.
-		replay := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
-		assert.Contains(t, replay.Body.String(), `"code":"SECURITY_PROOF_CONSUMED"`)
+		// A repeated request needs no proof and simply issues another credential.
+		second := securityEnrollmentRequest(http.MethodPost, path, "", "", identity, handler)
+		require.True(t, decodeAPIResponse(t, second).Success)
 		unchanged, err := model.GetTokenById(token.Id)
 		require.NoError(t, err)
-		assert.Equal(t, result.Key, unchanged.Key)
+		assert.NotEqual(t, result.Key, unchanged.Key)
+		assert.NotEqual(t, "original-credential-0123456789", unchanged.Key)
+	})
+
+	t.Run("a foreign token id is not found and stays unchanged", func(t *testing.T) {
+		foreign := seedToken(t, model.DB, user.Id+1000, "foreign", "foreign-credential-0123456789")
+		response := securityEnrollmentRequest(
+			http.MethodPost,
+			fmt.Sprintf("/api/token/%d/key/rotate", foreign.Id),
+			"", "", identity,
+			withAccessTokenID(RotateTokenKey, foreign.Id),
+		)
+		assert.False(t, decodeAPIResponse(t, response).Success)
+
+		stored, err := model.GetTokenById(foreign.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "foreign-credential-0123456789", stored.Key)
+		assert.Contains(t, response.Body.String(), "not found")
+		assert.NotContains(t, response.Body.String(), foreign.Key)
+	})
+
+	t.Run("the route rejects a personal access token", func(t *testing.T) {
+		pat, _ := createScopedAccessToken(t, user.Id, 0, "api_key:write")
+		router := gin.New()
+		router.POST("/api/token/:id/key/rotate", middleware.UserAuth(), RotateTokenKey)
+		before, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(""))
+		request.Header.Set("Authorization", "Bearer "+pat)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.Contains(t, response.Body.String(), `"code":"AUTH_SESSION_REQUIRED"`)
+
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, before.Key, stored.Key)
 	})
 }
-
 func TestRotateTokenKeyAcceptsAValidatedCustomKey(t *testing.T) {
 	user, identity := setupSecurityEnrollmentTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
@@ -926,18 +892,9 @@ func TestRotateTokenKeyAcceptsAValidatedCustomKey(t *testing.T) {
 	path := fmt.Sprintf("/api/token/%d/key/rotate", token.Id)
 	handler := withAccessTokenID(RotateTokenKey, token.Id)
 
-	issueProof := func() string {
-		t.Helper()
-		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
-		require.NoError(t, err)
-		return issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
-		}, service.VerificationMethodPassword)
-	}
-
 	t.Run("a custom secret is stored without the optional sk- prefix", func(t *testing.T) {
 		custom := "cu5tomSe9retValue0123456789abcdEF"
-		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"sk-`+custom+`"}`, issueProof(), identity, handler)
+		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"sk-`+custom+`"}`, "", identity, handler)
 		body := decodeAPIResponse(t, response)
 		require.True(t, body.Success, body.Message)
 
@@ -951,12 +908,7 @@ func TestRotateTokenKeyAcceptsAValidatedCustomKey(t *testing.T) {
 		current, err := model.GetTokenById(token.Id)
 		require.NoError(t, err)
 		second := seedToken(t, model.DB, user.Id, "custom-second", "second-credential-0123456789")
-		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: second.Id})
-		require.NoError(t, err)
-		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
-		}, service.VerificationMethodPassword)
-		response := securityEnrollmentRequest(http.MethodPost, fmt.Sprintf("/api/token/%d/key/rotate", second.Id), `{"key":"`+current.Key+`"}`, proof, identity, withAccessTokenID(RotateTokenKey, second.Id))
+		response := securityEnrollmentRequest(http.MethodPost, fmt.Sprintf("/api/token/%d/key/rotate", second.Id), `{"key":"`+current.Key+`"}`, "", identity, withAccessTokenID(RotateTokenKey, second.Id))
 		assert.Contains(t, response.Body.String(), "This API key is already in use")
 		unchanged, err := model.GetTokenById(second.Id)
 		require.NoError(t, err)
@@ -966,7 +918,7 @@ func TestRotateTokenKeyAcceptsAValidatedCustomKey(t *testing.T) {
 	t.Run("the current secret is refused", func(t *testing.T) {
 		current, err := model.GetTokenById(token.Id)
 		require.NoError(t, err)
-		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"`+current.Key+`"}`, issueProof(), identity, handler)
+		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"`+current.Key+`"}`, "", identity, handler)
 		assert.Contains(t, response.Body.String(), "must differ from the current one")
 		stored, err := model.GetTokenById(token.Id)
 		require.NoError(t, err)
@@ -976,22 +928,21 @@ func TestRotateTokenKeyAcceptsAValidatedCustomKey(t *testing.T) {
 	t.Run("a weak secret is refused before any write", func(t *testing.T) {
 		current, err := model.GetTokenById(token.Id)
 		require.NoError(t, err)
-		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"password123456789012345678901234"}`, issueProof(), identity, handler)
+		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"password123456789012345678901234"}`, "", identity, handler)
 		assert.False(t, decodeAPIResponse(t, response).Success)
 		stored, err := model.GetTokenById(token.Id)
 		require.NoError(t, err)
 		assert.Equal(t, current.Key, stored.Key)
 	})
 
-	t.Run("a replayed proof cannot rotate again", func(t *testing.T) {
-		proof := issueProof()
-		first := securityEnrollmentRequest(http.MethodPost, path, `{"key":"firstCu5tomSecret0123456789abcdef"}`, proof, identity, handler)
-		require.True(t, decodeAPIResponse(t, first).Success)
-		replay := securityEnrollmentRequest(http.MethodPost, path, `{"key":"secondCu5tomSecret0123456789abcd"}`, proof, identity, handler)
-		assert.Contains(t, replay.Body.String(), `"code":"SECURITY_PROOF_CONSUMED"`)
+	t.Run("a malformed body does not rotate", func(t *testing.T) {
+		current, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":`, "", identity, handler)
+		assert.False(t, decodeAPIResponse(t, response).Success)
 		stored, err := model.GetTokenById(token.Id)
 		require.NoError(t, err)
-		assert.Equal(t, "firstCu5tomSecret0123456789abcdef", stored.Key)
+		assert.Equal(t, current.Key, stored.Key)
 	})
 }
 
@@ -1251,7 +1202,6 @@ func verifyAPITokenAudit(t *testing.T) {
 	require.NoError(t, model.CreateUserSession(session))
 	jwt, _, err := service.IssueAccessToken(service.AuthIdentity{UserID: user.Id, SessionID: session.SID, UserAuthVersion: 1, SessionVersion: 1})
 	require.NoError(t, err)
-	identity := service.AuthIdentity{UserID: user.Id, SessionID: session.SID, UserAuthVersion: 1, SessionVersion: 1}
 	router := gin.New()
 	router.Use(middleware.RequestId(), middleware.AccessTokenAudit())
 	tokenRoutes := router.Group("/api/token", middleware.UserAuth(), middleware.TokenOperationAudit())
@@ -1350,11 +1300,9 @@ func verifyAPITokenAudit(t *testing.T) {
 				request.Header.Set("X-Test-Limit", "1")
 			}
 			if tc.rotate {
-				context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: owned.Id})
-				require.NoError(t, err)
-				request.Header.Set("X-Security-Proof", issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
-					Scope: service.VerificationScopeTokenKeyRotate, Context: context,
-				}, service.VerificationMethodPassword))
+				// Rotation no longer consumes a proof: the browser session alone
+				// authorizes it, so the request carries no X-Security-Proof header.
+				assert.Empty(t, request.Header.Get("X-Security-Proof"))
 			}
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
