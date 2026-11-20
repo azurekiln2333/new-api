@@ -70,6 +70,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	tools := responsesToolUsage{}
 	var finalResponse *dto.OpenAIResponsesResponse
 	var streamErr *types.NewAPIError
+	var knownUsage *dto.Usage
 
 	scanner := helper.NewStreamScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -95,6 +96,12 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		}
 		if streamResp.Response != nil {
 			info.ObserveResponseModel(streamResp.Response.Model)
+			if streamResp.Response.Usage != nil {
+				// Preserve only reported accounting facts on failures. Response
+				// conversion may estimate missing usage, so it cannot supply them.
+				knownUsage = dto.MergeUsageNonZero(knownUsage, relayconvert.UsageFromResponsesUsage(streamResp.Response.Usage))
+				service.ApplyResponsesUsage(knownUsage, streamResp.Response.Usage)
+			}
 		}
 		service.ObserveResponsesOutcome(info, &streamResp)
 		tools.observe(info, &streamResp, common.StringToByteSlice(data))
@@ -124,12 +131,15 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		}
 	}
 	if streamErr != nil {
-		return nil, streamErr
+		return knownUsage, streamErr
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		return knownUsage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	if finalResponse == nil {
+		if info.IsChannelTest {
+			return knownUsage, types.NewOpenAIError(fmt.Errorf("upstream stream ended before completion"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+		}
 		finalResponse = &dto.OpenAIResponsesResponse{
 			ID:        helper.GetResponseID(c),
 			CreatedAt: dto.IntValue(time.Now().Unix()),
@@ -141,11 +151,11 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 
 	responseValue, usage, err := convertResponsesResponseForClient(c, info, finalResponse)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return knownUsage, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	responseBody, err := common.Marshal(responseValue)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+		return knownUsage, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)

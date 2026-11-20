@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -226,6 +227,112 @@ func TestOaiResponsesToChatBufferedStreamHandlerReturnsJSONFromSSE(t *testing.T)
 	require.Contains(t, got, `"name":"lookup"`)
 	require.Contains(t, got, `"arguments":"{\"q\":\"x\"}"`)
 	require.Contains(t, got, `"finish_reason":"tool_calls"`)
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerPreservesReportedUsageOnFailure(t *testing.T) {
+	const reported = `data: {"type":"response.in_progress","response":{"usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":2}}}}` + "\n\n"
+	const delta = `data: {"type":"response.output_text.delta","delta":"partial answer"}` + "\n\n"
+	const failed = `data: {"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","code":"bad_response","message":"upstream failed"}}}` + "\n\n"
+	const failedUsage = `data: {"type":"response.failed","response":{"status":"failed","usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14,"input_tokens_details":{"cached_tokens":4},"output_tokens_details":{"reasoning_tokens":2}},"error":{"type":"server_error","message":"upstream failed"}}}` + "\n\n"
+	const zeroUsage = `data: {"type":"response.error","response":{"status":"failed","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0},"error":{"type":"server_error","message":"upstream failed"}}}` + "\n\n"
+	const malformed = "data: {invalid\n\n"
+	for _, diagnostic := range []bool{false, true} {
+		for _, tc := range []struct {
+			name       string
+			body       string
+			readErr    error
+			wantUsage  bool
+			wantTokens int
+		}{
+			{name: "failed terminal reports usage", body: delta + failedUsage, wantUsage: true, wantTokens: 14},
+			{name: "later zero usage preserves earlier usage", body: reported + delta + zeroUsage, wantUsage: true, wantTokens: 14},
+			{name: "malformed event preserves earlier usage", body: reported + delta + malformed, wantUsage: true, wantTokens: 14},
+			{name: "read failure preserves earlier usage", body: reported + delta, readErr: errors.New("upstream read failed"), wantUsage: true, wantTokens: 14},
+			{name: "failed output does not estimate usage", body: delta + failed},
+			{name: "explicit zero usage stays zero", body: delta + zeroUsage, wantUsage: true},
+			{name: "malformed output does not estimate usage", body: delta + malformed},
+			{name: "read failure does not estimate usage", body: delta, readErr: errors.New("upstream read failed")},
+		} {
+			t.Run(fmt.Sprintf("diagnostic=%t/%s", diagnostic, tc.name), func(t *testing.T) {
+				c, recorder, resp, info := newResponsesChatTestContext(t, tc.body, false)
+				info.IsChannelTest = diagnostic
+				info.SetEstimatePromptTokens(99)
+				if tc.readErr != nil {
+					resp.Body = io.NopCloser(io.MultiReader(strings.NewReader(tc.body), iotest.ErrReader(tc.readErr)))
+				}
+
+				usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+				require.NotNil(t, apiErr)
+				assert.Empty(t, recorder.Body.String(), "a failed buffered response must not emit a success body")
+				assert.False(t, c.Writer.Written())
+				if !tc.wantUsage {
+					assert.Nil(t, usage, "output alone must not become estimated failure usage")
+					return
+				}
+				require.NotNil(t, usage)
+				assert.Equal(t, tc.wantTokens, usage.TotalTokens)
+				if tc.wantTokens == 0 {
+					assert.Zero(t, usage.PromptTokens)
+					assert.Zero(t, usage.CompletionTokens)
+					assert.Nil(t, usage.BillingUsage)
+					return
+				}
+				assert.Equal(t, 11, usage.PromptTokens)
+				assert.Equal(t, 3, usage.CompletionTokens)
+				assert.Equal(t, 4, usage.PromptTokensDetails.CachedTokens)
+				assert.Equal(t, 2, usage.CompletionTokenDetails.ReasoningTokens)
+				require.NotNil(t, usage.BillingUsage)
+				assert.Equal(t, dto.BillingUsageSourceOAIResponses, usage.BillingUsage.Source)
+				assert.False(t, usage.BillingUsage.Estimated)
+			})
+		}
+	}
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerRequiresDiagnosticTerminal(t *testing.T) {
+	const reported = `data: {"type":"response.in_progress","response":{"usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14}}}` + "\n\n"
+	const delta = `data: {"type":"response.output_text.delta","delta":"partial answer"}` + "\n\n"
+	for _, diagnostic := range []bool{false, true} {
+		for _, hasUsage := range []bool{false, true} {
+			for _, done := range []bool{false, true} {
+				t.Run(fmt.Sprintf("diagnostic=%t/usage=%t/done=%t", diagnostic, hasUsage, done), func(t *testing.T) {
+					body := delta
+					if hasUsage {
+						body = reported + body
+					}
+					if done {
+						body += "data: [DONE]\n\n"
+					}
+					c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+					info.IsChannelTest = diagnostic
+					info.SetEstimatePromptTokens(99)
+
+					usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+					if !diagnostic {
+						require.Nil(t, apiErr, "ordinary callers retain the buffered fallback")
+						require.NotNil(t, usage)
+						assert.Contains(t, recorder.Body.String(), `"object":"chat.completion"`)
+						assert.Contains(t, recorder.Body.String(), `"content":"partial answer"`)
+						return
+					}
+					require.NotNil(t, apiErr)
+					assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+					assert.Empty(t, recorder.Body.String())
+					assert.False(t, c.Writer.Written())
+					if !hasUsage {
+						assert.Nil(t, usage, "a truncated diagnostic must not synthesize usage")
+						return
+					}
+					require.NotNil(t, usage)
+					assert.Equal(t, 11, usage.PromptTokens)
+					assert.Equal(t, 3, usage.CompletionTokens)
+					assert.Equal(t, 14, usage.TotalTokens)
+				})
+			}
+		}
+	}
 }
 
 func TestOaiResponsesToChatBufferedStreamHandlerPreservesInterleavedClaudeContent(t *testing.T) {
