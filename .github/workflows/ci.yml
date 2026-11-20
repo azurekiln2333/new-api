@@ -205,6 +205,22 @@ jobs:
       - name: Typecheck
         run: bun check -b
 
+      - name: Lint updated console flows
+        run: >-
+          bun x --no-install oxlint -c .oxlintrc.json
+          src/features/keys/components/api-key-rotate-dialog.tsx
+          src/features/keys/components/__tests__/api-key-rotate-dialog.test.tsx
+          src/features/channels/components/channel-card.tsx
+          src/features/channels/components/channel-usage-context.tsx
+          src/features/channels/components/__tests__/channel-details-entry.test.tsx
+          src/features/channels/hooks/__tests__/use-channel-usage.test.tsx
+          src/features/playground/api.ts
+          src/features/playground/hooks/use-playground-options.ts
+          src/features/playground/hooks/use-playground-state.ts
+          src/features/playground/lib/options/playground-option-utils.ts
+          src/features/playground/hooks/__tests__/use-playground-options.test.tsx
+          src/features/playground/hooks/__tests__/use-playground-state.test.ts
+
       - name: Test
         run: bun run test
 
