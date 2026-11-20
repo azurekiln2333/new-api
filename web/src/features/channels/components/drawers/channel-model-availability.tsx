@@ -58,7 +58,9 @@ export function ChannelModelAvailability(props: { channel: Channel }) {
     initialData: observations,
     queryFn: async () => {
       const result = requireServerSuccess(await getChannel(props.channel.id))
-      if (!result.data) throw new Error('Missing channel data')
+      if (!result.data) {
+        throw new Error('Missing channel data')
+      }
       return result.data.channel_info.model_unavailable ?? []
     },
   })
@@ -76,7 +78,9 @@ export function ChannelModelAvailability(props: { channel: Channel }) {
       handleServerError(error, t('Failed to restore model availability')),
   })
 
-  if (visible.length === 0) return null
+  if (visible.length === 0) {
+    return null
+  }
 
   return (
     <section aria-label={t('Unavailable models')} className='space-y-3'>
@@ -121,7 +125,9 @@ export function ChannelModelAvailability(props: { channel: Channel }) {
         confirmText={t('Restore')}
         isLoading={restore.isPending}
         handleConfirm={() => {
-          if (canOperate) restore.mutate()
+          if (canOperate) {
+            restore.mutate()
+          }
         }}
       />
     </section>
