@@ -21,10 +21,12 @@ import { PieChart } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { toIntlLocale } from '@/i18n/languages'
+import { formatTokens } from '@/lib/format'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
-import { formatShare, formatTokens } from '../lib/format'
+import { formatShare } from '../lib/format'
 import type { RankingPeriod, VendorRanking, VendorShareSeries } from '../types'
 import { CacheTokenDetails } from './cache-token-details'
 import { VendorLink } from './entity-links'
@@ -102,7 +104,8 @@ type MarketShareSectionProps = {
  * vendor list.
  */
 export function MarketShareSection(props: MarketShareSectionProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { resolvedTheme, themeReady } = useChartTheme()
   const chartTextColor =
     resolvedTheme === 'dark'
@@ -173,7 +176,7 @@ export function MarketShareSection(props: MarketShareSectionProps) {
               key: (datum: Record<string, unknown>) =>
                 String(datum?.vendor ?? ''),
               value: (datum: Record<string, unknown>) =>
-                `${(Number(datum?.share) * 100).toFixed(1)}% · ${formatTokens(Number(datum?.tokens) || 0)}`,
+                `${(Number(datum?.share) * 100).toFixed(1)}% · ${formatTokens(Number(datum?.tokens) || 0, locale)}`,
             },
           ],
         },
@@ -205,7 +208,7 @@ export function MarketShareSection(props: MarketShareSectionProps) {
       },
       animationAppear: { duration: 500 },
     }
-  }, [chartGridColor, chartTextColor, colourMap, orderedPoints])
+  }, [chartGridColor, chartTextColor, colourMap, orderedPoints, locale])
 
   const visible = props.rows.slice(0, MAX_VENDORS_IN_LIST)
   const half = Math.ceil(visible.length / 2)
@@ -276,6 +279,8 @@ function VendorList(props: {
   rows: VendorRanking[]
   colourMap: Record<string, string>
 }) {
+  const { i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
     <ul>
       {props.rows.map((vendor) => (
@@ -298,7 +303,7 @@ function VendorList(props: {
           </VendorLink>
           <div className='max-w-[55%] shrink-0 text-right'>
             <div className='text-foreground font-mono text-sm font-semibold tabular-nums'>
-              {formatTokens(vendor.total_tokens)}
+              {formatTokens(vendor.total_tokens, locale)}
             </div>
             <div className='text-muted-foreground/80 font-mono text-[11px] tabular-nums'>
               {formatShare(vendor.share)}

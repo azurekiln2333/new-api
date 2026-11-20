@@ -514,3 +514,39 @@ it('labels raw quota mode as tokens without introducing a currency symbol', () =
     within(screen.getAllByRole('cell')[1]).getByText('200')
   ).toBeInTheDocument()
 })
+
+it('keeps large token balances exact and updates their local abbreviations on language switch', async () => {
+  useSystemConfigStore.getState().setConfig({
+    currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'TOKENS' },
+  })
+  const tokenI18n = createInstance()
+  await tokenI18n.init({
+    lng: 'en',
+    fallbackLng: 'en',
+    resources: {
+      en: { translation: { Tokens: 'Tokens' } },
+      zhCN: { translation: { Tokens: '令牌' } },
+    },
+  })
+  render(
+    <I18nextProvider i18n={tokenI18n}>
+      <QuotaTable remaining={318574217} used={1500000} />
+    </I18nextProvider>
+  )
+  expect(screen.getAllByRole('cell')[0]).toHaveTextContent(
+    '318,574,217 (318.6M)'
+  )
+  expect(screen.getAllByRole('cell')[1]).toHaveTextContent('1,500,000 (1.5M)')
+  expect(screen.getByRole('button')).toHaveClass('whitespace-normal')
+  await act(() => tokenI18n.changeLanguage('zhCN'))
+  expect(screen.getAllByRole('cell')[0]).toHaveTextContent(
+    '318,574,217 (318.6M / 3.2亿)'
+  )
+  expect(screen.getAllByRole('cell')[1]).toHaveTextContent(
+    '1,500,000 (1.5M / 150万)'
+  )
+  await userEvent.click(screen.getByRole('button'))
+  const detail = await screen.findByRole('dialog')
+  expect(within(detail).getByText('318,574,217 (318.6M / 3.2亿)')).toBeVisible()
+  expect(within(detail).getByText('1,500,000 (1.5M / 150万)')).toBeVisible()
+})

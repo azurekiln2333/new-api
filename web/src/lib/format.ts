@@ -258,14 +258,21 @@ export function formatLogQuota(quota: number): string {
   })
 }
 
-/**
- * Format tokens count with K/M suffixes
- */
-export function formatTokens(tokens: number): string {
-  if (tokens === 0) return '-'
-  if (tokens < 1000) return tokens.toString()
-  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`
-  return `${(tokens / 1000000).toFixed(2)}M`
+/** Exact token count followed by international and localized abbreviations. */
+export function formatTokens(
+  tokens: number | null | undefined,
+  locales?: Intl.LocalesArgument
+): string {
+  if (tokens == null || !Number.isFinite(tokens)) return '-'
+  const exact = formatNumber(tokens, locales)
+  if (Math.abs(tokens) < 1000) return exact
+  const compact = [
+    ...new Set([
+      formatCompactNumber(tokens, 'en'),
+      formatCompactNumber(tokens, locales),
+    ]),
+  ].filter((value) => value !== exact && value !== String(tokens))
+  return compact.length ? `${exact} (${compact.join(' / ')})` : exact
 }
 
 /**

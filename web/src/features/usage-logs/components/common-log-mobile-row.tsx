@@ -22,6 +22,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
+import { toIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTokens } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -50,7 +51,8 @@ export function CommonLogMobileRow<TData>(props: {
   log: UsageLog
   cells: Map<string, Cell<TData, unknown>>
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { sensitiveVisible } = useUsageLogsContext()
   const [expanded, setExpanded] = useState(false)
 
@@ -85,9 +87,9 @@ export function CommonLogMobileRow<TData>(props: {
   if (contentPreview) {
     summaryParts.push(contentPreview)
   }
-  if (showTokens && (log.prompt_tokens > 0 || log.completion_tokens > 0)) {
+  if (showTokens) {
     summaryParts.push(
-      `↑${formatTokens(log.prompt_tokens)} ↓${formatTokens(log.completion_tokens)}`
+      `↑${formatTokens(log.prompt_tokens, locale)} ↓${formatTokens(log.completion_tokens, locale)}`
     )
   }
   if (showUseTime && log.use_time > 0) {
@@ -141,7 +143,7 @@ export function CommonLogMobileRow<TData>(props: {
           />
         </div>
         {summaryParts.length > 0 && (
-          <div className='text-muted-foreground min-w-0 truncate text-[11px] leading-4'>
+          <div className='text-muted-foreground min-w-0 text-[11px] leading-4 break-words'>
             {summaryParts.join(' · ')}
           </div>
         )}

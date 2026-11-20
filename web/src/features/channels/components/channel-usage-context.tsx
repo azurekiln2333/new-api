@@ -27,7 +27,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatCompactNumber, formatNumber } from '@/lib/format'
+import { formatNumber, formatTokens } from '@/lib/format'
 
 import type { ChannelUsageSummary } from '../types'
 
@@ -67,11 +67,11 @@ export function ChannelUsedTokens(props: ChannelUsedTokensProps) {
           render={
             <Badge
               variant='secondary'
-              className='inline-flex font-mono tabular-nums'
+              className='inline-flex h-auto min-h-5 max-w-full font-mono break-words whitespace-normal tabular-nums'
             />
           }
         >
-          {formatCompactNumber(usage.total_tokens, locale)}
+          {formatTokens(usage.total_tokens, locale)}
         </TooltipTrigger>
         <TooltipContent side='top' className='text-left whitespace-pre-line'>
           {title}

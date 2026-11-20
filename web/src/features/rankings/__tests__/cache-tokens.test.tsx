@@ -46,7 +46,11 @@ async function renderRankings(children: ReactNode) {
   await i18n.use(initReactI18next).init({
     lng: 'en',
     fallbackLng: 'en',
-    resources: { en: { translation: {} } },
+    resources: {
+      en: { translation: {} },
+      zhCN: { translation: { 'Cache Read': '缓存读取' } },
+      zhTW: { translation: { 'Cache Read': '快取讀取' } },
+    },
   })
   const route = createRootRoute({
     component: () => <I18nextProvider i18n={i18n}>{children}</I18nextProvider>,
@@ -81,19 +85,18 @@ test('model rows show separate cache reads and writes without adding them to tot
   expect(within(model).getByText('50')).toBeInTheDocument()
 })
 
-test('cache quantities use the same compact unit as the token total', async () => {
+test('cache quantities show exact counts with the same compact unit as the token total', async () => {
   await renderRankings(
     <CacheTokenDetails
       cache_read_tokens={3_020_000_000}
       cache_creation_tokens={1_500_000}
     />
   )
-  // Same `B` / `M` suffixes the total uses, not localized compact units.
-  expect(await screen.findByText('3.02B')).toBeInTheDocument()
-  expect(screen.getByText('1.50M')).toBeInTheDocument()
+  expect(await screen.findByText('3,020,000,000 (3B)')).toBeInTheDocument()
+  expect(screen.getByText('1,500,000 (1.5M)')).toBeInTheDocument()
 })
 
-test('a cache amount does not change language-dependent units on switch', async () => {
+test('a cache amount keeps its exact value and adds local compact units on language switch', async () => {
   const i18n = await renderRankings(
     <CacheTokenDetails
       cache_read_tokens={3_020_000_000}
@@ -101,10 +104,9 @@ test('a cache amount does not change language-dependent units on switch', async 
     />
   )
   await act(() => i18n.changeLanguage('zhCN'))
-  expect(screen.getByText('3.02B')).toBeInTheDocument()
-  expect(screen.queryByText('30.2亿')).not.toBeInTheDocument()
+  expect(screen.getByText('3,020,000,000 (3B / 30.2亿)')).toBeInTheDocument()
   await act(() => i18n.changeLanguage('zhTW'))
-  expect(screen.getByText('3.02B')).toBeInTheDocument()
+  expect(screen.getByText('3,020,000,000 (3B / 30.2億)')).toBeInTheDocument()
 })
 
 test('cache block renders nothing when both quantities are zero', async () => {
@@ -127,16 +129,18 @@ test('a single zero quantity keeps the cache pair complete', async () => {
   expect(within(writePair).getByText('50')).toBeInTheDocument()
 })
 
-test('each cache label stays in a non-wrapping pair with its value', async () => {
+test('a long cache count can wrap without hiding its exact value', async () => {
   await renderRankings(
-    <CacheTokenDetails cache_read_tokens={300} cache_creation_tokens={50} />
+    <CacheTokenDetails
+      cache_read_tokens={3_020_000_000}
+      cache_creation_tokens={50}
+    />
   )
   const rawRead = await screen.findByText('Cache Read')
   const pair = rawRead.parentElement as HTMLElement
-  // The label and value share one nowrap flex item so they never split lines.
-  expect(pair.className).toContain('whitespace-nowrap')
-  expect(pair.className).toContain('flex')
-  expect(within(pair).getByText('300')).toBeInTheDocument()
+  expect(pair.className).toContain('flex-wrap')
+  expect(pair.className).not.toContain('whitespace-nowrap')
+  expect(within(pair).getByText('3,020,000,000 (3B)')).toBeVisible()
 })
 
 test('cache value exposes its exact count in the title', async () => {
@@ -146,7 +150,7 @@ test('cache value exposes its exact count in the title', async () => {
       cache_creation_tokens={0}
     />
   )
-  const value = await screen.findByText('3.02B')
+  const value = await screen.findByText('3,020,000,000 (3B)')
   expect(value).toHaveAttribute('title', '3,020,000,000')
 })
 

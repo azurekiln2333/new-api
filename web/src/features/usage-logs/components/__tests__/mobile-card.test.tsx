@@ -370,7 +370,7 @@ it('summarises each log in a collapsed compact row by default', () => {
 
   const row = screen.getByRole('button', { expanded: false })
   expect(row).toHaveTextContent(longName)
-  expect(row).toHaveTextContent('↑1.2K ↓800 · 1.5s')
+  expect(row).toHaveTextContent('↑1,200 (1.2K) ↓800 · 1.5s')
   expect(row).toHaveTextContent('backend-production-token')
   expect(row).toHaveTextContent('production-admin')
 
@@ -392,6 +392,17 @@ it('expands a compact row into the full card', async () => {
     screen.getByRole('button', { name: `Channel: ${longName} #372` })
   ).toBeVisible()
   expect(screen.getByText('Input')).toBeVisible()
+})
+
+it('wraps a large exact token summary and keeps zero output visible in compact view', () => {
+  renderCompactLogs({
+    logs: [{ ...log, prompt_tokens: 318574217, completion_tokens: 0 }],
+  })
+  const row = screen.getByRole('button', { expanded: false })
+  const summary = within(row).getByText(/↑318,574,217 \(318.6M\) ↓0/)
+  expect(summary).toBeVisible()
+  expect(summary).toHaveClass('break-words')
+  expect(summary).not.toHaveClass('truncate')
 })
 
 it('switches to card view from the toggle and remembers the choice', async () => {

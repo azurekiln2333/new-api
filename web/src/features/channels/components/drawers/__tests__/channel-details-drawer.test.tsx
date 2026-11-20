@@ -24,7 +24,7 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
-import { formatNumber, formatTimestampToDate } from '@/lib/format'
+import { formatNumber, formatTimestampToDate, formatTokens } from '@/lib/format'
 
 import type { Channel, ChannelUsageDetail } from '../../../types'
 import { ChannelDetailsDrawer } from '../channel-details-drawer'
@@ -172,8 +172,8 @@ describe('ChannelDetailsDrawer', () => {
     const enabledRow = within(bodyRows[0])
     expect(enabledRow.getByText('gpt-4o')).toBeVisible()
     expect(enabledRow.getByText('Enabled')).toBeVisible()
-    expect(enabledRow.getByText(formatNumber(900_000, 'en'))).toBeVisible()
-    expect(enabledRow.getByText(formatNumber(1_100_000, 'en'))).toBeVisible()
+    expect(enabledRow.getByText(formatTokens(900_000, 'en'))).toBeVisible()
+    expect(enabledRow.getByText(formatTokens(1_100_000, 'en'))).toBeVisible()
     expect(enabledRow.getByText(formatNumber(30, 'en'))).toBeVisible()
     expect(
       enabledRow.getByText(formatTimestampToDate(1_700_000_000))
@@ -182,7 +182,7 @@ describe('ChannelDetailsDrawer', () => {
     const disabledRow = within(bodyRows[1])
     expect(disabledRow.getByText('gpt-4o-mini')).toBeVisible()
     expect(disabledRow.getByText('Disabled')).toBeVisible()
-    expect(disabledRow.getByText(formatNumber(400_000, 'en'))).toBeVisible()
+    expect(disabledRow.getByText(formatTokens(400_000, 'en'))).toBeVisible()
     expect(disabledRow.queryByText(/\d{4}-\d{2}-\d{2}/)).not.toBeInTheDocument()
     expect(disabledRow.getByText('-')).toBeVisible()
   })
@@ -196,13 +196,13 @@ describe('ChannelDetailsDrawer', () => {
     })
     expect(within(overview).getByText('Total tokens')).toBeVisible()
     expect(
-      within(overview).getByText(formatNumber(1_500_000, 'en'))
+      within(overview).getByText(formatTokens(1_500_000, 'en'))
     ).toBeVisible()
     expect(
-      within(overview).getByText(formatNumber(1_200_000, 'en'))
+      within(overview).getByText(formatTokens(1_200_000, 'en'))
     ).toBeVisible()
     expect(
-      within(overview).getByText(formatNumber(300_000, 'en'))
+      within(overview).getByText(formatTokens(300_000, 'en'))
     ).toBeVisible()
     expect(within(overview).getByText(formatNumber(42, 'en'))).toBeVisible()
     expect(within(overview).getByText('Consumed quota')).toBeVisible()

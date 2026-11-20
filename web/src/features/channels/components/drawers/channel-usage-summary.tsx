@@ -31,14 +31,15 @@ import { EmptyState } from '@/components/empty-state'
 import { StatusBadge } from '@/components/status-badge'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
-import { formatNumber, formatTimestampToDate } from '@/lib/format'
+import { formatNumber, formatTimestampToDate, formatTokens } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { ChannelModelUsage, ChannelUsageDetail } from '../../types'
 
 const NUMERIC_HEADER_CLASS =
   'text-muted-foreground text-right text-xs whitespace-nowrap'
-const NUMERIC_CELL_CLASS = 'py-2 text-right font-mono tabular-nums'
+const NUMERIC_CELL_CLASS =
+  'py-2 text-right font-mono whitespace-normal tabular-nums'
 
 function OverviewMetric(props: {
   icon: React.ComponentType<{ className?: string }>
@@ -57,7 +58,7 @@ function OverviewMetric(props: {
         <div className='text-muted-foreground truncate text-[10px] font-medium tracking-wider uppercase'>
           {props.label}
         </div>
-        <div className='text-foreground truncate font-mono text-sm font-semibold tabular-nums'>
+        <div className='text-foreground font-mono text-sm font-semibold break-words tabular-nums'>
           {props.value}
         </div>
       </div>
@@ -75,17 +76,17 @@ function UsageOverview(props: { usage: ChannelUsageDetail }) {
       <OverviewMetric
         icon={Sigma}
         label={t('Total tokens')}
-        value={formatNumber(usage.total_tokens, locale)}
+        value={formatTokens(usage.total_tokens, locale)}
       />
       <OverviewMetric
         icon={ArrowDownToLine}
         label={t('Input tokens')}
-        value={formatNumber(usage.prompt_tokens, locale)}
+        value={formatTokens(usage.prompt_tokens, locale)}
       />
       <OverviewMetric
         icon={ArrowUpFromLine}
         label={t('Output tokens')}
-        value={formatNumber(usage.completion_tokens, locale)}
+        value={formatTokens(usage.completion_tokens, locale)}
       />
       <OverviewMetric
         icon={Waypoints}
@@ -146,21 +147,21 @@ function ModelUsageTable(props: { models: ChannelModelUsage[] }) {
           header: t('Input tokens'),
           className: NUMERIC_HEADER_CLASS,
           cellClassName: NUMERIC_CELL_CLASS,
-          cell: (model) => formatCount(model.prompt_tokens),
+          cell: (model) => formatTokens(model.prompt_tokens, locale),
         },
         {
           id: 'completion_tokens',
           header: t('Output tokens'),
           className: NUMERIC_HEADER_CLASS,
           cellClassName: NUMERIC_CELL_CLASS,
-          cell: (model) => formatCount(model.completion_tokens),
+          cell: (model) => formatTokens(model.completion_tokens, locale),
         },
         {
           id: 'total_tokens',
           header: t('Total tokens'),
           className: cn(NUMERIC_HEADER_CLASS, 'hidden sm:table-cell'),
           cellClassName: cn(NUMERIC_CELL_CLASS, 'hidden sm:table-cell'),
-          cell: (model) => formatCount(model.total_tokens),
+          cell: (model) => formatTokens(model.total_tokens, locale),
         },
         {
           id: 'request_count',

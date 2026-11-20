@@ -171,12 +171,16 @@ function renderUsedTokens(
   )
 }
 
-test('used tokens shows the compact total of a channel with usage', () => {
+test('used tokens shows the exact and compact total without clipping wrapped lines', () => {
   renderUsedTokens({
     1: usage({ total_tokens: 1_500_000, prompt_tokens: 1_000_000 }),
   })
 
-  expect(screen.getByText('1.5M')).toBeVisible()
+  expect(screen.getByText('1,500,000 (1.5M)')).toBeVisible()
+  expect(screen.getByText('1,500,000 (1.5M)')).toHaveClass(
+    'h-auto',
+    'whitespace-normal'
+  )
 })
 
 test('used tokens keeps the input/output split in a tooltip instead of the row text', () => {

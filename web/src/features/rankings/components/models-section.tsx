@@ -21,10 +21,11 @@ import { BarChart3, Trophy } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { toIntlLocale } from '@/i18n/languages'
+import { formatCompactNumber, formatTokens } from '@/lib/format'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
-import { formatTokens } from '../lib/format'
 import type {
   ModelHistorySeries,
   ModelRanking,
@@ -56,7 +57,8 @@ type ModelsSectionProps = {
  * chart anchors the eye while the leaderboard provides the detailed key.
  */
 export function ModelsSection(props: ModelsSectionProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { resolvedTheme, themeReady } = useChartTheme()
   const chartTextColor =
     resolvedTheme === 'dark'
@@ -102,7 +104,8 @@ export function ModelsSection(props: ModelsSectionProps) {
         {
           orient: 'left',
           label: {
-            formatMethod: (val: number | string) => formatTokens(Number(val)),
+            formatMethod: (val: number | string) =>
+              formatCompactNumber(Number(val), locale),
             style: { fill: chartTextColor, fontSize: 10 },
           },
           grid: {
@@ -118,7 +121,7 @@ export function ModelsSection(props: ModelsSectionProps) {
               key: (datum: Record<string, unknown>) =>
                 String(datum?.model ?? ''),
               value: (datum: Record<string, unknown>) =>
-                formatTokens(Number(datum?.tokens) || 0),
+                formatTokens(Number(datum?.tokens) || 0, locale),
             },
           ],
         },
@@ -144,7 +147,7 @@ export function ModelsSection(props: ModelsSectionProps) {
             const overflow = array.slice(TOOLTIP_MAX_ROWS)
             const result = visible.map((item) => ({
               key: item.key,
-              value: formatTokens(Number(item.value) || 0),
+              value: formatTokens(Number(item.value) || 0, locale),
             }))
             if (overflow.length > 0) {
               const otherSum = overflow.reduce(
@@ -153,17 +156,20 @@ export function ModelsSection(props: ModelsSectionProps) {
               )
               result.push({
                 key: t('+{{count}} more', { count: overflow.length }),
-                value: formatTokens(otherSum),
+                value: formatTokens(otherSum, locale),
               })
             }
-            result.unshift({ key: t('Total:'), value: formatTokens(sum) })
+            result.unshift({
+              key: t('Total:'),
+              value: formatTokens(sum, locale),
+            })
             return result
           },
         },
       },
       animationAppear: { duration: 500 },
     }
-  }, [chartGridColor, chartTextColor, orderedPoints, t])
+  }, [chartGridColor, chartTextColor, orderedPoints, t, locale])
 
   return (
     <section className='bg-card overflow-hidden rounded-lg border'>
@@ -180,7 +186,7 @@ export function ModelsSection(props: ModelsSectionProps) {
         </div>
         <div className='max-w-full shrink-0 self-end text-right sm:max-w-[50%] sm:self-auto'>
           <div className='text-foreground font-mono text-2xl font-semibold tabular-nums'>
-            {formatTokens(props.totals.total_tokens)}
+            {formatTokens(props.totals.total_tokens, locale)}
           </div>
           <div className='text-muted-foreground/80 text-[10px] font-medium tracking-widest uppercase'>
             {t('tokens')}

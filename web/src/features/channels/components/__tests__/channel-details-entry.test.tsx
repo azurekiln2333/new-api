@@ -31,7 +31,7 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
-import { formatCompactNumber } from '@/lib/format'
+import { formatTokens } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CHANNEL_STATUS } from '../../constants'
@@ -201,7 +201,7 @@ it('shows the tokens consumed through a channel', async () => {
   await renderChannelsPage()
 
   expect(
-    await screen.findByText(formatCompactNumber(CONSUMED_TOKENS, 'en'))
+    await screen.findByText(formatTokens(CONSUMED_TOKENS, 'en'))
   ).toBeVisible()
 })
 
@@ -210,7 +210,7 @@ it('shows a dash instead of tokens when the channel has no usage record', async 
 
   expect(card.textContent).toContain('-')
   expect(
-    screen.queryByText(formatCompactNumber(CONSUMED_TOKENS, 'en'))
+    screen.queryByText(formatTokens(CONSUMED_TOKENS, 'en'))
   ).not.toBeInTheDocument()
 })
 

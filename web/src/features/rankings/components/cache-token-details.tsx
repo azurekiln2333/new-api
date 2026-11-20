@@ -19,20 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatTokens } from '@/lib/format'
 
-import { formatTokens } from '../lib/format'
 import type { RankingTokenTotals } from '../types'
 
 /**
  * Cache read / write token breakdown shown under a token total.
  *
- * Both quantities use the same compact token format as the total (see
- * `formatTokens`) so a row reads `8.24B … Cache Read 3.02B` rather than
- * mixing unit styles. Each label sits next to its value in a non-wrapping
- * pair; the two pairs share a single row and wrap together only when the
- * container is too narrow. The block renders nothing when both quantities
- * are zero. The exact value is available in the element title.
+ * Both quantities show exact and compact values. Labels and values wrap when
+ * the container is narrow; the block renders nothing when both are zero.
  */
 export function CacheTokenDetails(
   props: Pick<RankingTokenTotals, 'cache_read_tokens' | 'cache_creation_tokens'>
@@ -54,14 +49,14 @@ export function CacheTokenDetails(
       {entries.map((entry) => (
         <div
           key={entry.label}
-          className='flex items-baseline gap-1 whitespace-nowrap'
+          className='flex max-w-full flex-wrap items-baseline gap-1'
         >
           <dt>{entry.label}</dt>
           <dd
             className='text-foreground/80 font-mono tabular-nums'
             title={formatNumber(entry.value, locale)}
           >
-            {formatTokens(entry.value)}
+            {formatTokens(entry.value, locale)}
           </dd>
         </div>
       ))}

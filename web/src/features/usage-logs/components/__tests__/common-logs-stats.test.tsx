@@ -87,3 +87,10 @@ it('shows a dash when the filtered logs report no input tokens', async () => {
   expect(screen.getByText('Cache Hit Rate')).toBeVisible()
   expect(screen.getByText('-')).toBeVisible()
 })
+
+it('shows exact large token throughput with a compact abbreviation in a wrapping badge', async () => {
+  await renderStats({ quota: 0, rpm: 1, tpm: 318574217 })
+  const count = screen.getByText('318,574,217 (318.6M)')
+  expect(count).toBeVisible()
+  expect(count.parentElement).toHaveClass('flex-wrap', 'max-w-full')
+})

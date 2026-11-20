@@ -30,6 +30,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate, formatTokens } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
@@ -49,6 +50,8 @@ export function CacheTooltip({
   label: string
   color: string
 }) {
+  const { i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   if (tokens <= 0) return null
 
   return (
@@ -56,10 +59,10 @@ export function CacheTooltip({
       <Tooltip>
         <TooltipTrigger
           render={<Zap className={`size-3 flex-shrink-0 ${color}`} />}
-        ></TooltipTrigger>
+        />
         <TooltipContent side='top'>
           <p className='text-xs'>
-            {label}: {formatTokens(tokens)}
+            {label}: {formatTokens(tokens, locale)}
           </p>
         </TooltipContent>
       </Tooltip>

@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import type { QuotaDataItem } from '@/features/dashboard/types'
-import { formatCompactNumber } from '@/lib/format'
+import { formatTokens } from '@/lib/format'
 import type { TimeGranularity } from '@/lib/time'
 
 import { processChartData, processUserChartData } from '../charts'
@@ -202,7 +202,7 @@ describe('dashboard chart metric', () => {
         {}
       )
     ).toEqual({ 'model-a': 1200, 'model-b': 300 })
-    expect(result.totalTokensDisplay).toBe(formatCompactNumber(1500))
+    expect(result.totalTokensDisplay).toBe(formatTokens(1500))
   })
 
   test('keeps quota as the default metric', () => {
@@ -219,7 +219,7 @@ describe('dashboard chart metric', () => {
         {}
       )
     ).toEqual({ 'model-a': 500000, 'model-b': 100000 })
-    expect(result.totalTokensDisplay).toBe(formatCompactNumber(1500))
+    expect(result.totalTokensDisplay).toBe(formatTokens(1500))
   })
 
   test('measures the user charts in tokens when asked', () => {
@@ -237,8 +237,28 @@ describe('dashboard chart metric', () => {
       ['alice', 1200],
       ['bob', 300],
     ])
+    expect(result.spec_user_rank.title.subtext).toContain(formatTokens(1500))
+  })
+
+  test('keeps chart token tooltips exact while abbreviating plot labels in the selected locale', () => {
+    const result = processUserChartData(
+      [{ ...data[0], token_used: 318574217 }],
+      'day',
+      undefined,
+      10,
+      'tokens',
+      'zh-CN'
+    )
+    const datum = result.spec_user_rank.data[0].values[0]
+    expect(datum.rawValue).toBe(318574217)
     expect(result.spec_user_rank.title.subtext).toContain(
-      formatCompactNumber(1500)
+      '318,574,217 (318.6M / 3.2亿)'
+    )
+    expect(result.spec_user_rank.tooltip.mark.content[0].value(datum)).toBe(
+      '318,574,217 (318.6M / 3.2亿)'
+    )
+    expect(result.spec_user_rank.label.formatMethod(datum.rawValue)).toBe(
+      '3.2亿'
     )
   })
 })

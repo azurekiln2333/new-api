@@ -109,6 +109,13 @@ test('shows the recorded request and response models in log details', () => {
   queryClient.clear()
 })
 
+test('keeps large input counts exact and distinguishes zero output from missing usage', () => {
+  const queryClient = renderDetails({}, 318574217)
+  expect(rowValue('Input Tokens')).toBe('318,574,217 (318.6M)')
+  expect(rowValue('Output Tokens')).toBe('0')
+  queryClient.clear()
+})
+
 test('splits OpenAI cache writes into 30-minute and 12-hour rows with their prices', () => {
   const queryClient = renderDetails(
     {
@@ -127,9 +134,9 @@ test('splits OpenAI cache writes into 30-minute and 12-hour rows with their pric
   expect(screen.getByText('500').previousElementSibling).toHaveTextContent(
     'Cache Write (30m)'
   )
-  expect(screen.getByText('1,000').previousElementSibling).toHaveTextContent(
-    'Cache Write (12h)'
-  )
+  expect(
+    screen.getByText('1,000 (1K)').previousElementSibling
+  ).toHaveTextContent('Cache Write (12h)')
   expect(screen.queryByText('Cache Write')).toBeNull()
   expect(screen.getByText('$12.5/M').previousElementSibling).toHaveTextContent(
     'Cache Write (30m)'
@@ -153,7 +160,7 @@ test('keeps one cache write row and no cache prices for OpenAI logs without 12-h
     },
     4000
   )
-  expect(rowValue('Cache Write')).toBe('1,500')
+  expect(rowValue('Cache Write')).toBe('1,500 (1.5K)')
   expect(screen.queryByText('Cache Write (30m)')).toBeNull()
   expect(screen.queryByText('Cache Creation (30m)')).toBeNull()
   expect(screen.queryByText('Cache Creation')).toBeNull()

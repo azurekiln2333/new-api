@@ -68,6 +68,7 @@ import {
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { PolicyDecisionRecord } from '@/features/system-settings/request-policies/decision-record'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
@@ -399,7 +400,8 @@ function BillingBreakdown(props: {
 }
 
 function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { log, other } = props
 
   const promptTokens = log.prompt_tokens || 0
@@ -426,23 +428,26 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
 
   const rows: Array<{ label: string; value: string }> = []
 
-  rows.push({ label: t('Input Tokens'), value: promptTokens.toLocaleString() })
+  rows.push({
+    label: t('Input Tokens'),
+    value: formatTokens(promptTokens, locale),
+  })
   rows.push({
     label: t('Output Tokens'),
-    value: completionTokens.toLocaleString(),
+    value: formatTokens(completionTokens, locale),
   })
 
   if (cacheRead > 0) {
     rows.push({
       label: t('Cache Read'),
-      value: cacheRead.toLocaleString(),
+      value: formatTokens(cacheRead, locale),
     })
   }
 
   if (other.image_cache_tokens !== undefined) {
     rows.push({
       label: t('Image Cache'),
-      value: other.image_cache_tokens.toLocaleString(),
+      value: formatTokens(other.image_cache_tokens, locale),
     })
   }
 
@@ -454,42 +459,42 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   ) {
     rows.push({
       label: t('Cache Write'),
-      value: cacheWrite.toLocaleString(),
+      value: formatTokens(cacheWrite, locale),
     })
   }
 
   if (cacheWrite5m > 0) {
     rows.push({
       label: t('Cache Write (5m)'),
-      value: cacheWrite5m.toLocaleString(),
+      value: formatTokens(cacheWrite5m, locale),
     })
   }
 
   if (cacheWrite1h > 0) {
     rows.push({
       label: t('Cache Write (1h)'),
-      value: cacheWrite1h.toLocaleString(),
+      value: formatTokens(cacheWrite1h, locale),
     })
   }
 
   if (cacheWrite30m > 0) {
     rows.push({
       label: t('Cache Write (30m)'),
-      value: cacheWrite30m.toLocaleString(),
+      value: formatTokens(cacheWrite30m, locale),
     })
   }
 
   if (cacheWrite12h > 0) {
     rows.push({
       label: t('Cache Write (12h)'),
-      value: cacheWrite12h.toLocaleString(),
+      value: formatTokens(cacheWrite12h, locale),
     })
   }
 
   if (other.image && other.image_output) {
     rows.push({
       label: t('Image Tokens'),
-      value: other.image_output.toLocaleString(),
+      value: formatTokens(other.image_output, locale),
     })
   }
 
@@ -534,7 +539,8 @@ interface DetailsDialogProps {
 }
 
 export function DetailsDialog(props: DetailsDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const other = parseLogOther(props.log.other)
   const typeConfig = getLogTypeConfig(props.log.type)
@@ -1148,28 +1154,28 @@ export function DetailsDialog(props: DetailsDialogProps) {
             {other.audio_input != null && other.audio_input > 0 && (
               <DetailRow
                 label={t('Audio Input')}
-                value={formatTokens(other.audio_input)}
+                value={formatTokens(other.audio_input, locale)}
                 mono
               />
             )}
             {other.audio_output != null && other.audio_output > 0 && (
               <DetailRow
                 label={t('Audio Output')}
-                value={formatTokens(other.audio_output)}
+                value={formatTokens(other.audio_output, locale)}
                 mono
               />
             )}
             {other.text_input != null && other.text_input > 0 && (
               <DetailRow
                 label={t('Text Input')}
-                value={formatTokens(other.text_input)}
+                value={formatTokens(other.text_input, locale)}
                 mono
               />
             )}
             {other.text_output != null && other.text_output > 0 && (
               <DetailRow
                 label={t('Text Output')}
-                value={formatTokens(other.text_output)}
+                value={formatTokens(other.text_output, locale)}
                 mono
               />
             )}

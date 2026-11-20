@@ -26,7 +26,7 @@ import type {
   ProcessedUserChartData,
 } from '@/features/dashboard/types'
 import { getCurrencyDisplay } from '@/lib/currency'
-import { formatCompactNumber, formatNumber } from '@/lib/format'
+import { formatCompactNumber, formatTokens } from '@/lib/format'
 import { formatChartTime, type TimeGranularity } from '@/lib/time'
 
 type TFunction = (key: string) => string
@@ -75,7 +75,8 @@ export function processChartData(
   timeGranularity: TimeGranularity = 'day',
   t?: TFunction,
   chartCornerRadius?: number,
-  metric: ChartMetric = 'quota'
+  metric: ChartMetric = 'quota',
+  locale?: Intl.LocalesArgument
 ): ProcessedChartData {
   const tt: TFunction = t ?? ((x) => x)
   const otherLabel = tt('Other')
@@ -85,9 +86,9 @@ export function processChartData(
     Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)
   const formatQuotaValue = (value: number) => renderQuotaCompat(value, 4)
   const formatQuotaTotal = (value: number) => renderQuotaCompat(value, 2)
-  // Token values are exact in tooltips; totals and axes stay compact.
+  // Text totals and tooltips retain exact token counts; axes stay compact.
   const formatMetricValue = (value: number) =>
-    showTokens ? formatNumber(value) : formatQuotaValue(value)
+    showTokens ? formatTokens(value, locale) : formatQuotaValue(value)
 
   const MAX_TOOLTIP_MODELS = 15
   const isOtherTooltipKey = (key: string) =>
@@ -216,7 +217,7 @@ export function processChartData(
         },
       },
       totalQuotaDisplay: formatQuotaTotal(0),
-      totalTokensDisplay: formatCompactNumber(0),
+      totalTokensDisplay: formatTokens(0, locale),
       totalCountDisplay: formatInt(0),
     }
   }
@@ -729,7 +730,7 @@ export function processChartData(
       animation: true,
     },
     totalQuotaDisplay: formatQuotaTotal(totalQuotaRaw),
-    totalTokensDisplay: formatCompactNumber(totalTokensRaw),
+    totalTokensDisplay: formatTokens(totalTokensRaw, locale),
     totalCountDisplay: formatInt(totalTimes),
   }
 }
@@ -752,17 +753,17 @@ export function processUserChartData(
   timeGranularity: TimeGranularity = 'day',
   t?: TFunction,
   limit = 10,
-  metric: ChartMetric = 'quota'
+  metric: ChartMetric = 'quota',
+  locale?: Intl.LocalesArgument
 ): ProcessedUserChartData {
   const tt: TFunction = t ?? ((x) => x)
   const { config } = getCurrencyDisplay()
   const quotaPerUnit = config.quotaPerUnit
   const showTokens = metric === 'tokens'
 
-  // Quota keeps its currency-aware rendering; tokens fall back to a compact
-  // count so a ranking stays readable.
+  // Quota keeps its currency-aware rendering; token text includes exact counts.
   const formatVal = (raw: number) =>
-    showTokens ? formatCompactNumber(raw) : renderQuotaCompat(raw, 2)
+    showTokens ? formatTokens(raw, locale) : renderQuotaCompat(raw, 2)
   const toUsage = (raw: number) =>
     showTokens ? raw : Number((raw / quotaPerUnit).toFixed(4))
   const metricValue = (item: QuotaDataItem) =>
@@ -890,7 +891,8 @@ export function processUserChartData(
       label: {
         visible: true,
         position: 'outside',
-        formatMethod: (value: number) => formatVal(value),
+        formatMethod: (value: number) =>
+          showTokens ? formatCompactNumber(value, locale) : formatVal(value),
         style: { fontSize: 11 },
       },
       axes: [
@@ -946,7 +948,10 @@ export function processUserChartData(
           orient: 'left',
           type: 'linear',
           label: {
-            formatMethod: (value: number) => formatVal(value),
+            formatMethod: (value: number) =>
+              showTokens
+                ? formatCompactNumber(value, locale)
+                : formatVal(value),
           },
         },
       ],
