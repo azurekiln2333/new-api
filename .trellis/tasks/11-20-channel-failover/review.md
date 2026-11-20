@@ -339,3 +339,25 @@ Only static source/diff review and gofmt were performed. No local tests, build,
 lint, typecheck or browser verification. These changes require a new cloud CI
 run, including the existing race and SQLite/MySQL/PostgreSQL suites; no pass is
 claimed for the new revisions before that run completes.
+
+## Cloud CI 44736079684 logger race correction (2026-11-20)
+
+The integration job passed its database and relay-policy steps on SQLite
+3.50.4, MySQL 8.4.13, PostgreSQL 16.16 and Redis 7.4.12 (Go 1.26.10).
+The final race step failed only in
+`TestChannelCapacityStreamsRouteAroundFullChannelAndRelease`: concurrent
+request completion and cancellation both reached the unsynchronized
+`logCount++` in `logger/logger.go:114`. The relay/channel, relay/helper and
+relay/channel/openai race packages passed. This evidence does not indicate a
+stream gate or channel-queue race.
+
+With root approval, the shared logger count now uses `atomic.Int64` and the
+rotation scheduling flag uses `atomic.Bool`. The counter increment/reset,
+compare-and-swap scheduling decision and SetupLogger completion store are
+all atomic; the existing file rotation and writer locks remain intact.
+The existing cloud capacity scenario reproduces the production concurrency
+path, so no synthetic logging stress test or duplicate test file was added.
+
+Static inspection and gofmt only. The correction still requires the next
+cloud race run; no local tests, build, lint, typecheck or browser verification
+were executed.
