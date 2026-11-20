@@ -77,6 +77,7 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   })
   client.setQueryData(['status'], {
     SidebarModulesAdmin: admin ? JSON.stringify(admin) : '',
+    chats: [{ Desktop: 'client://open' }, { Web: 'https://chat.example.test' }],
   })
   useAuthStore.getState().auth.setUser({
     id: 1,
@@ -155,6 +156,45 @@ async function renderSidebarMenu(
     },
   }
 }
+
+describe('access configuration navigation', () => {
+  it('keeps the chat module identity and Playground alongside the client landing page', () => {
+    const { result } = sidebarFor()
+    const chat = result.current.find((group) => group.id === 'chat')
+    expect(chat).toMatchObject({ title: 'Access configuration' })
+    expect(chat?.items).toMatchObject([
+      { title: 'Playground', url: '/playground' },
+      { title: 'Access configuration', url: '/access' },
+    ])
+    const access = chat?.items[1]
+    if (!access) throw new Error('Expected access configuration navigation')
+    expect(checkIsActive('/access', access)).toBe(true)
+    expect(checkIsActive('/chat/1', access)).toBe(true)
+    expect(checkIsActive('/chat2link', access)).toBe(true)
+  })
+
+  it.each([
+    [{ chat: { chat: false } }, undefined],
+    [undefined, { chat: { chat: false } }],
+  ])('preserves the independent chat module toggle (%j, %j)', (admin, user) => {
+    const { result } = sidebarFor(admin, user)
+    expect(
+      result.current.find((group) => group.id === 'chat')?.items
+    ).toMatchObject([{ title: 'Playground', url: '/playground' }])
+  })
+
+  it('keeps Access configuration when only Playground is disabled', () => {
+    const { result } = sidebarFor({ chat: { playground: false } })
+    expect(
+      result.current.find((group) => group.id === 'chat')?.items
+    ).toMatchObject([{ title: 'Access configuration', url: '/access' }])
+  })
+
+  it('hides the complete group when the chat section is disabled', () => {
+    const { result } = sidebarFor({ chat: { enabled: false } })
+    expect(result.current.some((group) => group.id === 'chat')).toBe(false)
+  })
+})
 
 describe('security sidebar visibility', () => {
   it('old configurations show Security & Access immediately after Profile and keep API Keys', () => {

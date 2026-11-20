@@ -42,6 +42,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarBadges, SidebarData } from '@/components/layout/types'
+import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -52,12 +53,13 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
   const { t } = useTranslation()
+  const { chatPresets } = useChatPresets()
 
   return {
     navGroups: [
       {
         id: 'chat',
-        title: t('Chat'),
+        title: t('Access configuration'),
         items: [
           {
             title: t('Playground'),
@@ -65,9 +67,15 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: FlaskConical,
           },
           {
-            title: t('Chat'),
+            title: t('Access configuration'),
             icon: MessageSquare,
-            type: 'chat-presets',
+            url: '/access',
+            activeUrls: [
+              '/chat2link',
+              ...chatPresets
+                .filter((preset) => preset.type === 'web')
+                .map((preset) => `/chat/${preset.id}`),
+            ],
           },
         ],
       },
