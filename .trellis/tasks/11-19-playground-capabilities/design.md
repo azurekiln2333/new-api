@@ -2,6 +2,8 @@
 
 Planning version: 2026-11-20. Parent requirement IDs R1-R25 are authoritative. Research reports preserve evidence and alternatives; the contracts below supersede contradictory proposals (playground-only protocol switches, hiding unlimited counts, deferring upstream busy queues, or skipping real database verification merely because no column was added).
 
+Approved scope update: the user subsequently removed actual server verification (“不用校验服务器”). R25 ends at verified GitHub CI/tag/release/image publication. Server-access prerequisites and server-validation steps below are historical and no longer delivery blockers; do not claim server rollout was observed. All other accepted scope remains active.
+
 ## Playground and upstream endpoints (R1-R5)
 
 Reuse ModelGroupSelector, prompt tools, parameter controls and Message.sources. Search defaults off; send the existing web_search_options intent with existing medium context default, preserve annotations from JSON and SSE, deduplicate sources, retain cancellation/history and existing usage billing. An unsupported explicit search must not silently disappear. No independent search service or new prices.

@@ -245,3 +245,45 @@ revocation and secret-free auditing. Tests cover foreign ownership, proof
 scope/token mismatch, expiration, replay, PAT bypass, whitespace/weak values,
 collisions and Redis failure. This is a record of the controls verified for this
 change, not an assertion of application-wide ASVS compliance.
+
+## Record closure - commit state supersedes pending gates (2026-11-20)
+
+This section closes the record. It supersedes the locale and CI statements above;
+nothing in the implementation changed after the release.
+
+**Commits.** R18 regeneration is `3254adb2c` (`feat(keys): regenerate credentials
+with immediate cache revocation`) and R19 is `e19368c54` (`feat(keys): allow
+validated custom API credentials`). Root pushed both and reported the R19
+pipeline fully green on the cloud CI. That pipeline result is root's report; this
+record does not re-derive it.
+
+**Locales are no longer pending.** The earlier paragraphs that told root to merge
+`D:/AppData/Local/Temp/new-api-r18-r19-ui-translations.json`, run
+`add-missing-keys.mjs`, and "include" the backend error keys are historical. Read
+back from `e19368c54`, all 14 R18/R19 UI keys and all 8 API-credential error keys
+are present in each of the seven locale files (en, zh, zh-TW, fr, ja, ru, vi).
+No locale merge or sync step remains for this task.
+
+**Verification timing.** The local checks described above (isolated model and
+controller suites on real SQLite 3.50.4 in both transaction modes, frontend
+typecheck, seven R18 tests, miniredis coverage) ran before the user prohibited
+local test/build/lint/browser runs. After that instruction this lane executed no
+local command of that kind, so the final state of this task is verified by the
+cloud CI pipeline only. MySQL, PostgreSQL and real Redis coverage likewise exists
+only through CI; no local daemon was ever used for those gates.
+
+**Ownership.** No production or locale file was edited during this record
+closure. Root owns staging, commits and publication. The three residual R22
+service defects were handed to `r2_finish` and are not addressed here.
+
+## User-requested rotation/dialog corrections
+
+Commit `153c599c9` removes the additional security-proof prompt for owner key
+rotation under the explicitly approved authenticated-session policy. The existing
+server ownership, session-only and origin checks, credential revocation and
+secret-free auditing remain enforced. Custom creation retains its proof flow.
+Commit `5c5a1353c` wraps long replacement keys and adapts the result dialog to
+the viewport. Selector correction `e3a278062` uses the shared alertdialog role.
+Cloud CI `44728516165` passed all jobs at `2fcaab4c6`, including these corrections
+and the real database/Redis checks. This supersedes the earlier universal
+security-proof wording for regeneration, and is not a full ASVS compliance claim.

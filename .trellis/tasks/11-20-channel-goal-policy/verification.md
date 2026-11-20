@@ -35,9 +35,7 @@ Final local re-runs after the concurrent compilation blockers cleared:
 
 These final runs supersede the transient compilation blockers. They do not substitute for pJ's expanded cache/retry matrix or the external engine gates below. Reviewer-owned files are released to root.
 
-## Contract limitations and release gates
-
-### Frontend form roundtrip follow-up
+## Frontend form roundtrip follow-up
 
 Root requested a final frontend guard. Extended the existing
 `web/src/features/channels/components/__tests__/channel-configuration.test.tsx`

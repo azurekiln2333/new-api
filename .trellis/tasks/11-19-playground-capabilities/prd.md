@@ -2,7 +2,9 @@
 
 ## Goal
 
-Complete every requirement collected on 2026-11-19/20, coordinate the four existing pi agents in Herdr workspace w4C, independently review their work, and deliver separately revertible commits followed by a verified GitHub build and server update. The user authorized task creation/planning, later authorized commits, push, tags and deployment, and requested continuing interrupted pi turns. Product implementation still follows the current Trellis planning review gate.
+Approved delivery update: the user removed server verification (“不用校验服务器”). R25 now requires verified GitHub CI/tag/release/image publication, without a server-access prerequisite or claim of observed deployment. This supersedes server-verification language elsewhere in this task tree.
+
+Complete every requirement collected on 2026-11-19/20, coordinate the four existing pi agents in Herdr workspace w4C, independently review their work, and deliver separately revertible commits followed by a verified GitHub release. The user authorized implementation, commits, push and tags, and requested continuing interrupted pi turns. The later instruction excludes server verification and further local tests/builds/lint/browser checks; remaining validation runs in GitHub CI.
 
 ## Requirements and observable acceptance
 
@@ -21,7 +23,7 @@ Each R item below receives its own product commit; grouped child tasks do not co
 | R9 | Priority Enter bug | Enter commits priority without opening details; card-focused Enter/Space and explicit details actions still work |
 | R10 | Compact channel card layout | Priority and weight side by side; response metrics compact; used amount and used tokens on the same row at normal card widths, with usable narrow layouts |
 | R11 | Move card groups into channel details | Card group display removed; details show groups and the models available through that channel/group, respecting effective restrictions rather than inventing availability |
-| R12 | Exact and compact token counts | Consistent token-count displays include the exact value and readable abbreviated value, e.g. 318,574,217 (318.6M / 3.2亿); use shared locale-safe formatting, preserve zero/missing distinctions and raw numeric sorting |
+| R12 | Exact and compact token counts | Channel cards use compact 万/亿 totals; hover/details include exact and abbreviated values. The later approved log correction restores plain exact input/output/cache counts without parentheses or taller rows; preserve the original compact collapsed mobile summary, locale safety, zero/missing distinctions and raw numeric sorting |
 | R13 | Upstream price sync performance | Large catalogs do not freeze preview or confirmation; bounded rendered rows, batched preparation, responsive progress; all selected models saved once atomically with frozen pricing/rate/version and unchanged pricing semantics |
 | R14 | Sortable used balance in users | Separate Used balance column; numeric ascending/descending sorting across server pagination/filtering, not only the visible page |
 | R15 | One collapsible Logs menu | Usage, audit, drawing/image and task logs are four children of Logs; same expand/collapse style as System settings; child permissions and direct routes preserved |
@@ -29,12 +31,12 @@ Each R item below receives its own product commit; grouped child tasks do not co
 | R17 | Per-channel Codex goal restrictions | User clarified this means Codex /goal. Recognized active-goal requests skip channels denying this feature and use another eligible channel for the model; if none allows it, reject locally before an upstream request; never match arbitrary prompt text merely containing goal |
 | R18 | API key regeneration | Regenerate the credential on an existing key while retaining settings/history; old credential becomes invalid, including caches; ownership, sensitive-action checks and auditing verified |
 | R19 | Custom API key secret | Optional custom secret on creation/regeneration, with server-side allowed format/strength/uniqueness and collision handling; normal random generation stays available; secret excluded from audit/log output |
-| R20 | CORS allowlist | Replace wildcard-origin plus credential combination with validated exact origins; correct preflight/Vary/header behavior and allowed versus denied browser tests; report configuration location and effective deployment setting |
+| R20 | CORS allowlist | Replace wildcard-origin plus credential combination with validated exact origins; correct preflight/Vary/header behavior and allowed versus denied browser tests; report configuration location without claiming unobserved deployment settings |
 | R21 | Official service status page | New Service status navigation, themed official-status page using supported official sources, timestamp/staleness and unavailable states; display: 标准数据来自各厂商官方状态页，可能存在延迟；本页不代表本站自身可用性。 |
 | R22 | Local channel fingerprint checks | The intelligence-detection page offers admin-triggered channel fingerprint checks using reviewed lm-detector source/assets locally, without lm.ikale.io dependency; cancellation/progress/cost and reference-bank limits visible; no IQ or identity guarantee |
 | R23 | LinuxDO login avatar | Successful LinuxDO login imports/synchronizes its avatar under the existing avatar-source policy; provider image failures do not break authentication; custom-avatar preference and URL security preserved |
 | R24 | Collapsible code administration | Invitation codes and redemption codes share one collapsible sidebar group with their separate pages and permissions preserved |
-| R25 | Verified release and server delivery | Each item checked and committed separately; pi self-checks followed by root review; push/tag the intended revision, wait for successful CI/build, verify published image and live server revision/health; no release claim based only on push success |
+| R25 | Verified release delivery | Each item checked and committed separately; pi self-checks followed by root review; push/tag the intended revision, wait for successful CI/build, verify published image/tag/assets; server revision/health verification is excluded |
 
 ## Confirmed background
 
@@ -47,8 +49,8 @@ Each R item below receives its own product commit; grouped child tasks do not co
 
 Preserve existing uncommitted work, protected project attribution, group/key eligibility, billing semantics and all seven locales. Use shared UI components. Do not persist supplied credentials or forward them to third-party analysis sites. No model pricing changes, global UA impersonation, provider-domain special cases, arbitrary prompt keyword blocking, or claims that a fingerprint proves identity/IQ. Actual database behavior changes require real SQLite/MySQL/PostgreSQL checks; schema changes additionally require upgrade/idempotency validation. Independent modules must build with GOWORK=off. Existing live requests are not replayed after model output.
 
-Push/tag/release/server verification are now explicitly in scope, superseding the earlier no-deployment boundary. Deployment requires an identified server and observable version; no target host is guessed. Service-status data is vendor status, not this gateway's availability.
+Push/tag/release are explicitly in scope, superseding the earlier no-publication boundary. Server verification was subsequently excluded; no target host is guessed and no observed rollout is claimed. Service-status data is vendor status, not this gateway's availability.
 
 ## Planning status and remaining evidence
 
-Planning only: no product edits or implementation tests. Research covers all 25 requirements, and 19 child tasks have PRD/design/execution plans and validated context manifests. Independent plan review caught and corrected unlimited-channel Redis failure semantics, custom-key validation, unsupported out-of-bank detection claims and post-release bookkeeping loops. Final review must approve the consolidated scope/defaults before task activation. Remaining integration fixtures and deployed configuration checks are tracked in design.md and research/*.md; a missing server target is a delivery dependency rather than permission to deploy elsewhere.
+Implementation and publication are authorized and active. Research covers all 25 requirements, and 19 child tasks have PRD/design/execution plans and curated context manifests. Independent review corrected unlimited-channel Redis failure semantics, credential cache races and unsupported fingerprint identity claims. Current commit and cloud-verification evidence is recorded in report.md and the verified-release task; no server target is required for the approved final scope.

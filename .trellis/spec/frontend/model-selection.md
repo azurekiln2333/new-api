@@ -13,3 +13,24 @@ same sorted data. `model-group-selector/__tests__/sorting.test.tsx` covers
 numeric names, equivalent names with distinct IDs, filtering, immutable
 inputs and preserved selection in both viewport modes. Future channel/group
 navigation must retain these invariants.
+
+## Playground channel visibility
+
+`canSelectPlaygroundChannel(user)` requires both the administrator role and
+`channel.read`; custom permissions alone never expose manual channels. Reuse
+that predicate in the options hook and the config state owner. Query keys
+include identity, role, permission result and group, and consume the query's
+abort signal. A disabled query can retain cached data, so mask returned options
+explicitly and never derive ordinary-user UI from that cache.
+
+Pins are ephemeral and excluded from persisted config. Clear them synchronously
+on identity or privilege changes, before rendering a selector or constructing a
+request; reject ordinary-user pin assignment. An invalid pin belonging to the
+same authorized administrator remains visibly unavailable rather than silently
+changing their chosen routing. The server independently rejects ordinary-user
+list/pin requests and checks group/model/key eligibility for administrators.
+
+The existing playground options/state suites cover cached-channel hiding,
+custom grants, account switches, demotion, no pin resurrection and omission
+from the built request. `TestPlaygroundChannelNavigationAuthorizationAndRouting`
+covers forged list/pin requests and metadata-free denials.

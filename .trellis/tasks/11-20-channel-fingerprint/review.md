@@ -293,3 +293,44 @@ the existing test settlement/log executes once; lease release is deferred after
 acquisition and the probe cancellation context reaches transport. Unsupported
 or unbounded provider paths are rejected. No further production edits were made
 during this trace. The final CI and translation changes were not executed locally.
+
+## Record closure - R22 committed, translations synced (2026-11-20)
+
+This section supersedes every earlier "still owed" locale and CI statement in this
+review. No product file changed after the release.
+
+**Commit.** R22 is `1f3065b94` (`feat(channels): run bounded model fingerprint checks
+on site`), pushed by root. It carries the backend, assets, controller, router,
+frontend page, sidebar entries, `routeTree.gen.ts`, `.github/workflows/ci.yml`, and
+all seven locale files. Nothing in this lane's lease set remains uncommitted.
+
+**Translations are no longer pending.** The earlier handoff asked root to apply 24
+(or merged 38) keys from
+`D:/AppData/Local/Temp/new-api-browser-check/r22-translations.json`, and this review
+also referenced a separate one-key budget file. Those two files held 38 and 1 keys;
+they are now a single 39-key set in seven languages and are already synced into the
+committed locale files. Read back from `1f3065b94`, all 39 keys from
+`r22-translations.json`, all 1 key from `r22-budget-translations.json`, and all 14
+R18/R19 keys are present in each of en, zh, zh-TW, fr, ja, ru, vi. No locale apply
+or `i18n:sync` step remains for R22.
+
+**Verification timing.** Everything recorded above - the SDK package tests, the
+service lifecycle/budget/admission suites, the frontend page tests, lint and
+typecheck - ran locally before the user prohibited local test/build/lint/browser
+runs. After that instruction this lane ran no such command, so the final state of
+this lane is verified by the cloud CI pipeline only.
+
+**CI status: not claimed here.** Root reported that R19 `e19368c54` passed cloud CI
+fully. For R22 root pushed `1f3065b94` and the pipeline was started; this review does
+not assert that it passed. The workflow change in that commit adds the fingerprint
+SQL test to the MySQL/PostgreSQL loop and `Fingerprint` to the race selection, and
+its result is a root-owned release gate.
+
+**Final source reconciliation.** Independent read-only review confirmed all three
+earlier defects are fixed in `1f3065b94`: single/cumulative usage saturates safely;
+context cancellation and budget exhaustion terminalize queued probes; and a delayed
+cancel response cannot replace a newer job. The corresponding service/UI regression
+cases are committed. Current files match that commit. Integration CI `44718098082`
+and the subsequent complete tree at `2fcaab4c6` (`44728516165`) passed; no remaining
+fix or local execution is owed for these three findings. This evidence describes
+integration verification, not publication to main.
