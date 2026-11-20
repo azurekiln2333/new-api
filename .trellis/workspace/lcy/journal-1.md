@@ -115,3 +115,38 @@ Read Herdr workspace w4C Claude pane w4C:pV, resolved all outstanding merge conf
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: Complete gateway feature release
+<!-- trellis-session: v=2 fp=bc06f5454289df8b -->
+
+**Date**: 2026-11-20
+**Task**: Complete gateway feature release
+**Branch**: `merge/upstream`
+
+### Summary
+
+Completed R1-R25 and user corrections; main released as custom-20261120-a9b37b4. Cloud verification and published artifact checks passed. Archived 20 related tasks; no server verification.
+
+### Main Changes
+
+- Final product SHA: a9b37b493694a50942f98031d61f4c48e594ac2c. Per-requirement commits and boundaries are in .trellis/tasks/archive/2026-11/11-19-playground-capabilities/report.md.
+- Channel fingerprints run locally using embedded lm-detector references; logs again show plain exact token counts, while channel cards retain compact totals.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a9b37b493` | fix(console): scope expanded token counts to channels |
+| `3e2ca3884` | fix(logger): synchronize concurrent rotation accounting |
+| `79cd2f5c7` | fix(logs): restore plain token counts and compact rows |
+| `1f3065b94` | feat(channels): run bounded model fingerprint checks on site |
+
+### Testing
+
+- [OK] Integration CI 44739249885 passed all 3 jobs; main release workflow 44742578933 passed all 12 jobs, including backend, frontend, real SQLite/MySQL/PostgreSQL, Redis and race checks.
+- [OK] Verified public release/tag, seven asset metadata entries, three downloaded checksum files and AMD64/ARM64 GHCR manifests/configuration at custom-20261120-a9b37b4; no local tests/builds or server inspection in the final phase.
+
+### Status
+
+[OK] **Completed**
