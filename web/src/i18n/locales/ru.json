@@ -4128,6 +4128,7 @@
     "Model Description": "Описание модели",
     "Model details": "Сведения о модели",
     "Model disabled successfully": "Модель успешно отключена",
+    "Model discovery failed for enabled key {{index}}: {{error}}": "Не удалось получить модели для активного ключа {{index}}: {{error}}",
     "Model discovery uses the first key; other keys are not tested.": "Модели запрашиваются с первым ключом; остальные ключи не проверяются.",
     "Model discovery uses the saved channel connection settings.": "Для получения моделей используются сохранённые настройки подключения канала.",
     "Model enabled successfully": "Модель успешно включена",

@@ -155,10 +155,10 @@ function messageText(value: unknown): string | undefined {
 }
 
 /** Only these exact gateway failures are safe to translate in raw error fields. */
-export function translateChannelManagementError(
+function translateFixedChannelManagementError(
   t: (key: string, options?: Record<string, unknown>) => string,
   text: string
-): string {
+): string | undefined {
   switch (text) {
     case 'invalid upstream address':
       return t('invalid upstream address', { skipInterpolation: true })
@@ -168,8 +168,12 @@ export function translateChannelManagementError(
       })
     case 'failed to read the upstream response':
     case 'upstream returned an unsuccessful pricing response':
+    case 'failed to pull model':
+    case 'Upstream request failed':
+    case 'failed to get Codex client version: Upstream request failed':
       return t('Upstream request failed', { skipInterpolation: true })
     case 'upstream response is too large':
+    case 'Response too large':
       return t('Response too large', { skipInterpolation: true })
     case 'channel concurrency settings changed during admission':
       return t('channel concurrency settings changed during admission', {
@@ -193,9 +197,77 @@ export function translateChannelManagementError(
       return t('channel balance source changed during the query', {
         skipInterpolation: true,
       })
+    case 'channel configuration changed during model discovery':
+    case 'channel credential changed during model discovery':
+      return t(
+        'Connection settings changed. Fetch models again to refresh the list.',
+        { skipInterpolation: true }
+      )
+    case 'failed to reload channel for management request':
+      return t('Failed to fetch channel. Please try again later', {
+        skipInterpolation: true,
+      })
+    case 'channel has no enabled keys':
+    case 'no enabled key serves this request':
+      return t('No enabled channel key', { skipInterpolation: true })
+    case 'the selected model is not available on this channel':
+      return t('the selected model is not available on this channel', {
+        skipInterpolation: true,
+      })
+    case 'unsupported endpoint type':
+    case 'failed to create request':
+    case 'Invalid parameters':
+      return t('Invalid parameters', { skipInterpolation: true })
+    case 'upstream stream did not complete successfully':
+      return t('Stream did not complete successfully', {
+        skipInterpolation: true,
+      })
+    case 'invalid Gemini models response':
+    case 'invalid Gemini model name':
+    case 'repeated Gemini model page token':
+    case 'Gemini model pagination limit exceeded':
+    case 'invalid Ollama model inventory':
+    case 'failed to parse response':
+    case 'failed to parse pull response':
+    case 'Invalid response':
+    case 'failed to get Codex client version: Invalid response':
+      return t('Invalid response', { skipInterpolation: true })
+    case 'channel not found':
+      return t('Channel does not exist', { skipInterpolation: true })
+    case 'failed to refresh Codex channel credential':
+      return t('Failed to refresh credentials. Please try again later', {
+        skipInterpolation: true,
+      })
+    case 'Invalid channel header override':
+      return t('Invalid channel header override', { skipInterpolation: true })
+    case 'Invalid channel proxy':
+    case 'failed to get Codex client version: Invalid channel proxy':
+      return t('Invalid channel proxy', { skipInterpolation: true })
     default:
-      return text
+      return undefined
   }
+}
+
+/** Preserve provider text, including unknown reasons in a gateway key wrapper. */
+export function translateChannelManagementError(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  text: string
+): string {
+  const translated = translateFixedChannelManagementError(t, text)
+  if (translated !== undefined) return translated
+
+  const keyFailure = /^enabled key ([0-9]+) model discovery failed: (.+)$/.exec(
+    text
+  )
+  if (!keyFailure || keyFailure[0] !== text) return text
+  const error = translateFixedChannelManagementError(t, keyFailure[2])
+  if (error === undefined) return text
+  return t('Model discovery failed for enabled key {{index}}: {{error}}', {
+    index: keyFailure[1],
+    error,
+    interpolation: { escapeValue: false },
+    nest: false,
+  })
 }
 
 /**
@@ -206,10 +278,22 @@ export function translateChannelManagementError(
 export function getServerMessage(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined
   if (typeof value.message_key === 'string' && value.message_key) {
-    return i18next.t(
-      value.message_key,
-      isRecord(value.message_params) ? value.message_params : undefined
-    )
+    const params = isRecord(value.message_params)
+      ? value.message_params
+      : undefined
+    if (
+      (value.message_key === 'Failed to fetch models: {{error}}' ||
+        value.message_key === 'Failed to fetch Ollama version: {{error}}') &&
+      typeof params?.error === 'string'
+    ) {
+      return i18next.t(value.message_key, {
+        ...params,
+        error: translateChannelManagementError(i18next.t, params.error),
+        interpolation: { escapeValue: false },
+        nest: false,
+      })
+    }
+    return i18next.t(value.message_key, params)
   }
   const message = messageText(value.message)
   return message === undefined
@@ -260,7 +344,11 @@ export function getServerErrorMessage(
       ? messageText(source.error.message)
       : messageText(source.error)
     const message =
-      getServerMessage(source) || detail || messageText(source.title)
+      getServerMessage(source) ||
+      (detail === undefined
+        ? undefined
+        : translateChannelManagementError(i18next.t, detail)) ||
+      messageText(source.title)
     if (message) return message
   }
   const status = getServerErrorStatus(value)

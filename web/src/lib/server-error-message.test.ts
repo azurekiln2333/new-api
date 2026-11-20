@@ -192,8 +192,159 @@ describe('channel management error translation', () => {
       'provider returned {{secret}} and $t(Task timed out)',
     ]) {
       expect(getServerMessage({ message })).toBe(message)
+      expect(getServerErrorMessage({ error: message })).toBe(message)
       expect(translateChannelManagementError(i18next.t, message)).toBe(message)
     }
+  })
+
+  test('translates fixed discovery and diagnostic failures through raw error details', () => {
+    const messages = [
+      [
+        'channel configuration changed during model discovery',
+        '连接配置已更改，请重新获取模型列表。',
+      ],
+      [
+        'channel credential changed during model discovery',
+        '连接配置已更改，请重新获取模型列表。',
+      ],
+      [
+        'failed to reload channel for management request',
+        '获取渠道信息失败，请稍后重试',
+      ],
+      ['channel has no enabled keys', '没有可用的渠道密钥'],
+      ['no enabled key serves this request', '没有可用的渠道密钥'],
+      [
+        'the selected model is not available on this channel',
+        '所选模型在该渠道不可用',
+      ],
+      ['unsupported endpoint type', '无效的参数'],
+      [
+        'upstream stream did not complete successfully',
+        '流式输出未成功完成',
+      ],
+      ['invalid Gemini models response', '响应无效'],
+      ['invalid Gemini model name', '响应无效'],
+      ['repeated Gemini model page token', '响应无效'],
+      ['Gemini model pagination limit exceeded', '响应无效'],
+      ['invalid Ollama model inventory', '响应无效'],
+      ['failed to parse response', '响应无效'],
+      ['failed to parse pull response', '响应无效'],
+      ['failed to pull model', '上游请求失败'],
+      ['failed to create request', '无效的参数'],
+      ['channel not found', '渠道不存在'],
+      [
+        'failed to refresh Codex channel credential',
+        '刷新凭证失败，请稍后重试',
+      ],
+      ['Invalid response', '响应无效'],
+      ['Response too large', '响应过大'],
+      ['Invalid parameters', '无效的参数'],
+      ['Invalid channel header override', '渠道请求头覆盖配置无效'],
+      ['Invalid channel proxy', '渠道代理配置无效'],
+      ['Upstream request failed', '上游请求失败'],
+      [
+        'failed to get Codex client version: Invalid channel proxy',
+        '渠道代理配置无效',
+      ],
+      [
+        'failed to get Codex client version: Upstream request failed',
+        '上游请求失败',
+      ],
+      ['failed to get Codex client version: Invalid response', '响应无效'],
+    ]
+
+    for (const [message, expected] of messages) {
+      expect(getServerMessage({ message })).toBe(expected)
+      expect(getServerErrorMessage({ error: message })).toBe(expected)
+    }
+  })
+
+  test('translates known nested reasons only inside discovery and version message keys', () => {
+    const response = {
+      message: 'invalid upstream address',
+      message_key: 'Failed to fetch models: {{error}}',
+      message_params: { error: 'invalid Gemini models response' },
+    }
+
+    expect(getServerMessage(response)).toBe('获取模型列表失败：响应无效')
+    expect(
+      getServerMessage({
+        ...response,
+        message_key: 'Failed to fetch Ollama version: {{error}}',
+        message_params: { error: 'upstream response is too large' },
+      })
+    ).toBe('获取 Ollama 版本失败：响应过大')
+    expect(
+      getServerMessage({
+        ...response,
+        message_key: 'Invalid request parameters: {{error}}',
+      })
+    ).toBe(
+      i18next.t('Invalid request parameters: {{error}}', {
+        error: 'invalid Gemini models response',
+      })
+    )
+    expect(response.message_params.error).toBe('invalid Gemini models response')
+  })
+
+  test('translates an enabled-key wrapper only when its suffix is an exact gateway failure', () => {
+    const message =
+      'enabled key 2 model discovery failed: channel credential changed during model discovery'
+    const expected =
+      '已启用密钥 2 的模型发现失败：连接配置已更改，请重新获取模型列表。'
+
+    expect(getServerMessage({ message })).toBe(expected)
+    expect(
+      getServerMessage({
+        message_key: 'Failed to fetch models: {{error}}',
+        message_params: { error: message },
+      })
+    ).toBe(`获取模型列表失败：${expected}`)
+
+    for (const providerText of [
+      'enabled key 2 model discovery failed: Task timed out',
+      'enabled key 2 model discovery failed: invalid upstream address: detail',
+      'enabled key 2 model discovery failed: invalid upstream address ',
+      'enabled key 2 model discovery failed: invalid upstream address\n',
+      'enabled key -1 model discovery failed: invalid upstream address',
+      'enabled key 1.5 model discovery failed: invalid upstream address',
+      ' enabled key 2 model discovery failed: invalid upstream address',
+    ]) {
+      expect(translateChannelManagementError(i18next.t, providerText)).toBe(
+        providerText
+      )
+    }
+  })
+
+  test('recognizes an exact gateway suffix even when English translation matches its source', async () => {
+    await i18next.changeLanguage('en')
+
+    expect(
+      translateChannelManagementError(
+        i18next.t,
+        'enabled key 0 model discovery failed: Invalid response'
+      )
+    ).toBe('Model discovery failed for enabled key 0: Invalid response')
+  })
+
+  test('preserves arbitrary provider details in raw errors and recognized structured wrappers', () => {
+    const message =
+      ' Task timed out: provider <detail> {{secret}} and $t(Task timed out) '
+
+    expect(getServerErrorMessage({ error: message })).toBe(message)
+    expect(getServerErrorMessage({ error: { message } })).toBe(message)
+    expect(
+      getServerMessage({
+        message_key: 'Failed to fetch models: {{error}}',
+        message_params: { error: message },
+      })
+    ).toBe(`获取模型列表失败：${message}`)
+    expect(
+      getServerMessage({
+        message_key: 'Failed to fetch Ollama version: {{error}}',
+        message_params: { error: message },
+      })
+    ).toBe(`获取 Ollama 版本失败：${message}`)
   })
 
   test('keeps structured message keys ahead of raw gateway failures', () => {

@@ -4128,6 +4128,7 @@
     "Model Description": "モデルの説明",
     "Model details": "モデル詳細",
     "Model disabled successfully": "モデルが正常に無効化されました",
+    "Model discovery failed for enabled key {{index}}: {{error}}": "有効なキー {{index}} のモデル検出に失敗しました：{{error}}",
     "Model discovery uses the first key; other keys are not tested.": "最初のキーでモデルを取得します。他のキーはテストされません。",
     "Model discovery uses the saved channel connection settings.": "モデルの取得には、チャネルに保存済みの接続設定を使用します。",
     "Model enabled successfully": "モデルが正常に有効化されました",

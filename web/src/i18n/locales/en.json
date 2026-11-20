@@ -4128,6 +4128,7 @@
     "Model Description": "Model Description",
     "Model details": "Model details",
     "Model disabled successfully": "Model disabled successfully",
+    "Model discovery failed for enabled key {{index}}: {{error}}": "Model discovery failed for enabled key {{index}}: {{error}}",
     "Model discovery uses the first key; other keys are not tested.": "Model discovery uses the first key; other keys are not tested.",
     "Model discovery uses the saved channel connection settings.": "Model discovery uses the saved channel connection settings.",
     "Model enabled successfully": "Model enabled successfully",

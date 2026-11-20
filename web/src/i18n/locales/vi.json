@@ -4128,6 +4128,7 @@
     "Model Description": "Mô tả Mô hình",
     "Model details": "Chi tiết mô hình",
     "Model disabled successfully": "Model đã được vô hiệu hóa thành công",
+    "Model discovery failed for enabled key {{index}}: {{error}}": "Không thể lấy mô hình cho khóa đang bật {{index}}: {{error}}",
     "Model discovery uses the first key; other keys are not tested.": "Mô hình được lấy bằng khóa đầu tiên; các khóa khác chưa được kiểm tra.",
     "Model discovery uses the saved channel connection settings.": "Việc lấy mô hình sử dụng cài đặt kết nối đã lưu của kênh.",
     "Model enabled successfully": "Model đã được kích hoạt thành công",

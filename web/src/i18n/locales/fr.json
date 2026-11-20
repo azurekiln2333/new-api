@@ -4128,6 +4128,7 @@
     "Model Description": "Description du modèle",
     "Model details": "Détails du modèle",
     "Model disabled successfully": "Modèle désactivé avec succès",
+    "Model discovery failed for enabled key {{index}}: {{error}}": "Échec de la découverte des modèles pour la clé active {{index}} : {{error}}",
     "Model discovery uses the first key; other keys are not tested.": "Les modèles sont récupérés avec la première clé ; les autres clés ne sont pas testées.",
     "Model discovery uses the saved channel connection settings.": "La recherche de modèles utilise les paramètres de connexion enregistrés du canal.",
     "Model enabled successfully": "Modèle activé avec succès",

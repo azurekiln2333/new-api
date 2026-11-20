@@ -4128,6 +4128,7 @@
     "Model Description": "模型描述",
     "Model details": "模型詳情",
     "Model disabled successfully": "模型停用成功",
+    "Model discovery failed for enabled key {{index}}: {{error}}": "已啟用金鑰 {{index}} 的模型探索失敗：{{error}}",
     "Model discovery uses the first key; other keys are not tested.": "使用第一個金鑰取得模型，其他金鑰尚未測試。",
     "Model discovery uses the saved channel connection settings.": "取得模型時使用通道已儲存的連線設定。",
     "Model enabled successfully": "模型啟用成功",
