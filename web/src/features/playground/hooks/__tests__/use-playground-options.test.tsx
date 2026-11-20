@@ -207,12 +207,13 @@ test('removes the selected channel and navigation immediately after an administr
     </QueryClientProvider>
   )
   const user = userEvent.setup()
-  await user.click(screen.getByRole('combobox'))
+  const trigger = screen.getByRole('combobox')
+  await user.click(trigger)
   await user.click(await screen.findByRole('button', { name: 'Channels' }))
   await user.click(
     await screen.findByRole('button', { name: 'Scoped channel' })
   )
-  expect(screen.getByRole('combobox')).toHaveTextContent('Scoped channel')
+  expect(trigger).toHaveTextContent('Scoped channel')
   const requestCount = vi.mocked(api.getPlaygroundChannels).mock.calls.length
 
   act(() =>
@@ -223,7 +224,7 @@ test('removes the selected channel and navigation immediately after an administr
       permissions: { admin_permissions: { channel: { read: true } } },
     })
   )
-  expect(screen.getByRole('combobox')).toHaveTextContent('Default')
+  expect(trigger).toHaveTextContent('Default')
   expect(
     screen.queryByText(/Scoped channel|Channel #12/)
   ).not.toBeInTheDocument()
