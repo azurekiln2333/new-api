@@ -2,8 +2,8 @@
   "id": "playground-capabilities",
   "name": "playground-capabilities",
   "title": "Gateway reliability, playground and administration",
-  "description": "R1-R25: playground, protocol conversion, queue/failover, administration, security, status/fingerprints and separately committed verified release/server delivery.",
-  "status": "planning",
+  "description": "R1-R25: playground, protocol conversion, queue/failover, administration, security, status/fingerprints and separately committed verified GitHub release.",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -12,10 +12,10 @@
   "assignee": "lcy",
   "createdAt": "2026-11-19",
   "completedAt": null,
-  "branch": null,
-  "base_branch": "merge/upstream",
+  "branch": "merge/upstream",
+  "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "a9b37b493694a50942f98031d61f4c48e594ac2c",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -42,5 +42,8 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "release_tag": "custom-20261120-a9b37b4",
+    "release_workflow": "44742578933"
+  }
 }

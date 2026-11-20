@@ -2,7 +2,7 @@
 
 Implementation approved after final review. User subsequently removed server verification; execute R25 through verified GitHub CI/tag/release/image publication. Do not wait for server connection details or claim an observed server rollout. R3 may precede R2; the later selector mode change must retain the shared sort contract.
 
-Current state: planning. Do not dispatch product edits or task.py start until the final consolidated plan is reviewed under the current workflow. User has already authorized commits, push, tags, CI/CD and server verification; no repeated publication permission is needed once the concrete approved work is ready. The remaining deployment target input is not authorization.
+Current state: product implementation and independent review are complete; exact-commit GitHub CI 44739249885 passed at a9b37b493. The approved main publication completed as custom-20261120-a9b37b4, verified by workflow 44742578933 and artifact checks. The user authorized commits, push, tags and CI/CD, and later removed server verification; no server connection details are required.
 
 ## Four existing pi lanes
 

@@ -16,7 +16,7 @@ Preserve all parent compatibility/security/billing/i18n rules, existing uncommit
 
 ## Status
 
-Planning; no product edits/tests. Final consolidated review and task activation precede implementation. R25 publication is authorized; target-server details remain a delivery prerequisite.
+Completed and released in `custom-20261120-a9b37b4` at `a9b37b493694a50942f98031d61f4c48e594ac2c`. Full integration CI `44739249885` and release workflow `44742578933` passed. See the parent report and verified-release ledger for exact evidence. No server verification was performed, as requested.
 
 ## Confirmed visibility correction (2026-11-20)
 

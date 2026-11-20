@@ -208,3 +208,103 @@ not a complete database verification result.
 `6ae3e82be` additionally preserves pre-header heartbeat retry boundaries for
 native/converted Responses and propagates HTTP Retry-After. CI `44736079684`
 is verifying all these fixes; only its eventual results can close this gate.
+
+## Complete product-tree verification
+
+Run `44736079684` finished with backend success and all database steps passing.
+Frontend exposed one missing brace in the detail fixture (`08643c3ca` repairs
+it). Its race check exposed the legacy unsynchronized logger counter; rotation
+count and scheduling now use atomic operations in `3e2ca3884`. No gate/queue
+race was reported. `a9b37b493` additionally restores all non-channel numeric
+display conventions and keeps the channel exact-plus-abbreviation scope.
+
+Integration run `44739249885` completed successfully at the exact full revision
+`a9b37b493694a50942f98031d61f4c48e594ac2c`:
+
+| Job | Job ID | Result |
+| --- | --- | --- |
+| Backend vet, build and test | `136298389360` | Success |
+| Frontend typecheck, scoped lint, tests and build | `136298388967` | Success |
+| Database, Redis and race verification | `136298389379` | Success |
+
+Downloaded integration log:
+`D:/AppData/Local/Temp/new-api-ci-44739249885-integration.log`.
+Executed versions: Go 1.26.10, SQLite 3.50.4, MySQL 8.4.13,
+PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1), Redis 7.4.12. All database
+steps passed, including model observations on SQLite/MySQL/PostgreSQL,
+channel configuration, fingerprint probes, avatar and API key lifecycle,
+goal/failover/wait policies. The final race step passed at 13:04:44 UTC;
+all five selected packages passed, including controller in 17.876s.
+Exact commands and selectors are in `.github/workflows/ci.yml` at that SHA.
+
+Root fast-forwarded `fork/main` from `3254adb2c` to this verified full revision.
+Release workflow `44742578933` started at 13:14:33 UTC and passed all three
+validation jobs again (`136309669530`, `136309669582`, `136309669736`).
+At that interim checkpoint, prepare-version job `136315443584` had succeeded;
+AMD64 `136315498681` and ARM64 `136315498768` image builds were still running.
+R25 remained open until the tag, assets/checksums and image revision could be
+observed. The completed publication evidence below closes that gate. No local
+tests/builds or server verification were performed during this final phase.
+
+## Verified publication
+
+Release workflow `44742578933` completed successfully on November 20, 2026
+at 13:38:15 UTC (21:38:15 Asia/Shanghai), with all 12 jobs successful.
+The previous `custom-20261120-3254adb` release is superseded by the complete
+R1–R24 product tree and follow-up corrections. R25 publication is complete.
+
+| Publication evidence | Observed result |
+| --- | --- |
+| Main and tag source revision | `a9b37b493694a50942f98031d61f4c48e594ac2c` |
+| Published tag | `custom-20261120-a9b37b4` |
+| Release | https://github.com/azurekiln2333/new-api/releases/tag/custom-20261120-a9b37b4 |
+| Public state | `draft=false`, `prerelease=false`; published `2026-11-20T13:38:12Z` |
+| Integration CI | `44739249885`, all three jobs successful |
+| Release workflow | `44742578933`, all 12 jobs successful |
+| Image | `ghcr.io/azurekiln2333/new-api:custom-20261120-a9b37b4` |
+| Matching image tags | `latest`, `custom-20261120-a9b37b4`, `sha-a9b37b493694a50942f98031d61f4c48e594ac2c` |
+| Multi-platform index digest | `sha256:005cf64c18dee7dc2960b0ad9279eb2b0973fd8ad7358d78f9f1dbe36f6a1771` |
+| Download verification | Seven nonempty assets; three downloaded checksum files match all four binary asset digest metadata |
+
+Both runnable image configurations declare the expected source repository and
+revision `a9b37b493694a50942f98031d61f4c48e594ac2c`:
+
+| Architecture | Manifest digest |
+| --- | --- |
+| amd64 | `sha256:56c5e15cd3db39d35cc8b7c8838853c1acc2273d8bf06f63587732adb904bbc1` |
+| arm64 | `sha256:546aec089163e51b029802e315ae9239f1546dac0587a9165eebc5b7307cfbc8` |
+
+Published downloads:
+
+| Asset | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `checksums-linux.txt` | 202 | `sha256:0f90c21506057843f19550f8995144b965d0a1d8101a8181766980f1ad9224de` |
+| `checksums-macos.txt` | 104 | `sha256:cc47fc9c2901cb155a5598b64706525dd3d954f1428ee11e11fef5d57fc14223` |
+| `checksums-windows.txt` | 102 | `sha256:d2d6c337b2b34f15cd80028af9405dca8ea4c03ca460b1de42c60ad948c81faf` |
+| `new-api-arm64-custom-20261120-a9b37b4` | 145096969 | `sha256:7b24ba5c31e131a6447e72b0fee90dcbd96ff60528892e7b18b4c8323433612a` |
+| `new-api-custom-20261120-a9b37b4` | 150003977 | `sha256:54da51679210b360a97b4b7befc5097b0458d2634e4a39d4ff96f2869940ba02` |
+| `new-api-custom-20261120-a9b37b4.exe` | 151985152 | `sha256:69cf7814aac1fff85aa9b734f5a93758905e0696a8b6a2b15a06f205b4316387` |
+| `new-api-macos-custom-20261120-a9b37b4` | 175528882 | `sha256:a32e52887c428b1f46ef4b9a74a464c5fe820c3606b9aa0debdbcaf18722e47f` |
+
+Release jobs:
+
+| Job | ID | Result |
+| --- | --- | --- |
+| Validate release commit / Relay policy database and Redis integration | `136309669530` | Success |
+| Validate release commit / Frontend typecheck, test, and build | `136309669582` | Success |
+| Validate release commit / Backend vet, build, and test | `136309669736` | Success |
+| Prepare version | `136315443584` | Success |
+| Build amd64 | `136315498681` | Success |
+| Build arm64 | `136315498768` | Success |
+| Publish multi-platform image | `136318140913` | Success |
+| Prepare draft release | `136318295955` | Success |
+| Build release downloads / Linux Release | `136318391735` | Success |
+| Build release downloads / macOS Release | `136318391759` | Success |
+| Build release downloads / Windows Release | `136318392011` | Success |
+| Publish release with downloads | `136321432866` | Success |
+
+Artifact checks read GitHub release/tag metadata, downloaded the three small
+checksum files, and fetched GHCR index/manifests/configuration blobs. Large
+binaries were not downloaded or executed locally. These checks establish
+published artifacts and declared source revision, not a server rollout.
+The user excluded server access, pull/restart and health verification.

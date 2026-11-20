@@ -16,7 +16,7 @@ Preserve all parent compatibility/security/billing/i18n rules, existing uncommit
 
 ## Status
 
-Implementation in progress. Product publication is authorized. All further automated validation runs in GitHub CI; the user prohibited local tests, builds, lint and browser verification, and canceled server verification.
+Completed and released in `custom-20261120-a9b37b4` at `a9b37b493694a50942f98031d61f4c48e594ac2c`. Full integration CI `44739249885` and release workflow `44742578933` passed. See the parent report and verified-release ledger for exact evidence. No server verification was performed, as requested.
 
 ## Approved follow-up: unavailable upstream models (2026-11-20)
 
