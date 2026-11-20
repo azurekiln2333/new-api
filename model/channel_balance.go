@@ -1,6 +1,8 @@
 package model
 
 import (
+	"context"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 )
@@ -47,23 +49,47 @@ func UpdateChannelBalanceDetail(channelID int, update func(stored *ChannelBalanc
 	_, err := UpdateChannelOtherInfo(channelID, func(channel *Channel) (map[string]any, error) {
 		var balance *float64
 		detail, balance = update(channel.GetBalanceDetail())
-		if detail == nil {
-			return nil, nil
-		}
-		if detail.Windows == nil {
-			detail.Windows = []jsplugin.BalanceWindow{}
-		}
-		info := channel.GetOtherInfo()
-		info[channelBalanceDetailKey] = detail
-		channel.SetOtherInfo(info)
-		updates := map[string]any{}
-		if detail.Error == "" {
-			updates["balance_updated_time"] = common.GetTimestamp()
-		}
-		if balance != nil {
-			updates["balance"] = *balance
-		}
-		return updates, nil
+		return channel.balanceDetailUpdates(detail, balance), nil
 	})
 	return detail, err
+}
+
+// UpdateChannelBalanceDetailChecked validates the result's source inside the
+// same short transaction that writes its amount and detail. The callback must
+// only compare configuration and merge already-parsed results.
+func UpdateChannelBalanceDetailChecked(ctx context.Context, channelID int, update func(current *Channel, stored *ChannelBalanceDetail) (*ChannelBalanceDetail, *float64, error)) (*ChannelBalanceDetail, error) {
+	var detail *ChannelBalanceDetail
+	_, err := UpdateChannelOtherInfoLocked(ctx, channelID, func(channel *Channel) (map[string]any, error) {
+		var balance *float64
+		var err error
+		detail, balance, err = update(channel, channel.GetBalanceDetail())
+		if err != nil {
+			return nil, err
+		}
+		return channel.balanceDetailUpdates(detail, balance), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return detail, nil
+}
+
+func (channel *Channel) balanceDetailUpdates(detail *ChannelBalanceDetail, balance *float64) map[string]any {
+	if detail == nil {
+		return nil
+	}
+	if detail.Windows == nil {
+		detail.Windows = []jsplugin.BalanceWindow{}
+	}
+	info := channel.GetOtherInfo()
+	info[channelBalanceDetailKey] = detail
+	channel.SetOtherInfo(info)
+	updates := map[string]any{}
+	if detail.Error == "" {
+		updates["balance_updated_time"] = common.GetTimestamp()
+	}
+	if balance != nil {
+		updates["balance"] = *balance
+	}
+	return updates
 }

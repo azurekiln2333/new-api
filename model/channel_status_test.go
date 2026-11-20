@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -162,6 +163,65 @@ func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 	assert.Equal(t, "provider rejected key", stored.ChannelInfo.MultiKeyDisabledReason[0])
 	assert.NotZero(t, stored.ChannelInfo.MultiKeyDisabledTime[0])
 	assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
+}
+
+func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		multiKey     bool
+		replaceCache bool
+	}{
+		{name: "single-key disable removes routing"},
+		{name: "multi-key routing stays until the last key is disabled", multiKey: true},
+		{name: "replaced cache identity stays enabled and routable", replaceCache: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useScheduledChannelDatabase(t)
+			channel := Channel{Type: constant.ChannelTypeOpenAI, Name: t.Name(), Key: "key-a", Status: common.ChannelStatusEnabled, Models: "checked-status-model", Group: "default"}
+			keys := []string{channel.Key}
+			if tc.multiKey {
+				channel.Key = "key-a\nkey-b"
+				channel.ChannelInfo = ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling, MultiKeyPollingIndex: 1}
+				keys = channel.GetKeys()
+			}
+			require.NoError(t, channel.Insert())
+			InitChannelCache()
+			for index, key := range keys {
+				changed := UpdateChannelStatusChecked(context.Background(), channel.Id, key, common.ChannelStatusAutoDisabled, "Insufficient balance", func(current *Channel) bool {
+					if tc.replaceCache {
+						// A current cache publisher can replace the snapshot after the
+						// database validation, before this completed result is published.
+						replacement := channel
+						replacement.Key = "KEY-a"
+						CacheUpdateChannel(&replacement)
+					}
+					return current.Key == channel.Key
+				})
+				require.True(t, changed)
+				wantStatus := common.ChannelStatusAutoDisabled
+				if index < len(keys)-1 || tc.replaceCache {
+					wantStatus = common.ChannelStatusEnabled
+				}
+				cached, err := CacheGetChannel(channel.Id)
+				require.NoError(t, err)
+				assert.Equal(t, wantStatus, cached.Status)
+				if tc.replaceCache {
+					assert.Equal(t, "KEY-a", cached.Key, "a source mismatch must preserve the replacement bytes")
+				} else if tc.multiKey {
+					assert.Equal(t, common.ChannelStatusAutoDisabled, cached.ChannelInfo.MultiKeyStatusList[index])
+					assert.Equal(t, 1, cached.ChannelInfo.MultiKeyPollingIndex)
+				}
+				selected, err := GetRandomSatisfiedChannel(channel.Group, channel.Models, 0, nil)
+				require.NoError(t, err)
+				if wantStatus == common.ChannelStatusEnabled {
+					require.NotNil(t, selected)
+					assert.Equal(t, channel.Id, selected.Id)
+				} else {
+					assert.Nil(t, selected)
+				}
+			}
+		})
+	}
 }
 
 // writeAfterNextChannelRead stands for another node: right after the next

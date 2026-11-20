@@ -28,6 +28,7 @@ import (
 	"github.com/samber/lo"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 type Channel struct {
@@ -857,6 +858,50 @@ func UpdateChannelOtherInfo(channelID int, update func(channel *Channel) (map[st
 	return false, ErrChannelOtherInfoBusy
 }
 
+// UpdateChannelOtherInfoLocked validates and applies a completed management
+// result against one current, locked row. The callback must not perform network
+// I/O. Unlike the other_info CAS, the row lock also protects key and policy
+// comparisons from concurrent configuration edits.
+func UpdateChannelOtherInfoLocked(ctx context.Context, channelID int, update func(channel *Channel) (map[string]any, error)) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		lock := sqliteChannelKeyLock(channelID)
+		lock.Lock()
+		defer lock.Unlock()
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	written := false
+	db := DB.WithContext(ctx).Session(&gorm.Session{Logger: gormlogger.Discard})
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+			// A custom SQLite DSN may use deferred transactions. Take its writer
+			// lock before reading, as credential rotation does.
+			if err := tx.Model(&Channel{}).Where("1 = 0").UpdateColumn("id", gorm.Expr("id")).Error; err != nil {
+				return err
+			}
+		}
+		var channel Channel
+		if err := lockForUpdate(tx).First(&channel, "id = ?", channelID).Error; err != nil {
+			return err
+		}
+		updates, err := update(&channel)
+		if err != nil || updates == nil {
+			return err
+		}
+		updates["other_info"] = channel.OtherInfo
+		if err := tx.Model(&Channel{}).Where("id = ?", channelID).Updates(updates).Error; err != nil {
+			return err
+		}
+		written = true
+		return nil
+	})
+	return written && err == nil, err
+}
+
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
 	var channels []*Channel
 	var err error
@@ -1348,6 +1393,19 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) (changed bool) {
+	return updateChannelStatus(context.Background(), channelId, usingKey, status, reason, nil)
+}
+
+// UpdateChannelStatusChecked changes status only if a short, locked check of
+// current configuration still accepts the completed management result.
+func UpdateChannelStatusChecked(ctx context.Context, channelID int, usingKey string, status int, reason string, check func(*Channel) bool) bool {
+	if check == nil {
+		return false
+	}
+	return updateChannelStatus(ctx, channelID, usingKey, status, reason, check)
+}
+
+func updateChannelStatus(ctx context.Context, channelId int, usingKey string, status int, reason string, check func(*Channel) bool) (changed bool) {
 	// A status set by hand names no key and is never an automatic disable; it
 	// reaches every node within seconds. An automatic change, a disable after a
 	// failure or the re-enable after a test of the key it used, is left to the
@@ -1372,7 +1430,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 	pollingLock.Lock()
 	defer pollingLock.Unlock()
 
-	if common.MemoryCacheEnabled {
+	if common.MemoryCacheEnabled && check == nil {
 		channelCache, _ := CacheGetChannel(channelId)
 		if channelCache == nil {
 			return false
@@ -1411,8 +1469,12 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 	}()
 	// The status, the key statuses and the status reason are written from the
 	// stored row, keeping what another writer stores in other_info meanwhile.
-	written, err := UpdateChannelOtherInfo(channelId, func(channel *Channel) (map[string]any, error) {
+	var committed *Channel
+	update := func(channel *Channel) (map[string]any, error) {
 		shouldUpdateAbilities = false
+		if check != nil && !check(channel) {
+			return nil, nil
+		}
 		// Check the stored row too, since this node's cache may be stale.
 		if status == common.ChannelStatusAutoDisabled && channel.Status == common.ChannelStatusManuallyDisabled {
 			return nil, nil
@@ -1447,9 +1509,36 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 		if channel.ChannelInfo.IsMultiKey {
 			updates["channel_info"] = channel.ChannelInfo
 		}
+		committed = channel
 		return updates, nil
-	})
+	}
+	var written bool
+	var err error
+	if check == nil {
+		written, err = UpdateChannelOtherInfo(channelId, update)
+	} else {
+		written, err = UpdateChannelOtherInfoLocked(ctx, channelId, update)
+	}
 	shouldUpdateAbilities = shouldUpdateAbilities && written
+	if written && check != nil {
+		// Publish only the status fields after the guarded write commits. Never
+		// let an obsolete result mutate cache before its database check.
+		bump = true
+		if common.MemoryCacheEnabled {
+			channelSyncLock.Lock()
+			if cached, ok := channelsIDM[channelId]; ok && cached.Type == committed.Type && cached.Key == committed.Key &&
+				cached.ChannelInfo.IsMultiKey == committed.ChannelInfo.IsMultiKey && cached.GetBaseURL() == committed.GetBaseURL() &&
+				(cached.Setting == nil && committed.Setting == nil || cached.Setting != nil && committed.Setting != nil && *cached.Setting == *committed.Setting) {
+				updated := *cached
+				updated.ChannelInfo.MultiKeyStatusList = committed.ChannelInfo.MultiKeyStatusList
+				updated.ChannelInfo.MultiKeyDisabledReason = committed.ChannelInfo.MultiKeyDisabledReason
+				updated.ChannelInfo.MultiKeyDisabledTime = committed.ChannelInfo.MultiKeyDisabledTime
+				channelsIDM[channelId] = &updated
+				cacheUpdateChannelStatusLocked(channelId, committed.Status)
+			}
+			channelSyncLock.Unlock()
+		}
+	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		common.SysLog(common.LogText("failed to update channel status: channel_id=%d, status=%d, error=%v", channelId, status, err))
 	}

@@ -428,6 +428,12 @@ func CacheUpdateChannelStatus(id int, status int) {
 	}
 	channelSyncLock.Lock()
 	defer channelSyncLock.Unlock()
+	cacheUpdateChannelStatusLocked(id, status)
+}
+
+// cacheUpdateChannelStatusLocked publishes status and routing together. The
+// caller must hold channelSyncLock, including any current-identity check.
+func cacheUpdateChannelStatusLocked(id int, status int) {
 	if channel, ok := channelsIDM[id]; ok {
 		channel.Status = status
 	}
