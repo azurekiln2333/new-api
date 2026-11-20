@@ -147,12 +147,21 @@ export function ApiKeyRotateDialog() {
         confirmText={t('Done')}
         handleConfirm={close}
       >
-        <div className='flex items-center gap-2 rounded-md border p-2'>
-          <KeyRound className='text-muted-foreground size-4 shrink-0' />
-          <code className='min-w-0 flex-1 truncate font-mono text-sm'>
-            {rotatedKey}
-          </code>
-          <CopyButton value={rotatedKey} aria-label={t('Copy Key')} />
+        <div className='flex items-start gap-2'>
+          <div className='max-h-[min(40dvh,16rem)] min-w-0 flex-1 overflow-x-hidden overflow-y-auto rounded-md border p-2'>
+            <div className='flex items-start gap-2'>
+              <KeyRound className='text-muted-foreground mt-0.5 size-4 shrink-0' />
+              <code className='min-w-0 flex-1 font-mono text-sm break-all whitespace-pre-wrap'>
+                {rotatedKey}
+              </code>
+            </div>
+          </div>
+          {/* Copy stays outside the scroll area so it remains reachable. */}
+          <CopyButton
+            value={rotatedKey}
+            className='self-start'
+            aria-label={t('Copy Key')}
+          />
         </div>
       </ConfirmDialog>
     </>

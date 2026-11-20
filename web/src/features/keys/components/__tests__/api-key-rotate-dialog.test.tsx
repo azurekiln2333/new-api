@@ -212,3 +212,31 @@ it('sends a custom rotation secret exactly as typed and clears it when the dialo
   await user.click(screen.getByRole('button', { name: 'Open rotation' }))
   expect(await screen.findByLabelText('Custom key (optional)')).toHaveValue('')
 })
+
+it('wraps a long replacement key instead of truncating or scrolling sideways', async () => {
+  const user = userEvent.setup()
+  const longKey = `sk-${'A1b2C3d4'.repeat(16)}`
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true, data: { key: longKey.slice(3), token } },
+  })
+  renderRotation()
+  await user.click(screen.getByRole('button', { name: 'Open rotation' }))
+  await user.click(await screen.findByRole('button', { name: 'Rotate' }))
+  const value = await screen.findByText(longKey)
+  expect(value.tagName).toBe('CODE')
+  expect(value).toHaveClass('break-all')
+  expect(value).not.toHaveClass('truncate')
+  // The scroll container grows with content up to a viewport-relative ceiling
+  // and only scrolls vertically, so a low screen still shows the whole key.
+  const scroller = value.closest('[class*="overflow-y-auto"]')
+  expect(scroller).not.toBeNull()
+  expect(scroller).toHaveClass('overflow-x-hidden')
+  expect(scroller).toHaveClass('overflow-y-auto')
+  expect(scroller).toHaveClass('max-h-[min(40dvh,16rem)]')
+  const dialog = value.closest('[role="dialog"]')
+  expect(dialog).not.toBeNull()
+  // The dialog itself stays inside the viewport; only the key area scrolls.
+  expect(dialog).toHaveClass('max-h-[var(--dialog-available-height,calc(100dvh-2rem))]')
+  await user.click(screen.getByRole('button', { name: 'Copy Key' }))
+  expect(await navigator.clipboard.readText()).toBe(longKey)
+})
