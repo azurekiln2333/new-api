@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/logger"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -69,40 +68,10 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 	if err != nil {
 		return nil, nil, nil, newConvertRequestFailedError(c, info, err)
 	}
-	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
-	jsonData, err := common.Marshal(convertedRequest)
-	if err != nil {
-		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-	}
-	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-	if err != nil {
-		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-	}
-	jsonData, apiErr := requestplugin.Outbound(c, info, jsonData)
+	finalizer, _ := adaptor.(relaychannel.ResponsesRequestFinalizer)
+	body, closer, apiErr := prepareConvertedTextBody(c, info, convertedRequest, true, finalizer)
 	if apiErr != nil {
 		return nil, nil, nil, apiErr
-	}
-	if len(info.ParamOverride) > 0 {
-		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-		if err != nil {
-			return nil, nil, nil, newAPIErrorFromParamOverride(err)
-		}
-	}
-	if finalizer, ok := adaptor.(relaychannel.ResponsesRequestFinalizer); ok {
-		jsonData, err = finalizer.FinalizeResponsesRequest(info, jsonData)
-		if err != nil {
-			return nil, nil, nil, newConvertRequestFailedError(c, info, err)
-		}
-	}
-	// egress reads the body as it is sent, after the channel finalized it.
-	if apiErr = requestplugin.Egress(c, info, jsonData); apiErr != nil {
-		return nil, nil, nil, apiErr
-	}
-
-	logger.LogDebug(c, "requestBody: %s", jsonData)
-	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-	if err != nil {
-		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	return adaptor, body, closer, nil
 }

@@ -166,8 +166,12 @@ func TestChannelCapacityStreamsRouteAroundFullChannelAndRelease(t *testing.T) {
 	assert.Equal(t, int32(1), fallbackCalls.Load(), "capacity traversal works even with RetryTimes=0")
 	waitDone()
 
-	// A health test uses the same budget and must be skipped without disabling.
-	summary := testChannelForHealthCheck(context.Background(), fixture.channel, fixture.user.Id, true, 0)
+	// A canceled health test must leave a saturated channel unchanged.
+	// Focused diagnostic tests cover waiting and readmission; do not wait here
+	// while this test itself holds every slot on the selected channel.
+	healthCtx, cancelHealth := context.WithCancel(t.Context())
+	cancelHealth()
+	summary := testChannelForHealthCheck(healthCtx, fixture.channel, fixture.user.Id, true, 0)
 	assert.Equal(t, channelTestSummary{}, summary)
 	busyB, apiErr := service.AcquireChannelCapacity(context.Background(), b.Id, b.GetSetting())
 	require.Nil(t, apiErr)

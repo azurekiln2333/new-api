@@ -77,6 +77,9 @@ beforeEach(() => {
     if (url === '/api/task_plugin_options') {
       return { data: { success: true, data: pluginOptions } }
     }
+    if (url === '/api/channel/test/9') {
+      return { data: { success: true, message: '', time: 0.012 } }
+    }
     throw new Error(`Unexpected GET ${url}`)
   })
 })
@@ -129,4 +132,48 @@ test('a built-in channel offers every endpoint', async () => {
   expect(options).toHaveLength(9)
   expect(options).toContain('OpenAI (/v1/chat/completions)')
   expect(api.get).not.toHaveBeenCalledWith('/api/task_plugin_options')
+})
+
+test('Auto on a Responses-only channel leaves endpoint resolution to the server', async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channel(1, '{"supported_endpoints":["responses"]}')} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+
+  const endpoint = await screen.findByRole('combobox', { name: 'Endpoint Type' })
+  expect(endpoint).toHaveValue('Auto detect (default)')
+  await userEvent
+    .setup()
+    .click(await screen.findByRole('button', { name: 'Test Connection' }))
+  await vi.waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/channel/test/9',
+      expect.objectContaining({ params: { model: 'model-a' } })
+    )
+  )
+  const options = await endpointOptions()
+  expect(options).toContain('OpenAI Responses (/v1/responses)')
+  expect(options).not.toContain('Gemini (/v1beta/models/{model}:generateContent)')
+})
+
+test('a Chat-only channel does not offer explicit Responses overrides', async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channel(1, '{"supported_endpoints":["chat"]}')} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+
+  const options = await endpointOptions()
+  expect(options).toContain('Auto detect (default)')
+  expect(options).toContain('OpenAI (/v1/chat/completions)')
+  expect(options).toContain('Embeddings (/v1/embeddings)')
+  expect(options).not.toContain('OpenAI Responses (/v1/responses)')
+  expect(options).not.toContain(
+    'OpenAI Response Compaction (/v1/responses/compact)'
+  )
 })

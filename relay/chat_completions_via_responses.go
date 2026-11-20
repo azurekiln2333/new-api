@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,6 +77,15 @@ func applySystemPromptIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, requ
 }
 
 func textRequestViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request any) (*dto.Usage, *types.NewAPIError) {
+	// The Codex adaptor applies the configured prompt to instructions itself.
+	if info.ApiType != constant.APITypeCodex {
+		switch req := request.(type) {
+		case *dto.GeneralOpenAIRequest:
+			applySystemPromptIfNeeded(c, info, req)
+		case *dto.ClaudeRequest:
+			applyClaudeSystemPrompt(c, info, req)
+		}
+	}
 	// A chat request takes the outbound plugins and the param override in
 	// chat form, before the conversion.
 	outboundApplied := false
@@ -90,15 +100,9 @@ func textRequestViaResponses(c *gin.Context, info *relaycommon.RelayInfo, adapto
 			return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
-		chatJSON, apiErr := requestplugin.Outbound(c, info, chatJSON)
+		chatJSON, apiErr := applyTextBodyOverrides(c, info, chatJSON)
 		if apiErr != nil {
 			return nil, apiErr
-		}
-		if len(info.ParamOverride) > 0 {
-			chatJSON, err = relaycommon.ApplyParamOverrideWithRelayInfo(chatJSON, info)
-			if err != nil {
-				return nil, newAPIErrorFromParamOverride(err)
-			}
 		}
 		outboundApplied = true
 
@@ -148,14 +152,14 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	}
 	if !outboundApplied {
 		var apiErr *types.NewAPIError
-		if jsonData, apiErr = requestplugin.Outbound(c, info, jsonData); apiErr != nil {
+		if jsonData, apiErr = applyTextBodyOverrides(c, info, jsonData); apiErr != nil {
 			return nil, apiErr
 		}
-		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-			if err != nil {
-				return nil, newAPIErrorFromParamOverride(err)
-			}
+	}
+	if finalizer, ok := adaptor.(channel.ResponsesRequestFinalizer); ok {
+		jsonData, err = finalizer.FinalizeResponsesRequest(info, jsonData)
+		if err != nil {
+			return nil, newConvertRequestFailedError(c, info, err)
 		}
 	}
 	if apiErr := requestplugin.Egress(c, info, jsonData); apiErr != nil {
@@ -191,7 +195,7 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	// Converted Responses requests need the same pre-dispatch comment gate as
 	// native Responses. The response handler chooses Hold once the upstream
 	// protocol is known; non-stream response conversion still writes through.
-	if info.IsStream && helper.StreamCommitGateFrom(c) == nil {
+	if info.IsStream && !info.IsChannelTest && helper.StreamCommitGateFrom(c) == nil {
 		holdBudget := helper.DefaultStreamCommitHoldBudget
 		if seconds := service.EffectiveUpstreamFirstByteTimeoutSeconds(info.ChannelSetting); seconds > 0 {
 			holdBudget = time.Duration(seconds) * time.Second
@@ -206,16 +210,22 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 		return nil, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 	if resp == nil {
-		return nil, types.NewOpenAIError(nil, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		return nil, types.NewOpenAIError(errors.New("upstream returned no response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
-
+	if info.IsChannelTest {
+		// Diagnostics map the final error once, after the raw HTTP refusal is classified.
+		statusCodeMappingStr = ""
+	}
 	httpResp = resp.(*http.Response)
 	clientStream := info.IsStream
 	upstreamStream := isResponsesEventStreamContentType(httpResp.Header.Get("Content-Type"))
 	info.IsStream = clientStream || upstreamStream
 	if httpResp.StatusCode != http.StatusOK {
+		if info.IsChannelTest {
+			return nil, diagnosticHTTPError(c, httpResp)
+		}
 		helper.StoreUpstreamRetryAfter(c, httpResp.Header.Get("Retry-After"))
 		newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
@@ -233,11 +243,13 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	if upstreamStream {
 		info.IsStream = false
 		usage, newApiErr := openaichannel.OaiResponsesToChatBufferedStreamHandler(c, info, httpResp)
-		if newApiErr != nil {
+		// Diagnostics record parsed usage even when the buffered reply fails.
+		// Ordinary relay callers keep their existing error path.
+		if newApiErr != nil && !info.IsChannelTest {
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 			return nil, newApiErr
 		}
-		return usage, nil
+		return usage, newApiErr
 	}
 
 	usage, newApiErr := openaichannel.OaiResponsesToChatHandler(c, info, httpResp)

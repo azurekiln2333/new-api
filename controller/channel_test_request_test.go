@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,8 +15,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/lmfp"
-	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
 	"github.com/QuantumNous/new-api/relay/channel/cloudflare"
@@ -26,13 +27,16 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"gorm.io/gorm"
 )
 
 func convertChatCompatibilityRequest(t *testing.T, request *dto.GeneralOpenAIRequest, channelType int, mapping map[string]string) []byte {
@@ -108,7 +112,11 @@ func TestChannelTestOpenAIChatCompatibility(t *testing.T) {
 		{name: "o series", model: "o3-mini", upstream: "o3-mini", channelType: constant.ChannelTypeAzure, wantLimit: "max_completion_tokens"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			request, ok := buildTestRequest(tt.model, tt.endpoint, &model.Channel{}, tt.stream, nil).(*dto.GeneralOpenAIRequest)
+			endpoint := constant.EndpointType(tt.endpoint)
+			if endpoint == "" {
+				endpoint = constant.EndpointTypeOpenAI
+			}
+			request, ok := buildTestRequest(tt.model, endpoint, tt.endpoint == "", tt.stream, nil).(*dto.GeneralOpenAIRequest)
 			require.True(t, ok)
 			encoded := convertChatCompatibilityRequest(t, request, tt.channelType, map[string]string{tt.model: tt.upstream})
 			want := map[string]any{
@@ -479,16 +487,14 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 		{name: "empty answer retains usage", endpoint: "openai", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var sentPath string
-			var sentBody []byte
+			requests := make(chan channelDiagnosticWire, 1)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				sentPath = r.URL.Path
-				sentBody, _ = io.ReadAll(r.Body)
+				requests <- captureChannelDiagnostic(r)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = fmt.Fprintf(w, `{"id":"resp-fingerprint","object":"response","status":"completed","model":"gpt-4.1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`, tc.reply)
 			}))
 			defer upstream.Close()
-			setting := `{"supported_endpoints":["responses"]}`
+			setting := `{"supported_endpoints":["responses"],"system_prompt":"diagnostic system prompt"}`
 			override := `{"max_tokens":9000,"max_output_tokens":9000}`
 			selected := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "fingerprint-responses-" + tc.name, Key: "test-fingerprint-key", Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: &setting, ParamOverride: &override}
 			require.NoError(t, selected.Insert())
@@ -499,9 +505,11 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
-			assert.Equal(t, "/v1/responses", sentPath)
-			assert.Contains(t, string(sentBody), "fingerprint challenge")
-			assert.EqualValues(t, 300, gjson.GetBytes(sentBody, "max_output_tokens").Uint())
+			wire := takeChannelDiagnostic(t, requests)
+			assert.Equal(t, "/v1/responses", wire.path)
+			assert.Contains(t, string(wire.body), "fingerprint challenge")
+			assert.Equal(t, 1, strings.Count(string(wire.body), "diagnostic system prompt"))
+			assert.EqualValues(t, 300, gjson.GetBytes(wire.body, "max_output_tokens").Uint())
 			assert.Equal(t, tc.reply, result.Text)
 			assert.Equal(t, 10, result.PromptTokens)
 			assert.Equal(t, 5, result.OutputTokens)
@@ -564,22 +572,420 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 	})
 }
 
-func TestFingerprintDiagnosticRejectsUnsupportedEndpoint(t *testing.T) {
+func setupChannelDiagnosticRequests(t *testing.T) int {
+	t.Helper()
 	require.NoError(t, i18n.Init())
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	info := &relaycommon.RelayInfo{
-		RelayFormat: types.RelayFormatOpenAIResponses,
-		RelayMode:   relayconstant.RelayModeResponses,
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelType:    constant.ChannelTypeOpenAI,
-			ChannelSetting: dto.ChannelSettings{SupportedEndpoints: []string{dto.ChannelEndpointChat}},
-		},
+	userID := setupChannelCreateTest(t)
+	service.InitHttpClient()
+	const modelRatios = `{"gpt-4.1":1,"gpt-5.1":1,"codex-fixture":1}`
+	oldRatios, oldGroups := ratio_setting.ModelRatio2JSONString(), ratio_setting.GroupRatio2JSONString()
+	oldLogs := common.LogConsumeEnabled
+	settings := model_setting.GetGlobalSettings()
+	previous := *settings
+	t.Cleanup(func() {
+		*settings = previous
+		common.LogConsumeEnabled = oldLogs
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroups))
+	})
+	settings.PassThroughRequestEnabled = false
+	settings.ChatCompletionsToResponsesPolicy = model_setting.ChatCompletionsToResponsesPolicy{}
+	common.LogConsumeEnabled = true
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(modelRatios))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	return userID
+}
+
+const channelDiagnosticChatReply = `{"id":"chatcmpl-test","object":"chat.completion","model":"gpt-4.1","choices":[{"index":0,"message":{"role":"assistant","content":"12 34 56"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
+const channelDiagnosticResponsesReply = `{"id":"resp-test","object":"response","status":"completed","model":"gpt-4.1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"12 34 56"}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`
+
+type channelDiagnosticWire struct {
+	path    string
+	headers http.Header
+	body    []byte
+}
+
+func captureChannelDiagnostic(r *http.Request) channelDiagnosticWire {
+	body, _ := io.ReadAll(r.Body)
+	return channelDiagnosticWire{path: r.URL.Path, headers: r.Header.Clone(), body: body}
+}
+
+func takeChannelDiagnostic(t *testing.T, requests <-chan channelDiagnosticWire) channelDiagnosticWire {
+	t.Helper()
+	select {
+	case wire := <-requests:
+		return wire
+	default:
+		t.Fatal("no request reached the selected upstream")
+		return channelDiagnosticWire{}
 	}
-	_, handled, apiErr := relay.RelayTextDiagnostic(c, info, nil, &dto.OpenAIResponsesRequest{})
-	assert.True(t, handled)
-	require.NotNil(t, apiErr)
-	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+}
+
+func TestChannelDiagnosticEndpointPolicy(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	for _, tc := range []struct {
+		name, setting, endpoint, wantPath       string
+		scheduled, passthrough, preferResponses bool
+	}{
+		{name: "manual auto", setting: `{"supported_endpoints":["responses"]}`, wantPath: "/v1/responses"},
+		{name: "scheduled auto", setting: `{"supported_endpoints":["responses"]}`, scheduled: true, wantPath: "/v1/responses"},
+		{name: "no declaration retains chat", setting: `{}`, wantPath: "/v1/chat/completions"},
+		{name: "both follow global preference", setting: `{"supported_endpoints":["chat","responses"]}`, preferResponses: true, wantPath: "/v1/responses"},
+		{name: "chat only overrides global preference", setting: `{"supported_endpoints":["chat"]}`, preferResponses: true, wantPath: "/v1/chat/completions"},
+		{name: "explicit Responses cannot fall back to chat", setting: `{"supported_endpoints":["chat"]}`, endpoint: "openai-response"},
+		{name: "explicit Gemini cannot upgrade to Responses", setting: `{"supported_endpoints":["responses"]}`, endpoint: "gemini"},
+		{name: "automatic conversion conflicts with global passthrough", setting: `{"supported_endpoints":["responses"]}`, passthrough: true},
+		{name: "invalid per-channel passthrough combination", setting: `{"supported_endpoints":["responses"],"pass_through_body_enabled":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := model_setting.GetGlobalSettings()
+			previous := *settings
+			t.Cleanup(func() { *settings = previous })
+			settings.PassThroughRequestEnabled = tc.passthrough
+			settings.ChatCompletionsToResponsesPolicy = model_setting.ChatCompletionsToResponsesPolicy{
+				Enabled: tc.preferResponses, AllChannels: true, ModelPatterns: []string{"^gpt-4.1$"},
+			}
+			requests := make(chan channelDiagnosticWire, 4)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- captureChannelDiagnostic(r)
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/v1/responses" {
+					_, _ = io.WriteString(w, channelDiagnosticResponsesReply)
+				} else {
+					_, _ = io.WriteString(w, channelDiagnosticChatReply)
+				}
+			}))
+			defer upstream.Close()
+			selected := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "diagnostic-endpoint-policy", Key: "test-policy-key", Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: &tc.setting}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+
+			if tc.scheduled {
+				summary := testChannelForHealthCheck(t.Context(), selected, userID, true, 10000)
+				assert.Equal(t, channelTestSummary{Tested: 1, Succeeded: 1}, summary)
+			} else {
+				result := testChannel(t.Context(), selected, userID, "gpt-4.1", tc.endpoint, false, -1)
+				if tc.wantPath == "" {
+					require.NotNil(t, result.newAPIError)
+					assert.Equal(t, http.StatusBadRequest, result.newAPIError.StatusCode)
+				} else {
+					require.NoError(t, result.localErr)
+				}
+			}
+			var logs []model.Log
+			require.NoError(t, model.LOG_DB.Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Find(&logs).Error)
+			if tc.wantPath == "" {
+				assert.Empty(t, requests, "unsupported requests are rejected before dispatch")
+				assert.Empty(t, logs)
+				return
+			}
+			wire := takeChannelDiagnostic(t, requests)
+			assert.Equal(t, tc.wantPath, wire.path)
+			assert.Contains(t, string(wire.body), `"hi"`)
+			assert.Empty(t, requests)
+			require.Len(t, logs, 1)
+			assert.Equal(t, 10, logs[0].PromptTokens)
+			assert.Equal(t, 5, logs[0].CompletionTokens)
+		})
+	}
+}
+
+const channelDiagnosticPlugins = `export const meta = {apiVersion: 1, key: "rp-diagnostic-wire", name: "Diagnostic wire", version: "1.0.0", author: {name: "Test"}};
+export function request() {
+  return {action: "continue", effects: [{type: "reasoning.set", effort: "high"}]};
+}
+export function outbound() {
+  return {action: "continue", effects: [
+    {type: "json.patch", ops: [{op: "add", path: "/metadata", value: {source: "plugin"}}]},
+    {type: "header.patch", set: {"X-Plugin": "outbound", "X-Policy": "plugin"}}
+  ]};
+}
+export function egress(ctx, req) {
+  if (req.body.metadata && req.body.metadata.source === "override" && req.body.instructions === "channel prompt") {
+    return {action: "continue"};
+  }
+  return {action: "reject", code: "policy.order", message: "Expected effective upstream body"};
+}`
+
+func TestChannelDiagnosticRequestPolicy(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	plugin, err := jsplugin.DefaultRegistry.Register(channelDiagnosticPlugins, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key) })
+	previousInstances, err := common.Marshal(request_plugin_setting.GetInstances())
+	require.NoError(t, err)
+	setInstances := func(value string) {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: value}))
+	}
+	t.Cleanup(func() { setInstances(string(previousInstances)) })
+	setInstances(`[{"id":"diagnostic-wire","name":"Diagnostic wire","plugin":"rp-diagnostic-wire","enabled":true}]`)
+	requests := make(chan channelDiagnosticWire, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- captureChannelDiagnostic(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, channelDiagnosticResponsesReply)
+	}))
+	defer upstream.Close()
+	selected := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "diagnostic-wire-policy", Key: "test-policy-key", Models: "gpt-4.1", Group: "default",
+		Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+		Setting:        lo.ToPtr(`{"system_prompt":"channel prompt","request_plugins":["diagnostic-wire"]}`),
+		ModelMapping:   lo.ToPtr(`{"gpt-4.1":"gpt-5.1"}`),
+		ParamOverride:  lo.ToPtr(`{"metadata":{"source":"override"}}`),
+		HeaderOverride: lo.ToPtr(`{"X-Policy":"static:{api_key}","X-Browser":"{client_header:Content-Type}"}`),
+	}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	result := testChannel(t.Context(), selected, userID, "gpt-4.1", "openai-response", false, -1)
+	require.NoError(t, result.localErr)
+	wire := takeChannelDiagnostic(t, requests)
+	assert.Equal(t, "/v1/responses", wire.path)
+	assert.Equal(t, "gpt-5.1", gjson.GetBytes(wire.body, "model").String())
+	assert.Equal(t, "high", gjson.GetBytes(wire.body, "reasoning.effort").String())
+	assert.Equal(t, "channel prompt", gjson.GetBytes(wire.body, "instructions").String())
+	assert.Equal(t, "override", gjson.GetBytes(wire.body, "metadata.source").String())
+	assert.Equal(t, "outbound", wire.headers.Get("X-Plugin"))
+	assert.Equal(t, "static:test-policy-key", wire.headers.Get("X-Policy"))
+	assert.Empty(t, wire.headers.Get("X-Browser"))
+}
+
+func TestChannelDiagnosticBusyRetryAndProductiveFailure(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	previousStreamTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 15
+	t.Cleanup(func() { constant.StreamingTimeout = previousStreamTimeout })
+	const busy = `{"error":{"code":"concurrency_limit_exceeded","message":"Concurrency limit exceeded"}}`
+	const partialAnswer = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial answer\"}\n\n"
+	const productive = partialAnswer + "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"partial\",\"status\":\"failed\",\"error\":{\"code\":\"concurrency_limit_exceeded\",\"message\":\"Concurrency limit exceeded\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\n"
+	const truncated = "data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"partial\",\"status\":\"in_progress\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\n" + partialAnswer
+	for _, tc := range []struct {
+		name, endpoint, failure           string
+		stream, upstreamSSE, retry, usage bool
+	}{
+		{name: "Chat converted to Responses retries an HTTP refusal", failure: busy, retry: true, usage: true},
+		{name: "native Responses retries an HTTP refusal", endpoint: "openai-response", failure: busy, retry: true, usage: true},
+		{name: "generic 429 is not retried", failure: `{"error":{"message":"Too many requests"}}`},
+		{name: "quota refusal is not retried", failure: `{"error":{"code":"insufficient_quota","message":"Out of quota"}}`},
+		// Raw non-2xx envelope usage blocks replay but is not trusted for settlement.
+		{name: "HTTP refusal carrying usage is not retried or settled", failure: `{"error":{"code":"concurrency_limit_exceeded","message":"Concurrency limit exceeded"},"usage":{"input_tokens":10}}`},
+		{name: "productive native failure reports failure and settles once", endpoint: "openai-response", failure: productive, stream: true, upstreamSSE: true, usage: true},
+		{name: "productive converted failure reports failure and settles once", failure: productive, stream: true, upstreamSSE: true, usage: true},
+		{name: "truncated stream settles reported usage once", endpoint: "openai-response", failure: truncated, stream: true, upstreamSSE: true, usage: true},
+		{name: "non-stream Chat settles reported usage on unsolicited SSE failure", endpoint: "openai", failure: productive, upstreamSSE: true, usage: true},
+		{name: "non-stream Chat settles reported usage on unsolicited SSE truncation", endpoint: "openai", failure: truncated, upstreamSSE: true, usage: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := make(chan channelDiagnosticWire, 4)
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- captureChannelDiagnostic(r)
+				attempt := calls.Add(1)
+				if tc.upstreamSSE {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, tc.failure)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if attempt == 1 {
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = io.WriteString(w, tc.failure)
+					return
+				}
+				_, _ = io.WriteString(w, channelDiagnosticResponsesReply)
+			}))
+			defer upstream.Close()
+			selected := &model.Channel{
+				Type: constant.ChannelTypeOpenAI, Name: "diagnostic-busy-retry", Key: "test-key-one\ntest-key-two", Models: "gpt-4.1", Group: "default",
+				Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: lo.ToPtr(`{"supported_endpoints":["responses"]}`),
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling},
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			result := testChannel(ctx, selected, userID, "gpt-4.1", tc.endpoint, tc.stream, -1)
+			if tc.retry {
+				require.NoError(t, result.localErr)
+				assert.Equal(t, int32(2), calls.Load())
+				first := takeChannelDiagnostic(t, requests)
+				second := takeChannelDiagnostic(t, requests)
+				assert.Equal(t, "/v1/responses", first.path)
+				assert.Equal(t, first.path, second.path)
+				assert.Equal(t, first.headers.Get("Authorization"), second.headers.Get("Authorization"), "the retry stays on its original key")
+			} else {
+				require.Error(t, result.localErr)
+				assert.Equal(t, int32(1), calls.Load(), "never replay a productive or unclassified refusal")
+				if tc.upstreamSSE && !tc.stream {
+					wire := takeChannelDiagnostic(t, requests)
+					assert.Equal(t, "/v1/responses", wire.path)
+					assert.Equal(t, gjson.False, gjson.GetBytes(wire.body, "stream").Type)
+				}
+			}
+			var logs []model.Log
+			require.NoError(t, model.LOG_DB.Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Find(&logs).Error)
+			if tc.usage {
+				assert.Equal(t, 10, result.promptTokens)
+				assert.Equal(t, 5, result.completionTokens)
+				require.Len(t, logs, 1)
+				assert.Equal(t, 10, logs[0].PromptTokens)
+				assert.Equal(t, 5, logs[0].CompletionTokens)
+				assert.Positive(t, logs[0].Quota)
+			} else {
+				assert.Empty(t, logs)
+			}
+		})
+	}
+}
+
+func TestChannelDiagnosticReadmissionUsesCurrentCapAndPolicy(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	type diagnosticRequest struct{}
+	const callback = "test:channel_diagnostic_after_grant"
+	for _, cancelQueued := range []bool{false, true} {
+		name := "resume with current policy"
+		if cancelQueued {
+			name = "cancel instead of dispatching over the reduced cap"
+		}
+		t.Run(name, func(t *testing.T) {
+			requests := make(chan channelDiagnosticWire, 4)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- captureChannelDiagnostic(r)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, channelDiagnosticResponsesReply)
+			}))
+			t.Cleanup(upstream.Close)
+			selected := &model.Channel{
+				Type: constant.ChannelTypeOpenAI, Name: "diagnostic-current-cap", Key: "old-key", Models: "gpt-4.1", Group: "default",
+				Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: lo.ToPtr(`{"max_concurrent_requests":2,"supported_endpoints":["chat"]}`),
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			first, apiErr := service.AcquireChannelCapacity(t.Context(), selected.Id, selected.GetSetting())
+			require.Nil(t, apiErr)
+			t.Cleanup(first.Release)
+			second, apiErr := service.AcquireChannelCapacity(t.Context(), selected.Id, selected.GetSetting())
+			require.Nil(t, apiErr)
+			t.Cleanup(second.Release)
+
+			// Observe the real post-grant DB read. The attempt must release that
+			// lease before reaching upstream, even while the second holder stays active.
+			reads := make(chan context.Context, 2)
+			queries := model.DB.Callback().Query()
+			require.NoError(t, queries.After("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if row, ok := tx.Statement.Dest.(*model.Channel); ok && row.Id == selected.Id && tx.Statement.Context.Value(diagnosticRequest{}) != nil {
+					select {
+					case reads <- tx.Statement.Context:
+					case <-tx.Statement.Context.Done():
+					}
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, queries.Remove(callback)) })
+			ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), diagnosticRequest{}, true), 10*time.Second)
+			done := make(chan testResult, 1)
+			finished := make(chan struct{})
+			t.Cleanup(func() { cancel(); <-finished })
+			go func() {
+				defer close(finished)
+				done <- testChannel(ctx, selected, userID, "gpt-4.1", "", false, -1)
+			}()
+
+			require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", selected.Id).Updates(map[string]any{
+				"key": "new-key", "setting": `{"max_concurrent_requests":1,"supported_endpoints":["responses"]}`, "header_override": `{"X-Policy":"new:{api_key}"}`,
+			}).Error)
+			first.Release() // one slot under the old cap, none under the new cap
+			var staleLease context.Context
+			select {
+			case staleLease = <-reads:
+			case <-ctx.Done():
+				t.Fatal("no reload after the first grant")
+			}
+			select {
+			case <-staleLease.Done():
+			case <-ctx.Done():
+				t.Fatal("the stale lease was not released")
+			}
+			require.NoError(t, ctx.Err())
+			assert.Empty(t, requests, "the stale grant must not send a request")
+			if cancelQueued {
+				cancel()
+			} else {
+				second.Release()
+			}
+			select {
+			case result := <-done:
+				if cancelQueued {
+					require.ErrorIs(t, result.localErr, context.Canceled)
+					assert.Empty(t, requests)
+					second.Release()
+				} else {
+					require.NoError(t, result.localErr)
+					wire := takeChannelDiagnostic(t, requests)
+					assert.Equal(t, "/v1/responses", wire.path)
+					assert.Equal(t, "Bearer new-key", wire.headers.Get("Authorization"))
+					assert.Equal(t, "new:new-key", wire.headers.Get("X-Policy"))
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the diagnostic did not finish after release or cancellation")
+			}
+			sample := service.ReadChannelConcurrency(t.Context(), []int{selected.Id})[selected.Id]
+			require.NotNil(t, sample.Current)
+			assert.Zero(t, *sample.Current)
+		})
+	}
+}
+
+func TestFingerprintDiagnosticReloadsPolicyBetweenProbes(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	requests := make(chan channelDiagnosticWire, 8)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- captureChannelDiagnostic(r)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/responses" {
+			_, _ = io.WriteString(w, channelDiagnosticResponsesReply)
+		} else {
+			_, _ = io.WriteString(w, channelDiagnosticChatReply)
+		}
+	}))
+	defer upstream.Close()
+	selected := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "diagnostic-fingerprint-policy", Key: "test-key-one", Models: "gpt-4.1", Group: "default",
+		Status: common.ChannelStatusManuallyDisabled, BaseURL: &upstream.URL, Setting: lo.ToPtr(`{"supported_endpoints":["chat"]}`),
+		HeaderOverride: lo.ToPtr(`{"X-Policy":"one:{api_key}"}`),
+	}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	probe := func() (service.FingerprintProbeResult, error) {
+		return runFingerprintProbe(t.Context(), selected, userID, "gpt-4.1", "", lmfp.Challenge{Prompt: "current-policy challenge", ExpectedCount: 3}, 300)
+	}
+	first, err := probe()
+	require.NoError(t, err)
+	assert.Equal(t, "12 34 56", first.Text)
+	wire := takeChannelDiagnostic(t, requests)
+	assert.Equal(t, "/v1/chat/completions", wire.path)
+	assert.Equal(t, "Bearer test-key-one", wire.headers.Get("Authorization"))
+	assert.Equal(t, "one:test-key-one", wire.headers.Get("X-Policy"))
+
+	stored := model.DB.Model(&model.Channel{}).Where("id = ?", selected.Id)
+	require.NoError(t, stored.Updates(map[string]any{
+		"key": "test-key-two", "setting": `{"supported_endpoints":["responses"]}`, "header_override": `{"X-Policy":"two:{api_key}"}`,
+	}).Error)
+	second, err := probe()
+	require.NoError(t, err)
+	assert.Equal(t, "12 34 56", second.Text)
+	wire = takeChannelDiagnostic(t, requests)
+	assert.Equal(t, "/v1/responses", wire.path)
+	assert.Equal(t, "Bearer test-key-two", wire.headers.Get("Authorization"))
+	assert.Equal(t, "two:test-key-two", wire.headers.Get("X-Policy"))
+	assert.Contains(t, string(wire.body), "current-policy challenge")
+
+	require.NoError(t, stored.Update("models", "another-model").Error)
+	_, err = probe()
+	require.ErrorContains(t, err, "not available on this channel")
+	require.NoError(t, selected.Delete())
+	_, err = probe()
+	require.Error(t, err)
+	assert.Empty(t, requests, "a removed model or channel prevents any upstream request")
 }
 
 func TestFingerprintJobRouteOwnershipAndRequestLifetime(t *testing.T) {

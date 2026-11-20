@@ -30,6 +30,12 @@ import (
 
 const planContextKey = "request_plugin_plan"
 
+// InitDiagnosticAttempt binds the attempt hooks to a synthetic request. There
+// is no client ingress body or client response to capture for reporting.
+func InitDiagnosticAttempt(c *gin.Context) {
+	c.Set(planContextKey, NewPlan())
+}
+
 func planOf(c *gin.Context) *Plan {
 	if c == nil {
 		return nil

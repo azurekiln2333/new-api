@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
@@ -49,31 +48,6 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 	adaptor.Init(info)
 
-	if info.ChannelSetting.SystemPrompt != "" {
-		if request.System == nil {
-			request.SetStringSystem(info.ChannelSetting.SystemPrompt)
-		} else if info.ChannelSetting.SystemPromptOverride {
-			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
-			if request.IsStringSystem() {
-				existing := strings.TrimSpace(request.GetStringSystem())
-				if existing == "" {
-					request.SetStringSystem(info.ChannelSetting.SystemPrompt)
-				} else {
-					request.SetStringSystem(info.ChannelSetting.SystemPrompt + "\n" + existing)
-				}
-			} else {
-				systemContents := request.ParseSystem()
-				newSystem := dto.ClaudeMediaMessage{Type: dto.ContentTypeText}
-				newSystem.SetText(info.ChannelSetting.SystemPrompt)
-				if len(systemContents) == 0 {
-					request.System = []dto.ClaudeMediaMessage{newSystem}
-				} else {
-					request.System = append([]dto.ClaudeMediaMessage{newSystem}, systemContents...)
-				}
-			}
-		}
-	}
-
 	targetEndpoint, endpointErr := resolveTextUpstreamEndpoint(c, info)
 	if endpointErr != nil {
 		return endpointErr
@@ -87,6 +61,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		service.PostTextConsumeQuota(c, info, usage, nil)
 		return nil
 	}
+
+	applyClaudeSystemPrompt(c, info, request)
 
 	var requestBody io.Reader
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
@@ -103,39 +79,11 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return newConvertRequestFailedError(c, info, err)
 		}
-		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
-		jsonData, err := common.Marshal(convertedRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		// remove disabled fields for Claude API
-		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
-			return newAPIError
-		}
-		// apply param override
-		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-			if err != nil {
-				return newAPIErrorFromParamOverride(err)
-			}
-		}
-		if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
-			return newAPIError
-		}
-
-		logger.LogDebug(c, "requestBody: %s", jsonData)
-		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		body, closer, apiErr := prepareConvertedTextBody(c, info, convertedRequest, true, nil)
+		if apiErr != nil {
+			return apiErr
 		}
 		defer closer.Close()
-		jsonData = nil
 		requestBody = body
 	}
 
@@ -166,4 +114,29 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	return nil
+}
+
+func applyClaudeSystemPrompt(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) {
+	prompt := info.ChannelSetting.SystemPrompt
+	if prompt == "" {
+		return
+	}
+	if request.System == nil {
+		request.SetStringSystem(prompt)
+		return
+	}
+	if !info.ChannelSetting.SystemPromptOverride {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
+	if request.IsStringSystem() {
+		if existing := strings.TrimSpace(request.GetStringSystem()); existing != "" {
+			prompt += "\n" + existing
+		}
+		request.SetStringSystem(prompt)
+		return
+	}
+	prefix := dto.ClaudeMediaMessage{Type: dto.ContentTypeText}
+	prefix.SetText(prompt)
+	request.System = append([]dto.ClaudeMediaMessage{prefix}, request.ParseSystem()...)
 }

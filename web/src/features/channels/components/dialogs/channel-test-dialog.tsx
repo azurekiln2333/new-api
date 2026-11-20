@@ -89,6 +89,7 @@ import {
   formatResponseTime,
   handleTestChannel,
   parseChannelSettings,
+  supportsChannelEndpointSelection,
 } from '../../lib'
 import type {
   Channel,
@@ -180,6 +181,7 @@ const endpointTypeOptions: Array<{
   value: string
   label: string
   path?: string
+  requiresUpstream?: 'chat' | 'responses'
 }> = [
   { value: 'auto', label: 'Auto detect (default)' },
   {
@@ -191,11 +193,13 @@ const endpointTypeOptions: Array<{
     value: 'openai-response',
     label: 'OpenAI Responses (/v1/responses)',
     path: '/v1/responses',
+    requiresUpstream: 'responses',
   },
   {
     value: 'openai-response-compact',
     label: 'OpenAI Response Compaction (/v1/responses/compact)',
     path: '/v1/responses/compact',
+    requiresUpstream: 'responses',
   },
   {
     value: 'anthropic',
@@ -206,6 +210,7 @@ const endpointTypeOptions: Array<{
     value: 'gemini',
     label: 'Gemini (/v1beta/models/{model}:generateContent)',
     path: '/v1beta/models/{model}:generateContent',
+    requiresUpstream: 'chat',
   },
   {
     value: 'jina-rerank',
@@ -398,25 +403,44 @@ function ChannelTestDialogContent({
     pageIndex: 0,
     pageSize: 30,
   })
+  const settings = useMemo(
+    () => parseChannelSettings(currentRow.setting),
+    [currentRow.setting]
+  )
   const plugin = useTaskPluginOption(
     currentRow.type === CHANNEL_TYPE_TASK_PLUGIN
-      ? parseChannelSettings(currentRow.setting)?.task_plugin_key
+      ? settings?.task_plugin_key
       : undefined
   )
   const relayPaths = plugin?.relayPaths
+  const supportedEndpoints = supportsChannelEndpointSelection(currentRow.type)
+    ? settings?.supported_endpoints
+    : undefined
   const endpointSelectItems = useMemo(
     () =>
       endpointTypeOptions
-        .filter(
-          (option) =>
-            !relayPaths || !option.path || relayPaths.includes(option.path)
-        )
+        .filter((option) => {
+          if (relayPaths && option.path && !relayPaths.includes(option.path)) {
+            return false
+          }
+          // Chat and Messages inputs can also reach a Responses-only channel.
+          return (
+            !supportedEndpoints?.length ||
+            !option.requiresUpstream ||
+            supportedEndpoints.includes(option.requiresUpstream)
+          )
+        })
         .map((option) => ({
           value: option.value,
           label: t(option.label),
         })),
-    [relayPaths, t]
+    [relayPaths, supportedEndpoints, t]
   )
+  const effectiveEndpointType = endpointSelectItems.some(
+    (option) => option.value === endpointType
+  )
+    ? endpointType
+    : 'auto'
 
   // Only a multi-key channel has keys to choose from; the key list is already
   // served by the existing multi-key management endpoint.
@@ -506,7 +530,7 @@ function ChannelTestDialogContent({
     setPagination({ pageIndex: 0, pageSize: 30 })
   }, [])
 
-  const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(endpointType)
+  const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(effectiveEndpointType)
   const effectiveStreamTest = !streamDisabled && isStreamTest
 
   const handleEndpointTypeChange = useCallback((value: string | null) => {
@@ -662,7 +686,8 @@ function ChannelTestDialogContent({
           {
             channelName: currentRow.name,
             testModel: model,
-            endpointType: endpointType === 'auto' ? undefined : endpointType,
+            endpointType:
+              effectiveEndpointType === 'auto' ? undefined : effectiveEndpointType,
             stream: effectiveStreamTest || undefined,
             keyIndex: testKeyIndex,
             silent,
@@ -703,7 +728,7 @@ function ChannelTestDialogContent({
       currentRow,
       selectedKey,
       selectedKeyIndex,
-      endpointType,
+      effectiveEndpointType,
       effectiveStreamTest,
       markModelTesting,
       refreshChannelLists,
@@ -1099,7 +1124,7 @@ function ChannelTestDialogContent({
               <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
               <Combobox
                 options={endpointSelectItems}
-                value={endpointType}
+                value={effectiveEndpointType}
                 onValueChange={handleEndpointTypeChange}
                 id='endpoint-type'
                 className='w-full min-w-0'

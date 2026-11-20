@@ -47,25 +47,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		return newConvertRequestFailedError(c, info, err)
 	}
 
-	includeUsage := true
-	// 判断用户是否需要返回使用情况
-	if request.StreamOptions != nil {
-		includeUsage = request.StreamOptions.IncludeUsage
-	}
-
-	// 如果不支持StreamOptions，将StreamOptions设置为nil
-	if !info.SupportStreamOptions || !lo.FromPtrOr(request.Stream, false) {
-		request.StreamOptions = nil
-	} else {
-		// 如果支持StreamOptions，且请求中没有设置StreamOptions，根据配置文件设置StreamOptions
-		if constant.ForceStreamOption {
-			request.StreamOptions = &dto.StreamOptions{
-				IncludeUsage: true,
-			}
-		}
-	}
-
-	info.ShouldIncludeUsage = includeUsage
+	prepareChatStreamOptions(info, request)
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
@@ -79,7 +61,6 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	if targetEndpoint == types.RelayFormatOpenAIResponses {
-		applySystemPromptIfNeeded(c, info, request)
 		usage, newApiErr := textRequestViaResponses(c, info, adaptor, request)
 		if newApiErr != nil {
 			return newApiErr
@@ -126,48 +107,14 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		if err != nil {
 			return newConvertRequestFailedError(c, info, err)
 		}
-		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
-
 		if req, ok := convertedRequest.(*dto.GeneralOpenAIRequest); ok {
 			applySystemPromptIfNeeded(c, info, req)
 		}
-
-		jsonData, err := common.Marshal(convertedRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		// remove disabled fields for OpenAI API
-		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
-			return newAPIError
-		}
-		// apply param override
-		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-			if err != nil {
-				return newAPIErrorFromParamOverride(err)
-			}
-		}
-		if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
-			return newAPIError
-		}
-		if newAPIError = validatePlaygroundWebSearch(c, info, jsonData); newAPIError != nil {
-			return newAPIError
-		}
-
-		logger.LogDebug(c, "text request body: %s", jsonData)
-
-		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		body, closer, apiErr := prepareConvertedTextBody(c, info, convertedRequest, true, nil)
+		if apiErr != nil {
+			return apiErr
 		}
 		defer closer.Close()
-		jsonData = nil
 		requestBody = body
 	}
 
@@ -209,4 +156,13 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	}
 	return nil
+}
+
+func prepareChatStreamOptions(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	info.ShouldIncludeUsage = request.StreamOptions == nil || request.StreamOptions.IncludeUsage
+	if !info.SupportStreamOptions || !lo.FromPtrOr(request.Stream, false) {
+		request.StreamOptions = nil
+	} else if constant.ForceStreamOption {
+		request.StreamOptions = &dto.StreamOptions{IncludeUsage: true}
+	}
 }

@@ -52,45 +52,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	adaptor.Init(info)
 
-	if info.ChannelSetting.SystemPrompt != "" {
-		if request.SystemInstructions == nil {
-			request.SystemInstructions = &dto.GeminiChatContent{
-				Parts: []dto.GeminiPart{
-					{Text: info.ChannelSetting.SystemPrompt},
-				},
-			}
-		} else if len(request.SystemInstructions.Parts) == 0 {
-			request.SystemInstructions.Parts = []dto.GeminiPart{{Text: info.ChannelSetting.SystemPrompt}}
-		} else if info.ChannelSetting.SystemPromptOverride {
-			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
-			merged := false
-			for i := range request.SystemInstructions.Parts {
-				if request.SystemInstructions.Parts[i].Text == "" {
-					continue
-				}
-				request.SystemInstructions.Parts[i].Text = info.ChannelSetting.SystemPrompt + "\n" + request.SystemInstructions.Parts[i].Text
-				merged = true
-				break
-			}
-			if !merged {
-				request.SystemInstructions.Parts = append([]dto.GeminiPart{{Text: info.ChannelSetting.SystemPrompt}}, request.SystemInstructions.Parts...)
-			}
-		}
-	}
-
-	// Clean up empty system instruction
-	if request.SystemInstructions != nil {
-		hasContent := false
-		for _, part := range request.SystemInstructions.Parts {
-			if part.Text != "" {
-				hasContent = true
-				break
-			}
-		}
-		if !hasContent {
-			request.SystemInstructions = nil
-		}
-	}
+	applyGeminiSystemPrompt(c, info, request)
 
 	var requestBody io.Reader
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
@@ -108,34 +70,11 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return newConvertRequestFailedError(c, info, err)
 		}
-		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
-		jsonData, err := common.Marshal(convertedRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
-			return newAPIError
-		}
-		// apply param override
-		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-			if err != nil {
-				return newAPIErrorFromParamOverride(err)
-			}
-		}
-		if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
-			return newAPIError
-		}
-
-		logger.LogDebug(c, "Gemini request body: %s", jsonData)
-
-		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		body, closer, apiErr := prepareConvertedTextBody(c, info, convertedRequest, false, nil)
+		if apiErr != nil {
+			return apiErr
 		}
 		defer closer.Close()
-		jsonData = nil
 		requestBody = body
 	}
 
@@ -167,6 +106,36 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	return nil
+}
+
+func applyGeminiSystemPrompt(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) {
+	prompt := info.ChannelSetting.SystemPrompt
+	if prompt != "" {
+		prefix := dto.GeminiPart{Text: prompt}
+		switch {
+		case request.SystemInstructions == nil:
+			request.SystemInstructions = &dto.GeminiChatContent{Parts: []dto.GeminiPart{prefix}}
+		case len(request.SystemInstructions.Parts) == 0:
+			request.SystemInstructions.Parts = []dto.GeminiPart{prefix}
+		case info.ChannelSetting.SystemPromptOverride:
+			common.SetContextKey(c, constant.ContextKeySystemPromptOverride, true)
+			for i, part := range request.SystemInstructions.Parts {
+				if part.Text != "" {
+					request.SystemInstructions.Parts[i].Text = prompt + "\n" + part.Text
+					return
+				}
+			}
+			request.SystemInstructions.Parts = append([]dto.GeminiPart{prefix}, request.SystemInstructions.Parts...)
+		}
+	}
+	if request.SystemInstructions != nil {
+		for _, part := range request.SystemInstructions.Parts {
+			if part.Text != "" {
+				return
+			}
+		}
+		request.SystemInstructions = nil
+	}
 }
 
 func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
