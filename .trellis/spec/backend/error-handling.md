@@ -452,6 +452,90 @@ Wrong: route every operation through strict Redis waiting, making an unset cap
 a new availability dependency. Correct: use `Acquire` normally and reserve
 explicit `Wait` for recognized upstream concurrency recovery.
 
+## Channel management HTTP lifetime
+
+### 1. Scope / Trigger
+
+Administrative discovery, balance, price, inference and Ollama calls keep their
+specialized protocol paths. Share channel transport, admission and cleanup
+without generation conversion or generation first-byte timers.
+
+### 2. Signatures
+
+`service.DoChannelManagementRequest(service.ChannelManagementCall)` returns an
+`*http.Response` whose body owns the acquired lease. The call contains Request,
+Settings, ChannelID, Admission, Timeout, NoRedirect and optional
+`Reload func() (*http.Request, dto.ChannelSettings, error)`.
+
+```go
+owner := service.NewChannelDiagnosticAdmission(ctx, 0)
+defer owner.Close()
+resp, err := service.DoChannelManagementRequest(service.ChannelManagementCall{
+    Request: request, ChannelID: channel.Id, Settings: channel.GetSetting(),
+    Admission: owner, Reload: reloadCurrentRequest,
+})
+if err != nil {
+    return err
+}
+defer resp.Body.Close() // Includes non-2xx and failed/partial body reads.
+```
+
+### 3. Contracts
+
+The caller builds the specialized URL, method, fresh body and final static
+headers. Never forward browser client headers. Reload runs after each grant,
+validates the same saved channel/key, and returns current transport settings. A
+changed effective concurrency cap releases and reacquires with the same owner,
+bounded to three grants. Reload does not acquire a nested lease. Callers already
+holding an outer lease pass nil Admission and perform their own revalidation.
+
+The original request context and optional total Timeout survive replacement
+requests. A bounded management context supersedes the cached client's total
+timeout without changing its shared transport or connection/header timeouts.
+Static Host is mapped to Request.Host on a clone. Credentials and arbitrary
+static overrides never follow a cross-origin redirect; NoRedirect forbids all
+redirects. Proxy and transport errors do not expose credential-bearing URLs.
+
+The caller closes every response body. Reading EOF alone does not release the
+lease. Closing the body releases once, even after cancellation or read failure.
+Complete successful HTTP reads may confirm a queue probe is available. The
+helper does not classify provider errors or retry requests; callers own safe,
+bounded retries with the same admission owner.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Missing/invalid request URL or embedded URL credentials | Reject before send |
+| Reload rejects changed channel/key | Release grant; no stale dispatch |
+| Cap changes after grant | Release and reacquire current cap |
+| Cap changes repeatedly | Bounded error; no leaked capacity |
+| Caller cancellation or send deadline | Cancel request and release lease |
+| Response headers or failed body read | Keep lease until explicit body close |
+| Cross-origin redirect with channel headers/policy | Return 3xx without forwarding secrets |
+| Long operation with its own deadline | Keep that deadline; cached client unchanged |
+
+### 5. Good / Base / Bad Cases
+
+Good: a queued management call sends the reloaded key and Host, then holds its
+slot while its body is processed. Base: an unsaved preview remains uncounted.
+Bad: releasing at response headers, nesting admission or mutating the cached
+client timeout to accommodate one long Ollama pull.
+
+### 6. Tests Required
+
+Extend `service/http_client_transport_test.go` for cap reduction/regrant, current
+URL/key/Host, body lifetime, cancellation, idempotent Close and send-deadline
+cleanup. Use the synthetic clock to prove a management deadline can exceed the
+cached client timeout while that client remains unchanged. Run the existing
+ChannelManagement race selector and full backend suite in cloud CI.
+
+### 7. Wrong vs Correct
+
+Wrong: return an upstream response after deferring its lease release in the
+dispatch function. Correct: attach cleanup to the returned body and require the
+consumer to close it after processing, including every error branch.
+
 ## Error Types
 
 <!-- Custom error classes/types -->

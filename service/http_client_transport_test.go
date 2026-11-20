@@ -55,6 +55,154 @@ func (b *firstByteTestBody) Close() error {
 	return nil
 }
 
+func TestChannelManagementRequestReacquiresCapacityAndKeepsItUntilBodyClose(t *testing.T) {
+	coordinator := setupChannelWaitLocal(t)
+	previousClient := httpClient
+	t.Cleanup(func() { httpClient = previousClient })
+
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		const channelID = 82701
+		limited := dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)}
+		existing, apiErr := AcquireChannelCapacity(ctx, channelID, limited)
+		require.Nil(t, apiErr)
+		defer existing.Release()
+		admission := NewChannelDiagnosticAdmission(ctx, 0)
+		defer admission.Close()
+
+		var outbound *http.Request
+		var upstreamBody *firstByteTestBody
+		cached := &http.Client{Timeout: time.Second, Transport: firstByteTestTransport(func(r *http.Request) (*http.Response, error) {
+			outbound = r
+			upstreamBody = &firstByteTestBody{read: func([]byte) (int, error) {
+				<-r.Context().Done()
+				return 0, r.Context().Err()
+			}}
+			return &http.Response{StatusCode: http.StatusOK, Body: upstreamBody}, nil
+		})}
+		httpClient = cached
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://before.example/metrics", nil)
+		require.NoError(t, err)
+		request.Header.Set("Authorization", "Bearer previous-key")
+
+		var resp *http.Response
+		var callErr error
+		go func() {
+			resp, callErr = DoChannelManagementRequest(ChannelManagementCall{
+				Request: request, Admission: admission, ChannelID: channelID, Timeout: time.Minute,
+				Reload: func() (*http.Request, dto.ChannelSettings, error) {
+					fresh, err := http.NewRequest(http.MethodGet, "https://after.example/metrics", nil)
+					if err == nil {
+						fresh.Header.Set("Authorization", "Bearer current-key")
+						fresh.Header.Set("Host", "inference.internal")
+					}
+					return fresh, limited, err
+				},
+			})
+		}()
+		synctest.Wait()
+		require.Nil(t, outbound, "a lowered cap must be acquired again before sending")
+		assert.Equal(t, 1, *ReadChannelConcurrency(ctx, []int{channelID})[channelID].Current)
+		existing.Release()
+		dispatchChannelWaitTest(coordinator)
+		synctest.Wait()
+		require.NoError(t, callErr)
+		require.NotNil(t, resp)
+		defer resp.Body.Close()
+		assert.Equal(t, "after.example", outbound.URL.Host)
+		assert.Equal(t, "Bearer current-key", outbound.Header.Get("Authorization"))
+		assert.Equal(t, "inference.internal", outbound.Host)
+		assert.Equal(t, 1, *ReadChannelConcurrency(ctx, []int{channelID})[channelID].Current, "headers must not release the slot")
+
+		// The virtual clock advances beyond the cached relay client's timeout.
+		<-time.After(2 * time.Second)
+		require.NoError(t, outbound.Context().Err(), "the management deadline controls the response lifetime")
+		assert.Equal(t, time.Second, cached.Timeout, "management must not mutate the cached client")
+		cancel()
+		_, err = io.ReadAll(resp.Body)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Equal(t, 1, *ReadChannelConcurrency(ctx, []int{channelID})[channelID].Current, "the caller still owns body cleanup")
+		require.NoError(t, resp.Body.Close())
+		require.NoError(t, resp.Body.Close())
+		assert.True(t, upstreamBody.closed)
+		assert.Zero(t, *ReadChannelConcurrency(ctx, []int{channelID})[channelID].Current)
+	})
+}
+
+func TestChannelManagementRequestRedirectsPreserveHostAndOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		location string
+		status   int
+		calls    int
+	}{
+		{name: "same_origin_absolute", location: "https://upstream.example/next", status: http.StatusOK, calls: 2},
+		{name: "cross_origin", location: "https://other.example/next", status: http.StatusFound, calls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousClient := httpClient
+			t.Cleanup(func() { httpClient = previousClient })
+			var requests []*http.Request
+			httpClient = &http.Client{Transport: firstByteTestTransport(func(r *http.Request) (*http.Response, error) {
+				requests = append(requests, r)
+				status := http.StatusOK
+				headers := make(http.Header)
+				if len(requests) == 1 {
+					status = http.StatusFound
+					headers.Set("Location", tc.location)
+				}
+				return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+			})}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://upstream.example/start", nil)
+			require.NoError(t, err)
+			req.Header.Set("Host", "virtual.internal")
+			req.Header.Set("Authorization", "Bearer channel-key")
+			req.Header.Set("X-Channel-Secret", "static-secret")
+			resp, err := DoChannelManagementRequest(ChannelManagementCall{Request: req, Timeout: time.Minute})
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, tc.status, resp.StatusCode)
+			require.Len(t, requests, tc.calls)
+			for _, sent := range requests {
+				assert.Equal(t, "upstream.example", sent.URL.Host, "channel credentials must stay on the saved origin")
+				assert.Equal(t, "virtual.internal", sent.Host)
+				assert.Equal(t, "Bearer channel-key", sent.Header.Get("Authorization"))
+				assert.Equal(t, "static-secret", sent.Header.Get("X-Channel-Secret"))
+			}
+			assert.Equal(t, "virtual.internal", req.Header.Get("Host"), "the original request stays unchanged")
+		})
+	}
+}
+
+func TestChannelManagementRequestDeadlineCleansUpOnSendFailure(t *testing.T) {
+	previousRedis, previousClient := common.RedisEnabled, httpClient
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled, httpClient = previousRedis, previousClient })
+
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+		const channelID = 82702
+		admission := NewChannelDiagnosticAdmission(ctx, 0)
+		defer admission.Close()
+		var attempted bool
+		httpClient = &http.Client{Transport: firstByteTestTransport(func(r *http.Request) (*http.Response, error) {
+			attempted = true
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://upstream.example/metrics", nil)
+		require.NoError(t, err)
+		resp, err := DoChannelManagementRequest(ChannelManagementCall{
+			Request: request, Admission: admission, ChannelID: channelID, Timeout: time.Second,
+		})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.True(t, attempted)
+		assert.Nil(t, resp)
+		assert.Zero(t, *ReadChannelConcurrency(ctx, []int{channelID})[channelID].Current)
+	})
+}
+
 func TestUpstreamFirstByteTimeoutCancelsAndClosesAttempt(t *testing.T) {
 	for _, headers := range []bool{false, true} {
 		t.Run(fmt.Sprintf("headers=%t", headers), func(t *testing.T) {
