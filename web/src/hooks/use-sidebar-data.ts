@@ -99,6 +99,17 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: Key,
           },
           {
+            title: t('Service status'),
+            icon: Activity,
+            items: [
+              {
+                title: t('Official status'),
+                url: '/service-status',
+                icon: Activity,
+              },
+            ],
+          },
+          {
             title: t('Logs'),
             icon: FileText,
             items: [
