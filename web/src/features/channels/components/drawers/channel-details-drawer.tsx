@@ -48,6 +48,7 @@ import {
 import type { Channel } from '../../types'
 import { ChannelConcurrencySummary } from './channel-concurrency-summary'
 import { ChannelGroupModels } from './channel-group-models'
+import { ChannelModelAvailability } from './channel-model-availability'
 import { ChannelUsageSummary } from './channel-usage-summary'
 
 export interface ChannelDetailsDrawerProps {
@@ -161,6 +162,12 @@ export function ChannelDetailsDrawer(props: ChannelDetailsDrawerProps) {
             <div className='space-y-6'>
               <ChannelConcurrencySummary channelId={props.channel.id} />
               <ChannelGroupModels channel={props.channel} />
+              {props.open ? (
+                <ChannelModelAvailability
+                  key={props.channel.id}
+                  channel={props.channel}
+                />
+              ) : null}
               {body}
             </div>
           ) : (

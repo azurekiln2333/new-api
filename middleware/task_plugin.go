@@ -558,7 +558,7 @@ func RouteTaskPluginEndpoint() gin.HandlerFunc {
 		}
 		filter.Kind = dto.FilterTaskPluginIdentity
 		filter.TaskPluginKey = endpoint.Plugin.Meta.Key
-		if pluginChannel, _ := model.ChannelSatisfiesFilters(channel, request.Model, []dto.ChannelFilter{filter}); !pluginChannel {
+		if pluginChannel, _ := model.ChannelSatisfiesFilters(channel, request.Model, []dto.ChannelFilter{filter}, c.GetInt("id")); !pluginChannel {
 			constraints.Filters[filterIndex].TaskPluginRelayOnly = true
 			c.Set(pluginruntime.ContextKeyRelayEndpoint, endpoint)
 			c.Set(contextKeyTaskPluginEndpointModel, *request)

@@ -632,7 +632,7 @@ func channelWaitEligible(c *gin.Context, info *relaycommon.RelayInfo, channel *m
 	if !slices.Contains(models, info.OriginModelName) && !slices.Contains(models, ratio_setting.RoutingMatchModelName(info.OriginModelName)) {
 		return false
 	}
-	allowed, _ := model.ChannelSatisfiesFilters(channel, info.OriginModelName, constraints.Filters)
+	allowed, _ := model.ChannelSatisfiesFilters(channel, info.OriginModelName, constraints.Filters, c.GetInt("id"))
 	return allowed
 }
 

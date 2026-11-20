@@ -149,6 +149,12 @@ jobs:
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestExecuteTaskSubmission|TestImmediateTaskSettlementDatabase'
           done
 
+      - name: Verify model availability observations on SQLite, MySQL and PostgreSQL
+        run: |
+          for DIALECT in sqlite mysql postgres; do
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestChannelModelUnavailability$'
+          done
+
       - name: Verify channel configuration and key binding on MySQL and PostgreSQL
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
@@ -214,6 +220,11 @@ jobs:
           src/features/channels/components/channel-usage-context.tsx
           src/features/channels/components/__tests__/channel-details-entry.test.tsx
           src/features/channels/hooks/__tests__/use-channel-usage.test.tsx
+          src/features/channels/api.ts
+          src/features/channels/types.ts
+          src/features/channels/components/drawers/channel-details-drawer.tsx
+          src/features/channels/components/drawers/channel-model-availability.tsx
+          src/features/channels/components/drawers/__tests__/channel-details-drawer.test.tsx
           src/features/playground/api.ts
           src/features/playground/hooks/use-playground-options.ts
           src/features/playground/hooks/use-playground-state.ts

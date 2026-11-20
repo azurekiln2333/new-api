@@ -76,6 +76,9 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPut, path: "/", permission: authz.ChannelWrite, handler: controller.UpdateChannel},
 	{method: http.MethodPost, path: "/status/batch", permission: authz.ChannelOperate, handler: controller.BatchUpdateChannelStatus},
 	{method: http.MethodPost, path: "/:id/status", permission: authz.ChannelOperate, handler: controller.UpdateChannelStatus},
+	// Clearing a remembered upstream model refusal restores routing only; no
+	// key, model or status changes, so the operate permission is enough.
+	{method: http.MethodPost, path: "/:id/model_unavailable/restore", permission: authz.ChannelOperate, handler: controller.RestoreChannelModelUnavailability},
 	{method: http.MethodDelete, path: "/disabled", permission: authz.ChannelSensitiveWrite, handler: controller.DeleteDisabledChannel},
 	{method: http.MethodPost, path: "/tag/disabled", permission: authz.ChannelOperate, handler: controller.DisableTagChannels},
 	{method: http.MethodPost, path: "/tag/enabled", permission: authz.ChannelOperate, handler: controller.EnableTagChannels},

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -200,5 +201,44 @@ func TestChannelFieldsAreClassified(t *testing.T) {
 	for _, name := range collect(reflect.TypeFor[PatchChannel]()) {
 		assert.Truef(t, classified(name),
 			"channel field %q is not classified; add it to channelSensitiveFields, channelNonSensitiveFields, channelOperationalFields, or channelReadOnlyFields in channel_authz.go", name)
+	}
+}
+
+func TestRestoreChannelModelAvailability(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	channel := model.Channel{Type: 1, Name: "model-restore", Key: "private-key", Status: common.ChannelStatusEnabled, Models: "model-a,model-b", Group: "default"}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	for _, name := range []string{"model-a", "model-b"} {
+		written, err := model.RecordChannelModelUnavailability(channel.Id, name, channel.Key, "", name, http.StatusNotFound, model.ChannelModelUnavailableEvidenceCode)
+		require.NoError(t, err)
+		require.True(t, written)
+	}
+	for _, body := range []string{`{"model":"model-a"}`, `{}`} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/channel/%d/model_unavailable/restore", channel.Id), strings.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprint(channel.Id)}}
+		ctx.Set("id", rootID)
+		ctx.Set("role", common.RoleRootUser)
+		RestoreChannelModelUnavailability(ctx)
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		var response struct {
+			Success bool `json:"success"`
+			Data    bool `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.True(t, response.Success)
+		assert.True(t, response.Data)
+		stored, err := model.GetChannelById(channel.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, "model-a,model-b", stored.Models)
+		if body != `{}` {
+			require.Len(t, stored.ChannelInfo.ModelUnavailable, 1)
+			assert.Equal(t, "model-b", stored.ChannelInfo.ModelUnavailable[0].UpstreamModel)
+		} else {
+			assert.Empty(t, stored.ChannelInfo.ModelUnavailable)
+		}
 	}
 }

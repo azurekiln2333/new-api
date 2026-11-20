@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -183,6 +184,122 @@ func upstreamFieldText(value any) string {
 		return text
 	}
 	return fmt.Sprint(value)
+}
+
+// UpstreamModelUnavailableEvidence names how a definite "this model is missing"
+// refusal was recognized. It is a fixed code, never upstream text.
+type UpstreamModelUnavailableEvidence string
+
+const (
+	UpstreamModelUnavailableNone    UpstreamModelUnavailableEvidence = ""
+	UpstreamModelUnavailableByCode  UpstreamModelUnavailableEvidence = "error_code"
+	UpstreamModelUnavailableMessage UpstreamModelUnavailableEvidence = "error_message"
+
+	// The one anchored upstream sentence that names a missing model for the
+	// whole gateway. It is matched only with the attempted model and only for
+	// 404/410, so ordinary prose or model output can never qualify.
+	upstreamModelUnavailableTemplate = `model %q is not supported by any configured account in this group`
+)
+
+// structuredModelMissingCodes are the upstream codes that mean the model does
+// not exist for this credential. A generic model_not_supported is deliberately
+// absent: it also describes a protocol or endpoint mismatch, so it must not
+// persist channel state.
+var structuredModelMissingCodes = map[string]struct{}{
+	"model_not_found":      {},
+	"model_not_available":  {},
+	"models_not_found":     {},
+	"model_does_not_exist": {},
+}
+
+// upstreamErrorEnvelope returns the structured fields of an actual upstream
+// error envelope. ok is false for local errors that only carry a message.
+func upstreamErrorEnvelope(err *types.NewAPIError) (code, errorType, message string, ok bool) {
+	if err == nil {
+		return "", "", "", false
+	}
+	switch relayError := err.RelayError.(type) {
+	case types.OpenAIError:
+		return upstreamFieldText(relayError.Code), relayError.Type, relayError.Message, true
+	case *types.OpenAIError:
+		if relayError != nil {
+			return upstreamFieldText(relayError.Code), relayError.Type, relayError.Message, true
+		}
+	case types.ClaudeError:
+		return "", relayError.Type, relayError.Message, true
+	case *types.ClaudeError:
+		if relayError != nil {
+			return "", relayError.Type, relayError.Message, true
+		}
+	}
+	return "", "", "", false
+}
+
+// ClassifyUpstreamModelUnavailable reports a definite upstream refusal that
+// names the attempted model as unavailable. Only a real upstream envelope with
+// HTTP 404/410 qualifies: an endpoint, path, parameter or protocol refusal, an
+// authentication or capacity failure, and any local error keep ordinary retry
+// behavior and never persist channel state. attemptedModel is the model the
+// attempt actually sent upstream; the anchored sentence must name exactly it.
+func ClassifyUpstreamModelUnavailable(err *types.NewAPIError, attemptedModel string) UpstreamModelUnavailableEvidence {
+	if err == nil || RelayErrorSource(err) != "upstream" {
+		return UpstreamModelUnavailableNone
+	}
+	if err.StatusCode != http.StatusNotFound && err.StatusCode != http.StatusGone {
+		return UpstreamModelUnavailableNone
+	}
+	code, errorType, message, ok := upstreamErrorEnvelope(err)
+	if !ok {
+		return UpstreamModelUnavailableNone
+	}
+	// Conflicting auth/quota/capacity codes are not model capability evidence.
+	if ClassifyUpstreamRejectionCode(code, errorType) != UpstreamRejectionNone {
+		return UpstreamModelUnavailableNone
+	}
+	for _, field := range []string{code, errorType} {
+		normalized := strings.ToLower(strings.TrimSpace(field))
+		if _, known := structuredModelMissingCodes[normalized]; known {
+			continue
+		}
+		switch normalized {
+		case "", "invalid_request_error", "not_found_error", "not_found", "unknown_error", "server_error", "upstream_error", "api_error", "error", "404":
+		default:
+			return UpstreamModelUnavailableNone
+		}
+	}
+	normalizedMessage := strings.ToLower(strings.TrimSpace(message))
+	for _, conflicting := range []string{"api key", "api_key", "credential", "authentication", "unauthorized", "permission", "quota", "rate limit", "concurrency", "overloaded", "capacity", "balance", "billing"} {
+		if strings.Contains(normalizedMessage, conflicting) {
+			return UpstreamModelUnavailableNone
+		}
+	}
+	if mentionsUnsupportedScope(normalizedMessage) {
+		return UpstreamModelUnavailableNone
+	}
+	for _, field := range []string{code, errorType} {
+		if _, matched := structuredModelMissingCodes[strings.ToLower(strings.TrimSpace(field))]; matched {
+			return UpstreamModelUnavailableByCode
+		}
+	}
+	if attemptedModel == "" {
+		return UpstreamModelUnavailableNone
+	}
+	normalizedMessage = strings.TrimSuffix(normalizedMessage, ".")
+	if normalizedMessage == fmt.Sprintf(upstreamModelUnavailableTemplate, strings.ToLower(attemptedModel)) {
+		return UpstreamModelUnavailableMessage
+	}
+	return UpstreamModelUnavailableNone
+}
+
+// mentionsUnsupportedScope reports a refusal about the endpoint, path or
+// parameters of a request rather than a missing model.
+func mentionsUnsupportedScope(message string) bool {
+	for _, token := range []string{"endpoint", "parameter", "path ", "route", "protocol", "operation", "modality", "input type"} {
+		if strings.Contains(message, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // UpstreamRejectionStatusCode maps a rejection to the status the gateway

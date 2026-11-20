@@ -104,6 +104,13 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 		return PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}
 	}
 	if operation_setting.ShouldRetryByStatusCode(code) {
+		// Name a recognized refusal so logs distinguish a missing model from an
+		// ordinary retryable status. The retry outcome still follows the
+		// configured status ranges.
+		recordedModelError, _ := c.Get("relay_model_unavailable_error")
+		if recordedModelError == err || ClassifyUpstreamModelUnavailable(err, "") != UpstreamModelUnavailableNone {
+			return PolicyDecision{Action: "retry", Reason: "upstream_model_unavailable", Source: "upstream"}
+		}
 		// Name a recognized refusal so logs distinguish an upstream
 		// concurrency rejection from a general rate limit or quota exhaustion.
 		// The retry outcome still follows the configured status ranges.
@@ -136,6 +143,43 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 
 	RecordRelayErrorLog(c, channelError.ChannelId, err, relayInfo)
+	RecordUpstreamModelUnavailability(c, channelError, err, relayInfo)
+}
+
+// RecordUpstreamModelUnavailability remembers that the attempted credential of a
+// channel cannot serve the model, so later requests skip that combination. Only
+// a definite upstream 404/410 refusal with a real envelope qualifies, and only
+// before any output was delivered: local errors, endpoint or parameter
+// refusals, ambiguous text and post-output failures never persist state. The
+// stored entry is validated against the current credential and mapping, so a
+// late response cannot mark a replaced key or a changed mapping.
+func RecordUpstreamModelUnavailability(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
+	if relayInfo == nil || relayInfo.ChannelMeta == nil || channelError.ChannelId <= 0 {
+		return
+	}
+	if c != nil && c.Writer != nil && c.Writer.Written() {
+		return
+	}
+	evidence := ClassifyUpstreamModelUnavailable(err, relayInfo.UpstreamModelName)
+	if evidence == UpstreamModelUnavailableNone {
+		return
+	}
+	// Remember only this exact, classified attempt error for its retry reason.
+	// A later error in the same request cannot inherit the classification.
+	if c != nil {
+		c.Set("relay_model_unavailable_error", err)
+	}
+	originModel := relayInfo.OriginModelName
+	attemptMapping := ""
+	if c != nil {
+		if originModel == "" {
+			originModel = c.GetString("original_model")
+		}
+		attemptMapping = c.GetString("model_mapping")
+	}
+	if _, recordErr := model.RecordChannelModelUnavailability(channelError.ChannelId, originModel, channelError.UsingKey, attemptMapping, relayInfo.UpstreamModelName, err.StatusCode, string(evidence)); recordErr != nil {
+		logger.LogError(c, common.LogText("failed to record model unavailability (channel #%d): %v", channelError.ChannelId, recordErr))
+	}
 }
 
 // RecordRelayErrorLog writes the error log of a failed relay request when

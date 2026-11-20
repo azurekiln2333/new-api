@@ -55,7 +55,7 @@ func GetUntriedSatisfiedChannel(group, modelName string, failed []int, filters [
 			}
 			eligible := false
 			for _, channel := range channels {
-				if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters); ok && channel.Status == common.ChannelStatusEnabled {
+				if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters, 0); ok && channel.Status == common.ChannelStatusEnabled {
 					eligible = true
 					if !slices.Contains(failed, channel.Id) {
 						candidates = append(candidates, channel)
@@ -87,9 +87,14 @@ func GetUntriedSatisfiedChannel(group, modelName string, failed []int, filters [
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.
 // On false, it returns the first violated filter in filterEvalOrder for error
-// attribution.
-func ChannelSatisfiesFilters(ch *Channel, modelName string, filters []dto.ChannelFilter) (bool, dto.ChannelFilterKind) {
+// attribution. A channel recorded as unable to serve the model upstream for
+// every serving credential does not satisfy the request either: pinned,
+// affinity and queued candidates all re-check it here.
+func ChannelSatisfiesFilters(ch *Channel, modelName string, filters []dto.ChannelFilter, userIDs ...int) (bool, dto.ChannelFilterKind) {
 	if ch == nil {
+		return false, ""
+	}
+	if ch.ModelUnavailableForServingKeys(modelName, userIDs...) {
 		return false, ""
 	}
 	for _, kind := range filterEvalOrder {
@@ -131,7 +136,20 @@ func filterCandidateIDs(ids []int, modelName string, filters []dto.ChannelFilter
 		}
 		kept = next
 	}
-	return kept, ""
+	// A channel whose every serving credential is recorded as unable to serve
+	// the model upstream is not a candidate, so retries reach another channel.
+	// The input slice belongs to the channel cache and is never mutated.
+	filtered := make([]int, 0, len(kept))
+	for _, id := range kept {
+		if channel := channelsIDM[id]; channel != nil && channel.ModelUnavailableForServingKeys(modelName, 0) {
+			continue
+		}
+		filtered = append(filtered, id)
+	}
+	if len(filtered) == len(kept) {
+		return kept, ""
+	}
+	return filtered, ""
 }
 
 func filtersByKind(filters []dto.ChannelFilter, kind dto.ChannelFilterKind) []dto.ChannelFilter {

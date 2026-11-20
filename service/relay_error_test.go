@@ -485,3 +485,49 @@ func TestUpstreamConcurrencyKeepsRetryStopBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyUpstreamModelUnavailable(t *testing.T) {
+	envelope := func(status int, message, code string) *types.NewAPIError {
+		return types.WithOpenAIError(types.OpenAIError{Message: message, Type: "invalid_request_error", Code: code}, status)
+	}
+	for _, tc := range []struct {
+		name      string
+		err       *types.NewAPIError
+		attempted string
+		want      UpstreamModelUnavailableEvidence
+	}{
+		{name: "structured model_not_found", err: envelope(http.StatusNotFound, "no such model", "model_not_found"), attempted: "gpt-6-astra", want: UpstreamModelUnavailableByCode},
+		{name: "structured model_not_available", err: envelope(http.StatusGone, "no such model", "model_not_available"), attempted: "gpt-6-astra", want: UpstreamModelUnavailableByCode},
+		{name: "reported gateway sentence", err: envelope(http.StatusNotFound, `Model "gpt-6-astra" is not supported by any configured account in this group`, ""), attempted: "gpt-6-astra", want: UpstreamModelUnavailableMessage},
+		{name: "sentence naming another model", err: envelope(http.StatusNotFound, `Model "gpt-6-astra" is not supported by any configured account in this group`, ""), attempted: "gpt-6-mini", want: UpstreamModelUnavailableNone},
+		{name: "generic model_not_supported", err: envelope(http.StatusNotFound, "this model is not supported", "model_not_supported"), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+		{name: "endpoint refusal carrying a model code", err: envelope(http.StatusNotFound, "model_not_found: endpoint not supported", "model_not_found"), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+		{name: "model code with conflicting auth type", err: types.WithOpenAIError(types.OpenAIError{Code: "model_not_found", Type: "authentication_error"}, http.StatusNotFound), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+		{name: "model code with conflicting quota type", err: types.WithOpenAIError(types.OpenAIError{Code: "model_not_found", Type: "insufficient_quota"}, http.StatusNotFound), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+		{name: "model code with capacity message", err: envelope(http.StatusNotFound, "capacity exhausted for model", "model_not_found"), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+		{name: "ordinary endpoint 404", err: envelope(http.StatusNotFound, "Not Found", ""), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+		{name: "structured code on a non-404 status", err: envelope(http.StatusBadRequest, "no such model", "model_not_found"), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+		{name: "error without an upstream envelope", err: types.NewError(errors.New(`Model "gpt-6-astra" is not supported by any configured account in this group`), types.ErrorCodeBadResponseStatusCode, types.ErrOptionWithStatusCode(http.StatusNotFound)), attempted: "gpt-6-astra", want: UpstreamModelUnavailableNone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ClassifyUpstreamModelUnavailable(tc.err, tc.attempted))
+		})
+	}
+}
+
+func TestDecideRelayRetryNamesMissingModel(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	err := types.WithOpenAIError(types.OpenAIError{Message: "no such model", Code: "model_not_found"}, http.StatusNotFound)
+	assert.Equal(t, PolicyDecision{Action: "retry", Reason: "upstream_model_unavailable", Source: "upstream"}, DecideRelayRetry(c, err, 1))
+}
+
+func TestDecideRelayRetryNamesReportedMissingModel(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	err := types.WithOpenAIError(types.OpenAIError{Message: `Model "gpt-6-astra" is not supported by any configured account in this group`}, http.StatusNotFound)
+	// No selected credential means no persistence; classification still names
+	// the actual failure and must not leak onto a later endpoint error.
+	RecordUpstreamModelUnavailability(c, types.ChannelError{ChannelId: 1}, err, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-6-astra"}})
+	assert.Equal(t, PolicyDecision{Action: "retry", Reason: "upstream_model_unavailable", Source: "upstream"}, DecideRelayRetry(c, err, 1))
+	later := types.WithOpenAIError(types.OpenAIError{Message: "Not found"}, http.StatusNotFound)
+	assert.Equal(t, "retry_status_matched", DecideRelayRetry(c, later, 1).Reason)
+}

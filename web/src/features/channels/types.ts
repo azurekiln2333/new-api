@@ -22,7 +22,20 @@ import { z } from 'zod'
 // Channel Schema & Types
 // ============================================================================
 
+const channelModelUnavailabilitySchema = z.object({
+  upstream_model: z.string(),
+  key_fingerprint: z.string(),
+  status_code: z.number(),
+  evidence: z.enum(['error_code', 'error_message']),
+  observed_at: z.number(),
+})
+
+export type ChannelModelUnavailability = z.infer<
+  typeof channelModelUnavailabilitySchema
+>
+
 export const channelInfoSchema = z.object({
+  model_unavailable: z.array(channelModelUnavailabilitySchema).optional(),
   is_multi_key: z.boolean().default(false),
   multi_key_size: z.number().default(0),
   multi_key_status_list: z.record(z.string(), z.number()).optional(),

@@ -311,6 +311,76 @@ Wrong: dequeue every waiter when one slot releases, then let ordinary admission
 race. Correct: reserve capacity atomically for the eligible queue owner and
 return the owned lease for final live-policy validation.
 
+## Remembered upstream model unavailability
+
+### 1. Scope / Trigger
+
+A real upstream 404/410 can establish that the attempted model is unavailable
+for one channel credential. Preserve configured model names and other usable
+credentials. Never infer this from prompt/output text, a generic path 404,
+authentication failure, quota refusal or concurrency rejection.
+
+### 2. Signatures
+
+`ClassifyUpstreamModelUnavailable(err, attemptedModel)` returns fixed evidence
+`error_code`, `error_message` or none. `RecordChannelModelUnavailability` checks
+the current channel, credential and mapping under the existing channel lock.
+`RestoreChannelModelUnavailability(channelID, model, keyFingerprint)` removes
+matching observations. `POST /api/channel/:id/model_unavailable/restore`
+requires `ChannelOperate`; optional `model` and `key_fingerprint` narrow the
+selection, and the response's boolean `data` reports whether anything changed.
+
+### 3. Contracts
+
+Store observations in the existing `channel_info.model_unavailable` array:
+`upstream_model`, `key_fingerprint`, `key_index`, `status_code`, `evidence`,
+`observed_at`. Keep at most 64 observations and bound model names to 128
+characters. The fingerprint is a truncated SHA-256 identity, never a credential.
+Do not store raw upstream text. An index is historical, so UI must not present
+it as the credential's current position after reordering.
+
+Publish the committed marker slice without overwriting newer key status,
+scopes or the polling cursor; use existing channel sync for other instances.
+Ordinary configuration and cursor updates must preserve runtime observations.
+Routing checks use the currently resolved upstream model and keys available to
+the requesting user: another user's unmarked bound key cannot keep a public
+candidate eligible. Apply the rule to memory/SQL selection, pins, affinity,
+plugins, WebSocket turns and queue grant revalidation.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Definite model-not-found code on actual upstream 404/410 | Record attempted model/credential; ordinary retry boundaries apply |
+| Anchored reported sentence naming the actual attempted model | Same behavior, fixed message evidence |
+| Generic unsupported endpoint, auth, quota or capacity error | No persistent capability change |
+| Mapping/key changed since attempt | Discard obsolete observation |
+| Other eligible credential or channel exists | Preserve its eligibility |
+| Explicit administrator restore | Clear selected observations, refresh cache and audit without secrets |
+
+### 5. Good / Base / Bad Cases
+
+Good: A reports its attempted model is absent, B answers, and future requests
+skip only A's marked credential/model. Base: an unrelated model remains usable.
+Bad: disable the entire channel, delete configured models, or keep A eligible
+using a credential owned by a different user.
+
+### 6. Tests Required
+
+Run `TestChannelModelUnavailability` with `TEST_TASK_DB_DIALECT` set separately
+to sqlite, mysql and postgres; configure the corresponding real engine DSNs.
+Cover persistence, memory cache, alias/mapping changes, key reorder/replacement,
+user binding, stale configuration updates and restore. Existing service tests
+cover classifier false positives; controller/UI suites cover permissions and
+the restore action. Cloud verification is mandatory before compatibility claims.
+
+### 7. Wrong versus Correct
+
+Wrong: replace all cached `ChannelInfo` from a stale failed attempt. Correct:
+validate current state inside the update lock and publish only the current
+committed observation slice. Recovery removes observations; it does not enable
+disabled channels or keys.
+
 ## Error Types
 
 <!-- Custom error classes/types -->

@@ -729,7 +729,7 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	// Validate this turn against the same channel snapshot used for connection
 	// restoration. Lookup failure must never skip policy evaluation and then
 	// succeed on a second lookup. A locked socket needs a reconnect to reroute.
-	if ok, kind := appmodel.ChannelSatisfiesFilters(channel, model, service.GetChannelConstraints(c).Filters); !ok {
+	if ok, kind := appmodel.ChannelSatisfiesFilters(channel, model, service.GetChannelConstraints(c).Filters, c.GetInt("id")); !ok {
 		return newResponsesWSInvalidRequestError(fmt.Errorf("channel %d does not accept this request (%s); reconnect to route it to another channel", s.lockedChannelID, kind))
 	}
 	keyEnabled := channel.Key == s.lockedKey

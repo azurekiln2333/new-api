@@ -98,6 +98,9 @@ func GetUserBoundChannel(userId int, modelName string) *Channel {
 		if !slices.Contains(channel.UserBoundModels(userId), modelName) {
 			continue
 		}
+		if channel.ModelUnavailableForServingKeys(modelName, userId) {
+			continue
+		}
 		candidates = append(candidates, channel)
 	}
 	if len(candidates) == 0 {
@@ -394,6 +397,29 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 		return nil, fmt.Errorf("channel #%d no longer exists", id)
 	}
 	return &c.ChannelInfo, nil
+}
+
+// CacheRefreshChannelModelUnavailability reloads only observations, never a
+// stale key/status/scope snapshot. Serializing with full reloads prevents an
+// earlier reload from publishing over this committed observation or restore.
+func CacheRefreshChannelModelUnavailability(id int) error {
+	if !common.MemoryCacheEnabled {
+		return nil
+	}
+	channelCacheReloadLock.Lock()
+	defer channelCacheReloadLock.Unlock()
+	var stored Channel
+	if err := DB.Select("channel_info").First(&stored, "id = ?", id).Error; err != nil {
+		return err
+	}
+	channelSyncLock.Lock()
+	defer channelSyncLock.Unlock()
+	if cached, ok := channelsIDM[id]; ok {
+		updated := *cached
+		updated.ChannelInfo.ModelUnavailable = stored.ChannelInfo.ModelUnavailable
+		channelsIDM[id] = &updated
+	}
+	return nil
 }
 
 func CacheUpdateChannelStatus(id int, status int) {

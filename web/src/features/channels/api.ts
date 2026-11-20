@@ -66,6 +66,18 @@ const channelActionConfig = (
   skipErrorHandler: true,
 })
 
+/** Clear remembered model refusals; the next eligible request probes again. */
+export async function restoreChannelModelAvailability(
+  id: number
+): Promise<boolean> {
+  const response = await api.post<{ success: boolean; data: boolean }>(
+    `/api/channel/${id}/model_unavailable/restore`,
+    {},
+    channelActionConfig()
+  )
+  return requireServerSuccess(response.data).data
+}
+
 export async function getChannelPriorityOrder(): Promise<PriorityOrder> {
   const response = await api.get<{ success: boolean; data: PriorityOrder }>(
     '/api/channel/priority/order',

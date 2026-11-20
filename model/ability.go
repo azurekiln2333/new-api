@@ -207,7 +207,7 @@ func filterAbilitiesByConstraints(abilities []Ability, modelName string, filters
 	filtered := make([]Ability, 0, len(abilities))
 	for _, ability := range abilities {
 		channel := channelsByID[ability.ChannelId]
-		if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters); ok {
+		if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters, 0); ok {
 			filtered = append(filtered, ability)
 		}
 	}

@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
@@ -25,6 +31,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { formatNumber, formatTimestampToDate, formatTokens } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type {
   Channel,
@@ -114,8 +122,13 @@ const usageWithModels = detail({
   ],
 })
 
-function mockDetailApi(payload: ChannelUsageDetail) {
+function mockDetailApi(
+  payload: ChannelUsageDetail,
+  currentChannel: () => Channel = () => channel
+) {
   return vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/channel/7')
+      return { data: { success: true, data: currentChannel() } }
     if (url === '/api/channel/7/usage') {
       return { data: { success: true, data: payload } }
     }
@@ -166,6 +179,7 @@ afterEach(() => {
   cleanup()
   client.clear()
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.setUser(null)
 })
 
 describe('ChannelDetailsDrawer', () => {
@@ -288,7 +302,9 @@ describe('ChannelDetailsDrawer', () => {
       concurrency: { entriesById: {}, isPending: false, stale: false },
     })
 
-    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    const concurrency = await screen.findByRole('region', {
+      name: 'Concurrency',
+    })
     expect(within(concurrency).getByText('Unavailable')).toBeVisible()
     expect(within(concurrency).queryByText('…')).not.toBeInTheDocument()
   })
@@ -312,7 +328,9 @@ describe('ChannelDetailsDrawer', () => {
       },
     })
 
-    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    const concurrency = await screen.findByRole('region', {
+      name: 'Concurrency',
+    })
     const current = concurrency.querySelector('[data-concurrency-current]')
     expect(current?.textContent).toContain('3')
     expect(within(concurrency).getByText('8')).toBeVisible()
@@ -343,7 +361,9 @@ describe('ChannelDetailsDrawer', () => {
       },
     })
 
-    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    const concurrency = await screen.findByRole('region', {
+      name: 'Concurrency',
+    })
     expect(
       concurrency.querySelector('[data-concurrency-current]')?.textContent
     ).toContain('4')
@@ -370,10 +390,14 @@ describe('ChannelDetailsDrawer', () => {
       },
     })
 
-    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    const concurrency = await screen.findByRole('region', {
+      name: 'Concurrency',
+    })
     expect(within(concurrency).getByText('Unavailable')).toBeVisible()
     expect(
-      within(concurrency).getByText('Last known sample; the latest refresh failed')
+      within(concurrency).getByText(
+        'Last known sample; the latest refresh failed'
+      )
     ).toBeVisible()
     expect(within(concurrency).queryByText('0 / 8')).not.toBeInTheDocument()
   })
@@ -433,7 +457,9 @@ describe('ChannelDetailsDrawer', () => {
         models: 'gpt-4o,gpt-4o-mini',
         // The group may only use the second model, but the channel's public key
         // serves the first one, so this group reaches nothing here.
-        settings: JSON.stringify({ group_models: { default: ['gpt-4o-mini'] } }),
+        settings: JSON.stringify({
+          group_models: { default: ['gpt-4o-mini'] },
+        }),
         channel_info: {
           is_multi_key: true,
           multi_key_size: 2,
@@ -467,4 +493,98 @@ describe('ChannelDetailsDrawer', () => {
     expect(within(groups).getByText('vip')).toBeVisible()
     expect(within(groups).getByText('gpt-4o')).toBeVisible()
   })
+})
+
+const unavailableChannel: Channel = {
+  ...channel,
+  channel_info: {
+    ...channel.channel_info,
+    model_unavailable: [
+      {
+        upstream_model: 'gpt-4o',
+        key_fingerprint: 'a'.repeat(32),
+        status_code: 404,
+        evidence: 'error_code',
+        observed_at: 1_700_000_000,
+      },
+    ],
+  },
+}
+
+it('shows safe model observations without offering restore to a read-only administrator', async () => {
+  mockDetailApi(usageWithModels, () => unavailableChannel)
+  useAuthStore.getState().auth.setUser({
+    id: 8,
+    username: 'reader',
+    role: ROLE.ADMIN,
+    permissions: { admin_permissions: { channel: { read: true } } },
+  })
+  renderDrawer({ channel: unavailableChannel })
+  const section = screen.getByRole('region', { name: 'Unavailable models' })
+  expect(within(section).getByText('gpt-4o')).toBeVisible()
+  expect(
+    within(section).getByText(/Structured upstream model refusal.*404/)
+  ).toBeVisible()
+  expect(section).toHaveTextContent(formatTimestampToDate(1_700_000_000))
+  expect(within(section).queryByRole('button')).not.toBeInTheDocument()
+  expect(section).not.toHaveTextContent('a'.repeat(32))
+})
+
+it('confirms restoration and removes the stored observations after success', async () => {
+  let restored = false
+  mockDetailApi(usageWithModels, () =>
+    restored ? channel : unavailableChannel
+  )
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => {
+    restored = true
+    return { data: { success: true, data: true } }
+  })
+  renderDrawer({ channel: unavailableChannel })
+  const section = screen.getByRole('region', { name: 'Unavailable models' })
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: 'Restore model availability' })
+  )
+  expect(post).not.toHaveBeenCalled()
+  const confirmation = screen.getByRole('alertdialog', {
+    name: 'Restore model availability',
+  })
+  await user.click(
+    within(confirmation).getByRole('button', { name: 'Restore' })
+  )
+  await waitFor(() => expect(section).not.toBeInTheDocument())
+  expect(post).toHaveBeenCalledWith(
+    '/api/channel/7/model_unavailable/restore',
+    {},
+    expect.any(Object)
+  )
+})
+
+it('keeps observations visible when restoration fails', async () => {
+  mockDetailApi(usageWithModels, () => unavailableChannel)
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  vi.spyOn(api, 'post').mockRejectedValue(new Error('restore failed'))
+  renderDrawer({ channel: unavailableChannel })
+  const section = screen.getByRole('region', { name: 'Unavailable models' })
+  const user = userEvent.setup()
+  await user.click(
+    screen.getByRole('button', { name: 'Restore model availability' })
+  )
+  const confirmation = screen.getByRole('alertdialog', {
+    name: 'Restore model availability',
+  })
+  await user.click(
+    within(confirmation).getByRole('button', { name: 'Restore' })
+  )
+  await waitFor(() =>
+    expect(
+      within(confirmation).getByRole('button', { name: 'Restore' })
+    ).toBeEnabled()
+  )
+  expect(section).toHaveTextContent('gpt-4o')
 })

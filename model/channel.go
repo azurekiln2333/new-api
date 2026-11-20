@@ -2,8 +2,10 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,8 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -82,6 +86,22 @@ type ChannelInfo struct {
 	MultiKeyModels map[int][]string `json:"multi_key_models,omitempty"`
 	// 独占某个key的用户，key index -> user id；缺失或0表示公共key
 	MultiKeyUsers map[int]int `json:"multi_key_users,omitempty"`
+	// ModelUnavailable records upstream refusals that named a model as
+	// unavailable to one credential. It never changes Models or key status.
+	ModelUnavailable []ChannelModelUnavailability `json:"model_unavailable,omitempty"`
+}
+
+// ChannelModelUnavailability is one observation that a credential of the
+// channel cannot serve a model upstream. UpstreamModel is the model the
+// channel's mapping sends upstream, KeyFingerprint identifies the credential
+// without storing it, and Reason is a fixed code rather than upstream text.
+type ChannelModelUnavailability struct {
+	UpstreamModel  string `json:"upstream_model"`
+	KeyFingerprint string `json:"key_fingerprint"`
+	KeyIndex       int    `json:"key_index"`
+	StatusCode     int    `json:"status_code"`
+	Evidence       string `json:"evidence"`
+	ObservedAt     int64  `json:"observed_at"`
 }
 
 type ChannelSortOptions struct {
@@ -232,8 +252,16 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 // cannot serve the request only public keys are eligible. userId <= 0 is an
 // administrative caller (channel test), where every key stays eligible.
 func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (string, int, *types.NewAPIError) {
-	// If not in multi-key mode, return the original key string directly.
+	// If not in multi-key mode, return the original key string directly. A
+	// single credential recorded as unable to serve the model is refused here
+	// too, so a pin or queued candidate recheck that skipped selection cannot
+	// forward a known-unavailable combination.
 	if !channel.ChannelInfo.IsMultiKey {
+		if len(channel.ChannelInfo.ModelUnavailable) > 0 {
+			if upstreamModel, ok := channel.RoutingUpstreamModelName(modelName); ok && channel.keyModelUnavailable(0, upstreamModel) {
+				return "", 0, types.NewError(errors.New("no enabled key serves this request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable))
+			}
+		}
 		return channel.Key, 0, nil
 	}
 
@@ -262,6 +290,15 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (stri
 
 	// Collect the enabled keys that may serve this request. Without any key
 	// scope or user binding this is exactly the previous set of enabled keys.
+	// A key recorded as unable to serve the model upstream is skipped, so a
+	// retry uses another key of the same channel instead of repeating the
+	// refusal.
+	upstreamModel := ""
+	if len(channel.ChannelInfo.ModelUnavailable) > 0 {
+		if resolved, ok := channel.RoutingUpstreamModelName(modelName); ok {
+			upstreamModel = resolved
+		}
+	}
 	enabledIdx := make([]int, 0, len(keys))
 	candidates := make([]int, 0, len(keys))
 	boundIdx := make([]int, 0, len(keys))
@@ -271,6 +308,9 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (stri
 		}
 		enabledIdx = append(enabledIdx, i)
 		if !channel.KeyServesModel(i, modelName) {
+			continue
+		}
+		if channel.keyModelUnavailable(i, upstreamModel) {
 			continue
 		}
 		owner := channel.ChannelInfo.MultiKeyUsers[i]
@@ -357,6 +397,267 @@ func (channel *Channel) KeyServesModel(idx int, modelName string) bool {
 	return len(scope) == 0 || slices.Contains(scope, modelName)
 }
 
+// Evidence values of a stored model-unavailability observation. They are fixed
+// codes, never upstream text.
+const (
+	ChannelModelUnavailableEvidenceCode    = "error_code"
+	ChannelModelUnavailableEvidenceMessage = "error_message"
+
+	// A channel keeps the newest observations; older ones are dropped so the
+	// channel_info column stays bounded.
+	channelModelUnavailableLimit          = 64
+	channelModelUnavailableMaxModelLength = 128
+)
+
+// ChannelKeyFingerprint identifies a credential without storing it: a one-way
+// hash prefix that survives key reordering and is never the key itself.
+func ChannelKeyFingerprint(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:16])
+}
+
+// RoutingUpstreamModelName resolves the model a request for modelName is sent
+// upstream as, following the channel's model mapping the same way the relay
+// does (relay/helper.ModelMappedHelper): chained hops, the base name of a
+// reasoning suffix at any hop, and a stop at a self-map. ok is false for an
+// unreadable mapping or a cycle, where no observation applies. The hop walk
+// reuses followChannelModelMapping, so the model package keeps one resolver.
+func (channel *Channel) RoutingUpstreamModelName(modelName string) (string, bool) {
+	if modelName == "" {
+		return "", false
+	}
+	raw := strings.TrimSpace(channel.GetModelMapping())
+	if raw == "" || raw == "{}" {
+		return modelName, true
+	}
+	mapping := make(map[string]string)
+	if err := common.UnmarshalJsonStr(raw, &mapping); err != nil {
+		return "", false
+	}
+	// The relay also resolves a reasoning-suffixed name through its base name
+	// at any hop; pre-filling those entries keeps both resolvers in step.
+	candidates := make([]string, 0, len(mapping)+1)
+	candidates = append(candidates, modelName)
+	for _, target := range mapping {
+		candidates = append(candidates, target)
+	}
+	for _, candidate := range candidates {
+		if mapping[candidate] == "" {
+			mapping[candidate] = mapping[hostreasoning.BaseModelName(candidate)]
+		}
+	}
+	upstream, cycle := followChannelModelMapping(mapping, modelName)
+	if cycle || upstream == "" {
+		return "", false
+	}
+	return upstream, true
+}
+
+// keyEnabled reports whether the key at idx is enabled. A single-key channel
+// carries the channel status instead of a per-key status.
+func (channel *Channel) keyEnabled(idx int) bool {
+	if !channel.ChannelInfo.IsMultiKey {
+		return idx == 0
+	}
+	status, ok := channel.ChannelInfo.MultiKeyStatusList[idx]
+	return !ok || status == common.ChannelStatusEnabled
+}
+
+// keyModelUnavailable reports whether the credential at idx is recorded as
+// unable to serve upstreamModel. The fingerprint, not the stored index,
+// identifies the credential, so reordering keys never inherits an observation.
+func (channel *Channel) keyModelUnavailable(idx int, upstreamModel string) bool {
+	if upstreamModel == "" {
+		return false
+	}
+	keys := channel.GetKeys()
+	if idx < 0 || idx >= len(keys) {
+		return false
+	}
+	fingerprint := ChannelKeyFingerprint(keys[idx])
+	if fingerprint == "" {
+		return false
+	}
+	return slices.ContainsFunc(channel.ChannelInfo.ModelUnavailable, func(entry ChannelModelUnavailability) bool {
+		return entry.UpstreamModel == upstreamModel && entry.KeyFingerprint == fingerprint
+	})
+}
+
+// ModelUnavailableForServingKeys reports whether every enabled key that may
+// serve modelName is recorded as unable to serve the model upstream. Other
+// models, other keys and the configured model list stay untouched.
+// An omitted user ID includes every credential (administrative inspection).
+// Zero selects public credentials; a positive ID also permits that user's keys.
+func (channel *Channel) ModelUnavailableForServingKeys(modelName string, userIDs ...int) bool {
+	if len(channel.ChannelInfo.ModelUnavailable) == 0 || modelName == "" {
+		return false
+	}
+	upstreamModel, ok := channel.RoutingUpstreamModelName(modelName)
+	if !ok || upstreamModel == "" {
+		return false
+	}
+	marked := make(map[string]struct{}, len(channel.ChannelInfo.ModelUnavailable))
+	for _, entry := range channel.ChannelInfo.ModelUnavailable {
+		if entry.UpstreamModel == upstreamModel {
+			marked[entry.KeyFingerprint] = struct{}{}
+		}
+	}
+	if len(marked) == 0 {
+		return false
+	}
+	keys := channel.GetKeys()
+	serving := 0
+	for i := range keys {
+		if !channel.keyEnabled(i) || !channel.KeyServesModel(i, modelName) {
+			continue
+		}
+		if len(userIDs) > 0 && channel.ChannelInfo.IsMultiKey {
+			owner := channel.ChannelInfo.MultiKeyUsers[i]
+			if owner != 0 && owner != userIDs[0] {
+				continue
+			}
+		}
+		serving++
+		if _, ok := marked[ChannelKeyFingerprint(keys[i])]; !ok {
+			return false
+		}
+	}
+	return serving > 0
+}
+
+// channelServesConfiguredModel reports whether the channel still lists the
+// requested model, so an observation of a removed model is not recorded.
+func channelServesConfiguredModel(channel *Channel, modelName string) bool {
+	models := channel.GetModels()
+	if slices.Contains(models, modelName) {
+		return true
+	}
+	normalized := ratio_setting.RoutingMatchModelName(modelName)
+	return normalized != "" && normalized != modelName && slices.Contains(models, normalized)
+}
+
+// RecordChannelModelUnavailability persists that one credential of the channel
+// cannot serve the model a request for originModel reaches upstream. It records
+// nothing when the stored configuration no longer matches the attempt: a
+// replaced or disabled key, a changed mapping, a disabled channel, a model the
+// channel no longer serves, or a mapping that now resolves a different model
+// than the attempt sent. attemptMapping is the raw model mapping the failed
+// attempt used and attemptedUpstreamModel the model that attempt sent. It
+// reports whether it wrote.
+func RecordChannelModelUnavailability(channelID int, originModel, key, attemptMapping, attemptedUpstreamModel string, statusCode int, evidence string) (bool, error) {
+	fingerprint := ChannelKeyFingerprint(key)
+	if channelID <= 0 || originModel == "" || fingerprint == "" {
+		return false, nil
+	}
+	pollingLock := GetChannelPollingLock(channelID)
+	pollingLock.Lock()
+	defer pollingLock.Unlock()
+	written := false
+	_, err := UpdateChannelLocked(channelID, func(channel *Channel) error {
+		written = false
+		if channel.Status != common.ChannelStatusEnabled || channel.GetModelMapping() != attemptMapping {
+			return nil
+		}
+		if !channelServesConfiguredModel(channel, originModel) {
+			return nil
+		}
+		upstreamModel, ok := channel.RoutingUpstreamModelName(originModel)
+		if !ok || upstreamModel == "" || len(upstreamModel) > channelModelUnavailableMaxModelLength {
+			return nil
+		}
+		// A mapping that now resolves another model than the attempt sent would
+		// mark a different alias, so nothing is recorded.
+		if attemptedUpstreamModel != "" && upstreamModel != attemptedUpstreamModel {
+			return nil
+		}
+		keys := channel.GetKeys()
+		index := slices.IndexFunc(keys, func(candidate string) bool {
+			return ChannelKeyFingerprint(candidate) == fingerprint
+		})
+		if index < 0 || !channel.keyEnabled(index) || !channel.KeyServesModel(index, originModel) {
+			return nil
+		}
+		channel.ChannelInfo.ModelUnavailable = appendChannelModelUnavailability(channel.ChannelInfo.ModelUnavailable, ChannelModelUnavailability{
+			UpstreamModel:  upstreamModel,
+			KeyFingerprint: fingerprint,
+			KeyIndex:       index,
+			StatusCode:     statusCode,
+			Evidence:       evidence,
+			ObservedAt:     common.GetTimestamp(),
+		})
+		written = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if written {
+		return true, CacheRefreshChannelModelUnavailability(channelID)
+	}
+	return false, nil
+}
+
+// appendChannelModelUnavailability refreshes the observation of the same
+// credential and model and keeps the stored list bounded.
+func appendChannelModelUnavailability(entries []ChannelModelUnavailability, entry ChannelModelUnavailability) []ChannelModelUnavailability {
+	entries = slices.DeleteFunc(slices.Clone(entries), func(existing ChannelModelUnavailability) bool {
+		return existing.UpstreamModel == entry.UpstreamModel && existing.KeyFingerprint == entry.KeyFingerprint
+	})
+	entries = append(entries, entry)
+	if len(entries) > channelModelUnavailableLimit {
+		entries = entries[len(entries)-channelModelUnavailableLimit:]
+	}
+	return entries
+}
+
+// RestoreChannelModelUnavailability clears stored observations so the next
+// request probes the combination again. An empty upstreamModel clears every
+// model and an empty keyFingerprint clears every credential of the selected
+// models. The fingerprint identifies the credential, so a reordered key list
+// never restores the wrong entry.
+func RestoreChannelModelUnavailability(channelID int, upstreamModel, keyFingerprint string) (bool, error) {
+	if channelID <= 0 {
+		return false, nil
+	}
+	pollingLock := GetChannelPollingLock(channelID)
+	pollingLock.Lock()
+	defer pollingLock.Unlock()
+	written := false
+	_, err := UpdateChannelLocked(channelID, func(channel *Channel) error {
+		written = false
+		entries := channel.ChannelInfo.ModelUnavailable
+		if len(entries) == 0 {
+			return nil
+		}
+		kept := slices.DeleteFunc(slices.Clone(entries), func(entry ChannelModelUnavailability) bool {
+			if upstreamModel != "" && entry.UpstreamModel != upstreamModel {
+				return false
+			}
+			return keyFingerprint == "" || entry.KeyFingerprint == keyFingerprint
+		})
+		if len(kept) == len(entries) {
+			return nil
+		}
+		if len(kept) == 0 {
+			kept = nil
+		}
+		channel.ChannelInfo.ModelUnavailable = kept
+		written = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if written {
+		return true, CacheRefreshChannelModelUnavailability(channelID)
+	}
+	return false, nil
+}
+
 // modelsServedByKeys returns the subset of models that at least one of the
 // given keys may serve. A model with no serving key is dropped, so an all-bound
 // channel contributes nothing to the group it no longer serves.
@@ -414,11 +715,29 @@ func (channel *Channel) UserBoundModels(userId int) []string {
 		}
 		bound = append(bound, i)
 	}
-	return channel.modelsServedByKeys(bound, channel.GetModels())
+	models := make([]string, 0)
+	for _, modelName := range channel.GetModels() {
+		upstreamModel, _ := channel.RoutingUpstreamModelName(modelName)
+		for _, index := range bound {
+			if channel.KeyServesModel(index, modelName) && !channel.keyModelUnavailable(index, upstreamModel) {
+				models = append(models, modelName)
+				break
+			}
+		}
+	}
+	return models
 }
 
 func (channel *Channel) SaveChannelInfo() error {
-	return DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error
+	// The polling caller already holds the per-channel polling lock. Merge only
+	// its cursor; the request snapshot may predate a model observation or key edit.
+	_, err := UpdateChannelLocked(channel.Id, func(stored *Channel) error {
+		if stored.Key == channel.Key {
+			stored.ChannelInfo.MultiKeyPollingIndex = channel.ChannelInfo.MultiKeyPollingIndex
+		}
+		return nil
+	})
+	return err
 }
 
 func (channel *Channel) GetModels() []string {
@@ -784,40 +1103,33 @@ func keyScopeIdentity(key string, index int) string {
 // UpdateChannelLocked, so an edit never writes back a key a refresh replaced
 // after the edit read it.
 func (channel *Channel) Update() error {
-	// If this is a multi-key channel, recalculate MultiKeySize based on the stored key list to avoid inconsistency after editing keys
-	if channel.ChannelInfo.IsMultiKey {
-		var keyStr string
-		if existing, err := GetChannelById(channel.Id, true); err == nil {
-			keyStr = existing.Key
+	// Multi-key management already holds the polling lock across read and edit.
+	// UpdateChannelLocked supplies the database/process lock for this merge.
+	stored, err := UpdateChannelLocked(channel.Id, func(stored *Channel) error {
+		// An index-based scope edit from an old key list cannot be reassigned to
+		// a replacement credential. Ask the caller to reload its channel instead.
+		if channel.Key != "" && stored.Key != channel.Key {
+			return ErrChannelKeyChanged
 		}
-		// Parse the key list (supports newline separation or JSON array)
-		keys := []string{}
-		if keyStr != "" {
-			trimmed := strings.TrimSpace(keyStr)
-			if strings.HasPrefix(trimmed, "[") {
-				var arr []json.RawMessage
-				if err := common.Unmarshal([]byte(trimmed), &arr); err == nil {
-					keys = make([]string, len(arr))
-					for i, v := range arr {
-						keys[i] = string(v)
-					}
-				}
-			}
-			if len(keys) == 0 { // fallback to newline split
-				keys = strings.Split(strings.Trim(keyStr, "\n"), "\n")
-			}
-		}
-		channel.ChannelInfo.MultiKeySize = len(keys)
-		// Clean up status data that exceeds the new key count to prevent index out of range
-		if channel.ChannelInfo.MultiKeyStatusList != nil {
-			for idx := range channel.ChannelInfo.MultiKeyStatusList {
-				if idx >= channel.ChannelInfo.MultiKeySize {
-					delete(channel.ChannelInfo.MultiKeyStatusList, idx)
+		// Legacy callers edit model scopes/bindings. Runtime key status, disable
+		// reasons, polling position and observations belong to the stored row.
+		stored.ChannelInfo.MultiKeyModels = channel.ChannelInfo.MultiKeyModels
+		stored.ChannelInfo.MultiKeyUsers = channel.ChannelInfo.MultiKeyUsers
+		if stored.ChannelInfo.IsMultiKey {
+			stored.ChannelInfo.MultiKeySize = len(stored.GetKeys())
+			for index := range stored.ChannelInfo.MultiKeyStatusList {
+				if index < 0 || index >= stored.ChannelInfo.MultiKeySize {
+					delete(stored.ChannelInfo.MultiKeyStatusList, index)
 				}
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	return channel.saveConfiguration("key")
+	channel.ChannelInfo = stored.ChannelInfo
+	return channel.saveConfiguration("key", "channel_info", "status", "other_info")
 }
 
 // UpdateConfig saves an ordinary channel edit without writing the key or its
