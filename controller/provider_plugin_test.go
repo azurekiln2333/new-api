@@ -554,6 +554,7 @@ func TestFetchModelsOfAProviderChannel(t *testing.T) {
 		_, err := fetchChannelUpstreamModelIDs(channel)
 		require.Error(t, err)
 		channel.SetSetting(dto.ChannelSettings{TaskPluginKey: "fetch-converted", TLSInsecureSkipVerify: true})
+		require.NoError(t, model.DB.Model(channel).Update("setting", channel.Setting).Error)
 		models, err := fetchChannelUpstreamModelIDs(channel)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"converted-a", "converted-b"}, models)
