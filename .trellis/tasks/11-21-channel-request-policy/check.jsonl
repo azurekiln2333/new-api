@@ -1,0 +1,4 @@
+{"file":"AGENTS.md","reason":"Review and focused regression requirements"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Capacity lifetime and waiting invariants"}
+{"file":".agents/rules/billing.md","reason":"Prevent duplicate settlement"}
+{"file":".trellis/tasks/11-21-channel-request-policy/prd.md","reason":"User acceptance criteria and cloud-only validation"}

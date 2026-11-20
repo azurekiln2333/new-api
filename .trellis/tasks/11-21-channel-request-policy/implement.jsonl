@@ -1,0 +1,4 @@
+{"file":"AGENTS.md","reason":"Project conventions"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Capacity waiting and timeout contract"}
+{"file":".agents/rules/billing.md","reason":"Single diagnostic settlement and quota bounds"}
+{"file":".trellis/tasks/11-21-channel-request-policy/design.md","reason":"Exclusive ownership and integration contracts"}
