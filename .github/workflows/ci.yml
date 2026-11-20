@@ -164,7 +164,11 @@ jobs:
       - name: Verify console management credentials and policy reloads on MySQL and PostgreSQL
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestCodexWhamChannelManagement|TestChannelManagementInference|TestPricingSyncChannelManagement'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestCodexWhamChannelManagement|TestChannelManagementInference|TestPricingSyncChannelManagement|TestChannelDiagnostic|TestFingerprintDiagnostic|TestOllamaChannelManagement'
+          done
+          for DIALECT in mysql postgres; do
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestUpdateChannelStatusCheckedCacheRouting$'
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./service -run '^TestCodexChannelManagement'
           done
 
       - name: Verify login avatar updates on MySQL and PostgreSQL
@@ -188,7 +192,7 @@ jobs:
       - name: Check admission, waiting, streaming and timeout races
         env:
           CGO_ENABLED: '1'
-        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./pkg/perf_metrics -run 'ChannelCapacity|ChannelWait|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|StreamCommit|StreamComment|OaiResponsesStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling'
+        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'ChannelCapacity|ChannelWait|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
 
   frontend:
     name: Frontend typecheck, test, and build
@@ -224,6 +228,8 @@ jobs:
           src/features/keys/components/__tests__/api-key-rotate-dialog.test.tsx
           src/features/channels/components/channel-card.tsx
           src/features/channels/components/dialogs/channel-test-dialog.tsx
+          src/features/channels/components/channel-balance-details.tsx
+          src/features/channels/components/__tests__/channel-balance-cell.test.tsx
           src/features/channels/components/__tests__/channel-test-dialog-endpoints.test.tsx
           src/features/channels/components/channel-usage-context.tsx
           src/features/channels/components/__tests__/channel-details-entry.test.tsx
@@ -261,6 +267,10 @@ jobs:
           src/features/rankings/__tests__/cache-tokens.test.tsx
           src/features/service-status/fingerprint.tsx
           src/features/service-status/__tests__/fingerprint.test.tsx
+          src/features/system-settings/models/upstream-ratio-sync.tsx
+          src/features/system-settings/__tests__/pricing-sync.test.tsx
+          src/lib/server-error-message.ts
+          src/lib/server-error-message.test.ts
           src/features/users/components/user-quota-cell.tsx
           src/features/users/components/users-columns.tsx
           src/features/users/components/__tests__/quota-display.test.tsx
