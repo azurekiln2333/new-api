@@ -603,6 +603,205 @@ Wrong: update a refreshed key by ID alone, or trust a text-collated source-key
 predicate. Correct: bind an exact-byte source/type CAS, then reload the current
 credential for the next admitted Wham attempt.
 
+## Asynchronous performance sampling backend
+
+### 1. Scope / Trigger
+
+Apply when a finished request queues Redis performance counters after its caller
+can release request-scoped or test-fixture state.
+
+### 2. Signatures
+
+`perfmetrics.Record(sample Sample)` updates local counters synchronously. Its
+queued writer is `recordRedis(client *redis.Client, key bucketKey, sample Sample)`.
+
+### 3. Contracts
+
+Capture Redis enablement and the selected client inside Record before scheduling.
+Disabled Redis or a nil client schedules nothing; local sampling still happens.
+Queued work uses only the captured client and values, never mutable Redis globals.
+The existing one-second Redis operation deadline remains independent of the HTTP
+request. This does not make arbitrary concurrent global reconfiguration safe.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Redis disabled or client nil | Local count retained; no background job |
+| Client replaced after scheduling | Old job uses captured original client |
+| Captured Redis client fails | Existing best-effort failure; local count retained |
+
+### 5. Good / Base / Bad Cases
+
+Good: delayed work keeps client A after globals switch to B. Base: disabled Redis
+records locally. Bad: delayed work reads a fixture's restored RedisEnabled value.
+
+### 6. Tests Required
+
+`TestRecordRedisUsesBackendSnapshotBeforeScheduling` in the existing metrics test
+file controls the scheduling boundary and asserts client identity, no scheduling
+when disabled/unconfigured, and retained local counts without sleeps. Run it with
+`-race` alongside the original controller race selector in cloud CI.
+
+### 7. Wrong vs Correct
+
+Wrong: check RedisEnabled or RDB inside the queued closure. Correct: capture the
+backend synchronously and pass the client explicitly into the delayed writer.
+
+## Guarded management result persistence
+
+### 1. Scope / Trigger
+
+Apply when balance queries, credential refreshes or model discovery perform HTTP
+outside a transaction and later write a result derived from channel configuration.
+
+### 2. Signatures
+
+`model.UpdateChannelOtherInfoLocked(ctx, id, update)` runs a short current-row
+callback under the shared row-lock convention.
+`UpdateChannelBalanceDetailChecked` merges a completed balance result through
+that boundary. `UpdateChannelStatusChecked` checks current configuration before
+changing automatic status and publishing cache routing.
+
+### 3. Contracts
+
+No network call belongs inside the callback. SQLite takes its channel mutex and
+writer lock; MySQL/PostgreSQL use `lockForUpdate`. Compare credential bytes and
+provider/configuration identity in Go, avoiding case-insensitive SQL equality.
+Preserve current other_info and unrelated policy. Disable secret SQL logging.
+
+A balance plugin's successful credential refresh must be proven by the actual
+outgoing retry credential, its same account/index and the exact current saved
+key-set/configuration. Advance earlier multi-key sample provenance only when
+the sole changed line is that proven refresh. An administrator replacement,
+changed binding, header or plugin configuration is not refresh provenance.
+Redact both old and refreshed credentials from returned parser/transport errors.
+
+Checked cache publication keeps the identity check and status/routing write under
+the same channel lock. A change only to max_concurrent_requests does not invalidate
+the completed balance result; preserve the cache's configuration bytes when
+publishing status. Other authentication/configuration/key-scope changes still
+reject stale publication.
+
+Codex refresh uses optional `CodexCredentialRefreshOptions.ExpectedKey` before
+exchange and always checks the exact source/type/single-key mode before storing.
+`ErrCodexCredentialSourceChanged` returns no usable refreshed credential. Ordinary
+driver failures become fixed value-free errors. OAuth HTTP remains independent
+of channel header overrides.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Source key/provider/balance auth or route changed | Reject stale result |
+| AutoBan changed during request | Use current AutoBan at status write |
+| Refresh loses to administrator replacement | Preserve replacement bytes |
+| Context canceled or persistence fails | No successful result/cache publication |
+| Cache replaced after database validation | Preserve newer cache identity/routing |
+| Only admission cap changed | Publish valid status without replacing cached settings |
+
+### 5. Good / Base / Bad Cases
+
+Good: completed A cannot overwrite replacement B. Base: unchanged source writes
+its result while preserving current unrelated fields. Bad: a plain MySQL text
+comparison treats a case-only credential replacement as the old source.
+
+### 6. Tests Required
+
+Run `TestUpdateChannelStatusCheckedCacheRouting`,
+`TestChannelBalanceManagementDatabaseMatrix` and `TestCodexChannelManagement*`
+with real SQLite, MySQL and PostgreSQL in cloud CI. Observe stored credentials,
+balance/status, routing, current AutoBan and failed-store confidentiality.
+
+### 7. Wrong vs Correct
+
+Wrong: check the row before HTTP, then update by ID alone. Correct: complete HTTP,
+revalidate the actual dispatched source in a short transaction, then publish only
+the committed fields while preserving newer cache configuration.
+
+## Authoritative model discovery and saved previews
+
+### 1. Scope / Trigger
+
+Applies to browser model-list previews, manual/scheduled upstream model detection,
+explicit per-key synchronization and Gemini/Ollama/Codex inventory requests.
+Management endpoints remain specialized; text endpoint conversion is unrelated.
+
+### 2. Signatures
+
+`channelModelDiscoveryOptions` carries the explicit preview descriptor, original
+saved `SourceType` and optional original `KeyIndex`.
+`service.CodexModelDiscoveryPreview` carries pointer-valued Key, BaseURL,
+HeaderOverride and Proxy plus SourceType.
+`persistChannelUpstreamModelUpdate` compares the original source under
+`model.UpdateChannelOtherInfoLocked` before writing discovery-owned fields.
+
+### 3. Contracts
+
+A saved preview retains its real ID for shared channel capacity. Reload the saved
+row after each grant; latest saved cap, TLS and all unexposed settings remain
+authoritative. Overlay only submitted fields on an operation-owned copy: omitted
+base/header/proxy preserves the saved value, explicit empty clears it, and an
+empty key preserves the saved credential. Advanced Custom previews intentionally
+use the current enabled saved key. SourceType validates the original saved type
+before an intentional draft type is applied.
+
+Channel-wide authoritative discovery requires complete successful inventories
+from every enabled key. Preserve the original full channel and key index across
+plugin refresh/retry. Explicit `sync_key_models` retains its separate add-only
+partial-success recovery contract; it never infers deletion from failed keys.
+Strict inventories reject missing/null data and malformed or blank model items;
+valid explicit empty arrays may be authoritative. Plugin discovery retains its
+existing nonempty-result contract.
+
+Carry caller/task cancellation through HTTP, admission and bounded persistence.
+Compare source configuration in the short locked write, never perform HTTP in
+the transaction, and merge only discovery-owned state into the current row.
+Explicit sync changes MultiKeyModels while preserving current mode, polling
+index and disable metadata. Reload the stored row before rebuilding abilities so
+current group, priority, weight and tag are used.
+
+Codex uses its backend-api model endpoint and access-token-only placeholder
+substitution. A typed preview credential receiving 401 must not refresh or fall
+back to another saved account. Saved-credential refresh retries once with the
+same explicit noncredential overlays. GitHub version lookup has verified TLS,
+no channel authentication/header overrides and cancellable shared-cache waiters.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Saved cap changes during admission | Regrant current capacity before sending |
+| One enabled key fails authoritative discovery | No partial inventory or deletion authority |
+| Explicit per-key recovery partially succeeds | Add successful scopes only; report failed keys |
+| Source configuration changes before persistence | Reject stale result; preserve current row |
+| Only scheduling metadata changes during explicit sync | Preserve current scheduling metadata |
+| Canceled discovery | Stop upstream; no timestamp/result publication; release capacity |
+| Typed Codex credential returns 401 | No saved-account refresh or fallback |
+| Gemini pagination malformed/repeated/incomplete | Fail whole inventory within one deadline |
+
+### 5. Good / Base / Bad Cases
+
+Good: a saved preview uses a typed URL but current saved TLS/cap after waiting.
+Base: unchanged configuration publishes the complete inventory. Bad: treating a
+failed key or malformed response as proof that channel-wide models disappeared.
+
+### 6. Tests Required
+
+Run existing controller `TestChannelManagementModel*`,
+`TestChannelManagementBrowserDiscoveryHonorsCancellation`,
+`TestMultiKeyModelDiscoveryUsesOneKey` and `TestMultiKeyModelSyncPreviewAndApply`,
+plus `TestCodexChannelManagement*`, Gemini inventory and Ollama suites. Require
+real SQLite/MySQL/PostgreSQL and race gates in cloud; source review is not a pass.
+Assert current transport/header/cap, original key index, no stale writes,
+preserved scheduling/routing fields, complete inventories and cancellation.
+
+### 7. Wrong vs Correct
+
+Wrong: collapse the channel to a single-key copy, clear its ID, then overwrite a
+full saved row with the result. Correct: retain source/index and admission
+identity, reload current policy, then merge narrowly under the source guard.
+
 ## Error Types
 
 <!-- Custom error classes/types -->

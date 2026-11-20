@@ -12,7 +12,7 @@ path, preserve quota/usage semantics and score locally against pinned assets.
 - `POST /api/channel/:id/fingerprint/:job_id/cancel`: cancel actual upstream work.
 - `service.StartChannelFingerprint`, `GetChannelFingerprint` and
   `CancelChannelFingerprint` own the bounded job registry.
-- `relay.RelayTextDiagnostic` applies supported endpoint conversion without
+- `relay.RunChannelDiagnostic` applies supported endpoint conversion without
   settling separately from the channel test.
 
 ## 3. Contracts
@@ -34,6 +34,13 @@ current channel settings rather than the job's starting endpoint. Disabled
 channels retain administrator recovery diagnostics; deletion or model removal
 prevents later dispatch. The shared test path owns post-wait revalidation and
 admission; fingerprint orchestration must never acquire a second lease.
+
+The diagnostic controller alone settles known usage, including productive
+failed or truncated streams. Buffered unsolicited Responses SSE must retain
+reported usage on errors, and a diagnostic without a terminal event fails rather
+than synthesizing success or estimated failure usage. Raw non-2xx error-envelope
+usage is conservative evidence against replay, not an independently trusted
+billable usage report.
 
 `pkg/lmfp` embeds the SDK reference bank and detector, verifies SHA-256 pins, and
 loads them once. Runtime scoring does not contact the hosted detector. An optional
