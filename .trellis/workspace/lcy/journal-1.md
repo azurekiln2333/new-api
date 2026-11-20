@@ -150,3 +150,46 @@ Completed R1-R25 and user corrections; main released as custom-20261120-a9b37b4.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: Release unified channel request policies
+<!-- trellis-session: v=2 fp=4a5f08c92d11d53b -->
+
+**Date**: 2026-11-21
+**Task**: Release unified channel request policies
+**Branch**: `merge/upstream`
+
+### Summary
+
+Completed four pi implementation scopes and independent review; exact-SHA cloud CI passed, main integrated, custom-20261121-de5c967 published with verified multi-platform images, downloads and SHA-256 checksums. Archived the current task.
+
+### Main Changes
+
+- Unified fixed-channel diagnostics, endpoint conversion, current-policy admission, cancellation, waiting and known-usage settlement.
+- Fingerprinting defaults to three randomized serial challenges with current policy per sample.
+- Discovery, balance, price sync, inference, Wham, Ollama and Codex management share applicable channel transport, headers and capacity; guarded writes preserve replacements and routing.
+- Published main/tag at de5c96736f24968a81e62dee8b9960f360915ed1; GHCR custom/latest/SHA indexes match and contain linux/amd64 and linux/arm64.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `58d462bfe` | fix(channel): share bounded admission for trusted diagnostics |
+| `ae68b4125` | fix(fingerprint): default to three current-policy probes |
+| `c2b8026c0` | fix(channel): unify management request admission and transport |
+| `1b99bc8c3` | fix(pricing): honor channel policies during upstream sync |
+| `5ad885e9c` | fix(channel): enforce current inference management policies |
+| `97313aded` | fix(channel): apply relay policies to pinned channel diagnostics |
+| `593c0976f` | fix(channel): honor current policies across model management requests |
+| `de5c96736` | test(channel): persist TLS policy before model discovery reload |
+
+### Testing
+
+- [OK] Cloud integration 44822062923 and complete release 44824384740 passed; root, relaykit and tokenkit backend checks plus frontend typecheck/lint/tests/build.
+- [OK] Real SQLite 3.50.4, MySQL 8.4.13, PostgreSQL 16.16 and Redis 7.4.12 integration plus final race gate passed in GitHub Actions.
+- [OK] Verified published non-draft tag, seven nonempty assets and all four binary checksum entries against GitHub asset digests using read-only API requests.
+- [OK] No local tests/build/lint/typecheck/browser/upstream probes or deployment-server checks performed.
+
+### Status
+
+[OK] **Completed**

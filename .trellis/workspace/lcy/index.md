@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-11-20
+- **Total Sessions**: 6
+- **Last Active**: 2026-11-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~152 | Active |
+| `journal-1.md` | ~195 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-11-21 | Release unified channel request policies | `58d462bfe`, `ae68b4125`, `c2b8026c0`, `1b99bc8c3`, `5ad885e9c`, `97313aded`, `593c0976f`, `de5c96736` | `merge/upstream` |
 | 5 | 2026-11-20 | Complete gateway feature release | `a9b37b493`, `3e2ca3884`, `79cd2f5c7`, `1f3065b94` | `merge/upstream` |
 | 4 | 2026-11-18 | Finish Herdr Claude workspace merge | `9b21c12d2` | `merge/upstream` |
 | 3 | 2026-11-16 | Channel concurrency and timeout failover released | `60da6a512`, `673c2b8f8`, `d9987dc9a` | `custom/rc45-stats` |
