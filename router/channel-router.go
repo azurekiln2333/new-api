@@ -86,6 +86,12 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/fetch_models/:id", permission: authz.ChannelOperate, handler: controller.FetchUpstreamModels},
 	{method: http.MethodGet, path: "/:id/vllm/status", permission: authz.ChannelRead, handler: controller.GetVLLMChannelStatus},
 	{method: http.MethodGet, path: "/:id/sglang/status", permission: authz.ChannelRead, handler: controller.GetSGLangChannelStatus},
+	// Model fingerprint checks are an operator-triggered, bounded probe run that
+	// reuses the channel test path, so starting one spends the operator's
+	// upstream quota and needs the channel operate permission.
+	{method: http.MethodPost, path: "/:id/fingerprint", permission: authz.ChannelOperate, handler: controller.StartChannelFingerprint},
+	{method: http.MethodGet, path: "/:id/fingerprint/:job_id", permission: authz.ChannelOperate, handler: controller.GetChannelFingerprint},
+	{method: http.MethodPost, path: "/:id/fingerprint/:job_id/cancel", permission: authz.ChannelOperate, handler: controller.CancelChannelFingerprint},
 	{method: http.MethodPost, path: "/fetch_models", permission: authz.ChannelSensitiveWrite, handler: controller.FetchModels},
 	{method: http.MethodPost, path: "/:id/codex/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshCodexChannelCredential},
 	{method: http.MethodPost, path: "/:id/plugin_login", permission: authz.ChannelSensitiveWrite, handler: controller.StartPluginLogin},

@@ -44,6 +44,11 @@ type testResult struct {
 	// keyIndex is the key of a multi-key channel that served this test, or -1
 	// when it is unknown. It decides which key a failed test may disable.
 	keyIndex int
+	// A caller that reads the reply, such as a model fingerprint probe, receives
+	// the response body and the usage the relay settled.
+	responseBody     []byte
+	promptTokens     int
+	completionTokens int
 }
 
 // channelTestKeyError marks a key named for a channel test that the channel or
@@ -190,6 +195,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
+	// testChannel builds its own gin context, so a caller's prompt override is
+	// carried over from the request context here.
+	if prompt, ok := ctx.Value(channelTestPromptKey).(testPrompt); ok {
+		c.Set(channelTestPromptKey, prompt)
+	}
 
 	testModel = strings.TrimSpace(testModel)
 	if testModel == "" {
@@ -317,6 +327,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 // runChannelTestRequest sends the synthetic test request through the already
 // selected channel and key and reports the outcome.
 func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, tik time.Time) (outcome testResult) {
+	var knownUsage *dto.Usage
 	lease, capacityErr := service.AcquireRequestChannelCapacity(c, channel.Id)
 	if capacityErr != nil {
 		return testResult{localErr: capacityErr, newAPIError: capacityErr}
@@ -326,6 +337,10 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 	defer func() {
 		if coordinationErr := lease.Err(); coordinationErr != nil {
 			outcome = testResult{localErr: coordinationErr, newAPIError: coordinationErr}
+		}
+		if knownUsage != nil {
+			outcome.promptTokens = knownUsage.PromptTokens
+			outcome.completionTokens = knownUsage.CompletionTokens
 		}
 		lease.Release()
 		c.Request = originalRequest
@@ -380,7 +395,13 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 		}
 	}
 
-	request := buildTestRequest(testModel, endpointType, channel, isStream)
+	var promptOverride *testPrompt
+	if prompt, ok := c.Get(channelTestPromptKey); ok {
+		if typed, isPrompt := prompt.(testPrompt); isPrompt {
+			promptOverride = &typed
+		}
+	}
+	request := buildTestRequest(testModel, endpointType, channel, isStream, promptOverride)
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
@@ -458,166 +479,181 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 	}
 
 	adaptor.Init(info)
-
-	var convertedRequest any
-	// 根据 RelayMode 选择正确的转换函数
-	switch info.RelayMode {
-	case relayconstant.RelayModeEmbeddings:
-		// Embedding 请求 - request 已经是正确的类型
-		if embeddingReq, ok := request.(*dto.EmbeddingRequest); ok {
-			convertedRequest, err = adaptor.ConvertEmbeddingRequest(c, info, *embeddingReq)
-		} else {
-			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid embedding request type"),
-				newAPIError: types.NewError(errors.New("invalid embedding request type"), types.ErrorCodeConvertRequestFailed),
-			}
-		}
-	case relayconstant.RelayModeImagesGenerations:
-		// 图像生成请求 - request 已经是正确的类型
-		if imageReq, ok := request.(*dto.ImageRequest); ok {
-			convertedRequest, err = adaptor.ConvertImageRequest(c, info, *imageReq)
-		} else {
-			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid image request type"),
-				newAPIError: types.NewError(errors.New("invalid image request type"), types.ErrorCodeConvertRequestFailed),
-			}
-		}
-	case relayconstant.RelayModeRerank:
-		// Rerank 请求 - request 已经是正确的类型
-		if rerankReq, ok := request.(*dto.RerankRequest); ok {
-			convertedRequest, err = adaptor.ConvertRerankRequest(c, info.RelayMode, *rerankReq)
-		} else {
-			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid rerank request type"),
-				newAPIError: types.NewError(errors.New("invalid rerank request type"), types.ErrorCodeConvertRequestFailed),
-			}
-		}
-	case relayconstant.RelayModeResponses:
-		// Response 请求 - request 已经是正确的类型
-		if responseReq, ok := request.(*dto.OpenAIResponsesRequest); ok {
-			convertedRequest, err = adaptor.ConvertOpenAIResponsesRequest(c, info, *responseReq)
-		} else {
-			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid response request type"),
-				newAPIError: types.NewError(errors.New("invalid response request type"), types.ErrorCodeConvertRequestFailed),
-			}
-		}
-	case relayconstant.RelayModeResponsesCompact:
-		// Response compaction request - convert to OpenAIResponsesRequest before adapting
-		switch req := request.(type) {
-		case *dto.OpenAIResponsesCompactionRequest:
-			convertedRequest, err = adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
-				Model:              req.Model,
-				Input:              req.Input,
-				Instructions:       req.Instructions,
-				PreviousResponseID: req.PreviousResponseID,
-			})
-		case *dto.OpenAIResponsesRequest:
-			convertedRequest, err = adaptor.ConvertOpenAIResponsesRequest(c, info, *req)
-		default:
-			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid response compaction request type"),
-				newAPIError: types.NewError(errors.New("invalid response compaction request type"), types.ErrorCodeConvertRequestFailed),
-			}
-		}
-	default:
-		switch req := request.(type) {
-		case *dto.GeneralOpenAIRequest:
-			convertedRequest, err = adaptor.ConvertOpenAIRequest(c, info, req)
-		case *dto.ClaudeRequest:
-			convertedRequest, err = adaptor.ConvertClaudeRequest(c, info, req)
-		case *dto.GeminiChatRequest:
-			convertedRequest, err = adaptor.ConvertGeminiRequest(c, info, req)
-		default:
-			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid chat request type"),
-				newAPIError: types.NewError(errors.New("invalid chat request type"), types.ErrorCodeConvertRequestFailed),
-			}
-		}
+	var usageA any
+	var respErr *types.NewAPIError
+	diagnosticHandled := false
+	if promptOverride != nil {
+		adaptor = &fingerprintBoundedAdaptor{Adaptor: adaptor, maxOutputTokens: promptOverride.MaxTokens}
+		usageA, diagnosticHandled, respErr = relay.RelayTextDiagnostic(c, info, adaptor, request)
 	}
+	if !diagnosticHandled {
 
-	if err != nil {
-		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeConvertRequestFailed),
-		}
-	}
-	jsonData, err := common.Marshal(convertedRequest)
-	if err != nil {
-		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
-		}
-	}
-
-	//jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
-	//if err != nil {
-	//	return testResult{
-	//		context:     c,
-	//		localErr:    err,
-	//		newAPIError: types.NewError(err, types.ErrorCodeConvertRequestFailed),
-	//	}
-	//}
-
-	if len(info.ParamOverride) > 0 {
-		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-		if err != nil {
-			if fixedErr, ok := relaycommon.AsParamOverrideReturnError(err); ok {
+		var convertedRequest any
+		// 根据 RelayMode 选择正确的转换函数
+		switch info.RelayMode {
+		case relayconstant.RelayModeEmbeddings:
+			// Embedding 请求 - request 已经是正确的类型
+			if embeddingReq, ok := request.(*dto.EmbeddingRequest); ok {
+				convertedRequest, err = adaptor.ConvertEmbeddingRequest(c, info, *embeddingReq)
+			} else {
 				return testResult{
 					context:     c,
-					localErr:    fixedErr,
-					newAPIError: relaycommon.NewAPIErrorFromParamOverride(fixedErr),
+					localErr:    errors.New("invalid embedding request type"),
+					newAPIError: types.NewError(errors.New("invalid embedding request type"), types.ErrorCodeConvertRequestFailed),
 				}
 			}
-			return testResult{
-				context:     c,
-				localErr:    err,
-				newAPIError: types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid),
+		case relayconstant.RelayModeImagesGenerations:
+			// 图像生成请求 - request 已经是正确的类型
+			if imageReq, ok := request.(*dto.ImageRequest); ok {
+				convertedRequest, err = adaptor.ConvertImageRequest(c, info, *imageReq)
+			} else {
+				return testResult{
+					context:     c,
+					localErr:    errors.New("invalid image request type"),
+					newAPIError: types.NewError(errors.New("invalid image request type"), types.ErrorCodeConvertRequestFailed),
+				}
+			}
+		case relayconstant.RelayModeRerank:
+			// Rerank 请求 - request 已经是正确的类型
+			if rerankReq, ok := request.(*dto.RerankRequest); ok {
+				convertedRequest, err = adaptor.ConvertRerankRequest(c, info.RelayMode, *rerankReq)
+			} else {
+				return testResult{
+					context:     c,
+					localErr:    errors.New("invalid rerank request type"),
+					newAPIError: types.NewError(errors.New("invalid rerank request type"), types.ErrorCodeConvertRequestFailed),
+				}
+			}
+		case relayconstant.RelayModeResponses:
+			// Response 请求 - request 已经是正确的类型
+			if responseReq, ok := request.(*dto.OpenAIResponsesRequest); ok {
+				convertedRequest, err = adaptor.ConvertOpenAIResponsesRequest(c, info, *responseReq)
+			} else {
+				return testResult{
+					context:     c,
+					localErr:    errors.New("invalid response request type"),
+					newAPIError: types.NewError(errors.New("invalid response request type"), types.ErrorCodeConvertRequestFailed),
+				}
+			}
+		case relayconstant.RelayModeResponsesCompact:
+			// Response compaction request - convert to OpenAIResponsesRequest before adapting
+			switch req := request.(type) {
+			case *dto.OpenAIResponsesCompactionRequest:
+				convertedRequest, err = adaptor.ConvertOpenAIResponsesRequest(c, info, dto.OpenAIResponsesRequest{
+					Model:              req.Model,
+					Input:              req.Input,
+					Instructions:       req.Instructions,
+					PreviousResponseID: req.PreviousResponseID,
+				})
+			case *dto.OpenAIResponsesRequest:
+				convertedRequest, err = adaptor.ConvertOpenAIResponsesRequest(c, info, *req)
+			default:
+				return testResult{
+					context:     c,
+					localErr:    errors.New("invalid response compaction request type"),
+					newAPIError: types.NewError(errors.New("invalid response compaction request type"), types.ErrorCodeConvertRequestFailed),
+				}
+			}
+		default:
+			switch req := request.(type) {
+			case *dto.GeneralOpenAIRequest:
+				convertedRequest, err = adaptor.ConvertOpenAIRequest(c, info, req)
+			case *dto.ClaudeRequest:
+				convertedRequest, err = adaptor.ConvertClaudeRequest(c, info, req)
+			case *dto.GeminiChatRequest:
+				convertedRequest, err = adaptor.ConvertGeminiRequest(c, info, req)
+			default:
+				return testResult{
+					context:     c,
+					localErr:    errors.New("invalid chat request type"),
+					newAPIError: types.NewError(errors.New("invalid chat request type"), types.ErrorCodeConvertRequestFailed),
+				}
 			}
 		}
-	}
 
-	requestBody := bytes.NewBuffer(jsonData)
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
-	resp, err := adaptor.DoRequest(c, info, requestBody)
-	if err != nil {
-		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
-		}
-	}
-	var httpResp *http.Response
-	if resp != nil {
-		httpResp = resp.(*http.Response)
-		if httpResp.StatusCode != http.StatusOK {
-			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
-			common.SysError(common.LogText(
-				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
-				channel.Id,
-				channel.Name,
-				channel.Type,
-				testModel,
-				endpointType,
-				httpResp.StatusCode,
-				err,
-			))
+		if err != nil {
 			return testResult{
 				context:     c,
 				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				newAPIError: types.NewError(err, types.ErrorCodeConvertRequestFailed),
 			}
 		}
+		jsonData, err := common.Marshal(convertedRequest)
+		if err != nil {
+			return testResult{
+				context:     c,
+				localErr:    err,
+				newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
+			}
+		}
+
+		//jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
+		//if err != nil {
+		//	return testResult{
+		//		context:     c,
+		//		localErr:    err,
+		//		newAPIError: types.NewError(err, types.ErrorCodeConvertRequestFailed),
+		//	}
+		//}
+
+		if len(info.ParamOverride) > 0 {
+			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
+			if err != nil {
+				if fixedErr, ok := relaycommon.AsParamOverrideReturnError(err); ok {
+					return testResult{
+						context:     c,
+						localErr:    fixedErr,
+						newAPIError: relaycommon.NewAPIErrorFromParamOverride(fixedErr),
+					}
+				}
+				return testResult{
+					context:     c,
+					localErr:    err,
+					newAPIError: types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid),
+				}
+			}
+		}
+
+		requestBody := bytes.NewBuffer(jsonData)
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+		resp, err := adaptor.DoRequest(c, info, requestBody)
+		if err != nil {
+			return testResult{
+				context:     c,
+				localErr:    err,
+				newAPIError: types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
+			}
+		}
+		var httpResp *http.Response
+		if resp != nil {
+			httpResp = resp.(*http.Response)
+			if httpResp.StatusCode != http.StatusOK {
+				err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
+				common.SysError(common.LogText(
+					"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
+					channel.Id,
+					channel.Name,
+					channel.Type,
+					testModel,
+					endpointType,
+					httpResp.StatusCode,
+					err,
+				))
+				return testResult{
+					context:     c,
+					localErr:    err,
+					newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				}
+			}
+		}
+		usageA, respErr = adaptor.DoResponse(c, httpResp, info)
 	}
-	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
+	switch usage := usageA.(type) {
+	case *dto.Usage:
+		knownUsage = usage
+	case dto.Usage:
+		knownUsage = &usage
+	}
 	if respErr != nil {
 		return testResult{
 			context:     c,
@@ -633,6 +669,7 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 			newAPIError: types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
 		}
 	}
+	knownUsage = usage
 	result := w.Result()
 	respBody, err := readTestResponseBody(result.Body, isStream)
 	if err != nil {
@@ -671,9 +708,12 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 	})
 	common.SysLog(common.LogText("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{
-		context:     c,
-		localErr:    nil,
-		newAPIError: nil,
+		context:          c,
+		localErr:         nil,
+		newAPIError:      nil,
+		responseBody:     respBody,
+		promptTokens:     usage.PromptTokens,
+		completionTokens: usage.CompletionTokens,
 	}
 }
 
@@ -852,8 +892,22 @@ func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
 	return message
 }
 
-func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool) dto.Request {
+func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool, prompt *testPrompt) dto.Request {
 	testResponsesInput := json.RawMessage(`[{"role":"user","content":"hi"}]`)
+	// A probe supplies its own instruction and output budget; every other caller
+	// keeps the fixed test prompt.
+	instruction := "hi"
+	maxTokens := uint(16)
+	geminiMaxTokens := uint(3000)
+	if prompt != nil {
+		if prompt.Prompt != "" {
+			instruction = prompt.Prompt
+		}
+		if prompt.MaxTokens > 0 {
+			maxTokens = prompt.MaxTokens
+			geminiMaxTokens = prompt.MaxTokens
+		}
+	}
 
 	// 根据端点类型构建不同的测试请求
 	if endpointType != "" {
@@ -882,11 +936,19 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 			}
 		case constant.EndpointTypeOpenAIResponse:
 			// 返回 OpenAIResponsesRequest
-			return &dto.OpenAIResponsesRequest{
+			input, err := common.Marshal([]dto.Message{{Role: "user", Content: instruction}})
+			if err != nil {
+				input = testResponsesInput
+			}
+			testRequest := &dto.OpenAIResponsesRequest{
 				Model:  model,
-				Input:  json.RawMessage(`[{"role":"user","content":"hi"}]`),
+				Input:  input,
 				Stream: lo.ToPtr(isStream),
 			}
+			if prompt != nil {
+				testRequest.MaxOutputTokens = lo.ToPtr(maxTokens)
+			}
+			return testRequest
 		case constant.EndpointTypeOpenAIResponseCompact:
 			// 返回 OpenAIResponsesCompactionRequest
 			return &dto.OpenAIResponsesCompactionRequest{
@@ -897,11 +959,11 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 			return &dto.ClaudeRequest{
 				Model:     model,
 				Stream:    lo.ToPtr(isStream),
-				MaxTokens: lo.ToPtr(uint(16)),
+				MaxTokens: lo.ToPtr(maxTokens),
 				Messages: []dto.ClaudeMessage{
 					{
 						Role:    "user",
-						Content: "hi",
+						Content: instruction,
 					},
 				},
 			}
@@ -910,11 +972,11 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				Contents: []dto.GeminiChatContent{
 					{
 						Role:  "user",
-						Parts: []dto.GeminiPart{{Text: "hi"}},
+						Parts: []dto.GeminiPart{{Text: instruction}},
 					},
 				},
 				GenerationConfig: dto.GeminiChatGenerationConfig{
-					MaxOutputTokens: lo.ToPtr(uint(3000)),
+					MaxOutputTokens: lo.ToPtr(geminiMaxTokens),
 				},
 			}
 		case constant.EndpointTypeOpenAI:
@@ -924,10 +986,10 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				Messages: []dto.Message{
 					{
 						Role:    "user",
-						Content: "hi",
+						Content: instruction,
 					},
 				},
-				MaxTokens: lo.ToPtr(uint(16)),
+				MaxTokens: lo.ToPtr(maxTokens),
 			}
 			if isStream {
 				req.StreamOptions = &dto.StreamOptions{IncludeUsage: true}

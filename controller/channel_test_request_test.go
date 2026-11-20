@@ -1,15 +1,22 @@
 package controller
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/lmfp"
+	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
 	"github.com/QuantumNous/new-api/relay/channel/cloudflare"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
@@ -18,11 +25,14 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func convertChatCompatibilityRequest(t *testing.T, request *dto.GeneralOpenAIRequest, channelType int, mapping map[string]string) []byte {
@@ -98,7 +108,7 @@ func TestChannelTestOpenAIChatCompatibility(t *testing.T) {
 		{name: "o series", model: "o3-mini", upstream: "o3-mini", channelType: constant.ChannelTypeAzure, wantLimit: "max_completion_tokens"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			request, ok := buildTestRequest(tt.model, tt.endpoint, &model.Channel{}, tt.stream).(*dto.GeneralOpenAIRequest)
+			request, ok := buildTestRequest(tt.model, tt.endpoint, &model.Channel{}, tt.stream, nil).(*dto.GeneralOpenAIRequest)
 			require.True(t, ok)
 			encoded := convertChatCompatibilityRequest(t, request, tt.channelType, map[string]string{tt.model: tt.upstream})
 			want := map[string]any{
@@ -307,6 +317,336 @@ func TestCloudflareEmbeddingResponseCompatibility(t *testing.T) {
 			assert.Equal(t, http.StatusOK, w.Code)
 			assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 			assert.JSONEq(t, tt.body, w.Body.String())
+		})
+	}
+}
+
+func TestFingerprintReplyText(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		endpoint string
+		body     string
+		want     string
+		wantErr  bool
+	}{
+		{
+			name:     "chat completions",
+			endpoint: "openai",
+			body:     `{"choices":[{"message":{"role":"assistant","content":" 12 34 56 "}}]}`,
+			want:     "12 34 56",
+		},
+		{
+			name:     "responses output text",
+			endpoint: "openai-response",
+			body:     `{"output_text":"12 34"}`,
+			want:     "12 34",
+		},
+		{
+			name:     "responses output parts",
+			endpoint: "openai-response",
+			body:     `{"output":[{"content":[{"type":"output_text","text":"12"},{"type":"output_text","text":"34"}]}]}`,
+			want:     "12\n34",
+		},
+		{
+			name:     "anthropic text block",
+			endpoint: "anthropic",
+			body:     `{"content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"12 34"}]}`,
+			want:     "12 34",
+		},
+		{
+			name:     "gemini parts",
+			endpoint: "gemini",
+			body:     `{"candidates":[{"content":{"parts":[{"text":"12 "},{"text":"34"}]}}]}`,
+			want:     "12 \n34",
+		},
+		{
+			name: "anthropic all text blocks only", endpoint: "anthropic",
+			body: `{"content":[{"type":"thinking","text":"999"},{"type":"text","text":"12"},{"type":"text","text":"34"}]}`,
+			want: "12\n34",
+		},
+		{
+			name: "gemini excludes thoughts", endpoint: "gemini",
+			body: `{"candidates":[{"content":{"parts":[{"thought":true,"text":"999"},{"text":"12"},{"text":"34"}]}}]}`,
+			want: "12\n34",
+		},
+		{
+			name: "chat text blocks", endpoint: "openai",
+			body: `{"choices":[{"message":{"content":[{"type":"text","text":"12"},{"type":"image_url","text":"999"},{"type":"text","text":"34"}]}}]}`,
+			want: "12\n34",
+		},
+		{
+			name:     "empty reply is an error",
+			endpoint: "openai",
+			body:     `{"choices":[{"message":{"role":"assistant","content":""}}]}`,
+			wantErr:  true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			text, err := fingerprintReplyText([]byte(tt.body), tt.endpoint)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, text)
+		})
+	}
+}
+
+// The recorder sits immediately below the probe's final wire guard; it observes
+// the exact bytes an adaptor would send after channel parameter overrides.
+type fingerprintRequestRecorder struct {
+	channel.Adaptor
+	body []byte
+}
+
+func (recorder *fingerprintRequestRecorder) DoRequest(_ *gin.Context, _ *relaycommon.RelayInfo, body io.Reader) (any, error) {
+	var err error
+	recorder.body, err = io.ReadAll(body)
+	return nil, err
+}
+
+func TestFingerprintWireOutputBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		apiType               int
+		format                types.RelayFormat
+		body, path, countPath string
+		want                  uint64
+		wantErr               bool
+	}{
+		{name: "chat override", apiType: constant.APITypeOpenAI, format: types.RelayFormatOpenAI, body: `{"max_tokens":9000,"n":8}`, path: "max_tokens", countPath: "n", want: 300},
+		{name: "reasoning override", apiType: constant.APITypeOpenAI, format: types.RelayFormatOpenAI, body: `{"max_tokens":9000,"max_completion_tokens":8000}`, path: "max_completion_tokens", countPath: "n", want: 300},
+		{name: "responses override", apiType: constant.APITypeOpenAI, format: types.RelayFormatOpenAIResponses, body: `{"max_output_tokens":9000}`, path: "max_output_tokens", want: 300},
+		{name: "anthropic smaller limit", apiType: constant.APITypeAnthropic, format: types.RelayFormatClaude, body: `{"max_tokens":100}`, path: "max_tokens", want: 100},
+		{name: "gemini override", apiType: constant.APITypeGemini, format: types.RelayFormatGemini, body: `{"generationConfig":{"maxOutputTokens":9000,"candidateCount":8}}`, path: "generationConfig.maxOutputTokens", countPath: "generationConfig.candidateCount", want: 300},
+		{name: "gemini null config", apiType: constant.APITypeGemini, format: types.RelayFormatGemini, body: `{"generationConfig":null}`, path: "generationConfig.maxOutputTokens", countPath: "generationConfig.candidateCount", want: 300},
+		{name: "missing output limit", apiType: constant.APITypeNewAPI, format: types.RelayFormatOpenAIResponses, body: `{}`, path: "max_output_tokens", want: 300},
+		{name: "codex cannot enforce", apiType: constant.APITypeCodex, format: types.RelayFormatOpenAIResponses, body: `{}`, wantErr: true},
+		{name: "malformed limit", apiType: constant.APITypeOpenAI, format: types.RelayFormatOpenAI, body: `{"max_tokens":-1}`, wantErr: true},
+		{name: "hosted tools forbidden", apiType: constant.APITypeOpenAI, format: types.RelayFormatOpenAIResponses, body: `{"tools":[{"type":"web_search"}]}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &fingerprintRequestRecorder{}
+			adaptor := &fingerprintBoundedAdaptor{Adaptor: recorder, maxOutputTokens: 300}
+			info := &relaycommon.RelayInfo{RelayFormat: tc.format, ChannelMeta: &relaycommon.ChannelMeta{ApiType: tc.apiType}}
+			_, err := adaptor.DoRequest(nil, info, strings.NewReader(tc.body))
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Empty(t, recorder.body, "unsupported requests never reach the upstream")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, gjson.GetBytes(recorder.body, tc.path).Uint())
+			if tc.countPath != "" {
+				assert.EqualValues(t, 1, gjson.GetBytes(recorder.body, tc.countPath).Int())
+			}
+			if tc.path == "max_completion_tokens" {
+				assert.False(t, gjson.GetBytes(recorder.body, "max_tokens").Exists())
+			}
+		})
+	}
+}
+
+func TestFingerprintSelectedChannelValidation(t *testing.T) {
+	selected := &model.Channel{Type: constant.ChannelTypeOpenAI, Models: "gpt-4.1, gpt-4o"}
+	require.NoError(t, validateFingerprintChannel(selected, "gpt-4o"))
+	require.ErrorContains(t, validateFingerprintChannel(selected, "another-model"), "not available")
+	selected.Type = constant.ChannelTypeCodex
+	require.ErrorContains(t, validateFingerprintChannel(selected, "gpt-4o"), "enforceable output token limit")
+}
+
+func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	rootID := setupChannelCreateTest(t)
+	service.InitHttpClient()
+	oldLogs := common.LogConsumeEnabled
+	oldRatios, oldGroups := ratio_setting.ModelRatio2JSONString(), ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4.1":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() {
+		common.LogConsumeEnabled = oldLogs
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroups))
+	})
+	for _, tc := range []struct {
+		name, endpoint, reply string
+		wantErr               bool
+	}{
+		{name: "chat", endpoint: "openai", reply: "12 34 56"},
+		{name: "messages", endpoint: "anthropic", reply: "12 34 56"},
+		{name: "empty answer retains usage", endpoint: "openai", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sentPath string
+			var sentBody []byte
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sentPath = r.URL.Path
+				sentBody, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"id":"resp-fingerprint","object":"response","status":"completed","model":"gpt-4.1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`, tc.reply)
+			}))
+			defer upstream.Close()
+			setting := `{"supported_endpoints":["responses"]}`
+			override := `{"max_tokens":9000,"max_output_tokens":9000}`
+			selected := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "fingerprint-responses-" + tc.name, Key: "test-fingerprint-key", Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: &setting, ParamOverride: &override}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			result, err := runFingerprintProbe(t.Context(), selected, rootID, "gpt-4.1", tc.endpoint, lmfp.Challenge{Prompt: "fingerprint challenge", ExpectedCount: 3}, 300)
+			if tc.wantErr {
+				require.ErrorContains(t, err, "no text to score")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, "/v1/responses", sentPath)
+			assert.Contains(t, string(sentBody), "fingerprint challenge")
+			assert.EqualValues(t, 300, gjson.GetBytes(sentBody, "max_output_tokens").Uint())
+			assert.Equal(t, tc.reply, result.Text)
+			assert.Equal(t, 10, result.PromptTokens)
+			assert.Equal(t, 5, result.OutputTokens)
+			var logs []model.Log
+			require.NoError(t, model.LOG_DB.Where("channel_id = ?", selected.Id).Find(&logs).Error)
+			require.Len(t, logs, 1, "the conversion reuses one test settlement")
+			assert.Equal(t, 10, logs[0].PromptTokens)
+			assert.Equal(t, 5, logs[0].CompletionTokens)
+			assert.Positive(t, logs[0].Quota)
+		})
+	}
+	t.Run("cancellation releases selected channel capacity", func(t *testing.T) {
+		dispatched := make(chan struct{})
+		upstreamCancelled := make(chan struct{})
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.ReadAll(r.Body)
+			close(dispatched)
+			<-r.Context().Done()
+			close(upstreamCancelled)
+		}))
+		defer upstream.Close()
+		setting := `{"supported_endpoints":["responses"],"max_concurrent_requests":1}`
+		selected := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "fingerprint-cancel", Key: "test-fingerprint-key", Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: &setting}
+		require.NoError(t, selected.Insert())
+		t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := runFingerprintProbe(ctx, selected, rootID, "gpt-4.1", "openai", lmfp.Challenge{Prompt: "fingerprint challenge", ExpectedCount: 3}, 300)
+			done <- err
+		}()
+		select {
+		case <-dispatched:
+		case <-time.After(3 * time.Second):
+			t.Fatal("probe did not reach the selected upstream")
+		}
+		sample := service.ReadChannelConcurrency(t.Context(), []int{selected.Id})[selected.Id]
+		require.NotNil(t, sample.Current)
+		assert.Equal(t, 1, *sample.Current)
+		cancel()
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), selected.Key)
+		case <-time.After(3 * time.Second):
+			t.Fatal("probe did not stop after cancellation")
+		}
+		select {
+		case <-upstreamCancelled:
+		case <-time.After(3 * time.Second):
+			t.Fatal("upstream request context was not cancelled")
+		}
+		sample = service.ReadChannelConcurrency(t.Context(), []int{selected.Id})[selected.Id]
+		require.NotNil(t, sample.Current)
+		assert.Zero(t, *sample.Current, "the aborted probe releases its concurrency slot")
+		var logs int64
+		require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("channel_id = ?", selected.Id).Count(&logs).Error)
+		assert.Zero(t, logs, "a request aborted without usage does not record a successful test settlement")
+	})
+}
+
+func TestFingerprintDiagnosticRejectsUnsupportedEndpoint(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAIResponses,
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    constant.ChannelTypeOpenAI,
+			ChannelSetting: dto.ChannelSettings{SupportedEndpoints: []string{dto.ChannelEndpointChat}},
+		},
+	}
+	_, handled, apiErr := relay.RelayTextDiagnostic(c, info, nil, &dto.OpenAIResponsesRequest{})
+	assert.True(t, handled)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+}
+
+func TestFingerprintJobRouteOwnershipAndRequestLifetime(t *testing.T) {
+	parent, cancelParent := context.WithCancel(t.Context())
+	defer cancelParent()
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	job, err := service.StartChannelFingerprint(parent, service.FingerprintRequest{
+		ChannelID: 42, ChannelName: "selected-channel", Model: "gpt-4.1", Count: 1, TokenBudget: 1000, ProbeTimeout: 10 * time.Second,
+	}, func(ctx context.Context, _ lmfp.Challenge, _ uint) (service.FingerprintProbeResult, error) {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return service.FingerprintProbeResult{}, ctx.Err()
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = service.CancelChannelFingerprint(job.ID) })
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("probe did not start")
+	}
+	cancelParent()
+	for _, handler := range []gin.HandlerFunc{GetChannelFingerprint, CancelChannelFingerprint} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		c.Params = gin.Params{{Key: "id", Value: "43"}, {Key: "job_id", Value: job.ID}}
+		handler(c)
+		assert.Equal(t, http.StatusNotFound, w.Code, "mismatched channel route cannot read or cancel")
+	}
+	current, err := service.GetChannelFingerprint(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", current.State, "handler completion and a mismatched cancellation leave the job running")
+	select {
+	case <-stopped:
+		t.Fatal("probe ended without an explicit matching cancellation")
+	default:
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(job.ChannelID)}, {Key: "job_id", Value: job.ID}}
+	CancelChannelFingerprint(c)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, gjson.Get(w.Body.String(), "success").Bool())
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("matching cancellation did not stop the probe")
+	}
+}
+
+func TestCountChallengeNumbers(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		text string
+		want int
+	}{
+		{name: "spaces", text: "12 34 56", want: 3},
+		{name: "commas and newlines", text: "12,34\n56", want: 3},
+		{name: "out of range", text: "0 356 400 12", want: 1},
+		{name: "negative and text", text: "-12 hello 34", want: 1},
+		{name: "empty", text: "", want: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, countChallengeNumbers(tt.text))
 		})
 	}
 }
