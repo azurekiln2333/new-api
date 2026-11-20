@@ -127,8 +127,9 @@ function mockDetailApi(
   currentChannel: () => Channel = () => channel
 ) {
   return vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/channel/7')
+    if (url === '/api/channel/7') {
       return { data: { success: true, data: currentChannel() } }
+    }
     if (url === '/api/channel/7/usage') {
       return { data: { success: true, data: payload } }
     }
