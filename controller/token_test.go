@@ -560,6 +560,56 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	}
 }
 
+func TestNormalizeCustomTokenKey(t *testing.T) {
+	valid := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "mixed alphanumeric", raw: "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE", want: "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE"},
+		{name: "optional sk prefix is dropped", raw: "sk-aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE", want: "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE"},
+		{name: "maximum storage length", raw: strings.Repeat("aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE", 4), want: strings.Repeat("aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE", 4)},
+	}
+	for _, test := range valid {
+		t.Run("valid/"+test.name, func(t *testing.T) {
+			got, err := model.NormalizeCustomTokenKey(test.raw)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got)
+		})
+	}
+
+	for _, test := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "too short", raw: "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1"},
+		{name: "too long", raw: strings.Repeat("aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE", 4) + "x"},
+		{name: "empty", raw: ""},
+		{name: "sk prefix only", raw: "sk-"},
+		{name: "embedded hyphen", raw: "aB3dE5gH7jK9mN1p-Q3sT5vW7yZ9bC1dE"},
+		{name: "whitespace", raw: "aB3dE5gH7jK9mN1p Q3sT5vW7yZ9bC1dE"},
+		{name: "leading whitespace", raw: " aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE"},
+		{name: "trailing whitespace", raw: "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE\n"},
+		{name: "control character", raw: "aB3dE5gH7jK9mN1p\x00Q3sT5vW7yZ9bC1dE"},
+		{name: "non ascii", raw: "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dé"},
+		{name: "underscore", raw: "aB3dE5gH7jK9mN1p_Q3sT5vW7yZ9bC1dE"},
+		{name: "too few distinct characters", raw: strings.Repeat("abc", 11)},
+		{name: "ascending sequence", raw: "0123456789abcdefghijklmnopqrstuv"},
+		{name: "descending sequence", raw: "zyxwvutsrqponmlkjihgfedcba987654"},
+		{name: "repeated motif", raw: strings.Repeat("abcd1234", 4)},
+		{name: "common weak word", raw: "password123456789012345678901234"},
+	} {
+		t.Run("rejected/"+test.name, func(t *testing.T) {
+			got, err := model.NormalizeCustomTokenKey(test.raw)
+			assert.Error(t, err)
+			assert.Empty(t, got)
+			if test.raw != "" {
+				assert.NotContains(t, err.Error(), test.raw, "the rejection message must not echo the secret")
+			}
+		})
+	}
+}
+
 func TestRotateTokenKeyRejectsWhenTheCacheCannotBeRevoked(t *testing.T) {
 	user, identity := setupSecurityEnrollmentTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
@@ -631,7 +681,79 @@ func TestRotateTokenKeyRejectsWhenTheCacheCannotBeRevoked(t *testing.T) {
 	})
 }
 
-func TestTokenKeySQLLogsStayValueFree(t *testing.T) {
+func TestAddTokenRequiresStepUpForACustomKey(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	custom := "createCu5tomSecret0123456789abcd"
+	body := `{"name":"custom-key","key":"` + custom + `","expired_time":-1,"unlimited_quota":true}`
+
+	t.Run("a custom key without a proof is refused", func(t *testing.T) {
+		response := securityEnrollmentRequest(http.MethodPost, "/api/token/", body, "", identity, AddToken)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_REQUIRED"`)
+		var count int64
+		require.NoError(t, model.DB.Model(&model.Token{}).Where("user_id = ?", user.Id).Count(&count).Error)
+		assert.Zero(t, count)
+	})
+
+	t.Run("a rotation proof cannot create a custom key", func(t *testing.T) {
+		existing := seedToken(t, model.DB, user.Id, "existing", "existing-credential-0123456789")
+		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: existing.Id})
+		require.NoError(t, err)
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+		}, service.VerificationMethodPassword)
+		response := securityEnrollmentRequest(http.MethodPost, "/api/token/", body, proof, identity, AddToken)
+		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_SCOPE_MISMATCH"`)
+	})
+
+	t.Run("a custom-create proof creates the owner's key", func(t *testing.T) {
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyCustomCreate,
+		}, service.VerificationMethodPassword)
+		response := securityEnrollmentRequest(http.MethodPost, "/api/token/", body, proof, identity, AddToken)
+		require.True(t, decodeAPIResponse(t, response).Success, response.Body.String())
+
+		var created model.Token
+		require.NoError(t, model.DB.Where("user_id = ? AND name = ?", user.Id, "custom-key").First(&created).Error)
+		assert.Equal(t, custom, created.Key)
+		replay := securityEnrollmentRequest(http.MethodPost, "/api/token/", body, proof, identity, AddToken)
+		assert.Contains(t, replay.Body.String(), `"code":"SECURITY_PROOF_CONSUMED"`)
+	})
+
+	t.Run("a personal access token cannot create a custom secret", func(t *testing.T) {
+		pat, accessToken := createScopedAccessToken(t, user.Id, 0, "api_key:write")
+		patIdentity := service.AuthIdentity{UserID: user.Id, SessionID: model.AccessTokenSessionID(accessToken.Id), UserAuthVersion: user.AuthVersion, SessionVersion: model.AccessTokenSessionVersion}
+		_, err := service.GetVerificationRequirements(patIdentity, service.VerificationScopeTokenKeyCustomCreate)
+		assert.ErrorIs(t, err, service.ErrVerificationForbidden)
+		_, err = service.GetVerificationRequirements(patIdentity, service.VerificationScopeTokenKeyRotate)
+		assert.ErrorIs(t, err, service.ErrVerificationForbidden)
+		router := gin.New()
+		router.POST("/api/token/", middleware.UserAuth(), AddToken)
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyCustomCreate,
+		}, service.VerificationMethodPassword)
+		request := httptest.NewRequest(http.MethodPost, "/api/token/", strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+pat)
+		request.Header.Set("X-Security-Proof", proof)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.False(t, decodeAPIResponse(t, response).Success)
+
+		// Ordinary random creation retains its existing PAT permission and does
+		// not require an interactive browser-only step-up ceremony.
+		request = httptest.NewRequest(http.MethodPost, "/api/token/", strings.NewReader(`{"name":"random-key","expired_time":-1,"unlimited_quota":true}`))
+		request.Header.Set("Authorization", "Bearer "+pat)
+		request.Header.Set("Content-Type", "application/json")
+		response = httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.True(t, decodeAPIResponse(t, response).Success, response.Body.String())
+	})
+}
+
+func TestTokenKeyUniquenessErrorsStayValueFree(t *testing.T) {
 	setupTokenControllerTestDB(t)
 	var sqlLogs bytes.Buffer
 	model.DB = model.DB.Session(&gorm.Session{Logger: logger.New(log.New(&sqlLogs, "", 0), logger.Config{LogLevel: logger.Info})}).Debug()
@@ -641,7 +763,7 @@ func TestTokenKeySQLLogsStayValueFree(t *testing.T) {
 	duplicate := &model.Token{UserId: 2, Name: "duplicate", Key: "taken-credential-0123456789", Status: 1, ExpiredTime: -1}
 	err := duplicate.Insert()
 	require.Error(t, err)
-	assert.ErrorIs(t, err, model.ErrDatabase)
+	assert.ErrorIs(t, err, model.ErrTokenKeyUnavailable)
 	assert.NotContains(t, err.Error(), "taken-credential-0123456789")
 	_, err = model.GetTokenByKey(owner.Key, true)
 	require.NoError(t, err)
@@ -650,6 +772,26 @@ func TestTokenKeySQLLogsStayValueFree(t *testing.T) {
 	assert.NotContains(t, sqlLogs.String(), owner.Key)
 	assert.NotContains(t, sqlLogs.String(), rotated.Key)
 
+	custom := "customL0gSecret0123456789abcdeFGHI"
+	rotated, err = model.RotateTokenKeyWithSecret(owner.Id, owner.UserId, custom)
+	require.NoError(t, err)
+	duplicate.Key = "another-credential-0123456789"
+	require.NoError(t, duplicate.Insert())
+	_, err = model.RotateTokenKeyWithSecret(duplicate.Id, duplicate.UserId, custom)
+	assert.ErrorIs(t, err, model.ErrTokenKeyUnavailable)
+	assert.NotContains(t, sqlLogs.String(), custom)
+	assert.NotContains(t, sqlLogs.String(), duplicate.Key)
+
+	// Non-unique driver errors may quote values as well; neither SQL logging
+	// nor the returned error may expose that payload.
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register("secret_driver_error", func(tx *gorm.DB) {
+		tx.AddError(errors.New("driver rejected secret " + custom))
+	}))
+	t.Cleanup(func() { require.NoError(t, model.DB.Callback().Update().Remove("secret_driver_error")) })
+	_, err = model.RotateTokenKey(owner.Id, owner.UserId)
+	assert.ErrorIs(t, err, model.ErrDatabase)
+	assert.NotContains(t, err.Error(), custom)
+	assert.NotContains(t, sqlLogs.String(), custom)
 }
 
 func TestRotateTokenKeyRequiresOwnershipAndProof(t *testing.T) {
@@ -775,6 +917,118 @@ func TestRotateTokenKeyRequiresOwnershipAndProof(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, result.Key, unchanged.Key)
 	})
+}
+
+func TestRotateTokenKeyAcceptsAValidatedCustomKey(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	token := seedToken(t, model.DB, user.Id, "custom-rotate", "original-credential-0123456789")
+	path := fmt.Sprintf("/api/token/%d/key/rotate", token.Id)
+	handler := withAccessTokenID(RotateTokenKey, token.Id)
+
+	issueProof := func() string {
+		t.Helper()
+		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
+		require.NoError(t, err)
+		return issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+		}, service.VerificationMethodPassword)
+	}
+
+	t.Run("a custom secret is stored without the optional sk- prefix", func(t *testing.T) {
+		custom := "cu5tomSe9retValue0123456789abcdEF"
+		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"sk-`+custom+`"}`, issueProof(), identity, handler)
+		body := decodeAPIResponse(t, response)
+		require.True(t, body.Success, body.Message)
+
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, custom, stored.Key)
+		assert.Equal(t, "custom-rotate", stored.Name)
+	})
+
+	t.Run("a value owned by another token is refused", func(t *testing.T) {
+		current, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		second := seedToken(t, model.DB, user.Id, "custom-second", "second-credential-0123456789")
+		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: second.Id})
+		require.NoError(t, err)
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+		}, service.VerificationMethodPassword)
+		response := securityEnrollmentRequest(http.MethodPost, fmt.Sprintf("/api/token/%d/key/rotate", second.Id), `{"key":"`+current.Key+`"}`, proof, identity, withAccessTokenID(RotateTokenKey, second.Id))
+		assert.Contains(t, response.Body.String(), "This API key is already in use")
+		unchanged, err := model.GetTokenById(second.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "second-credential-0123456789", unchanged.Key)
+	})
+
+	t.Run("the current secret is refused", func(t *testing.T) {
+		current, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"`+current.Key+`"}`, issueProof(), identity, handler)
+		assert.Contains(t, response.Body.String(), "must differ from the current one")
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, current.Key, stored.Key)
+	})
+
+	t.Run("a weak secret is refused before any write", func(t *testing.T) {
+		current, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		response := securityEnrollmentRequest(http.MethodPost, path, `{"key":"password123456789012345678901234"}`, issueProof(), identity, handler)
+		assert.False(t, decodeAPIResponse(t, response).Success)
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, current.Key, stored.Key)
+	})
+
+	t.Run("a replayed proof cannot rotate again", func(t *testing.T) {
+		proof := issueProof()
+		first := securityEnrollmentRequest(http.MethodPost, path, `{"key":"firstCu5tomSecret0123456789abcdef"}`, proof, identity, handler)
+		require.True(t, decodeAPIResponse(t, first).Success)
+		replay := securityEnrollmentRequest(http.MethodPost, path, `{"key":"secondCu5tomSecret0123456789abcd"}`, proof, identity, handler)
+		assert.Contains(t, replay.Body.String(), `"code":"SECURITY_PROOF_CONSUMED"`)
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "firstCu5tomSecret0123456789abcdef", stored.Key)
+	})
+}
+
+func TestAddTokenAcceptsAValidatedCustomKey(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	custom := "createCu5tomSecret0123456789abcd"
+	request, err := common.Marshal(map[string]any{
+		"name":            "custom-key",
+		"key":             "sk-" + custom,
+		"expired_time":    -1,
+		"unlimited_quota": true,
+	})
+	require.NoError(t, err)
+	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeTokenKeyCustomCreate}, service.VerificationMethodPassword)
+	recorder := securityEnrollmentRequest(http.MethodPost, "/api/token/", string(request), proof, identity, AddToken)
+	body := decodeAPIResponse(t, recorder)
+	require.True(t, body.Success, body.Message)
+
+	var created model.Token
+	require.NoError(t, model.DB.Where("user_id = ? AND name = ?", user.Id, "custom-key").First(&created).Error)
+	assert.Equal(t, custom, created.Key)
+
+	// A weak value is refused and creates no record.
+	weakRequest, err := common.Marshal(map[string]any{
+		"name":            "weak-key",
+		"key":             "0123456789abcdefghijklmnopqrstuv",
+		"expired_time":    -1,
+		"unlimited_quota": true,
+	})
+	require.NoError(t, err)
+	weakProof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeTokenKeyCustomCreate}, service.VerificationMethodPassword)
+	weakRecorder := securityEnrollmentRequest(http.MethodPost, "/api/token/", string(weakRequest), weakProof, identity, AddToken)
+	assert.False(t, decodeAPIResponse(t, weakRecorder).Success)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("name = ?", "weak-key").Count(&count).Error)
+	assert.Zero(t, count)
 }
 
 func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {

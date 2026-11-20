@@ -161,10 +161,10 @@ jobs:
             TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestOAuthLogin.*Avatar|TestUserSettingsPreserveProviderAvatar|TestSecurityLogin'
           done
 
-      - name: Verify API key rotation on MySQL and PostgreSQL
+      - name: Verify API key rotation and custom keys on MySQL and PostgreSQL
         run: |
           for DIALECT in mysql postgres; do
-            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestRotateTokenKey'
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestNormalizeCustomTokenKey|TestRotateTokenKey|TestAddToken.*CustomKey|TestTokenKeyUniquenessErrorsStayValueFree'
           done
 
       - name: Verify per-turn goal routing on MySQL and PostgreSQL

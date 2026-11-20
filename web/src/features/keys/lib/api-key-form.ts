@@ -35,6 +35,15 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
   return z
     .object({
       name: z.string().min(1, t('Please enter a name')),
+      custom_key: z
+        .string()
+        .optional()
+        .refine(
+          (value) => !value || /^(?:sk-)?[A-Za-z0-9]{32,128}$/.test(value),
+          t(
+            '32-128 letters or digits, with an optional sk- prefix. Generated keys stay the recommended default.'
+          )
+        ),
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().nullable(),
       unlimited_quota: z.boolean(),
@@ -48,6 +57,13 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
+      if (data.custom_key && (data.tokenCount ?? 1) !== 1) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tokenCount'],
+          message: t('Custom keys can only be created one at a time.'),
+        })
+      }
       if (data.group === 'auto') {
         if (
           data.auto_groups_mode === 'custom' &&
@@ -106,6 +122,7 @@ export type ApiKeyFormValues = z.infer<ReturnType<typeof getApiKeyFormSchema>>
 
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   name: '',
+  custom_key: '',
   remain_quota_dollars: 10,
   expired_time: null,
   unlimited_quota: true,
@@ -180,6 +197,7 @@ export function transformApiKeyToFormDefaults(
 
   return {
     name: apiKey.name,
+    custom_key: '',
     remain_quota_dollars: apiKey.unlimited_quota
       ? 0
       : quotaUnitsToDollars(apiKey.remain_quota),

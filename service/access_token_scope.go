@@ -242,7 +242,10 @@ var accessTokenVerificationScopes = map[string]string{
 	// personal access token must never be able to mint or replace the API key
 	// that its own scope already exposes.
 	VerificationScopeTokenKeyRotate: "",
-	VerificationScopeLogin:          "",
+	// Creating a token with a user-chosen secret is equally sensitive: a
+	// personal access token must not be able to mint the credential it wants.
+	VerificationScopeTokenKeyCustomCreate: "",
+	VerificationScopeLogin:                "",
 }
 
 // AccessTokenVerificationScope returns the token scope a PAT needs for a

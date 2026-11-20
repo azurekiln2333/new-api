@@ -33,6 +33,7 @@ const (
 	VerificationScopeAccessTokenRevoke      = "access_token.revoke"
 	VerificationScopeAccessTokenUpdate      = "access_token.update"
 	VerificationScopeTokenKeyRotate         = "token.key.rotate"
+	VerificationScopeTokenKeyCustomCreate   = "token.key.custom_create"
 	VerificationScopeAccountBind            = "account.binding.bind"
 	VerificationScopeAccountUnbind          = "account.binding.unbind"
 	VerificationScopePasswordSet            = "account.password.set"
@@ -131,6 +132,10 @@ type AccessTokenRevokeContext struct {
 type TokenKeyRotateContext struct {
 	TokenID int `json:"token_id"`
 }
+
+// TokenKeyCustomCreateContext carries no fields: creating a token with a
+// user-chosen secret is bound only to the action and the authenticated session.
+type TokenKeyCustomCreateContext struct{}
 
 const (
 	maxAccessTokenContextScopes   = 128
@@ -273,6 +278,11 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
+	case VerificationScopeTokenKeyCustomCreate:
+		if len(fields) != 0 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = struct{}{}
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete, VerificationScopeLoginPreferenceDisable:
@@ -350,6 +360,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeTokenKeyRotate,
+		VerificationScopeTokenKeyCustomCreate,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete, VerificationScopeLoginPreferenceDisable,
 		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,

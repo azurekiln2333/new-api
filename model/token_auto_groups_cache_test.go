@@ -293,6 +293,46 @@ func TestTokenKeyLifecycleDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, token.Id, current.Id)
 
+			// The unique index is the race arbiter. Both callers supply the same
+			// maximum-length custom value without any existence precheck.
+			custom, err := common.GenerateRandomCharsKey(CustomTokenKeyMaxLength)
+			require.NoError(t, err)
+			custom, err = NormalizeCustomTokenKey(custom)
+			require.NoError(t, err)
+			keys = append(keys, custom)
+			duplicates := [2]Token{{UserId: 7, Key: custom}, {UserId: 8, Key: custom}}
+			results := make(chan error, 2)
+			start := make(chan struct{})
+			var writers sync.WaitGroup
+			for i := range duplicates {
+				writers.Go(func() {
+					<-start
+					results <- duplicates[i].Insert()
+				})
+			}
+			close(start)
+			writers.Wait()
+			close(results)
+			successes := 0
+			for err := range results {
+				if err == nil {
+					successes++
+				} else {
+					assert.ErrorIs(t, err, ErrTokenKeyUnavailable)
+					assert.NotContains(t, err.Error(), custom)
+				}
+			}
+			for _, duplicate := range duplicates {
+				if duplicate.Id > 0 {
+					ids = append(ids, duplicate.Id)
+				}
+			}
+			assert.Equal(t, 1, successes)
+			_, err = RotateTokenKeyWithSecret(token.Id, token.UserId, custom)
+			assert.ErrorIs(t, err, ErrTokenKeyUnavailable)
+			current, err = GetTokenByKey(rotated.Key, true)
+			require.NoError(t, err)
+			assert.Equal(t, token.Id, current.Id)
 		})
 	}
 }

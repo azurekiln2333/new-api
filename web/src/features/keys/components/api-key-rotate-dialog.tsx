@@ -23,6 +23,8 @@ import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   SecureVerificationDialog,
   useSecureVerification,
@@ -44,6 +46,7 @@ export function ApiKeyRotateDialog() {
   const verification = useSecureVerification()
   const { requestVerification, cancel: cancelVerification } = verification
   const [pending, setPending] = useState(false)
+  const [customKey, setCustomKey] = useState('')
   const [rotatedKey, setRotatedKey] = useState('')
   const operation = useRef<AbortController | null>(null)
 
@@ -55,6 +58,7 @@ export function ApiKeyRotateDialog() {
       current?.abort()
       cancelVerification()
       setPending(false)
+      setCustomKey('')
       setRotatedKey('')
     }
   }, [isOpen, cancelVerification])
@@ -80,7 +84,8 @@ export function ApiKeyRotateDialog() {
       const rotated = await rotateApiKey(
         currentRow.id,
         proof.proof_token,
-        controller.signal
+        controller.signal,
+        customKey === '' ? undefined : customKey
       )
       if (operation.current !== controller) return
       setRotatedKey(`sk-${rotated.key}`)
@@ -99,13 +104,21 @@ export function ApiKeyRotateDialog() {
         setPending(false)
       }
     }
-  }, [currentRow, forgetResolvedKey, requestVerification, t, triggerRefresh])
+  }, [
+    currentRow,
+    customKey,
+    forgetResolvedKey,
+    requestVerification,
+    t,
+    triggerRefresh,
+  ])
 
   const close = () => {
     operation.current?.abort()
     operation.current = null
     cancelVerification()
     setPending(false)
+    setCustomKey('')
     setRotatedKey('')
     setOpen(null)
   }
@@ -125,7 +138,28 @@ export function ApiKeyRotateDialog() {
         confirmText={t('Rotate')}
         handleConfirm={handleRotate}
         isLoading={pending}
-      />
+      >
+        <div className='grid gap-2'>
+          <Label htmlFor='rotate-custom-key'>
+            {t('Custom key (optional)')}
+          </Label>
+          <Input
+            id='rotate-custom-key'
+            type='password'
+            value={customKey}
+            onChange={(event) => setCustomKey(event.target.value)}
+            placeholder={t('Leave empty to generate a secure random key')}
+            autoComplete='new-password'
+            spellCheck={false}
+            disabled={pending}
+          />
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              '32-128 letters or digits, with an optional sk- prefix. Generated keys stay the recommended default.'
+            )}
+          </p>
+        </div>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={isOpen && rotatedKey !== ''}

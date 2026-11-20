@@ -120,11 +120,13 @@ afterEach(() => {
 it('verifies the selected token, shows the replacement once and clears a previously revealed key', async () => {
   const user = userEvent.setup()
   const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
-    if (url === '/api/token/7/key')
-      {return { data: { success: true, data: { key: 'old' } } }}
+    if (url === '/api/token/7/key') {
+      return { data: { success: true, data: { key: 'old' } } }
+    }
     if (url === '/api/verify') return proofResponse()
-    if (url === '/api/token/7/key/rotate')
-      {return { data: { success: true, data: { key: 'replacement', token } } }}
+    if (url === '/api/token/7/key/rotate') {
+      return { data: { success: true, data: { key: 'replacement', token } } }
+    }
     throw new Error(`Unexpected POST ${url}`)
   })
   renderRotation()
@@ -195,8 +197,9 @@ it('keeps rotation open after a server rejection and requires a fresh proof on r
   const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
     if (url === '/api/verify') return proofResponse()
     attempts++
-    if (attempts === 1)
-      {return { data: { success: false, message: 'Please try again later.' } }}
+    if (attempts === 1) {
+      return { data: { success: false, message: 'Please try again later.' } }
+    }
     return { data: { success: true, data: { key: 'replacement', token } } }
   })
   renderRotation()
@@ -208,13 +211,53 @@ it('keeps rotation open after a server rejection and requires a fresh proof on r
       'current-password'
     )
     await user.click(screen.getByRole('button', { name: 'Verify' }))
-    if (index === 0)
-      {await waitFor(() =>
+    if (index === 0) {
+      await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
-      )}
+      )
+    }
   }
   expect(await screen.findByText('sk-replacement')).toBeVisible()
   expect(post.mock.calls.filter(([url]) => url === '/api/verify')).toHaveLength(
     2
   )
+})
+
+it('sends a custom rotation secret exactly as typed and clears it when the dialog closes', async () => {
+  const user = userEvent.setup()
+  const customKey = ' sk-M7qR2zT9bV4nX6kP8sD3hF5jL0wC1yA9 '
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify') return proofResponse()
+    return {
+      data: {
+        success: false,
+        message: 'The API key may only contain letters and digits',
+      },
+    }
+  })
+  renderRotation()
+  await user.click(screen.getByRole('button', { name: 'Open rotation' }))
+  await user.type(
+    await screen.findByLabelText('Custom key (optional)'),
+    customKey
+  )
+  await user.click(screen.getByRole('button', { name: 'Rotate' }))
+  expect(screen.getByLabelText('Custom key (optional)')).toBeDisabled()
+  await user.type(
+    await screen.findByLabelText('Password', { selector: 'input' }),
+    'current-password'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
+  )
+  expect(post).toHaveBeenCalledWith(
+    '/api/token/7/key/rotate',
+    { key: customKey },
+    expect.anything()
+  )
+  expect(screen.getByLabelText('Custom key (optional)')).toHaveValue(customKey)
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Open rotation' }))
+  expect(await screen.findByLabelText('Custom key (optional)')).toHaveValue('')
 })

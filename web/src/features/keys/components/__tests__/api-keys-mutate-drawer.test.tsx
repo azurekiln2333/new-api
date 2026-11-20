@@ -424,3 +424,178 @@ describe('API keys mutate drawer user quota query switch', () => {
     expect(createdPayloads[0]?.allow_user_quota_query).toBe(false)
   })
 })
+
+describe('Custom API key creation', () => {
+  const customKey = 'sk-M7qR2zT9bV4nX6kP8sD3hF5jL0wC1yA9'
+
+  function installCustomKeyVerification() {
+    const getFixture = apiClient.get
+    vi.spyOn(apiClient, 'get').mockImplementation((url) => {
+      if (url !== '/api/verify/methods') return getFixture(url)
+      return Promise.resolve({
+        data: {
+          success: true,
+          data: {
+            scope: 'token.key.custom_create',
+            methods: [{ method: 'password', available: true }],
+            oauth_providers: [],
+            password_encryption_enabled: false,
+          },
+        },
+      })
+    })
+  }
+
+  test('verifies a custom credential and submits one exact secret with non-replayable authorization', async () => {
+    installApiFixtures([])
+    installCustomKeyVerification()
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+      if (url === '/api/verify') {
+        return {
+          data: {
+            success: true,
+            data: {
+              proof_token: 'custom-create-proof',
+              scope: 'token.key.custom_create',
+              method: 'password',
+              expires_at: Math.floor(Date.now() / 1000) + 300,
+            },
+          },
+        }
+      }
+      return { data: { success: true } }
+    })
+    await renderCreateDrawer()
+    changeInput(getControlByLabel('Name'), 'custom credential')
+    changeInput(getControlByLabel('Quantity'), '3')
+    fireEvent.change(screen.getByLabelText('Custom key (optional)'), {
+      target: { value: customKey },
+    })
+    expect(getControlByLabel('Quantity')).toHaveValue(1)
+    expect(getControlByLabel('Quantity')).toBeDisabled()
+    fireEvent.click(findButton('Save changes', true))
+    expect(post).not.toHaveBeenCalled()
+    const password = await screen.findByLabelText('Password', {
+      selector: 'input',
+    })
+    fireEvent.change(password, { target: { value: 'current-password' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/token/',
+        expect.objectContaining({ key: customKey, name: 'custom credential' }),
+        expect.objectContaining({
+          headers: { 'X-Security-Proof': 'custom-create-proof' },
+          singleUseAuthorization: true,
+          signal: expect.any(AbortSignal),
+        })
+      )
+    )
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/token/')
+    ).toHaveLength(1)
+    expect(post).toHaveBeenCalledWith(
+      '/api/verify',
+      expect.objectContaining({ scope: 'token.key.custom_create' }),
+      expect.anything()
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Custom key (optional)')).toHaveValue('')
+    )
+  })
+
+  test('rejects whitespace without silently trimming the custom secret', async () => {
+    const payloads: Array<Record<string, unknown>> = []
+    installApiFixtures(payloads)
+    await renderCreateDrawer()
+    changeInput(getControlByLabel('Name'), 'custom credential')
+    fireEvent.change(screen.getByLabelText('Custom key (optional)'), {
+      target: { value: ` ${customKey}` },
+    })
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Custom key (optional)')).toHaveAttribute(
+        'aria-invalid',
+        'true'
+      )
+    )
+    expect(screen.getByLabelText('Custom key (optional)')).toHaveValue(
+      ` ${customKey}`
+    )
+    expect(payloads).toEqual([])
+  })
+
+  test('does not create a custom credential when verification is cancelled', async () => {
+    installApiFixtures([])
+    installCustomKeyVerification()
+    const post = vi.spyOn(api, 'post')
+    await renderCreateDrawer()
+    changeInput(getControlByLabel('Name'), 'custom credential')
+    fireEvent.change(screen.getByLabelText('Custom key (optional)'), {
+      target: { value: customKey },
+    })
+    fireEvent.click(findButton('Save changes', true))
+    await screen.findByLabelText('Password', { selector: 'input' })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(findButton('Save changes', true)).toBeEnabled())
+    expect(post).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Custom key (optional)')).toHaveValue(
+      customKey
+    )
+  })
+
+  test('keeps a duplicate custom key editable and obtains a fresh proof before retrying', async () => {
+    installApiFixtures([])
+    installCustomKeyVerification()
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+      if (url === '/api/verify') {
+        return {
+          data: {
+            success: true,
+            data: {
+              proof_token: 'custom-create-proof',
+              scope: 'token.key.custom_create',
+              method: 'password',
+              expires_at: Math.floor(Date.now() / 1000) + 300,
+            },
+          },
+        }
+      }
+      return {
+        data: { success: false, message: 'This API key is already in use' },
+      }
+    })
+    await renderCreateDrawer()
+    changeInput(getControlByLabel('Name'), 'custom credential')
+    fireEvent.change(screen.getByLabelText('Custom key (optional)'), {
+      target: { value: customKey },
+    })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      fireEvent.click(findButton('Save changes', true))
+      fireEvent.change(
+        await screen.findByLabelText('Password', { selector: 'input' }),
+        { target: { value: 'current-password' } }
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+      await waitFor(() =>
+        expect(findButton('Save changes', true)).toBeEnabled()
+      )
+      expect(
+        await screen.findByText('This API key is already in use')
+      ).toBeVisible()
+      expect(screen.getByLabelText('Custom key (optional)')).toHaveValue(
+        customKey
+      )
+      expect(screen.getByLabelText('Custom key (optional)')).toHaveAttribute(
+        'aria-invalid',
+        'true'
+      )
+    }
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/verify')
+    ).toHaveLength(2)
+    expect(
+      post.mock.calls.filter(([url]) => url === '/api/token/')
+    ).toHaveLength(2)
+  })
+})

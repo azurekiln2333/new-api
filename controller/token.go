@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -237,7 +239,26 @@ func RotateTokenKey(c *gin.Context) {
 	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTokenKeyRotate, Context: proofContext}) == nil {
 		return
 	}
-	rotated, err := model.RotateTokenKey(token.Id, userId)
+	// An empty key keeps the secure random generator. A supplied key is validated
+	// and stored server-side; it is never echoed into logs or audit payloads.
+	request := struct {
+		Key string `json:"key"`
+	}{}
+	if c.Request.Body != nil {
+		if err := c.ShouldBindJSON(&request); err != nil && !errors.Is(err, io.EOF) {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+	}
+	rotated, err := model.RotateTokenKeyWithSecret(token.Id, userId, request.Key)
+	if errors.Is(err, model.ErrTokenKeyUnavailable) {
+		common.ApiErrorT(c, "This API key is already in use")
+		return
+	}
+	if errors.Is(err, model.ErrTokenKeyUnchanged) {
+		common.ApiErrorT(c, "The new API key must differ from the current one")
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -383,11 +404,34 @@ func AddToken(c *gin.Context) {
 		token.CrossGroupRetry = false
 		_ = token.SetAutoGroups(nil)
 	}
-	key, err := common.GenerateKey()
-	if err != nil {
-		common.ApiErrorT(c, "Failed to generate token")
-		common.SysLog(common.LogText("failed to generate token key: %s", err.Error()))
-		return
+	// A supplied key is validated and stored exactly as typed (minus an optional
+	// prefix); otherwise the secure random generator stays the default. A custom
+	// key is a sensitive action: it requires the same browser-session step-up as
+	// rotation so a personal access token can never mint a credential it controls.
+	key := ""
+	if token.Key != "" {
+		normalized, err := model.NormalizeCustomTokenKey(token.Key)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		proofContext, err := common.Marshal(service.TokenKeyCustomCreateContext{})
+		if err != nil {
+			writeSecurityOperationError(c, err)
+			return
+		}
+		if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTokenKeyCustomCreate, Context: proofContext}) == nil {
+			return
+		}
+		key = normalized
+	} else {
+		generated, err := common.GenerateKey()
+		if err != nil {
+			common.ApiErrorT(c, "Failed to generate token")
+			common.SysLog(common.LogText("failed to generate token key: %s", err.Error()))
+			return
+		}
+		key = generated
 	}
 	cleanToken := model.Token{
 		UserId:             c.GetInt("id"),
@@ -407,6 +451,10 @@ func AddToken(c *gin.Context) {
 	}
 	cleanToken.AllowUserQuotaQuery = request.AllowUserQuotaQuery == nil || *request.AllowUserQuotaQuery
 	err = cleanToken.Insert()
+	if errors.Is(err, model.ErrTokenKeyUnavailable) {
+		common.ApiErrorT(c, "This API key is already in use")
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

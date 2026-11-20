@@ -72,9 +72,17 @@ export async function getTokenAutoGroups(): Promise<
 
 // Create a new API key
 export async function createApiKey(
-  data: ApiKeyFormData
+  data: ApiKeyFormData & { key?: string },
+  verification?: { proofToken: string; signal: AbortSignal }
 ): Promise<ApiResponse<ApiKey>> {
-  const res = await api.post('/api/token/', data)
+  const res = verification
+    ? await api.post('/api/token/', data, {
+        ...authRequestOptions,
+        headers: { 'X-Security-Proof': verification.proofToken },
+        singleUseAuthorization: true,
+        signal: verification.signal,
+      })
+    : await api.post('/api/token/', data)
   return res.data
 }
 
@@ -122,19 +130,16 @@ export async function fetchTokenKey(
 export async function rotateApiKey(
   id: number,
   proofToken: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  key?: string
 ): Promise<{ key: string; token: ApiKey }> {
   return authResult(
-    api.post(
-      `/api/token/${id}/key/rotate`,
-      {},
-      {
-        ...authRequestOptions,
-        headers: { 'X-Security-Proof': proofToken },
-        singleUseAuthorization: true,
-        signal,
-      }
-    ),
+    api.post(`/api/token/${id}/key/rotate`, key === undefined ? {} : { key }, {
+      ...authRequestOptions,
+      headers: { 'X-Security-Proof': proofToken },
+      singleUseAuthorization: true,
+      signal,
+    }),
     'Failed to rotate API key'
   )
 }

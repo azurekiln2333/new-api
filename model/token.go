@@ -8,6 +8,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -345,7 +347,7 @@ func (token *Token) Insert() error {
 	if err != nil {
 		// A unique-index error quotes the conflicting value, which for a token is
 		// the secret itself; replace it with a stable, value-free message.
-		return ErrDatabase
+		return mapTokenKeyConflict(err)
 	}
 	return nil
 }
@@ -376,10 +378,37 @@ func (token *Token) Delete() (err error) {
 	return DB.Delete(token).Error
 }
 
-// RotateTokenKey replaces only the owner's credential, preserving its record.
-// Cache-miss readers hold the same row lock through cache publication. Changing
-// the Redis generation rejects delayed snapshots after invalidation or restart.
+// RotateTokenKey replaces the credential of one existing token owned by userId
+// with a freshly generated secret. See RotateTokenKeyWithSecret for the path
+// that accepts a user-chosen value.
 func RotateTokenKey(id int, userId int) (*Token, error) {
+	return rotateTokenKey(id, userId, "")
+}
+
+// RotateTokenKeyWithSecret rotates a token to a validated user-chosen secret.
+// An empty customKey keeps the secure random generator. The caller sends the
+// value exactly as the user typed it: surrounding whitespace is invalid rather
+// than silently trimmed, so a mistyped secret is rejected instead of stored in
+// a form the user did not choose.
+func RotateTokenKeyWithSecret(id int, userId int, customKey string) (*Token, error) {
+	if customKey != "" {
+		normalized, err := NormalizeCustomTokenKey(customKey)
+		if err != nil {
+			return nil, err
+		}
+		customKey = normalized
+	}
+	return rotateTokenKey(id, userId, customKey)
+}
+
+// rotateTokenKey replaces the credential of one existing token owned by userId.
+// The record keeps its id, name, status, quota, limits and usage history; only
+// the key changes, so clients that cached the old credential lose access while
+// the token's configuration and statistics stay attached to the same row.
+// The old credential's cache is fenced before the write, and the row is locked
+// for the duration of the rotation so two concurrent rotations cannot interleave.
+// An empty customKey keeps the secure random generator.
+func rotateTokenKey(id int, userId int, customKey string) (*Token, error) {
 	if id <= 0 || userId <= 0 {
 		return nil, errors.New("invalid token id")
 	}
@@ -393,27 +422,209 @@ func RotateTokenKey(id int, userId int) (*Token, error) {
 		if err := locked.Where("id = ? AND user_id = ?", id, userId).First(&token).Error; err != nil {
 			return err
 		}
-		key, err := common.GenerateKey()
-		if err != nil {
+		key := customKey
+		if key == "" {
+			generated, err := common.GenerateKey()
+			if err != nil {
+				return err
+			}
+			key = generated
+		} else {
+			if key == token.Key {
+				return ErrTokenKeyUnchanged
+			}
+			// Rejects a key another row already owns without revealing whose it
+			// is; the unique index remains the final guard against a race.
+			var taken int64
+			if err := tx.Unscoped().Model(&Token{}).Where(map[string]any{"key": key}).Where("id <> ?", token.Id).Count(&taken).Error; err != nil {
+				return ErrDatabase
+			}
+			if taken > 0 {
+				return ErrTokenKeyUnavailable
+			}
+		}
+		// Abort before the write if cache invalidation fails. Cache-miss readers
+		// hold this row lock through publication; deleting the cache generation
+		// rejects delayed snapshots even after the temporary fence expires.
+		if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 			return ErrDatabase
 		}
-		if err := invalidateTokenCacheForMutation(token.Key); err != nil {
-			return ErrDatabase
-		}
+		// The key column is unique across every user: a duplicate is rejected by
+		// the database and rolls the whole rotation back, leaving the old
+		// credential valid rather than silently sharing another token's key.
+		// The column name stays unquoted here so GORM's dialect handles quoting.
 		if err := tx.Model(&Token{}).Where("id = ?", token.Id).Update("key", key).Error; err != nil {
-			return ErrDatabase
+			return mapTokenKeyConflict(err)
 		}
 		token.Key = key
 		rotated = &token
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrTokenKeyUnavailable) || errors.Is(err, ErrTokenKeyUnchanged) {
 			return nil, err
 		}
-		return nil, ErrDatabase
+		return nil, mapTokenKeyConflict(err)
 	}
 	return rotated, nil
+}
+
+// mapTokenKeyConflict replaces a driver error with a stable, value-free message.
+// Unique-index errors quote the conflicting value, which here is the secret
+// itself, so they must never reach the client or a log line.
+func mapTokenKeyConflict(err error) error {
+	if isTokenKeyConflict(err) {
+		return ErrTokenKeyUnavailable
+	}
+	// Other driver errors can include SQL values too (for example an invalid
+	// encoding or failed constraint). Do not return or log the raw driver text.
+	return ErrDatabase
+}
+
+func isTokenKeyConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return mysqlErr.Number == 1062
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unique constraint failed") ||
+		strings.Contains(message, "duplicate entry") ||
+		strings.Contains(message, "duplicate key")
+}
+
+// Custom API key contract. A user-chosen secret is stored without the optional
+// "sk-" prefix and must be 32-128 ASCII letters or digits. These checks reject
+// obvious weak values; they do not make a user-chosen string equivalent to a
+// generated secret.
+const (
+	CustomTokenKeyMinLength   = 32
+	CustomTokenKeyMaxLength   = 128
+	customTokenKeyMinDistinct = 8
+)
+
+var (
+	ErrTokenKeyUnavailable = common.NewMessage("This API key is already in use")
+	ErrTokenKeyUnchanged   = common.NewMessage("The new API key must differ from the current one")
+)
+
+// NormalizeCustomTokenKey validates a user-supplied credential and returns the
+// stored value: the optional leading "sk-" is removed, everything else must be
+// ASCII letters or digits. Embedded separators, whitespace and control
+// characters are rejected because middleware/auth.go parses hyphens as routing
+// suffixes and printability cannot be assumed for arbitrary input.
+func NormalizeCustomTokenKey(raw string) (string, error) {
+	value := raw
+	if strings.HasPrefix(value, "sk-") {
+		value = value[len("sk-"):]
+	}
+	if len(value) < CustomTokenKeyMinLength || len(value) > CustomTokenKeyMaxLength {
+		return "", common.NewMessage("The API key must be {{min}}-{{max}} characters after the optional prefix", map[string]any{"min": CustomTokenKeyMinLength, "max": CustomTokenKeyMaxLength})
+	}
+	distinct := make(map[byte]struct{}, customTokenKeyMinDistinct)
+	for i := range len(value) {
+		c := value[i]
+		if !isTokenKeyChar(c) {
+			return "", common.NewMessage("The API key may only contain ASCII letters and digits")
+		}
+		distinct[c] = struct{}{}
+	}
+	if len(distinct) < customTokenKeyMinDistinct {
+		return "", common.NewMessage("The API key is too easy to guess; use at least {{count}} different characters", map[string]any{"count": customTokenKeyMinDistinct})
+	}
+	lower := strings.ToLower(value)
+	if isTrivialTokenSequence(lower) {
+		return "", common.NewMessage("The API key is a predictable sequence; choose an unrelated value")
+	}
+	if hasRepeatingTokenMotif(lower, 16) {
+		return "", common.NewMessage("The API key repeats too short a pattern; choose an unrelated value")
+	}
+	if hasTrivialTokenKeyPrefix(lower) {
+		return "", common.NewMessage("The API key contains a common easy-to-guess word")
+	}
+	return value, nil
+}
+
+func isTokenKeyChar(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// trivialTokenSequences are the ordered runs a person reaches for first. A
+// value contained entirely in one of them (either direction) is predictable
+// regardless of where the digits-to-letters boundary falls.
+var trivialTokenSequences = []string{
+	"0123456789abcdefghijklmnopqrstuvwxyz",
+	"abcdefghijklmnopqrstuvwxyz0123456789",
+	"zyxwvutsrqponmlkjihgfedcba9876543210",
+	"9876543210zyxwvutsrqponmlkjihgfedcba",
+}
+
+// isTrivialTokenSequence reports a value that is one contiguous run of a trivial
+// ordered sequence, such as "0123456789abcdef..." or "zyxwvuts...".
+func isTrivialTokenSequence(value string) bool {
+	for _, sequence := range trivialTokenSequences {
+		if strings.Contains(sequence, value) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRepeatingTokenMotif reports a value made only of one motif repeated, e.g.
+// "abababab...". maxPeriod bounds how long that motif may be.
+func hasRepeatingTokenMotif(value string, maxPeriod int) bool {
+	for period := 1; period <= maxPeriod && period <= len(value); period++ {
+		if len(value)%period != 0 {
+			continue
+		}
+		repeats := true
+		for i := period; i < len(value); i++ {
+			if value[i] != value[i-period] {
+				repeats = false
+				break
+			}
+		}
+		if repeats {
+			return true
+		}
+	}
+	return false
+}
+
+// hasTrivialTokenKeyPrefix reports a value that starts with a common weak word
+// and continues only with digits, e.g. "password1234".
+func hasTrivialTokenKeyPrefix(value string) bool {
+	for _, word := range []string{"password", "secret", "changeme", "letmein", "qwerty"} {
+		rest, ok := strings.CutPrefix(value, word)
+		if !ok {
+			continue
+		}
+		if rest == "" || isDigitsOnly(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDigitsOnly(value string) bool {
+	if value == "" {
+		return true
+	}
+	for i := range len(value) {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (token *Token) IsModelLimitsEnabled() bool {
