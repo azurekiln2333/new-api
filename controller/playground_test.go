@@ -71,6 +71,7 @@ func TestPlaygroundChannelNavigationAuthorizationAndRouting(t *testing.T) {
 				{name: "auto resolves eligible group", group: "auto", model: "model-b", channel: channels[1].Id, role: common.RoleRootUser, status: http.StatusOK, wantGroup: "second"},
 				{name: "own bound key outside group", group: "default", model: "bound-model", channel: channels[3].Id, role: common.RoleRootUser, status: http.StatusOK, wantGroup: "default"},
 				{name: "ordinary user forged pin", group: "default", model: "model-a", channel: channels[0].Id, role: common.RoleCommonUser, status: http.StatusForbidden},
+				{name: "ordinary user forged pin outside group", group: "default", model: "model-a", channel: channels[2].Id, role: common.RoleCommonUser, status: http.StatusForbidden},
 				{name: "PAT cannot pin", group: "default", model: "model-a", channel: channels[0].Id, role: common.RoleRootUser, pat: true, status: http.StatusForbidden},
 				{name: "unavailable group", group: "private", model: "model-a", channel: channels[2].Id, role: common.RoleRootUser, status: http.StatusForbidden},
 				{name: "channel outside group", group: "default", model: "model-a", channel: channels[2].Id, role: common.RoleRootUser, status: http.StatusForbidden},
@@ -131,6 +132,7 @@ func TestPlaygroundChannelNavigationAuthorizationAndRouting(t *testing.T) {
 			}{
 				{"admin minimal metadata", common.RoleRootUser, false, "default", http.StatusOK},
 				{"ordinary user", common.RoleCommonUser, false, "default", http.StatusForbidden},
+				{"ordinary user forged group", common.RoleCommonUser, false, "private", http.StatusForbidden},
 				{"personal access token", common.RoleRootUser, true, "default", http.StatusForbidden},
 				{"denied group", common.RoleRootUser, false, "private", http.StatusForbidden},
 			} {
@@ -145,6 +147,10 @@ func TestPlaygroundChannelNavigationAuthorizationAndRouting(t *testing.T) {
 					PlaygroundChannels(c)
 					require.Equal(t, tc.status, response.Code, response.Body.String())
 					if tc.status != http.StatusOK {
+						assert.NotContains(t, response.Body.String(), `"data"`)
+						for _, channel := range channels {
+							assert.NotContains(t, response.Body.String(), channel.Name)
+						}
 						return
 					}
 					var result struct {

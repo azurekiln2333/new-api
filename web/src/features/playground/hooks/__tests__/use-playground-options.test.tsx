@@ -17,14 +17,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
+import { ModelGroupSelector } from '@/components/model-group-selector'
 import { useAuthStore } from '@/stores/auth-store'
 
 import * as api from '../../api'
 import { usePlaygroundOptions } from '../use-playground-options'
+import { usePlaygroundState } from '../use-playground-state'
+
+const clients: QueryClient[] = []
 
 vi.mock('../../api', () => ({
   getUserModels: vi.fn(),
@@ -34,6 +46,7 @@ vi.mock('../../api', () => ({
 vi.mock('@/lib/handle-server-error', () => ({ handleServerError: vi.fn() }))
 
 beforeEach(() => {
+  localStorage.clear()
   vi.clearAllMocks()
   useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 100 })
   vi.mocked(api.getUserGroups).mockResolvedValue([
@@ -48,12 +61,18 @@ beforeEach(() => {
   ])
 })
 
-afterEach(() => useAuthStore.getState().auth.reset())
+afterEach(() => {
+  cleanup()
+  clients.splice(0).forEach((client) => client.clear())
+  localStorage.clear()
+  useAuthStore.getState().auth.reset()
+})
 
 function setup(currentChannel?: number, currentModel = 'model-b') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  clients.push(client)
   const setModels = vi.fn()
   const updateConfig = vi.fn()
   const setGroups = vi.fn()
@@ -92,7 +111,10 @@ test('keeps an unavailable explicit pin and blocks sending instead of routing el
   const view = setup(12)
   await waitFor(() => expect(view.result.current.canSend).toBe(true))
   act(() => {
-    view.client.setQueryData(['playground-channels', 1, 'default'], [])
+    view.client.setQueryData(
+      ['playground-channels', 1, 100, true, 'default'],
+      []
+    )
   })
   await waitFor(() => expect(view.result.current.channelUnavailable).toBe(true))
   expect(view.result.current.canSend).toBe(false)
@@ -109,4 +131,104 @@ test('does not query channel metadata for regular users and rejects forged local
   expect(view.result.current.channelUnavailable).toBe(true)
   expect(view.result.current.canSend).toBe(false)
   expect(view.updateConfig).not.toHaveBeenCalled()
+})
+
+function ChannelSelectionHarness() {
+  const state = usePlaygroundState()
+  const options = usePlaygroundOptions({
+    currentGroup: state.config.group,
+    currentModel: state.config.model,
+    currentChannel: state.config.channel_id,
+    setGroups: state.setGroups,
+    setModels: state.setModels,
+    updateConfig: state.updateConfig,
+  })
+  return (
+    <ModelGroupSelector
+      selectedModel={state.config.model}
+      models={state.models}
+      onModelChange={(model) => state.updateConfig('model', model)}
+      selectedGroup={state.config.group}
+      groups={state.groups}
+      onGroupChange={(group) => state.updateConfig('group', group)}
+      channels={options.channels}
+      selectedChannel={state.config.channel_id}
+      onChannelChange={(channel) => state.updateConfig('channel_id', channel)}
+    />
+  )
+}
+
+test('a regular user with channel permissions sees only groups even with cached channel metadata', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 2,
+    username: 'custom-grant',
+    role: 1,
+    permissions: { admin_permissions: { channel: { read: true } } },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  client.setQueryData(
+    ['playground-channels', 2, 1, false, 'default'],
+    [{ id: 99, name: 'Private channel outside group', models: ['model-b'] }]
+  )
+  render(
+    <QueryClientProvider client={client}>
+      <ChannelSelectionHarness />
+    </QueryClientProvider>
+  )
+  const user = userEvent.setup()
+  await waitFor(() =>
+    expect(screen.getByRole('combobox')).toHaveTextContent('Default')
+  )
+  await user.click(screen.getByRole('combobox'))
+  expect(screen.getByRole('button', { name: 'Default' })).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Channels' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('group', { name: 'Model navigation' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByText(/Private channel|Channel #99/)
+  ).not.toBeInTheDocument()
+  expect(api.getPlaygroundChannels).not.toHaveBeenCalled()
+})
+
+test('removes the selected channel and navigation immediately after an administrator is demoted', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  render(
+    <QueryClientProvider client={client}>
+      <ChannelSelectionHarness />
+    </QueryClientProvider>
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('combobox'))
+  await user.click(await screen.findByRole('button', { name: 'Channels' }))
+  await user.click(
+    await screen.findByRole('button', { name: 'Scoped channel' })
+  )
+  expect(screen.getByRole('combobox')).toHaveTextContent('Scoped channel')
+  const requestCount = vi.mocked(api.getPlaygroundChannels).mock.calls.length
+
+  act(() =>
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'demoted',
+      role: 1,
+      permissions: { admin_permissions: { channel: { read: true } } },
+    })
+  )
+  expect(screen.getByRole('combobox')).toHaveTextContent('Default')
+  expect(
+    screen.queryByText(/Scoped channel|Channel #12/)
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Channels' })
+  ).not.toBeInTheDocument()
+  expect(api.getPlaygroundChannels).toHaveBeenCalledTimes(requestCount)
 })

@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { STORAGE_KEYS } from '../../constants'
+import { buildChatCompletionPayload } from '../../lib/streaming/payload-builder'
 import type { Message } from '../../types'
 import { usePlaygroundState } from '../use-playground-state'
 
@@ -51,6 +52,9 @@ afterEach(() => {
 
 describe('usePlaygroundState conversations', () => {
   test('keeps channel pins ephemeral and clears them atomically when changing groups', async () => {
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 1, username: 'admin', role: 100 })
     const view = await renderPlaygroundState()
     act(() => {
       view.result.current.updateConfig('channel_id', 12)
@@ -63,6 +67,78 @@ describe('usePlaygroundState conversations', () => {
       view.result.current.updateConfig('group', 'another-group')
     })
     expect(view.result.current.config.group).toBe('another-group')
+    expect(view.result.current.config.channel_id).toBeUndefined()
+    view.unmount()
+  })
+
+  test.each([
+    {
+      name: 'another administrator signs in',
+      user: { id: 2, username: 'B', role: 100 },
+    },
+    {
+      name: 'the role loses administrator status despite a custom grant',
+      user: {
+        id: 1,
+        username: 'A',
+        role: 1,
+        permissions: { admin_permissions: { channel: { read: true } } },
+      },
+    },
+    {
+      name: 'channel permission is revoked',
+      user: {
+        id: 1,
+        username: 'A',
+        role: 10,
+        permissions: { admin_permissions: { channel: { read: false } } },
+      },
+    },
+    {
+      name: 'the administrator role changes',
+      user: { id: 1, username: 'A', role: 100 },
+    },
+  ])(
+    'clears the pin before building a request when $name',
+    async ({ user }) => {
+      const administrator = {
+        id: 1,
+        username: 'A',
+        role: 10,
+        permissions: { admin_permissions: { channel: { read: true } } },
+      }
+      useAuthStore.getState().auth.setUser(administrator)
+      const view = await renderPlaygroundState()
+      act(() => view.result.current.updateConfig('channel_id', 12))
+      expect(view.result.current.config.channel_id).toBe(12)
+
+      act(() => useAuthStore.getState().auth.setUser(user))
+      expect(view.result.current.config.channel_id).toBeUndefined()
+      expect(
+        buildChatCompletionPayload(
+          [userMessage('hello', 'next-request')],
+          view.result.current.config,
+          view.result.current.parameterEnabled
+        )
+      ).not.toHaveProperty('channel_id')
+
+      act(() => useAuthStore.getState().auth.setUser(administrator))
+      expect(view.result.current.config.channel_id).toBeUndefined()
+      view.unmount()
+    }
+  )
+
+  test('ignores a restored or manually assigned pin for an ordinary user', async () => {
+    localStorage.setItem(
+      `${STORAGE_KEYS.CONFIG}:1`,
+      JSON.stringify({
+        version: 1,
+        data: { group: 'default', channel_id: 12 },
+      })
+    )
+    const view = await renderPlaygroundState()
+    expect(view.result.current.config.channel_id).toBeUndefined()
+    act(() => view.result.current.updateConfig('channel_id', 12))
     expect(view.result.current.config.channel_id).toBeUndefined()
     view.unmount()
   })

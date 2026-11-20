@@ -38,14 +38,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { hasPermission } from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
-import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getPlaygroundChannels, getUserGroups, getUserModels } from '../api'
 import {
+  canSelectPlaygroundChannel,
   getGroupFallback,
   getModelFallback,
   getOptionLoadErrorMessage,
@@ -75,11 +74,16 @@ export function usePlaygroundOptions({
 }: UsePlaygroundOptionsParams) {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
-  const canSelectChannel =
-    (user?.role ?? 0) >= ROLE.ADMIN && hasPermission(user, 'channel', 'read')
+  const canSelectChannel = canSelectPlaygroundChannel(user)
   const channelsQuery = useQuery({
-    queryKey: ['playground-channels', user?.id, currentGroup],
-    queryFn: () => getPlaygroundChannels(currentGroup),
+    queryKey: [
+      'playground-channels',
+      user?.id,
+      user?.role,
+      canSelectChannel,
+      currentGroup,
+    ],
+    queryFn: ({ signal }) => getPlaygroundChannels(currentGroup, signal),
     enabled: canSelectChannel && currentGroup !== '',
     staleTime: 30_000,
   })

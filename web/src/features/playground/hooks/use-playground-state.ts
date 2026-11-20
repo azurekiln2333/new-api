@@ -18,9 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useAuthStore } from '@/stores/auth-store'
+
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../constants'
 import {
   applyMessageStateUpdate,
+  canSelectPlaygroundChannel,
   completeLegacyMessageMigration,
   createConversationMeta,
   createProjectMeta,
@@ -65,10 +68,24 @@ function toStorageFailure(result: StorageSaveResult): PlaygroundStorageFailure {
  * while messages belong to the active conversation.
  */
 export function usePlaygroundState() {
+  const user = useAuthStore((state) => state.auth.user)
+  const canSelectChannel = canSelectPlaygroundChannel(user)
+  const selectionIdentity = `${user?.id}:${user?.role}:${canSelectChannel}`
+  const [previousSelectionIdentity, setPreviousSelectionIdentity] =
+    useState(selectionIdentity)
   // Load initial state from localStorage
   const [config, setConfig] = useState<PlaygroundConfig>(
     getInitialPlaygroundConfig
   )
+
+  // Clear the ephemeral pin before children and request callbacks receive the
+  // next render. An effect would leave one render using the previous identity.
+  if (previousSelectionIdentity !== selectionIdentity) {
+    setPreviousSelectionIdentity(selectionIdentity)
+    if (config.channel_id !== undefined) {
+      setConfig({ ...config, channel_id: undefined })
+    }
+  }
 
   const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(
     getInitialParameterEnabled
@@ -245,6 +262,9 @@ export function usePlaygroundState() {
   // Update config with automatic save
   const updateConfig = useCallback(
     <K extends keyof PlaygroundConfig>(key: K, value: PlaygroundConfig[K]) => {
+      if (key === 'channel_id' && value !== undefined && !canSelectChannel) {
+        return
+      }
       setConfig((prev) => {
         const updated = { ...prev, [key]: value }
         if (key === 'group') {
@@ -254,7 +274,7 @@ export function usePlaygroundState() {
         return updated
       })
     },
-    []
+    [canSelectChannel]
   )
 
   // Update parameter enabled with automatic save

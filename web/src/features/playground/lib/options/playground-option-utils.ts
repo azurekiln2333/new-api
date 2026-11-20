@@ -16,7 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { hasPermission } from '@/lib/admin-permissions'
+import { ROLE } from '@/lib/roles'
+import type { AuthUser } from '@/stores/auth-store'
+
 import type { GroupOption, ModelOption } from '../../types'
+
+export function canSelectPlaygroundChannel(user: AuthUser | null): boolean {
+  return (
+    (user?.role ?? 0) >= ROLE.ADMIN && hasPermission(user, 'channel', 'read')
+  )
+}
 
 export function getModelFallback(
   models: ModelOption[],

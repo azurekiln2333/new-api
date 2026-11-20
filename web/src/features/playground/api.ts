@@ -34,9 +34,10 @@ export type PlaygroundChannelOption = {
 }
 
 export async function getPlaygroundChannels(
-  group: string
+  group: string,
+  signal?: AbortSignal
 ): Promise<PlaygroundChannelOption[]> {
-  const { data } = await api.get('/pg/channels', { params: { group } })
+  const { data } = await api.get('/pg/channels', { params: { group }, signal })
   requireServerSuccess(data)
   return Array.isArray(data.data) ? data.data : []
 }
