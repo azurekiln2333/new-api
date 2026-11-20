@@ -715,7 +715,7 @@ func (channel *Channel) UserBoundModels(userId int) []string {
 		}
 		bound = append(bound, i)
 	}
-	models := make([]string, 0)
+	var models []string
 	for _, modelName := range channel.GetModels() {
 		upstreamModel, _ := channel.RoutingUpstreamModelName(modelName)
 		for _, index := range bound {
