@@ -15,6 +15,7 @@ import (
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
@@ -298,6 +299,52 @@ func TestChannelEndpointDeclarationsConstrainNativeResponsesHTTPAndWebSocket(t *
 				}
 			})
 		}
+	}
+}
+
+func TestResponsesRefusalRetainsRetryAfter(t *testing.T) {
+	service.InitHttpClient()
+	settings := model_setting.GetGlobalSettings()
+	previousPassthrough := settings.PassThroughRequestEnabled
+	settings.PassThroughRequestEnabled = false
+	t.Cleanup(func() { settings.PassThroughRequestEnabled = previousPassthrough })
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/responses", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "45")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"code":"concurrency_limit_exceeded","message":"concurrency limit exceeded for user","type":"rate_limit_error"}}`)
+	}))
+	defer upstream.Close()
+	for _, path := range []string{"/v1/responses", "/v1/chat/completions"} {
+		t.Run(path, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-4o","stream":true}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, "test-key")
+			common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{SupportedEndpoints: []string{"responses"}})
+			var apiErr *relaytypes.NewAPIError
+			if path == "/v1/responses" {
+				request := &dto.OpenAIResponsesRequest{Model: "gpt-4o", Input: []byte(`"hello"`), Stream: common.GetPointer(true)}
+				info := relaycommon.GenRelayInfoResponses(c, request)
+				info.DisablePing = true
+				apiErr = ResponsesHelper(c, info)
+			} else {
+				request := &dto.GeneralOpenAIRequest{Model: "gpt-4o", Stream: common.GetPointer(true), Messages: []dto.Message{{Role: "user", Content: "hello"}}}
+				info := relaycommon.GenRelayInfoOpenAI(c, request)
+				info.DisablePing = true
+				apiErr = TextHelper(c, info)
+			}
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
+			assert.Equal(t, service.UpstreamRejectionConcurrency, service.ClassifyUpstreamRejection(apiErr))
+			assert.Equal(t, "45", helper.UpstreamRetryAfter(c), "the queue must receive the refused attempt's Retry-After")
+			assert.False(t, c.Writer.Written())
+		})
 	}
 }
 

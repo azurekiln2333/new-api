@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -12,6 +13,7 @@ import (
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -186,6 +188,18 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	jsonData = nil
 	var requestBody io.Reader = body
 
+	// Converted Responses requests need the same pre-dispatch comment gate as
+	// native Responses. The response handler chooses Hold once the upstream
+	// protocol is known; non-stream response conversion still writes through.
+	if info.IsStream && helper.StreamCommitGateFrom(c) == nil {
+		holdBudget := helper.DefaultStreamCommitHoldBudget
+		if seconds := service.EffectiveUpstreamFirstByteTimeoutSeconds(info.ChannelSetting); seconds > 0 {
+			holdBudget = time.Duration(seconds) * time.Second
+		}
+		gate := helper.InstallStreamCommitGate(c, holdBudget)
+		defer gate.Finish(c)
+	}
+
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
@@ -202,6 +216,7 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	upstreamStream := isResponsesEventStreamContentType(httpResp.Header.Get("Content-Type"))
 	info.IsStream = clientStream || upstreamStream
 	if httpResp.StatusCode != http.StatusOK {
+		helper.StoreUpstreamRetryAfter(c, httpResp.Header.Get("Retry-After"))
 		newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 		return nil, newApiErr

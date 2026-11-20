@@ -231,7 +231,11 @@ func (g *StreamCommitGate) writeContent(p []byte) (int, error) {
 		g.writeErr = err
 		return n, g.writeErr
 	}
-	if g.holding && len(g.buffered)+len(p) <= g.maxBytes {
+	// Keepalive can arrive while DoRequest is still waiting for upstream
+	// headers, before a protocol-aware handler can call Hold. A bare comment
+	// must not make that eventual zero-work failure look like exposed output.
+	// Unknown handlers still commit on their first actual content write.
+	if (g.holding || isStreamCommentFrame(p)) && len(g.buffered)+len(p) <= g.maxBytes {
 		g.buffered = append(g.buffered, p...)
 		g.mu.Unlock()
 		return len(p), nil

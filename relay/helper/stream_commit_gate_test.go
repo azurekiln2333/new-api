@@ -105,10 +105,12 @@ func TestStreamCommitGateRetryAfterStoppedKeepAlive(t *testing.T) {
 	for attempt := range 2 {
 		gate := InstallStreamCommitGate(c, time.Minute)
 		t.Cleanup(func() { gate.Finish(c) })
-		gate.Hold()
 		stop := StartStreamKeepAlive(c, time.Minute)
 		reused := StartStreamKeepAlive(c, time.Minute)
 		reused() // Nested callers do not own the live keepalive or its writer.
+		require.NoError(t, PingData(c))
+		assert.False(t, gate.Committed(), "keepalive before protocol selection must remain retryable")
+		gate.Hold()
 		_, err := c.Writer.Write([]byte("data: response.created\n\n"))
 		require.NoError(t, err)
 		stop()
@@ -127,17 +129,20 @@ func TestStreamCommitGateRetryAfterStoppedKeepAlive(t *testing.T) {
 			assert.False(t, c.Writer.Written())
 		}
 	}
-	assert.Equal(t, "data: response.created\n\ndata: successful-response\n\n", recorder.Body.String())
+	assert.Equal(t, ": PING\n\ndata: response.created\n\ndata: successful-response\n\n", recorder.Body.String())
 }
 
 func TestStreamCommitGateWithoutProtocolHoldWritesThrough(t *testing.T) {
 	c, recorder := newStreamTestContext(t)
 	gate := InstallStreamCommitGate(c, time.Minute)
 	t.Cleanup(func() { gate.Finish(c) })
+	require.NoError(t, PingData(c))
+	assert.False(t, gate.Committed(), "transport keepalive cannot commit before the handler chooses its protocol")
+	assert.Empty(t, recorder.Body.String())
 	require.NoError(t, StringData(c, "converted response"))
 	assert.True(t, gate.Committed())
 	gate.Finish(c)
-	assert.Equal(t, "data: converted response\n\n", recorder.Body.String())
+	assert.Equal(t, ": PING\n\ndata: converted response\n\n", recorder.Body.String())
 }
 
 func TestStreamCommentKeepAliveSpansTwoWaitCycles(t *testing.T) {

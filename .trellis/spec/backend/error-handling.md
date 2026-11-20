@@ -206,6 +206,14 @@ each complete event as one
 frame. Finish must stop and join timers/writers idempotently. Never bypass Reply
 or silently swallow final errors when removing wrappers.
 
+Transport keepalive comments can arrive before a protocol handler calls Hold.
+The attempt gate buffers those comments under its existing byte/time bounds;
+the first actual write still commits immediately for an unknown handler. The
+keepalive owner's stop callback joins its goroutine and removes its own outer
+writer before the attempt gate finishes. A stopped wrapper retaining a closed
+gate would swallow every later attempt. Native and converted Responses HTTP
+refusals preserve Retry-After before their response bodies are consumed.
+
 Observe usage and productive output before deciding a failure is replayable.
 Once work is billable or output is exposed, emit the incoming protocol's terminal
 error, settle actual usage once and never retry/refund the consumed attempt.

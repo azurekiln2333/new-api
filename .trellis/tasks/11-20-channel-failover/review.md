@@ -305,3 +305,37 @@ typecheck, test, build or browser verification, as instructed. Add
 `TestRequestPolicyUpstreamHTTPFailover` to the existing Responses SQL DSN matrix
 alongside `TestChannelWaitRouting` so the exact stream billing assertions run
 on MySQL and PostgreSQL as well as the root suite's SQLite fixture.
+
+## Cloud CI 44731068705 corrections (2026-11-20)
+
+The cloud run disproved the earlier static-only writer lifecycle conclusion.
+`doRequest` installed a keepalive outside the attempt gate, but stopping it
+did not detach it. Gate Finish could not remove the inner closed gate, so a
+later successful attempt settled correctly while its response was swallowed.
+The owner stop now joins the keepalive and removes only its own outer wrapper.
+The existing helper suite covers two attempts and nested keepalive ownership.
+
+`TestChannelCapacityStreamsRouteAroundFullChannelAndRelease` now sends a real
+delta before blocking, observes a comment while all channels are full, then
+releases the fallback lease and requires that same queued request to finish.
+The old immediate-429 expectation was incompatible with approved R8 waiting.
+The Responses HTTP accounting table now explicitly expects no exposed framing,
+a 502 error, full refund and no consume log for four failures before work;
+the following successful request charges once. Existing WebSocket and partial
+work expectations remain unchanged. These corrections were handed off to root
+and committed as `7112215db`.
+
+The follow-up read found two adjacent boundaries, also repaired: keepalive
+comments before protocol Hold are buffered under the same byte/time bounds
+(unknown handlers still commit on their first content), and both native and
+converted Responses preserve HTTP refusal Retry-After. Converted Responses
+also installs its gate before DoRequest so transport pings cannot get ahead of
+the handler's gate. Existing helper tests
+cover comment discard/commit and unknown-handler pass-through; the existing
+relay conversion test file now covers real HTTP 429 Retry-After transfer for
+native and Chat-to-Responses paths. The backend error-handling spec is synced.
+
+Only static source/diff review and gofmt were performed. No local tests, build,
+lint, typecheck or browser verification. These changes require a new cloud CI
+run, including the existing race and SQLite/MySQL/PostgreSQL suites; no pass is
+claimed for the new revisions before that run completes.
