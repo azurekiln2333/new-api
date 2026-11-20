@@ -169,11 +169,15 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		multiKey     bool
-		replaceCache bool
+		replaceCache string
 	}{
 		{name: "single-key disable removes routing"},
 		{name: "multi-key routing stays until the last key is disabled", multiKey: true},
-		{name: "replaced cache identity stays enabled and routable", replaceCache: true},
+		{name: "replaced cache key stays enabled and routable", replaceCache: "key"},
+		{name: "replaced cache auth headers stay enabled and routable", replaceCache: "headers"},
+		{name: "replaced cache provider config stays enabled and routable", replaceCache: "settings"},
+		{name: "replaced cache key models stay enabled and routable", multiKey: true, replaceCache: "models"},
+		{name: "replaced cache key users stay enabled and routable", multiKey: true, replaceCache: "users"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			useScheduledChannelDatabase(t)
@@ -186,27 +190,43 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 			}
 			require.NoError(t, channel.Insert())
 			InitChannelCache()
+			replacement := channel
+			switch tc.replaceCache {
+			case "key":
+				replacement.Key = "KEY-a"
+			case "headers":
+				replacement.HeaderOverride = common.GetPointer(`{"Authorization":"Bearer replacement"}`)
+			case "settings":
+				replacement.OtherSettings = `{"plugin_config":{"account":"replacement"}}`
+			case "models":
+				replacement.ChannelInfo.MultiKeyModels = map[int][]string{0: {"replacement-model"}}
+			case "users":
+				replacement.ChannelInfo.MultiKeyUsers = map[int]int{0: 123}
+			}
 			for index, key := range keys {
 				changed := UpdateChannelStatusChecked(context.Background(), channel.Id, key, common.ChannelStatusAutoDisabled, "Insufficient balance", func(current *Channel) bool {
-					if tc.replaceCache {
+					if tc.replaceCache != "" {
 						// A current cache publisher can replace the snapshot after the
 						// database validation, before this completed result is published.
-						replacement := channel
-						replacement.Key = "KEY-a"
 						CacheUpdateChannel(&replacement)
 					}
 					return current.Key == channel.Key
 				})
 				require.True(t, changed)
 				wantStatus := common.ChannelStatusAutoDisabled
-				if index < len(keys)-1 || tc.replaceCache {
+				if index < len(keys)-1 || tc.replaceCache != "" {
 					wantStatus = common.ChannelStatusEnabled
 				}
 				cached, err := CacheGetChannel(channel.Id)
 				require.NoError(t, err)
 				assert.Equal(t, wantStatus, cached.Status)
-				if tc.replaceCache {
-					assert.Equal(t, "KEY-a", cached.Key, "a source mismatch must preserve the replacement bytes")
+				if tc.replaceCache != "" {
+					assert.Equal(t, replacement.Key, cached.Key, "a source mismatch must preserve the replacement bytes")
+					assert.Equal(t, replacement.HeaderOverride, cached.HeaderOverride)
+					assert.Equal(t, replacement.OtherSettings, cached.OtherSettings)
+					assert.Equal(t, replacement.ChannelInfo.MultiKeyModels, cached.ChannelInfo.MultiKeyModels)
+					assert.Equal(t, replacement.ChannelInfo.MultiKeyUsers, cached.ChannelInfo.MultiKeyUsers)
+					assert.Empty(t, cached.ChannelInfo.MultiKeyStatusList, "an obsolete result must not disable keys in a replacement scope")
 				} else if tc.multiKey {
 					assert.Equal(t, common.ChannelStatusAutoDisabled, cached.ChannelInfo.MultiKeyStatusList[index])
 					assert.Equal(t, 1, cached.ChannelInfo.MultiKeyPollingIndex)

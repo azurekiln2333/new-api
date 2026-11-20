@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1528,6 +1530,10 @@ func updateChannelStatus(ctx context.Context, channelId int, usingKey string, st
 			channelSyncLock.Lock()
 			if cached, ok := channelsIDM[channelId]; ok && cached.Type == committed.Type && cached.Key == committed.Key &&
 				cached.ChannelInfo.IsMultiKey == committed.ChannelInfo.IsMultiKey && cached.GetBaseURL() == committed.GetBaseURL() &&
+				reflect.DeepEqual(cached.ChannelInfo.MultiKeyModels, committed.ChannelInfo.MultiKeyModels) &&
+				maps.Equal(cached.ChannelInfo.MultiKeyUsers, committed.ChannelInfo.MultiKeyUsers) &&
+				cached.OtherSettings == committed.OtherSettings &&
+				(cached.HeaderOverride == nil && committed.HeaderOverride == nil || cached.HeaderOverride != nil && committed.HeaderOverride != nil && *cached.HeaderOverride == *committed.HeaderOverride) &&
 				(cached.Setting == nil && committed.Setting == nil || cached.Setting != nil && committed.Setting != nil && *cached.Setting == *committed.Setting) {
 				updated := *cached
 				updated.ChannelInfo.MultiKeyStatusList = committed.ChannelInfo.MultiKeyStatusList
