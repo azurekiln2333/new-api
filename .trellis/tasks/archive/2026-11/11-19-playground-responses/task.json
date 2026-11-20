@@ -1,0 +1,29 @@
+{
+  "id": "playground-responses",
+  "name": "playground-responses",
+  "title": "Channel supported endpoints and protocol conversion",
+  "description": "R4: Shared upstream endpoint declarations for playground Chat and external Messages, replacing the playground-only toggle proposal.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lcy",
+  "assignee": "lcy",
+  "createdAt": "2026-11-19",
+  "completedAt": "2026-11-20",
+  "branch": "merge/upstream",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "a9b37b493694a50942f98031d61f4c48e594ac2c",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-19-playground-capabilities",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "release_tag": "custom-20261120-a9b37b4",
+    "release_workflow": "44742578933"
+  }
+}
