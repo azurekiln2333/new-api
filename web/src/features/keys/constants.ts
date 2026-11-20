@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type StatusBadgeProps } from '@/components/status-badge'
+import type { StatusBadgeProps } from '@/components/status-badge'
 
 // ============================================================================
 // API Key Status Configuration
@@ -95,6 +95,7 @@ export const SUCCESS_MESSAGES = {
   API_KEY_CREATED: 'API Key created successfully',
   API_KEY_UPDATED: 'API Key updated successfully',
   API_KEY_DELETED: 'API Key deleted successfully',
+  API_KEY_ROTATED: 'API Key rotated successfully',
   API_KEY_ENABLED: 'API Key enabled successfully',
   API_KEY_DISABLED: 'API Key disabled successfully',
 } as const

@@ -35,6 +35,32 @@ func getTokenCacheFenceKey(key string) string {
 	return fmt.Sprintf("token:fence:{%s}", getTokenCacheKey(key))
 }
 
+func getTokenCacheGenerationKey(key string) string {
+	return fmt.Sprintf("token:generation:{%s}", getTokenCacheKey(key))
+}
+
+// tokenCacheReadGeneration must run before reading the database snapshot. A
+// mutation deletes this nonce atomically with the hash. Expiry or Redis restart
+// also invalidates it, so an arbitrarily delayed reader cannot publish old data.
+func tokenCacheReadGeneration(key string) (string, error) {
+	if !common.RedisEnabled {
+		return "", nil
+	}
+	nonce, err := common.GenerateKey()
+	if err != nil {
+		return "", err
+	}
+	const script = `
+if redis.call('EXISTS', KEYS[2]) == 1 then return '' end
+local generation = redis.call('GET', KEYS[1])
+if generation then return generation end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+return ARGV[1]`
+	return common.RDB.Eval(context.Background(), script, []string{
+		getTokenCacheGenerationKey(key), getTokenCacheFenceKey(key),
+	}, nonce, tokenCacheTTLSeconds()).Text()
+}
+
 func tokenCacheTTLSeconds() int {
 	ttl := common.RedisKeyCacheSeconds()
 	if ttl <= 0 {
@@ -43,11 +69,10 @@ func tokenCacheTTLSeconds() int {
 	return ttl
 }
 
-// tokenCacheFenceSeconds must outlive a token mutation's database write plus
-// any in-flight reader's DB-read-to-cache-init gap. The fence is not deleted
-// after commit; it expires naturally so a reader holding a pre-mutation
-// snapshot cannot publish it right after the mutation cleared the cache.
-// While the fence exists readers simply serve the database without caching.
+// The short fence suppresses cache refill during ordinary metadata updates.
+// Credential rotation additionally locks cache-miss database reads and changes
+// the generation: its safety does not depend on an in-flight reader finishing
+// before this timeout.
 const tokenCacheFenceSeconds = 10
 
 // invalidateTokenCacheForMutation is called before a token metadata mutation
@@ -57,12 +82,13 @@ func invalidateTokenCacheForMutation(key string) error {
 	if !common.RedisEnabled || key == "" {
 		return nil
 	}
-	ctx := context.Background()
-	err := common.RDB.Set(ctx, getTokenCacheFenceKey(key), 1, time.Duration(tokenCacheFenceSeconds)*time.Second).Err()
-	if err != nil {
-		return err
-	}
-	return common.RDB.Del(ctx, getTokenCacheKey(key)).Err()
+	const script = `
+redis.call('SET', KEYS[2], '1', 'EX', ARGV[1])
+redis.call('DEL', KEYS[1], KEYS[3])
+return 1`
+	return common.RDB.Eval(context.Background(), script, []string{
+		getTokenCacheKey(key), getTokenCacheFenceKey(key), getTokenCacheGenerationKey(key),
+	}, tokenCacheFenceSeconds).Err()
 }
 
 // cacheInitToken publishes database metadata when the hash is cold or fails
@@ -70,8 +96,8 @@ func invalidateTokenCacheForMutation(key string) error {
 // can update Redis before the database catches up; counters that are no
 // longer integers are replaced from the snapshot.
 // Returns 0 when fenced, 1 after initialization, or 2 for an existing hash.
-func cacheInitToken(token Token) (int, error) {
-	if !common.RedisEnabled {
+func cacheInitToken(token Token, generation string) (int, error) {
+	if !common.RedisEnabled || generation == "" {
 		return 0, nil
 	}
 	allowIps := ""
@@ -94,7 +120,7 @@ func cacheInitToken(token Token) (int, error) {
 		return 0, err
 	}
 	const script = `
-if redis.call('EXISTS', KEYS[2]) == 1 then
+if redis.call('EXISTS', KEYS[2]) == 1 or redis.call('GET', KEYS[3]) ~= ARGV[23] then
   return 0
 end
 local exists = redis.call('EXISTS', KEYS[1])
@@ -122,7 +148,7 @@ end
 return 1`
 
 	return common.RDB.Eval(context.Background(), script, []string{
-		cacheKey, getTokenCacheFenceKey(token.Key),
+		cacheKey, getTokenCacheFenceKey(token.Key), getTokenCacheGenerationKey(token.Key),
 	},
 		token.Id, token.UserId, token.Status, token.Name,
 		token.CreatedTime, token.AccessedTime, token.ExpiredTime,
@@ -131,7 +157,7 @@ return 1`
 		token.AutoGroups, token.RemainQuota, token.UsedQuota,
 		strconv.FormatBool(token.AllowUserQuotaQuery),
 		tokenCacheTTLSeconds(),
-		token.CacheExpiresAt, mac, strconv.FormatBool(repair), existing.CacheMAC,
+		token.CacheExpiresAt, mac, strconv.FormatBool(repair), existing.CacheMAC, generation,
 	).Int()
 }
 

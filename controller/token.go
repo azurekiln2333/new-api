@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -204,6 +205,47 @@ func GetTokenKey(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
 	common.ApiSuccess(c, gin.H{
 		"key": token.GetFullKey(),
+	})
+}
+
+// RotateTokenKey replaces the credential of one existing API token. The token
+// keeps its id, name, quota, limits and usage history; only the key changes and
+// the previous credential stops authenticating. The action is owner-scoped and
+// requires a step-up proof bound to this exact token id, so neither another
+// user nor a stale proof can rotate it.
+func RotateTokenKey(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	userId := c.GetInt("id")
+	// Resolve ownership first: a missing or foreign token must not consume a
+	// proof or reveal whether the id exists.
+	token, err := model.GetTokenByIds(id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	params := tokenAuditParams(c)
+	params["id"], params["name"] = token.Id, token.Name
+	proofContext, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTokenKeyRotate, Context: proofContext}) == nil {
+		return
+	}
+	rotated, err := model.RotateTokenKey(token.Id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyTokenAuditSucceeded, true)
+	common.ApiSuccess(c, gin.H{
+		"key":   rotated.GetFullKey(),
+		"token": buildMaskedTokenResponse(rotated),
 	})
 }
 

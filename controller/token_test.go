@@ -2,10 +2,12 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -20,13 +22,16 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type tokenAPIResponse struct {
@@ -555,6 +560,223 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	}
 }
 
+func TestRotateTokenKeyRejectsWhenTheCacheCannotBeRevoked(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	token := seedToken(t, model.DB, user.Id, "cache-fenced", "fenced-credential-0123456789")
+	path := fmt.Sprintf("/api/token/%d/key/rotate", token.Id)
+	handler := withAccessTokenID(RotateTokenKey, token.Id)
+
+	previousEnabled, previousClient := common.RedisEnabled, common.RDB
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	require.NoError(t, client.Ping(context.Background()).Err())
+	common.RedisEnabled, common.RDB = true, client
+	t.Cleanup(func() {
+		_ = client.Close()
+		common.RedisEnabled, common.RDB = previousEnabled, previousClient
+	})
+
+	issueProof := func() string {
+		t.Helper()
+		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
+		require.NoError(t, err)
+		return issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+		}, service.VerificationMethodPassword)
+	}
+
+	// Prime the cache and the fence the way a relay request would, using the
+	// same derived key names so the assertions do not depend on column quoting.
+	cacheKey := "token:" + common.GenerateHMAC("fenced-credential-0123456789")
+	fenceKey := "token:fence:{" + cacheKey + "}"
+	primeCache := func(t *testing.T) {
+		t.Helper()
+		require.NoError(t, common.RDB.Set(context.Background(), cacheKey, "1", time.Minute).Err())
+		require.NoError(t, common.RDB.Set(context.Background(), fenceKey, "1", time.Minute).Err())
+	}
+	primeCache(t)
+
+	t.Run("a failed fence leaves the old credential in place", func(t *testing.T) {
+		server.Close()
+		response := securityEnrollmentRequest(http.MethodPost, path, "", issueProof(), identity, handler)
+		assert.False(t, decodeAPIResponse(t, response).Success)
+
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "fenced-credential-0123456789", stored.Key, "the database key must not change when the cache fence fails")
+	})
+
+	t.Run("a recovered cache still invalidates the old credential", func(t *testing.T) {
+		// miniredis cannot be restarted in place, so point the client at a fresh
+		// instance: this proves the fence path works once Redis is reachable again.
+		recovered := miniredis.RunT(t)
+		recoveredClient := redis.NewClient(&redis.Options{Addr: recovered.Addr()})
+		require.NoError(t, recoveredClient.Ping(context.Background()).Err())
+		common.RDB = recoveredClient
+		t.Cleanup(func() { _ = recoveredClient.Close() })
+		primeCache(t)
+
+		response := securityEnrollmentRequest(http.MethodPost, path, "", issueProof(), identity, handler)
+		body := decodeAPIResponse(t, response)
+		require.True(t, body.Success, body.Message)
+
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.NotEqual(t, "fenced-credential-0123456789", stored.Key)
+		// The old credential's cache entry is deleted and the fence is re-raised,
+		// so a concurrent reader cannot publish the pre-rotation snapshot again.
+		assert.Equal(t, int64(0), common.RDB.Exists(context.Background(), cacheKey).Val())
+		assert.Equal(t, int64(1), common.RDB.Exists(context.Background(), fenceKey).Val())
+	})
+}
+
+func TestTokenKeySQLLogsStayValueFree(t *testing.T) {
+	setupTokenControllerTestDB(t)
+	var sqlLogs bytes.Buffer
+	model.DB = model.DB.Session(&gorm.Session{Logger: logger.New(log.New(&sqlLogs, "", 0), logger.Config{LogLevel: logger.Info})}).Debug()
+	owner := &model.Token{UserId: 1, Name: "owner", Key: "taken-credential-0123456789", Status: 1, ExpiredTime: -1}
+	require.NoError(t, owner.Insert())
+
+	duplicate := &model.Token{UserId: 2, Name: "duplicate", Key: "taken-credential-0123456789", Status: 1, ExpiredTime: -1}
+	err := duplicate.Insert()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrDatabase)
+	assert.NotContains(t, err.Error(), "taken-credential-0123456789")
+	_, err = model.GetTokenByKey(owner.Key, true)
+	require.NoError(t, err)
+	rotated, err := model.RotateTokenKey(owner.Id, owner.UserId)
+	require.NoError(t, err)
+	assert.NotContains(t, sqlLogs.String(), owner.Key)
+	assert.NotContains(t, sqlLogs.String(), rotated.Key)
+
+}
+
+func TestRotateTokenKeyRequiresOwnershipAndProof(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	token := seedToken(t, model.DB, user.Id, "rotate-me", "original-credential-0123456789")
+	require.NoError(t, model.DB.Model(token).Updates(map[string]any{
+		"model_limits_enabled": true,
+		"model_limits":         "gpt-4o",
+		"remain_quota":         321,
+		"used_quota":           77,
+	}).Error)
+	path := fmt.Sprintf("/api/token/%d/key/rotate", token.Id)
+	handler := withAccessTokenID(RotateTokenKey, token.Id)
+
+	assertKeyUnchanged := func(t *testing.T) {
+		t.Helper()
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "original-credential-0123456789", stored.Key)
+	}
+
+	t.Run("a missing proof does not rotate", func(t *testing.T) {
+		response := securityEnrollmentRequest(http.MethodPost, path, "", "", identity, handler)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_REQUIRED"`)
+		assertKeyUnchanged(t)
+	})
+
+	t.Run("a proof for another token does not rotate", func(t *testing.T) {
+		otherContext, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id + 1})
+		require.NoError(t, err)
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: otherContext,
+		}, service.VerificationMethodPassword)
+
+		response := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_CONTEXT_MISMATCH"`)
+		assertKeyUnchanged(t)
+	})
+
+	t.Run("an expired authorization does not rotate", func(t *testing.T) {
+		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
+		require.NoError(t, err)
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+		}, service.VerificationMethodPassword)
+		require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("user_id = ? AND purpose = ?", user.Id, model.AuthFlowPurposeSecurityProof).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+		response := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
+		assert.Equal(t, http.StatusForbidden, response.Code)
+		assert.Contains(t, response.Body.String(), `"code":"SECURITY_PROOF_EXPIRED"`)
+		assertKeyUnchanged(t)
+	})
+
+	t.Run("a foreign token is not found before any proof is consumed", func(t *testing.T) {
+		foreign := seedToken(t, model.DB, user.Id+1000, "foreign", "foreign-credential-0123456789")
+		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: foreign.Id})
+		require.NoError(t, err)
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+		}, service.VerificationMethodPassword)
+
+		response := securityEnrollmentRequest(http.MethodPost, fmt.Sprintf("/api/token/%d/key/rotate", foreign.Id), "", proof, identity, withAccessTokenID(RotateTokenKey, foreign.Id))
+		assert.False(t, decodeAPIResponse(t, response).Success)
+
+		stored, err := model.GetTokenById(foreign.Id)
+		require.NoError(t, err)
+		assert.Equal(t, "foreign-credential-0123456789", stored.Key)
+		// The proof was never consumed, so the owner could still use it.
+		assert.Contains(t, response.Body.String(), "not found")
+	})
+
+	t.Run("a valid proof rotates the credential in place", func(t *testing.T) {
+		context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: token.Id})
+		require.NoError(t, err)
+		proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+			Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+		}, service.VerificationMethodPassword)
+
+		response := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
+		body := decodeAPIResponse(t, response)
+		require.True(t, body.Success, body.Message)
+
+		var result struct {
+			Key   string         `json:"key"`
+			Token *tokenResponse `json:"token"`
+		}
+		require.NoError(t, common.Unmarshal(body.Data, &result))
+		require.NotEmpty(t, result.Key)
+		assert.NotEqual(t, "original-credential-0123456789", result.Key)
+		assert.Len(t, result.Key, 48)
+		require.NotNil(t, result.Token)
+		assert.Equal(t, token.Id, result.Token.Id)
+		assert.NotEqual(t, result.Key, result.Token.Key, "the masked row must not carry the raw credential")
+
+		stored, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, result.Key, stored.Key)
+		// Configuration, ownership and history stay on the same record.
+		assert.Equal(t, user.Id, stored.UserId)
+		assert.Equal(t, "rotate-me", stored.Name)
+		assert.Equal(t, common.TokenStatusEnabled, stored.Status)
+		assert.True(t, stored.UnlimitedQuota)
+		assert.Equal(t, 321, stored.RemainQuota)
+		assert.Equal(t, 77, stored.UsedQuota)
+		assert.True(t, stored.ModelLimitsEnabled)
+		assert.Equal(t, "gpt-4o", stored.ModelLimits)
+		assert.Equal(t, "default", stored.Group)
+
+		// The previous credential stops authenticating, the new one resolves to
+		// the same record.
+		var byOldKey model.Token
+		assert.ErrorIs(t, model.DB.Where(map[string]any{"key": "original-credential-0123456789"}).First(&byOldKey).Error, gorm.ErrRecordNotFound)
+		var byNewKey model.Token
+		require.NoError(t, model.DB.Where(map[string]any{"key": result.Key}).First(&byNewKey).Error)
+		assert.Equal(t, token.Id, byNewKey.Id)
+
+		// A replayed proof is rejected and changes nothing.
+		replay := securityEnrollmentRequest(http.MethodPost, path, "", proof, identity, handler)
+		assert.Contains(t, replay.Body.String(), `"code":"SECURITY_PROOF_CONSUMED"`)
+		unchanged, err := model.GetTokenById(token.Id)
+		require.NoError(t, err)
+		assert.Equal(t, result.Key, unchanged.Key)
+	})
+}
+
 func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
 	db := setupTokenControllerTestDB(t)
 	token := seedToken(t, db, 1, "owned-token", "owner1234token5678")
@@ -736,7 +958,7 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				db, _ := newAuditTestDatabase(t, database.name, dsn)
 				model.DB = db
 				common.SetDatabaseTypes(database.typ, database.typ)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}))
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}, &model.AuthFlow{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{}))
 				// Initialize production column quoting as well as the existing audit table.
 				require.NoError(t, model.InitLogDB())
 				if separateLog {
@@ -764,15 +986,18 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 
 func verifyAPITokenAudit(t *testing.T) {
 	t.Helper()
-	pat := "api-token-audit-pat-secret"
-	user := &model.User{Username: "token-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AccessToken: &pat, AffCode: "token-owner"}
+	// Legacy access tokens are retired, so the PAT case needs a scoped token.
+	pat := ""
+	user := &model.User{Username: "token-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "token-owner"}
 	require.NoError(t, model.DB.Create(user).Error)
+	pat, _ = createScopedAccessToken(t, user.Id, 0, "api_key:reveal")
 	other := &model.User{Username: "other-owner", Password: "placeholder", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "other-owner"}
 	require.NoError(t, model.DB.Create(other).Error)
 	session := &model.UserSession{SID: "token-audit-session", UserID: user.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "placeholder", LoginMethod: "password", LastActiveAt: time.Now().Unix(), ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	require.NoError(t, model.CreateUserSession(session))
 	jwt, _, err := service.IssueAccessToken(service.AuthIdentity{UserID: user.Id, SessionID: session.SID, UserAuthVersion: 1, SessionVersion: 1})
 	require.NoError(t, err)
+	identity := service.AuthIdentity{UserID: user.Id, SessionID: session.SID, UserAuthVersion: 1, SessionVersion: 1}
 	router := gin.New()
 	router.Use(middleware.RequestId(), middleware.AccessTokenAudit())
 	tokenRoutes := router.Group("/api/token", middleware.UserAuth(), middleware.TokenOperationAudit())
@@ -788,6 +1013,7 @@ func verifyAPITokenAudit(t *testing.T) {
 		}
 		c.Next()
 	}, GetTokenKey)
+	tokenRoutes.POST("/:id/key/rotate", RotateTokenKey)
 	tokenRoutes.GET("/", GetAllTokens)
 	tokenRoutes.GET("/:id", GetToken)
 	tokenRoutes.GET("/search", SearchTokens)
@@ -799,6 +1025,7 @@ func verifyAPITokenAudit(t *testing.T) {
 		params                           string
 		initialStatus                    int
 		failWrite, rateLimit, usePAT     bool
+		rotate                           bool
 	}{
 		{name: "create", method: "POST", path: "/", body: `{"name":"created","expired_time":-1,"unlimited_quota":true}`, action: "token.create", success: true},
 		{name: "invalid create", method: "POST", path: "/", body: `{"name":"attempt","remain_quota":-1}`, action: "token.create", params: `{"name":"attempt"}`},
@@ -819,6 +1046,7 @@ func verifyAPITokenAudit(t *testing.T) {
 		{name: "foreign delete", method: "DELETE", path: "/$other", action: "token.delete", params: `{"id":$other}`},
 		{name: "missing delete", method: "DELETE", path: "/999999", action: "token.delete", params: `{"id":999999}`},
 		{name: "key view", method: "POST", path: "/$id/key", action: "token.key_view", success: true, params: `{"id":$id,"name":"owned"}`},
+		{name: "key rotation", method: "POST", path: "/$id/key/rotate", action: "token.key_rotate", success: true, params: `{"id":$id,"name":"owned"}`, rotate: true},
 		{name: "PAT key view", method: "POST", path: "/$id/key", action: "token.key_view", success: true, params: `{"id":$id,"name":"owned"}`, usePAT: true},
 		{name: "foreign key view", method: "POST", path: "/$other/key", action: "token.key_view", params: `{"id":$other}`},
 		{name: "rate limited key view", method: "POST", path: "/$id/key", action: "token.key_view", params: `{"id":$id}`, rateLimit: true},
@@ -866,6 +1094,13 @@ func verifyAPITokenAudit(t *testing.T) {
 			request.RemoteAddr = "192.0.2.12:4321"
 			if tc.rateLimit {
 				request.Header.Set("X-Test-Limit", "1")
+			}
+			if tc.rotate {
+				context, err := common.Marshal(service.TokenKeyRotateContext{TokenID: owned.Id})
+				require.NoError(t, err)
+				request.Header.Set("X-Security-Proof", issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{
+					Scope: service.VerificationScopeTokenKeyRotate, Context: context,
+				}, service.VerificationMethodPassword))
 			}
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
@@ -931,7 +1166,18 @@ func verifyAPITokenAudit(t *testing.T) {
 			}
 			encoded, err := common.Marshal(events)
 			require.NoError(t, err)
-			for _, secret := range []string{pat, jwt, owned.Key, foreign.Key, foreign.Name, "raw-body-secret", "raw-storage-error-secret", "private-model-configuration", "203.0.113.57", "Authorization"} {
+			secrets := []string{pat, jwt, owned.Key, foreign.Key, foreign.Name, "raw-body-secret", "raw-storage-error-secret", "private-model-configuration", "203.0.113.57", "Authorization"}
+			if tc.rotate {
+				var rotated model.Token
+				require.NoError(t, model.DB.Where("id = ?", owned.Id).First(&rotated).Error)
+				assert.NotEqual(t, owned.Key, rotated.Key, "rotation must replace the credential")
+				assert.Equal(t, owned.Name, rotated.Name)
+				assert.Equal(t, owned.RemainQuota, rotated.RemainQuota)
+				assert.Equal(t, owned.Group, rotated.Group)
+				assert.Contains(t, response.Body.String(), rotated.Key, "the owner receives the new credential once")
+				secrets = append(secrets, rotated.Key)
+			}
+			for _, secret := range secrets {
 				assert.NotContains(t, string(encoded), secret)
 			}
 			if tc.action == "token.key_view" && tc.success {

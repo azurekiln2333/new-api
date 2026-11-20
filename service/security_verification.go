@@ -32,6 +32,7 @@ const (
 	VerificationScopeAccessTokenGenerate    = "access_token.generate"
 	VerificationScopeAccessTokenRevoke      = "access_token.revoke"
 	VerificationScopeAccessTokenUpdate      = "access_token.update"
+	VerificationScopeTokenKeyRotate         = "token.key.rotate"
 	VerificationScopeAccountBind            = "account.binding.bind"
 	VerificationScopeAccountUnbind          = "account.binding.unbind"
 	VerificationScopePasswordSet            = "account.password.set"
@@ -123,6 +124,12 @@ type AccessTokenUpdateContext struct {
 type AccessTokenRevokeContext struct {
 	TokenID int  `json:"token_id,omitempty"`
 	Legacy  bool `json:"legacy,omitempty"`
+}
+
+// TokenKeyRotateContext binds a rotation proof to the exact API token whose
+// credential is replaced, so a proof for one token cannot rotate another.
+type TokenKeyRotateContext struct {
+	TokenID int `json:"token_id"`
 }
 
 const (
@@ -260,6 +267,12 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
+	case VerificationScopeTokenKeyRotate:
+		var context TokenKeyRotateContext
+		if len(fields) != 1 || common.Unmarshal(operation.Context, &context) != nil || context.TokenID <= 0 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete, VerificationScopeLoginPreferenceDisable:
@@ -336,6 +349,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		}
 	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
+		VerificationScopeTokenKeyRotate,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete, VerificationScopeLoginPreferenceDisable,
 		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,

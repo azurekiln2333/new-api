@@ -35,6 +35,7 @@ export type SecurityProofScope =
   | 'access_token.generate'
   | 'access_token.update'
   | 'access_token.revoke'
+  | 'token.key.rotate'
   | 'account.binding.bind'
   | 'account.binding.unbind'
   | 'account.password.set'
@@ -89,6 +90,7 @@ export type VerificationOperation =
       scope: 'access_token.revoke'
       context: { token_id: number } | { legacy: true }
     }
+  | { scope: 'token.key.rotate'; context: { token_id: number } }
   | {
       scope: Exclude<
         SecurityProofScope,
@@ -98,6 +100,7 @@ export type VerificationOperation =
         | 'access_token.generate'
         | 'access_token.update'
         | 'access_token.revoke'
+        | 'token.key.rotate'
         | `admin.user.${string}`
       >
       context?: Record<string, never>

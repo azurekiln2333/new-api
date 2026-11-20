@@ -227,11 +227,14 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/token/auto-groups": accessTokenScopeRule("api_key:read"),
 	"GET /api/token/:id":         accessTokenScopeRule("api_key:read"),
 	"POST /api/token/:id/key":    accessTokenScopeRule("api_key:reveal"),
-	"POST /api/token/":           accessTokenScopeRule("api_key:write"),
-	"PUT /api/token/":            accessTokenScopeRule("api_key:write"),
-	"DELETE /api/token/:id":      accessTokenScopeRule("api_key:write"),
-	"POST /api/token/batch":      accessTokenScopeRule("api_key:write"),
-	"POST /api/token/batch/keys": accessTokenScopeRule("api_key:reveal"),
+	// Rotating a credential is browser-session only: a personal access token
+	// must never replace the API key that its own scope already exposes.
+	"POST /api/token/:id/key/rotate": accessTokenSessionRule,
+	"POST /api/token/":               accessTokenScopeRule("api_key:write"),
+	"PUT /api/token/":                accessTokenScopeRule("api_key:write"),
+	"DELETE /api/token/:id":          accessTokenScopeRule("api_key:write"),
+	"POST /api/token/batch":          accessTokenScopeRule("api_key:write"),
+	"POST /api/token/batch/keys":     accessTokenScopeRule("api_key:reveal"),
 
 	// router/api-router.go: /api/redemption
 	"GET /api/redemption/":           accessTokenScopeRule("redemption:read"),

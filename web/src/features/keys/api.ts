@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { authRequestOptions, authResult } from '@/lib/secure-verification'
 
 import type {
   ApiKey,
@@ -114,6 +115,28 @@ export async function fetchTokenKey(
 ): Promise<{ success: boolean; message?: string; data?: { key: string } }> {
   const res = await api.post(`/api/token/${id}/key`)
   return res.data
+}
+
+// Rotate the credential of one token in place. The record id, permissions and
+// usage history are preserved.
+export async function rotateApiKey(
+  id: number,
+  proofToken: string,
+  signal: AbortSignal
+): Promise<{ key: string; token: ApiKey }> {
+  return authResult(
+    api.post(
+      `/api/token/${id}/key/rotate`,
+      {},
+      {
+        ...authRequestOptions,
+        headers: { 'X-Security-Proof': proofToken },
+        singleUseAuthorization: true,
+        signal,
+      }
+    ),
+    'Failed to rotate API key'
+  )
 }
 
 // Batch fetch real (unmasked) keys for multiple tokens

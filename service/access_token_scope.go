@@ -238,7 +238,11 @@ var accessTokenVerificationScopes = map[string]string{
 	VerificationScopeAccessTokenGenerate:   "",
 	VerificationScopeAccessTokenUpdate:     "",
 	VerificationScopeAccessTokenRevoke:     "",
-	VerificationScopeLogin:                 "",
+	// A credential rotation is only available from a browser session: a
+	// personal access token must never be able to mint or replace the API key
+	// that its own scope already exposes.
+	VerificationScopeTokenKeyRotate: "",
+	VerificationScopeLogin:          "",
 }
 
 // AccessTokenVerificationScope returns the token scope a PAT needs for a

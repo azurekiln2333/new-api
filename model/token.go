@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type Token struct {
@@ -281,33 +282,72 @@ func GetTokenById(id int) (*Token, error) {
 	return &token, err
 }
 
+// lockTokenCredentialSnapshot serializes credential replacement with the
+// database snapshot held through cache publication. SQLite has no row locks;
+// a zero-row write takes its writer lock even for a custom deferred DSN, before
+// a read snapshot exists. It does not modify a token or its quota counters.
+func lockTokenCredentialSnapshot(tx *gorm.DB) (*gorm.DB, error) {
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		if err := tx.Model(&Token{}).Where("1 = 0").UpdateColumn("id", gorm.Expr("id")).Error; err != nil {
+			return nil, err
+		}
+	}
+	return lockForUpdate(tx), nil
+}
+
 func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+	// Credentials must never appear in SQL traces, including DB.Debug().
+	db := DB.Session(&gorm.Session{Logger: logger.Discard})
 	if !fromDB && common.RedisEnabled {
-		// Try Redis first
 		token, err := cacheGetTokenByKey(key)
 		if err == nil {
 			return token, nil
 		}
-		// Don't return error - fall through to DB
 	}
+	// Capture the Redis generation before the snapshot. If Redis is down or
+	// fenced, serve the database without publishing a cache entry.
+	generation, _ := tokenCacheReadGeneration(key)
 	token = &Token{}
-	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
-		return nil, err
+	if generation == "" {
+		err = db.Where(map[string]any{"key": key}).First(token).Error
+	} else {
+		err = db.Transaction(func(tx *gorm.DB) error {
+			// Rotation holds the same row lock until commit. Even if Redis is
+			// restarted during rotation, a new cache miss cannot publish the old
+			// database value between invalidation and commit.
+			locked, err := lockTokenCredentialSnapshot(tx)
+			if err != nil {
+				return err
+			}
+			if err := locked.Where(map[string]any{"key": key}).First(token).Error; err != nil {
+				return err
+			}
+			// Publication stays inside the row lock. A timed-out Redis command
+			// arriving later is rejected by the mutation's generation change.
+			if _, cacheErr := cacheInitToken(*token, generation); cacheErr != nil {
+				common.SysLog(common.LogText("failed to init token cache: %s", cacheErr.Error()))
+			}
+			return nil
+		})
 	}
-	if common.RedisEnabled {
-		// 用数据库快照初始化或修复元数据，Lua 保留正在使用的额度计数。
-		// 初始化失败不影响本次读取。
-		if _, cacheErr := cacheInitToken(*token); cacheErr != nil {
-			common.SysLog(common.LogText("failed to init token cache: %s", cacheErr.Error()))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
+		return nil, ErrDatabase
 	}
 	return token, nil
 }
 
 func (token *Token) Insert() error {
 	var err error
-	err = DB.Create(token).Error
-	return err
+	err = DB.Session(&gorm.Session{Logger: logger.Discard}).Create(token).Error
+	if err != nil {
+		// A unique-index error quotes the conflicting value, which for a token is
+		// the secret itself; replace it with a stable, value-free message.
+		return ErrDatabase
+	}
+	return nil
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
@@ -334,6 +374,46 @@ func (token *Token) Delete() (err error) {
 		common.SysLog(common.LogText("failed to invalidate token cache before delete: %s", cacheErr.Error()))
 	}
 	return DB.Delete(token).Error
+}
+
+// RotateTokenKey replaces only the owner's credential, preserving its record.
+// Cache-miss readers hold the same row lock through cache publication. Changing
+// the Redis generation rejects delayed snapshots after invalidation or restart.
+func RotateTokenKey(id int, userId int) (*Token, error) {
+	if id <= 0 || userId <= 0 {
+		return nil, errors.New("invalid token id")
+	}
+	var rotated *Token
+	err := DB.Session(&gorm.Session{Logger: logger.Discard}).Transaction(func(tx *gorm.DB) error {
+		locked, err := lockTokenCredentialSnapshot(tx)
+		if err != nil {
+			return err
+		}
+		var token Token
+		if err := locked.Where("id = ? AND user_id = ?", id, userId).First(&token).Error; err != nil {
+			return err
+		}
+		key, err := common.GenerateKey()
+		if err != nil {
+			return ErrDatabase
+		}
+		if err := invalidateTokenCacheForMutation(token.Key); err != nil {
+			return ErrDatabase
+		}
+		if err := tx.Model(&Token{}).Where("id = ?", token.Id).Update("key", key).Error; err != nil {
+			return ErrDatabase
+		}
+		token.Key = key
+		rotated = &token
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		return nil, ErrDatabase
+	}
+	return rotated, nil
 }
 
 func (token *Token) IsModelLimitsEnabled() bool {
