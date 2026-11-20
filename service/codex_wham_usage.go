@@ -12,15 +12,20 @@ import (
 	"github.com/google/uuid"
 )
 
+// CodexWhamRequestSender dispatches a prepared Wham request after its default
+// headers are set. The caller applies channel headers, transport and admission;
+// each fetch function reads and closes the returned response body.
+type CodexWhamRequestSender func(*http.Request) (*http.Response, error)
+
 func FetchCodexWhamUsage(
 	ctx context.Context,
-	client *http.Client,
+	send CodexWhamRequestSender,
 	baseURL string,
 	accessToken string,
 	accountID string,
 ) (statusCode int, body []byte, err error) {
-	if client == nil {
-		return 0, nil, fmt.Errorf("nil http client")
+	if send == nil {
+		return 0, nil, fmt.Errorf("nil request sender")
 	}
 	bu := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if bu == "" {
@@ -41,7 +46,7 @@ func FetchCodexWhamUsage(
 	}
 	setCodexWhamRequestHeaders(req, at, aid)
 
-	resp, err := client.Do(req)
+	resp, err := send(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -56,13 +61,13 @@ func FetchCodexWhamUsage(
 
 func FetchCodexWhamRateLimitResetCredits(
 	ctx context.Context,
-	client *http.Client,
+	send CodexWhamRequestSender,
 	baseURL string,
 	accessToken string,
 	accountID string,
 ) (statusCode int, body []byte, err error) {
-	if client == nil {
-		return 0, nil, fmt.Errorf("nil http client")
+	if send == nil {
+		return 0, nil, fmt.Errorf("nil request sender")
 	}
 	bu := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if bu == "" {
@@ -83,7 +88,7 @@ func FetchCodexWhamRateLimitResetCredits(
 	}
 	setCodexWhamRequestHeaders(req, at, aid)
 
-	resp, err := client.Do(req)
+	resp, err := send(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -98,13 +103,13 @@ func FetchCodexWhamRateLimitResetCredits(
 
 func ConsumeCodexWhamRateLimitResetCredit(
 	ctx context.Context,
-	client *http.Client,
+	send CodexWhamRequestSender,
 	baseURL string,
 	accessToken string,
 	accountID string,
 ) (statusCode int, body []byte, err error) {
-	if client == nil {
-		return 0, nil, fmt.Errorf("nil http client")
+	if send == nil {
+		return 0, nil, fmt.Errorf("nil request sender")
 	}
 	bu := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if bu == "" {
@@ -138,7 +143,7 @@ func ConsumeCodexWhamRateLimitResetCredit(
 	setCodexWhamRequestHeaders(req, at, aid)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := send(req)
 	if err != nil {
 		return 0, nil, err
 	}

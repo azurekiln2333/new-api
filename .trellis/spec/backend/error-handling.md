@@ -536,6 +536,73 @@ Wrong: return an upstream response after deferring its lease release in the
 dispatch function. Correct: attach cleanup to the returned body and require the
 consumer to close it after processing, including every error branch.
 
+## Codex Wham management and credential refresh
+
+### 1. Scope / Trigger
+
+Apply to console Wham usage, credit inspection and credit consumption. These
+specialized endpoints use management transport, not generation conversion.
+
+### 2. Signatures
+
+The three `service.FetchCodexWhamUsage`,
+`FetchCodexWhamRateLimitResetCredits` and
+`ConsumeCodexWhamRateLimitResetCredit` functions receive a
+`CodexWhamRequestSender func(*http.Request) (*http.Response, error)`.
+The controller supplies `codexWhamDispatch.send` and owns one diagnostic
+admission owner for the initial and optional post-refresh request.
+
+### 3. Contracts
+
+Reload the fixed current single-key Codex channel after admission. Rebuild
+Wham paths, access-token/account headers and static overrides from that row;
+the access token alone expands `{api_key}`. Never forward browser headers or
+the full OAuth JSON. Disabled channels retain explicit administrator recovery.
+The service reads and closes the response body before OAuth refresh starts.
+The independent OAuth exchange receives no channel overrides. No redirect is
+followed, and no generic failure retry is added to credit consumption. The
+existing unauthorized/forbidden refresh-once branch remains a separate retry.
+
+Refresh persistence compares ID, Codex type and the exact source credential.
+MySQL uses parameterized binary casts, PostgreSQL explicit C collation and
+SQLite BINARY collation. Plain text equality under a case-insensitive column
+collation is insufficient. GORM quotes the reserved key identifier and binds
+values; discard SQL logging for both secret predicates and updates. A failed
+CAS keeps a concurrent replacement. The in-memory refreshed credential is
+eligible only while the database still holds the exact source bytes.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Current channel deleted/type or multi-key policy changed | Reject before dispatch |
+| Current URL/key/headers/cap changed before grant | Use current policy or regrant |
+| Response body incomplete or caller canceled | Close body and release capacity |
+| Source key replaced, including case-only or trailing whitespace | Keep replacement bytes; do not overwrite |
+| Consume returns 500 or redirect | Return that attempt; no generic retry or redirect |
+
+### 5. Good / Base / Bad Cases
+
+Good: a post-refresh dispatch uses a concurrently replaced credential B. Base:
+an unchanged source A is replaced with its refreshed credential. Bad: a
+MySQL case-insensitive equality lets refreshed A overwrite case-changed B.
+
+### 6. Tests Required
+
+`TestCodexWhamChannelManagement` in `controller/codex_usage_test.go` observes
+actual paths, account/access-token headers, cleanup, cancellation, replacement
+bytes, changed type, consume failure and redirects. Run the selector with
+`TEST_CHANNEL_SQL_DSN` for real MySQL/PostgreSQL, default SQLite and the cloud
+race gate. Authentication, Session Management and OAuth2 OWASP Cheat Sheets
+are the credential-handling read gate; ASVS 5.0.0 is the recorded baseline,
+not a claim of full conformance.
+
+### 7. Wrong vs Correct
+
+Wrong: update a refreshed key by ID alone, or trust a text-collated source-key
+predicate. Correct: bind an exact-byte source/type CAS, then reload the current
+credential for the next admitted Wham attempt.
+
 ## Error Types
 
 <!-- Custom error classes/types -->
