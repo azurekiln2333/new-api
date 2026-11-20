@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -21,6 +21,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
@@ -30,6 +31,7 @@ import (
 
 const (
 	defaultTimeoutSeconds       = 10
+	maxRatioSyncTimeoutSeconds  = 60
 	defaultEndpoint             = "/api/pricing"
 	maxConcurrentFetches        = 8
 	maxRatioConfigBytes         = 10 << 20 // 10MB
@@ -208,6 +210,114 @@ func modelPricingSyncValues(data map[string]any, name string) map[string]any {
 	return values
 }
 
+func pricingSyncRequest(ctx context.Context, baseURL, endpoint string) (*http.Request, error) {
+	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+		baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+		base, err := url.Parse(baseURL)
+		if err != nil || base.Hostname() == "" || base.User != nil || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" {
+			return nil, errors.New("invalid upstream address")
+		}
+		switch endpoint {
+		case "openrouter":
+			endpoint = "/v1/models"
+		case "":
+			endpoint = defaultEndpoint
+		}
+		endpoint = baseURL + "/" + strings.TrimPrefix(endpoint, "/")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil || req.URL.Hostname() == "" || req.URL.User != nil || (req.URL.Scheme != "http" && req.URL.Scheme != "https") {
+		return nil, errors.New("invalid upstream address")
+	}
+	return req, nil
+}
+
+// Only the saved origin may receive credentials or other channel-specific
+// connection policy. A cross-origin absolute endpoint remains a public source.
+func pricingSyncChannelOrigin(req *http.Request, baseURL string) bool {
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	return err == nil && base.User == nil && base.Scheme == req.URL.Scheme && strings.EqualFold(base.Host, req.URL.Host)
+}
+
+func fetchPricingSyncResponse(ctx context.Context, source dto.UpstreamDTO, channel *model.Channel) (*http.Response, error) {
+	baseURL := source.BaseURL
+	if channel != nil {
+		baseURL = channel.GetBaseURL()
+	} else if source.ID > 0 {
+		return nil, errors.New("Channel not found")
+	}
+	openRouter := source.Endpoint == "openrouter"
+	if openRouter && channel == nil {
+		return nil, errors.New("OpenRouter requires a valid channel with API key")
+	}
+	req, err := pricingSyncRequest(ctx, baseURL, source.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	call := service.ChannelManagementCall{Request: req}
+	if channel != nil && pricingSyncChannelOrigin(req, baseURL) {
+		// Upstreams may specify the same channel more than once; keep the
+		// in-memory snapshot immutable across concurrent exchanges.
+		snapshot := *channel
+		admission := service.NewChannelDiagnosticAdmission(ctx, 0)
+		// Closing the waiter doesn't close the granted lease; the response
+		// body owns that lease after this function returns.
+		defer admission.Close()
+		call.Admission, call.ChannelID, call.Settings = admission, snapshot.Id, snapshot.GetSetting()
+		call.Reload = func() (*http.Request, dto.ChannelSettings, error) {
+			var current model.Channel
+			if err := model.DB.WithContext(ctx).First(&current, channel.Id).Error; err != nil || current.Type != channel.Type {
+				return nil, dto.ChannelSettings{}, errors.New("Channel not found")
+			}
+			base := current.GetBaseURL()
+			fresh, err := pricingSyncRequest(ctx, base, source.Endpoint)
+			if err != nil {
+				return nil, dto.ChannelSettings{}, err
+			}
+			if !pricingSyncChannelOrigin(fresh, base) {
+				return nil, dto.ChannelSettings{}, errors.New("channel origin changed during price sync")
+			}
+			key, _, keyErr := current.GetNextEnabledKey()
+			if keyErr != nil {
+				return nil, dto.ChannelSettings{}, errors.New("No enabled channel key")
+			}
+			key = strings.TrimSpace(key)
+			// General pricing endpoints historically use no default Auth; an
+			// operator may opt in via a static override with {api_key}.
+			if openRouter {
+				if key == "" || key == "EMPTY" {
+					return nil, dto.ChannelSettings{}, errors.New("no API key configured for this channel")
+				}
+				fresh.Header = GetAuthHeader(key)
+			}
+			if err := applyFetchModelsHeaderOverrides(&current, key, fresh.Header); err != nil {
+				return nil, dto.ChannelSettings{}, errors.New("Invalid channel header override")
+			}
+			return fresh, current.GetSetting(), nil
+		}
+	} else if openRouter {
+		return nil, errors.New("OpenRouter requires a valid channel with API key")
+	}
+
+	// Retry only failed HTTP sends for this idempotent GET. Capacity/policy
+	// failures and upstream HTTP statuses do not enter the retry loop.
+	for attempt := 0; ; attempt++ {
+		call.Request = req.Clone(ctx)
+		resp, err := service.DoChannelManagementRequest(call)
+		var transportErr *url.Error
+		if err == nil || attempt == 2 || ctx.Err() != nil || !errors.As(err, &transportErr) {
+			return resp, err
+		}
+		timer := time.NewTimer(time.Duration(200<<attempt) * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func FetchUpstreamRatios(c *gin.Context) {
 	var req struct {
 		dto.UpstreamRequest
@@ -222,38 +332,37 @@ func FetchUpstreamRatios(c *gin.Context) {
 	if req.Timeout <= 0 {
 		req.Timeout = defaultTimeoutSeconds
 	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(min(req.Timeout, maxRatioSyncTimeoutSeconds))*time.Second)
+	defer cancel()
 
 	var upstreams []dto.UpstreamDTO
-
+	var channelIDs []int
 	if len(req.Upstreams) > 0 {
-		for _, u := range req.Upstreams {
-			if strings.HasPrefix(u.BaseURL, "http") {
-				if u.Endpoint == "" {
-					u.Endpoint = defaultEndpoint
-				}
-				u.BaseURL = strings.TrimRight(u.BaseURL, "/")
-				upstreams = append(upstreams, u)
+		for _, source := range req.Upstreams {
+			if source.ID > 0 {
+				channelIDs = append(channelIDs, source.ID)
+			}
+			upstreams = append(upstreams, source)
+		}
+	} else {
+		for _, id := range req.ChannelIDs {
+			if id > 0 && int64(int(id)) == id {
+				channelIDs = append(channelIDs, int(id))
 			}
 		}
-	} else if len(req.ChannelIDs) > 0 {
-		intIds := make([]int, 0, len(req.ChannelIDs))
-		for _, id64 := range req.ChannelIDs {
-			intIds = append(intIds, int(id64))
-		}
-		dbChannels, err := model.GetChannelsByIds(intIds)
-		if err != nil {
-			logger.LogError(c.Request.Context(), common.LogText("failed to query channels: %s", err.Error()))
+	}
+	channels := make(map[int]*model.Channel)
+	if len(channelIDs) > 0 {
+		var stored []*model.Channel
+		if err := model.DB.WithContext(ctx).Where("id IN ?", channelIDs).Find(&stored).Error; err != nil {
+			logger.LogError(ctx, common.LogText("failed to query channels: %s", err.Error()))
 			common.ApiErrorStatus(c, http.StatusInternalServerError, common.NewMessage("Failed to query channels"))
 			return
 		}
-		for _, ch := range dbChannels {
-			if base := ch.GetBaseURL(); strings.HasPrefix(base, "http") {
-				upstreams = append(upstreams, dto.UpstreamDTO{
-					ID:       ch.Id,
-					Name:     ch.Name,
-					BaseURL:  strings.TrimRight(base, "/"),
-					Endpoint: "",
-				})
+		for _, channel := range stored {
+			channels[channel.Id] = channel
+			if len(req.Upstreams) == 0 && strings.HasPrefix(channel.GetBaseURL(), "http") {
+				upstreams = append(upstreams, dto.UpstreamDTO{ID: channel.Id, Name: channel.Name})
 			}
 		}
 	}
@@ -265,132 +374,54 @@ func FetchUpstreamRatios(c *gin.Context) {
 
 	var wg sync.WaitGroup
 	ch := make(chan upstreamResult, len(upstreams))
-
+	// Keep the batch fan-out bound independently of the actual shared cap on
+	// each saved channel. Waiting here also spends the original deadline.
 	sem := make(chan struct{}, maxConcurrentFetches)
 
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	transport := &http.Transport{MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: 1 * time.Second, ResponseHeaderTimeout: 10 * time.Second}
-	if common.TLSInsecureSkipVerify {
-		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()
-	}
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, _, err := net.SplitHostPort(addr)
-		if err != nil {
-			host = addr
-		}
-		// 对 github.io 优先尝试 IPv4，失败则回退 IPv6
-		if strings.HasSuffix(host, "github.io") {
-			if conn, err := dialer.DialContext(ctx, "tcp4", addr); err == nil {
-				return conn, nil
+	for _, source := range upstreams {
+		wg.Go(func() {
+			uniqueName := source.Name
+			if source.ID != 0 {
+				uniqueName = fmt.Sprintf("%s(%d)", source.Name, source.ID)
 			}
-			return dialer.DialContext(ctx, "tcp6", addr)
-		}
-		return dialer.DialContext(ctx, network, addr)
-	}
-	client := &http.Client{Transport: transport}
-
-	for _, chn := range upstreams {
-		wg.Add(1)
-		go func(chItem dto.UpstreamDTO) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			isOpenRouter := chItem.Endpoint == "openrouter"
-
-			endpoint := chItem.Endpoint
-			var fullURL string
-			if isOpenRouter {
-				fullURL = chItem.BaseURL + "/v1/models"
-			} else if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
-				fullURL = endpoint
-			} else {
-				if endpoint == "" {
-					endpoint = defaultEndpoint
-				} else if !strings.HasPrefix(endpoint, "/") {
-					endpoint = "/" + endpoint
-				}
-				fullURL = chItem.BaseURL + endpoint
-			}
-			isModelsDev := isModelsDevAPIEndpoint(fullURL)
-
-			uniqueName := chItem.Name
-			if chItem.ID != 0 {
-				uniqueName = fmt.Sprintf("%s(%d)", chItem.Name, chItem.ID)
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				ch <- upstreamResult{Name: uniqueName, Err: ctx.Err().Error()}
+				return
 			}
 
-			ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
-			defer cancel()
-
-			httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+			resp, err := fetchPricingSyncResponse(ctx, source, channels[source.ID])
 			if err != nil {
-				logger.LogWarn(c.Request.Context(), common.LogText("build request failed: %s", err.Error()))
+				logger.LogWarn(ctx, common.LogText("http error on %s: %s", source.Name, err.Error()))
 				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 				return
 			}
-
-			// OpenRouter requires Bearer token auth
-			if isOpenRouter && chItem.ID != 0 {
-				dbCh, err := model.GetChannelById(chItem.ID, true)
+			bodyBytes, err := func() ([]byte, error) {
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+				}
+				body, err := io.ReadAll(io.LimitReader(resp.Body, maxRatioConfigBytes+1))
 				if err != nil {
-					ch <- upstreamResult{Name: uniqueName, Err: "failed to get channel key: " + err.Error()}
-					return
+					return nil, errors.New("failed to read the upstream response")
 				}
-				key, _, apiErr := dbCh.GetNextEnabledKey()
-				if apiErr != nil {
-					ch <- upstreamResult{Name: uniqueName, Err: "failed to get enabled channel key: " + apiErr.Error()}
-					return
+				if len(body) > maxRatioConfigBytes {
+					return nil, errors.New("upstream response is too large")
 				}
-				if strings.TrimSpace(key) == "" {
-					ch <- upstreamResult{Name: uniqueName, Err: "no API key configured for this channel"}
-					return
-				}
-				httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(key))
-			} else if isOpenRouter {
-				ch <- upstreamResult{Name: uniqueName, Err: "OpenRouter requires a valid channel with API key"}
-				return
-			}
-
-			// 简单重试：最多 3 次，指数退避
-			var resp *http.Response
-			var lastErr error
-			for attempt := range 3 {
-				resp, lastErr = client.Do(httpReq)
-				if lastErr == nil {
-					break
-				}
-				time.Sleep(time.Duration(200*(1<<attempt)) * time.Millisecond)
-			}
-			if lastErr != nil {
-				logger.LogWarn(c.Request.Context(), common.LogText("http error on %s: %s", chItem.Name, lastErr.Error()))
-				ch <- upstreamResult{Name: uniqueName, Err: lastErr.Error()}
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				logger.LogWarn(c.Request.Context(), common.LogText("non-200 from %s: %s", chItem.Name, resp.Status))
-				ch <- upstreamResult{Name: uniqueName, Err: resp.Status}
-				return
-			}
-
-			// Content-Type 和响应体大小校验
-			if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.Contains(strings.ToLower(ct), "application/json") {
-				logger.LogWarn(c.Request.Context(), common.LogText("unexpected content-type from %s: %s", chItem.Name, ct))
-			}
-			limited := io.LimitReader(resp.Body, maxRatioConfigBytes)
-			bodyBytes, err := io.ReadAll(limited)
+				return body, nil
+			}()
 			if err != nil {
-				logger.LogWarn(c.Request.Context(), common.LogText("read response failed from %s: %s", chItem.Name, err.Error()))
 				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 				return
 			}
 
 			// type3: OpenRouter /v1/models -> convert per-token pricing to ratios
-			if isOpenRouter {
+			if source.Endpoint == "openrouter" {
 				converted, err := convertOpenRouterToRatioData(bytes.NewReader(bodyBytes))
 				if err != nil {
-					logger.LogWarn(c.Request.Context(), common.LogText("OpenRouter parse failed from %s: %s", chItem.Name, err.Error()))
+					logger.LogWarn(ctx, common.LogText("OpenRouter parse failed from %s: %s", source.Name, err.Error()))
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
@@ -399,10 +430,10 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			// type4: models.dev /api.json -> convert provider model pricing to ratios
-			if isModelsDev {
+			if resp.Request != nil && isModelsDevAPIEndpoint(resp.Request.URL.String()) {
 				converted, err := convertModelsDevToRatioData(bytes.NewReader(bodyBytes))
 				if err != nil {
-					logger.LogWarn(c.Request.Context(), common.LogText("models.dev parse failed from %s: %s", chItem.Name, err.Error()))
+					logger.LogWarn(ctx, common.LogText("models.dev parse failed from %s: %s", source.Name, err.Error()))
 					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
 					return
 				}
@@ -416,17 +447,15 @@ func FetchUpstreamRatios(c *gin.Context) {
 			var body struct {
 				Success bool            `json:"success"`
 				Data    json.RawMessage `json:"data"`
-				Message string          `json:"message"`
 			}
 
 			if err := common.DecodeJson(bytes.NewReader(bodyBytes), &body); err != nil {
-				logger.LogWarn(c.Request.Context(), common.LogText("json decode failed from %s: %s", chItem.Name, err.Error()))
-				ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
+				ch <- upstreamResult{Name: uniqueName, Err: "failed to parse the upstream response"}
 				return
 			}
 
 			if !body.Success {
-				ch <- upstreamResult{Name: uniqueName, Err: body.Message}
+				ch <- upstreamResult{Name: uniqueName, Err: "upstream returned an unsuccessful pricing response"}
 				return
 			}
 
@@ -465,7 +494,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 				BillingExpr          string   `json:"billing_expr"`
 			}
 			if err := common.Unmarshal(body.Data, &pricingItems); err != nil {
-				logger.LogWarn(c.Request.Context(), common.LogText("unrecognized data format from %s: %s", chItem.Name, err.Error()))
+				logger.LogWarn(ctx, common.LogText("unrecognized data format from %s", source.Name))
 				ch <- upstreamResult{Name: uniqueName, Err: "failed to parse the upstream response"}
 				return
 			}
@@ -567,7 +596,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			}
 
 			ch <- upstreamResult{Name: uniqueName, Data: converted}
-		}(chn)
+		})
 	}
 
 	wg.Wait()
