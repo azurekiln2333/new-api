@@ -59,7 +59,9 @@ const inFlightGet = new Map<string, Promise<unknown>>()
 const originalGet = api.get.bind(api)
 
 api.get = ((url: string, config: ApiRequestConfig = {}) => {
-  if (config.disableDuplicate) return originalGet(url, config)
+  // A caller-owned signal must not cancel another caller's request or reuse
+  // its canceled promise. Query clients already deduplicate their own reads.
+  if (config.disableDuplicate || config.signal) return originalGet(url, config)
 
   const params = config.params ? JSON.stringify(config.params) : '{}'
   const sessionSID = useAuthStore.getState().auth.session?.sid || 'anonymous'

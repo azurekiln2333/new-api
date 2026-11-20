@@ -76,3 +76,84 @@ it('public notices keep their existing ETag revalidation policy', async () => {
   await getNotice()
   expect(adapter.mock.calls[0][0].headers.get('Cache-Control')).toBeNull()
 })
+
+it.each([
+  { disableDuplicate: false, requests: 1 },
+  { disableDuplicate: true, requests: 2 },
+])(
+  'shares concurrent GET requests unless deduplication is disabled ($disableDuplicate)',
+  async ({ disableDuplicate, requests }) => {
+    const adapter = vi.fn<AxiosAdapter>(async (config) => ({
+      data: { success: true },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }))
+    api.defaults.adapter = adapter
+    const responses = await Promise.all([
+      api.get('/shared-get', { disableDuplicate }),
+      api.get('/shared-get', { disableDuplicate }),
+    ])
+
+    expect(responses.map((response) => response.data)).toEqual([
+      { success: true },
+      { success: true },
+    ])
+    expect(adapter).toHaveBeenCalledTimes(requests)
+  }
+)
+
+it.each([false, true])(
+  'does not reuse a canceled GET for a new caller (new caller signal: %s)',
+  async (hasSignal) => {
+    const adapter = vi.fn<AxiosAdapter>(async (config) => ({
+      data: { success: true },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }))
+    api.defaults.adapter = adapter
+    const canceled = new AbortController()
+    const signal = hasSignal ? new AbortController().signal : undefined
+    const first = api.get('/canceled-get', { signal: canceled.signal })
+    canceled.abort()
+    const fresh = api.get('/canceled-get', { signal })
+    const results = await Promise.allSettled([first, fresh])
+
+    expect(results[0]).toMatchObject({
+      status: 'rejected',
+      reason: { code: 'ERR_CANCELED' },
+    })
+    expect(results[1]).toMatchObject({
+      status: 'fulfilled',
+      value: { data: { success: true } },
+    })
+    expect(adapter).toHaveBeenCalledTimes(1)
+  }
+)
+
+it('honors caller cancellation even when a matching unsignaled GET is in flight', async () => {
+  api.defaults.adapter = async (config) => ({
+    data: { success: true },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
+  })
+  const existing = api.get('/independent-get')
+  const canceled = new AbortController()
+  const cancelable = api.get('/independent-get', { signal: canceled.signal })
+  canceled.abort()
+  const results = await Promise.allSettled([existing, cancelable])
+
+  expect(results[0]).toMatchObject({
+    status: 'fulfilled',
+    value: { data: { success: true } },
+  })
+  expect(results[1]).toMatchObject({
+    status: 'rejected',
+    reason: { code: 'ERR_CANCELED' },
+  })
+})
