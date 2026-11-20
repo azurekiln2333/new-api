@@ -41,6 +41,124 @@ func dispatchChannelWaitTest(c *channelWaitCoordinator) {
 	c.mu.Unlock()
 }
 
+func TestChannelDiagnosticAdmission(t *testing.T) {
+	t.Run("ordinary waiting still requires authentication", func(t *testing.T) {
+		setupChannelWaitLocal(t)
+		waiter := NewChannelWaiter(t.Context(), 0)
+		defer waiter.Close()
+		_, apiErr := waiter.Wait(t.Context(), []ChannelWaitCandidate{{ChannelID: 72501}})
+		require.NotNil(t, apiErr)
+		assert.Equal(t, http.StatusUnauthorized, apiErr.StatusCode)
+	})
+	t.Run("background work waits and releases its fixed channel", func(t *testing.T) {
+		coordinator := setupChannelWaitLocal(t)
+		const channelID = 72502
+		settings := dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)}
+		active, apiErr := AcquireChannelCapacity(t.Context(), channelID, settings)
+		require.Nil(t, apiErr)
+		defer active.Release()
+		admission := NewChannelDiagnosticAdmission(t.Context(), 0)
+		defer admission.Close()
+		result := make(chan channelWaitResult, 1)
+		go func() {
+			lease, apiErr := admission.Acquire(t.Context(), channelID, settings)
+			result <- channelWaitResult{grant: &ChannelWaitGrant{ChannelID: channelID, Lease: lease}, err: apiErr}
+		}()
+		select {
+		case <-coordinator.wake:
+		case <-time.After(3 * time.Second):
+			t.Fatal("diagnostic did not enter the queue")
+		}
+		dispatchChannelWaitTest(coordinator)
+		select {
+		case <-result:
+			t.Fatal("diagnostic bypassed the channel capacity")
+		default:
+		}
+		active.Release()
+		dispatchChannelWaitTest(coordinator)
+		var admitted channelWaitResult
+		select {
+		case admitted = <-result:
+		case <-time.After(3 * time.Second):
+			t.Fatal("released capacity did not admit the diagnostic")
+		}
+		require.Nil(t, admitted.err)
+		require.NotNil(t, admitted.grant.Lease)
+		admitted.grant.Lease.Release()
+		admitted.grant.Lease.Release()
+		localChannelCapacity.Lock()
+		remaining := localChannelCapacity.active[channelID]
+		localChannelCapacity.Unlock()
+		assert.Zero(t, remaining)
+		assert.Empty(t, coordinator.entries)
+	})
+	t.Run("cancellation removes queued background work", func(t *testing.T) {
+		coordinator := setupChannelWaitLocal(t)
+		const channelID = 72503
+		settings := dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)}
+		active, apiErr := AcquireChannelCapacity(t.Context(), channelID, settings)
+		require.Nil(t, apiErr)
+		defer active.Release()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		admission := NewChannelDiagnosticAdmission(ctx, 0)
+		defer admission.Close()
+		result := make(chan *types.NewAPIError, 1)
+		go func() {
+			lease, apiErr := admission.Acquire(ctx, channelID, settings)
+			if lease != nil {
+				lease.Release()
+			}
+			result <- apiErr
+		}()
+		select {
+		case <-coordinator.wake:
+		case <-time.After(3 * time.Second):
+			t.Fatal("diagnostic did not enter the queue")
+		}
+		cancel()
+		select {
+		case apiErr = <-result:
+			require.NotNil(t, apiErr)
+		case <-time.After(3 * time.Second):
+			t.Fatal("queued diagnostic ignored cancellation")
+		}
+		assert.Empty(t, coordinator.entries)
+	})
+	t.Run("unsaved preview has no shared capacity owner", func(t *testing.T) {
+		setupChannelWaitLocal(t)
+		admission := NewChannelDiagnosticAdmission(t.Context(), 0)
+		defer admission.Close()
+		lease, apiErr := admission.Acquire(t.Context(), 0, dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+		require.Nil(t, apiErr)
+		require.NotNil(t, lease)
+		lease.Release()
+		localChannelCapacity.Lock()
+		remaining := localChannelCapacity.active[0]
+		localChannelCapacity.Unlock()
+		assert.Zero(t, remaining)
+	})
+	t.Run("unlimited admission survives unavailable Redis telemetry", func(t *testing.T) {
+		setupChannelWaitLocal(t)
+		oldRedis, oldClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, nil
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = oldRedis, oldClient })
+		admission := NewChannelDiagnosticAdmission(t.Context(), 0)
+		defer admission.Close()
+		lease, apiErr := admission.Acquire(t.Context(), 72504, dto.ChannelSettings{})
+		require.Nil(t, apiErr)
+		require.NotNil(t, lease)
+		assert.NoError(t, lease.Context().Err())
+		assert.Nil(t, lease.Err())
+		lease.Release()
+		localChannelCapacity.Lock()
+		remaining := localChannelCapacity.active[72504]
+		localChannelCapacity.Unlock()
+		assert.Zero(t, remaining)
+	})
+}
+
 func TestChannelWaitLocalFIFOAndUnrelatedCandidates(t *testing.T) {
 	c := setupChannelWaitLocal(t)
 	candidate := ChannelWaitCandidate{ChannelID: 72101, Settings: dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)}}
@@ -270,7 +388,7 @@ func TestChannelWaitRedis(t *testing.T) {
 	id := int(time.Now().UnixNano())
 	candidate := ChannelWaitCandidate{ChannelID: id, Settings: dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)}}
 	t.Cleanup(func() {
-		_ = client.Del(ctx, channelWaitGlobalKey, channelWaitUserKey(id), channelWaitUserKey(id+1), channelWaitQueueKey(id), channelWaitBusyKey(id), channelCapacityKey(id)).Err()
+		_ = client.Del(ctx, channelWaitGlobalKey, channelWaitUserKey(0), channelWaitUserKey(id), channelWaitUserKey(id+1), channelWaitQueueKey(id), channelWaitBusyKey(id), channelCapacityKey(id)).Err()
 	})
 	first, second := channelWaitTestEntry(id, candidate), channelWaitTestEntry(id+1, candidate)
 	active, apiErr := acquireRedisChannelCapacity(ctx, client, id, 1)
@@ -350,6 +468,73 @@ func TestChannelWaitRedis(t *testing.T) {
 	grant.grant.Lease.Release()
 	assert.Zero(t, client.Exists(ctx, channelWaitBusyKey(id)).Val())
 	assert.Zero(t, client.ZCard(ctx, channelCapacityKey(id)).Val())
+
+	t.Run("internal diagnostics cancel and release Redis ownership", func(t *testing.T) {
+		coordinator := newChannelWaitCoordinator(client)
+		coordinator.running = true
+		active, apiErr := acquireRedisChannelCapacity(ctx, client, id, 1)
+		require.Nil(t, apiErr)
+		defer active.Release()
+		requestCtx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		admission := NewChannelDiagnosticAdmission(requestCtx, 0)
+		admission.waiter.coordinator = coordinator
+		defer admission.Close()
+		result := make(chan channelWaitResult, 1)
+		go func() {
+			lease, apiErr := admission.Acquire(requestCtx, id, candidate.Settings)
+			result <- channelWaitResult{grant: &ChannelWaitGrant{Lease: lease}, err: apiErr}
+		}()
+		select {
+		case <-coordinator.wake:
+		case <-time.After(3 * time.Second):
+			t.Fatal("internal diagnostic did not enter Redis queue")
+		}
+		assert.EqualValues(t, 1, client.ZCard(ctx, channelWaitUserKey(0)).Val())
+		cancel()
+		select {
+		case canceled := <-result:
+			require.NotNil(t, canceled.err)
+			assert.Nil(t, canceled.grant.Lease)
+		case <-time.After(3 * time.Second):
+			t.Fatal("internal Redis diagnostic ignored cancellation")
+		}
+		assert.Zero(t, client.ZCard(ctx, channelWaitUserKey(0)).Val())
+		assert.Zero(t, client.ZCard(ctx, channelWaitQueueKey(id)).Val())
+		assert.EqualValues(t, 1, client.ZCard(ctx, channelCapacityKey(id)).Val())
+
+		// Use a fresh deterministic dispatcher for the next request; cancellation
+		// notifications from the prior request cannot stand in for registration.
+		coordinator = newChannelWaitCoordinator(client)
+		coordinator.running = true
+		next := NewChannelDiagnosticAdmission(t.Context(), 0)
+		next.waiter.coordinator = coordinator
+		defer next.Close()
+		go func() {
+			lease, apiErr := next.Acquire(t.Context(), id, candidate.Settings)
+			result <- channelWaitResult{grant: &ChannelWaitGrant{Lease: lease}, err: apiErr}
+		}()
+		select {
+		case <-coordinator.wake:
+		case <-time.After(3 * time.Second):
+			t.Fatal("replacement internal diagnostic did not queue")
+		}
+		active.Release()
+		dispatchChannelWaitTest(coordinator)
+		select {
+		case admitted := <-result:
+			require.Nil(t, admitted.err)
+			require.NotNil(t, admitted.grant.Lease)
+			admitted.grant.Lease.Release()
+			admitted.grant.Lease.Release()
+		case <-time.After(3 * time.Second):
+			t.Fatal("replacement internal diagnostic was not admitted")
+		}
+		assert.Zero(t, client.ZCard(ctx, channelWaitGlobalKey).Val())
+		assert.Zero(t, client.ZCard(ctx, channelWaitUserKey(0)).Val())
+		assert.Zero(t, client.ZCard(ctx, channelWaitQueueKey(id)).Val())
+		assert.Zero(t, client.ZCard(ctx, channelCapacityKey(id)).Val())
+	})
 
 	// Coordination failure is unavailable, never a falsely full channel or
 	// an independent local admission. Close only the dedicated test peer.

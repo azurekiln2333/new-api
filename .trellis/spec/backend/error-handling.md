@@ -389,6 +389,69 @@ validate current state inside the update lock and publish only the current
 committed observation slice. Recovery removes observations; it does not enable
 disabled channels or keys.
 
+## Trusted console diagnostic admission
+
+### 1. Scope / Trigger
+
+Use fixed-channel admission for server-owned console diagnostics and background
+management operations. It reserves capacity; callers still own access checks and
+current channel, enabled-key, model and endpoint validation.
+
+### 2. Signatures
+
+`service.NewChannelDiagnosticAdmission(ctx, userID)` returns an operation owner.
+Call `Acquire(ctx, channelID, settings)` for ordinary admission, `Wait(...)` only
+after a positively classified upstream concurrency refusal, and defer `Close()`.
+The returned `ChannelCapacityLease` is already counted; use its `Context()` and
+release after upstream body cleanup.
+
+### 3. Contracts
+
+Background operations use internal user bucket 0, bounded by existing
+`CHANNEL_WAIT_MAX_REQUESTS`, `CHANNEL_WAIT_MAX_PER_USER` and
+`CHANNEL_WAIT_TIMEOUT_SECONDS`. Ordinary `NewChannelWaiter(ctx, 0)` remains
+unauthorized. Never manufacture a positive user ID.
+
+Saved limited channels reuse the shared queue. Ordinary unlimited channels
+retain best-effort telemetry and continue during Redis telemetry outages.
+Unsaved IDs are uncounted previews and never share an ID-0 capacity counter.
+Reuse the owner across retries so the original wait deadline cannot reset.
+After a grant, reload applicable policy and release/reacquire when the cap
+changes. Never acquire twice or silently test another channel.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Ordinary anonymous waiter | 401; no queue registration |
+| Internal limited channel is full | Bounded fixed-channel wait |
+| Canceled queued operation | Remove only its registrations; preserve active lease |
+| Unlimited channel with Redis telemetry unavailable | Admit without canceling traffic |
+| Explicit recognized upstream concurrency refusal | Reuse owner and shared busy backoff |
+| Generic 429, quota refusal or transport failure | No concurrency-wait classification |
+| Unsaved preview | Cancellable uncounted lease |
+
+### 5. Good / Base / Bad Cases
+
+Good: a scheduled test queues behind a live request and releases its slot after
+reading the response. Base: an unlimited preview keeps its ordinary behavior.
+Bad: inventing a user identity, resetting the deadline on each retry or
+returning a lease before the response body closes.
+
+### 6. Tests Required
+
+Extend `service/channel_wait_test.go`: verify anonymous refusal, fixed-channel
+handoff, cancellation, idempotent release, uncounted previews and unlimited
+admission during Redis outage. With real Redis, assert internal cancellation
+cleans global/user/channel queue entries without removing another active owner;
+then admit and release a replacement operation. Run through cloud CI.
+
+### 7. Wrong versus Correct
+
+Wrong: route every operation through strict Redis waiting, making an unset cap
+a new availability dependency. Correct: use `Acquire` normally and reserve
+explicit `Wait` for recognized upstream concurrency recovery.
+
 ## Error Types
 
 <!-- Custom error classes/types -->

@@ -45,6 +45,7 @@ type ChannelWaiter struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	userID      int
+	internal    bool
 	mu          sync.Mutex
 	deadline    time.Time
 	duration    time.Duration
@@ -142,7 +143,7 @@ func (w *ChannelWaiter) Close() {
 func (w *ChannelWaiter) Wait(ctx context.Context, candidates []ChannelWaitCandidate) (*ChannelWaitGrant, *types.NewAPIError) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.userID <= 0 {
+	if w.userID <= 0 && !w.internal {
 		return nil, types.NewErrorWithStatusCode(errors.New("authenticated user required for channel waiting"), types.ErrorCodeInvalidRequest, http.StatusUnauthorized, types.ErrOptionWithSkipRetry())
 	}
 	if w.deadline.IsZero() {
