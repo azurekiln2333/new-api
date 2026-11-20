@@ -139,12 +139,9 @@ it('sends no mutation when the confirmation is cancelled', async () => {
   const post = vi.spyOn(api, 'post')
   renderRotation()
   await user.click(screen.getByRole('button', { name: 'Open rotation' }))
-  const dialog = (await screen.findByRole('button', { name: 'Rotate' })).closest(
-    '[role="dialog"]'
-  )
-  expect(dialog).not.toBeNull()
+  const dialog = await screen.findByRole('alertdialog', { name: 'Rotate API key' })
   await user.click(
-    within(dialog as HTMLElement).getByRole('button', { name: 'Cancel' })
+    within(dialog).getByRole('button', { name: 'Cancel' })
   )
   await waitFor(() =>
     expect(
@@ -233,8 +230,8 @@ it('wraps a long replacement key instead of truncating or scrolling sideways', a
   expect(scroller).toHaveClass('overflow-x-hidden')
   expect(scroller).toHaveClass('overflow-y-auto')
   expect(scroller).toHaveClass('max-h-[min(40dvh,16rem)]')
-  const dialog = value.closest('[role="dialog"]')
-  expect(dialog).not.toBeNull()
+  const dialog = screen.getByRole('alertdialog', { name: 'New API key' })
+  expect(dialog).toContainElement(value)
   // The dialog itself stays inside the viewport; only the key area scrolls.
   expect(dialog).toHaveClass('max-h-[var(--dialog-available-height,calc(100dvh-2rem))]')
   await user.click(screen.getByRole('button', { name: 'Copy Key' }))
