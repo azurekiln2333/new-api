@@ -159,6 +159,24 @@ func relayResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor 
 	if apiErr := requestplugin.Egress(c, info, jsonData); apiErr != nil {
 		return nil, apiErr
 	}
+	if apiErr := validatePlaygroundWebSearch(c, info, jsonData); apiErr != nil {
+		return nil, apiErr
+	}
+	if info.WebSearchBillingKey == "" {
+		var hostedTools struct {
+			Tools []struct {
+				Type string `json:"type"`
+			} `json:"tools"`
+		}
+		if err := common.Unmarshal(jsonData, &hostedTools); err == nil {
+			for _, tool := range hostedTools.Tools {
+				if tool.Type == dto.BuildInToolWebSearch || tool.Type == dto.BuildInToolWebSearchPreview {
+					info.WebSearchBillingKey = tool.Type
+					break
+				}
+			}
+		}
+	}
 
 	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 	if err != nil {

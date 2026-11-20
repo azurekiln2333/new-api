@@ -17,17 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { ERROR_MESSAGES } from '../../constants'
-import type { ChatCompletionChunk } from '../../types'
+import type { ChatCompletionChunk, Message } from '../../types'
+import { extractCitationSources } from '../message/message-streaming-utils'
 
 const STREAM_DONE_MESSAGE = '[DONE]'
 const STREAM_CLOSED_READY_STATE = 2
 
 export type StreamUpdateType = 'reasoning' | 'content'
 
-export type StreamMessageUpdate = {
-  type: StreamUpdateType
-  chunk: string
-}
+export type StreamMessageUpdate =
+  | { type: StreamUpdateType; chunk: string }
+  | { type: 'sources'; sources: NonNullable<Message['sources']> }
+  | ({ type: 'error' } & StreamErrorDetails)
 
 type StreamErrorPayload = {
   error?: {
@@ -65,7 +66,10 @@ export function parseStreamErrorDetails(data?: string): StreamErrorDetails {
 }
 
 export function parseStreamMessageUpdates(data: string): StreamMessageUpdate[] {
-  const chunk = JSON.parse(data) as ChatCompletionChunk
+  const chunk = JSON.parse(data) as ChatCompletionChunk & StreamErrorPayload
+  if (chunk?.error) {
+    return [{ type: 'error', ...parseStreamErrorDetails(data) }]
+  }
   const delta = chunk.choices?.[0]?.delta
 
   if (!delta) {
@@ -81,6 +85,11 @@ export function parseStreamMessageUpdates(data: string): StreamMessageUpdate[] {
 
   if (delta.content) {
     updates.push({ type: 'content', chunk: delta.content })
+  }
+
+  const sources = extractCitationSources(delta.annotations)
+  if (sources.length > 0) {
+    updates.push({ type: 'sources', sources })
   }
 
   return updates

@@ -22,7 +22,10 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { STORAGE_KEYS } from '../../../constants'
 import type { Message } from '../../../types'
-import { getInitialParameterEnabled } from '../../state/playground-state-utils'
+import {
+  getInitialParameterEnabled,
+  getInitialPlaygroundConfig,
+} from '../../state/playground-state-utils'
 import {
   clearPlaygroundData,
   loadConfig,
@@ -49,6 +52,17 @@ beforeEach(() => {
 afterEach(() => {
   localStorage.clear()
   useAuthStore.getState().auth.reset()
+})
+
+test('web search defaults off for older config and persists search sources', () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'A', role: 1 })
+  saveConfig({ model: 'existing-model' })
+  expect(getInitialPlaygroundConfig().web_search).toBe(false)
+  saveConfig({ web_search: true })
+  expect(getInitialPlaygroundConfig().web_search).toBe(true)
+  const sources = [{ href: 'https://example.com/article', title: 'Article' }]
+  saveMessages([{ ...messages[0], from: 'assistant', sources }])
+  expect(loadMessages()?.[0].sources).toEqual(sources)
 })
 
 test('switching accounts isolates config, messages and parameter toggles and preserves returning account data', () => {

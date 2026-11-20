@@ -70,6 +70,44 @@ export function processStreamingContent(
 
 export type StreamChunkType = 'reasoning' | 'content'
 
+export function mergeMessageSources(
+  existing: NonNullable<Message['sources']>,
+  incoming: NonNullable<Message['sources']>
+): NonNullable<Message['sources']> {
+  const sources = new Map(existing.map((source) => [source.href, source]))
+  for (const source of incoming) {
+    if (!sources.has(source.href)) sources.set(source.href, source)
+  }
+  return [...sources.values()]
+}
+
+export function extractCitationSources(
+  annotations: unknown
+): NonNullable<Message['sources']> {
+  if (!Array.isArray(annotations)) return []
+  const sources: NonNullable<Message['sources']> = []
+  for (const annotation of annotations) {
+    if (!annotation || annotation.type !== 'url_citation') continue
+    const citation = annotation.url_citation ?? annotation
+    if (typeof citation.url !== 'string') continue
+    try {
+      const url = new URL(citation.url)
+      if (!['https:', 'http:'].includes(url.protocol)) continue
+      if (url.username || url.password) continue
+      sources.push({
+        href: url.href,
+        title:
+          typeof citation.title === 'string' && citation.title.trim()
+            ? citation.title.trim()
+            : url.hostname,
+      })
+    } catch {
+      // Upstream annotations can contain incomplete or non-web URLs.
+    }
+  }
+  return mergeMessageSources([], sources)
+}
+
 function getAppendableChunk(currentContent: string, chunk: string): string {
   if (!currentContent || !chunk.startsWith(currentContent)) {
     return chunk
@@ -192,6 +230,10 @@ export function applyChatCompletionChoice(
     ...finalizeMessage(
       updateCurrentVersionContent(message, choice.message?.content || ''),
       choice.message?.reasoning_content ?? choice.message?.reasoning
+    ),
+    sources: mergeMessageSources(
+      message.sources ?? [],
+      extractCitationSources(choice.message?.annotations)
     ),
     status: MESSAGE_STATUS.COMPLETE,
   })

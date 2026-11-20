@@ -6098,6 +6098,7 @@
     "Search rules...": "Поиск правил…",
     "Search tags...": "Поиск тегов...",
     "Search the public web at inference time": "Искать в общедоступной сети во время инференса",
+    "Search the web through the selected model. Requires upstream support and may incur additional charges.": "Поиск в интернете через выбранную модель. Требуется поддержка провайдера; возможна дополнительная плата.",
     "Search vendor names or descriptions": "Поиск по имени или описанию поставщика",
     "Search vendors": "Поиск поставщиков",
     "Search vendors...": "Поиск поставщиков...",

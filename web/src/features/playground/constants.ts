@@ -55,6 +55,7 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   seed: null,
   reasoning_effort: 'medium',
   stream: true,
+  web_search: false,
 }
 
 export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {

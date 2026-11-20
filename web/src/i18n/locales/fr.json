@@ -6098,6 +6098,7 @@
     "Search rules...": "Rechercher des règles…",
     "Search tags...": "Rechercher des tags...",
     "Search the public web at inference time": "Rechercher sur le web public lors de l'inférence",
+    "Search the web through the selected model. Requires upstream support and may incur additional charges.": "Rechercher sur le Web avec le modèle sélectionné. Le fournisseur doit prendre en charge cette fonction et des frais supplémentaires peuvent s’appliquer.",
     "Search vendor names or descriptions": "Rechercher un nom ou une description",
     "Search vendors": "Rechercher un fournisseur",
     "Search vendors...": "Rechercher des fournisseurs...",

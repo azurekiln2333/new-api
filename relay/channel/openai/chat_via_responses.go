@@ -52,6 +52,8 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	tools := responsesToolUsage{}
+	tools.observe(info, &dto.ResponsesStreamResponse{Type: "response.completed", Response: &responsesResp}, body)
 	return usage, nil
 }
 
@@ -64,6 +66,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	info.StreamStatus = relaycommon.NewStreamStatus()
 	info.StreamStatus.RequireTerminal()
 	accumulator := relayconvert.NewResponsesBufferedAccumulator()
+	tools := responsesToolUsage{}
 	var finalResponse *dto.OpenAIResponsesResponse
 	var streamErr *types.NewAPIError
 
@@ -93,6 +96,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 			info.ObserveResponseModel(streamResp.Response.Model)
 		}
 		service.ObserveResponsesOutcome(info, &streamResp)
+		tools.observe(info, &streamResp, common.StringToByteSlice(data))
 		accumulator.ProcessEvent(&streamResp)
 		switch streamResp.Type {
 		case "response.completed", "response.done", "response.incomplete":
@@ -191,6 +195,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	// failedUsage the usage it reported, if any.
 	upstreamFailed := false
 	var failedUsage *dto.Usage
+	tools := responsesToolUsage{}
 
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo == nil {
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
@@ -279,6 +284,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if streamResp.Response != nil {
 			info.ObserveResponseModel(streamResp.Response.Model)
 		}
+		tools.observe(info, &streamResp, common.StringToByteSlice(data))
 		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
 			upstreamFailed = true
 			if streamResp.Response != nil {
@@ -386,4 +392,56 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		helper.Done(c)
 	}
 	return usage, nil
+}
+
+// responsesToolUsage preserves actual hosted-tool calls when a Responses reply
+// is converted to another client protocol. Terminal-only outputs are supported;
+// an item repeated in the terminal response is counted only once.
+type responsesToolUsage struct {
+	seen map[string]struct{}
+}
+
+func (u *responsesToolUsage) observe(info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse, raw []byte) {
+	switch event.Type {
+	case dto.ResponsesOutputTypeItemDone:
+		u.observeItem(info, event.Item, event.OutputIndex)
+	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+		if event.Response != nil {
+			for i := range event.Response.Output {
+				u.observeItem(info, &event.Response.Output[i], &i)
+			}
+		}
+		// Vendor billing facts take precedence over protocol item counts.
+		info.ApplyVendorToolUsage(raw)
+	}
+}
+
+func (u *responsesToolUsage) observeItem(info *relaycommon.RelayInfo, item *dto.ResponsesOutput, index *int) {
+	if item == nil {
+		return
+	}
+	switch item.Type {
+	case dto.BuildInCallWebSearchCall, dto.BuildInCallFileSearchCall, dto.BuildInCallFunctionCall:
+	default:
+		return
+	}
+	aliases := make([]string, 0, 2)
+	if item.ID != "" {
+		aliases = append(aliases, "id:"+item.ID)
+	}
+	if index != nil && *index >= 0 {
+		aliases = append(aliases, fmt.Sprintf("index:%d", *index))
+	}
+	if u.seen == nil {
+		u.seen = make(map[string]struct{})
+	}
+	for _, alias := range aliases {
+		if _, exists := u.seen[alias]; exists {
+			return
+		}
+	}
+	for _, alias := range aliases {
+		u.seen[alias] = struct{}{}
+	}
+	info.CountBillableToolCall(item.Type, item.Name)
 }

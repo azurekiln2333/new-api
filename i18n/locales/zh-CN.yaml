@@ -94,6 +94,7 @@ relay.upstream_first_byte_timeout: "等待上游响应正文的首个字节超�
 relay.channel_endpoint_invalid: "渠道的上游端点配置无效"
 relay.channel_endpoint_unsupported: "此渠道没有支持当前请求的兼容上游端点"
 relay.channel_endpoint_passthrough_conflict: "渠道需要转换协议时不能启用请求体透传"
+relay.playground_web_search_unavailable: "所选渠道无法保留联网搜索，请选择支持上游搜索的渠道或关闭搜索。"
 channel.test_completed_content: "所有通道测试已完成"
 channel.response_time_exceeded: "响应时间 {{.Seconds}}s 超过阈值 {{.Threshold}}s"
 channel.upstream_update_notify_subject: "上游模型巡检通知"

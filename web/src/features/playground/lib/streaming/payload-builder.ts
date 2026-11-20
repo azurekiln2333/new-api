@@ -44,6 +44,10 @@ export function buildChatCompletionPayload(
     stream: config.stream,
   }
 
+  if (config.web_search) {
+    payload.web_search_options = { search_context_size: 'medium' }
+  }
+
   if (parameterEnabled.temperature) {
     payload.temperature = config.temperature
   }

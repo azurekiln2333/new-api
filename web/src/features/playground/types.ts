@@ -77,6 +77,7 @@ export interface ChatCompletionRequest {
   presence_penalty?: number
   seed?: number
   reasoning_effort?: ReasoningEffort
+  web_search_options?: { search_context_size: 'medium' }
 }
 
 export interface ChatCompletionChunk {
@@ -91,6 +92,7 @@ export interface ChatCompletionChunk {
       content?: string
       reasoning_content?: string | null
       reasoning?: string | null
+      annotations?: unknown
     }
     finish_reason: string | null
   }>
@@ -108,6 +110,7 @@ export interface ChatCompletionResponse {
       content: string
       reasoning_content?: string | null
       reasoning?: string | null
+      annotations?: unknown
     }
     finish_reason: string
   }>
@@ -139,6 +142,7 @@ export interface PlaygroundConfig {
   seed: number | null
   reasoning_effort: ReasoningEffort
   stream: boolean
+  web_search: boolean
 }
 
 export interface ParameterEnabled {

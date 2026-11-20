@@ -118,6 +118,7 @@ const (
 	MsgRelayChannelEndpointInvalid             = "relay.channel_endpoint_invalid"
 	MsgRelayChannelEndpointUnsupported         = "relay.channel_endpoint_unsupported"
 	MsgRelayChannelEndpointPassthroughConflict = "relay.channel_endpoint_passthrough_conflict"
+	MsgPlaygroundWebSearchUnavailable          = "relay.playground_web_search_unavailable"
 
 	MsgChannelUpstreamUpdateNotifySubject   = "channel.upstream_update_notify_subject"
 	MsgChannelUpstreamUpdateSummary         = "channel.upstream_update_summary"

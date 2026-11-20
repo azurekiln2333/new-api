@@ -6098,6 +6098,7 @@
     "Search rules...": "ルールを検索…",
     "Search tags...": "タグを検索...",
     "Search the public web at inference time": "推論時に公開ウェブを検索",
+    "Search the web through the selected model. Requires upstream support and may incur additional charges.": "選択したモデルでウェブ検索します。上流の対応が必要で、追加料金が発生する場合があります。",
     "Search vendor names or descriptions": "プロバイダー名や説明で検索",
     "Search vendors": "ベンダーを検索",
     "Search vendors...": "ベンダーを検索...",

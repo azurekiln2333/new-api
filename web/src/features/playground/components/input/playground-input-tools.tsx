@@ -38,11 +38,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import {
-  ATTACHMENT_ACTIONS,
-  getAttachmentActionNotice,
-  getSearchActionNotice,
-} from '../../lib'
+import { ATTACHMENT_ACTIONS, getAttachmentActionNotice } from '../../lib'
 import type { ParameterEnabled, PlaygroundConfig } from '../../types'
 import { PlaygroundParameterPanel } from './playground-parameter-panel'
 
@@ -82,8 +78,7 @@ export function PlaygroundInputTools({
   }
 
   const handleSearchAction = () => {
-    const notice = getSearchActionNotice()
-    toast.info(t(notice.title))
+    onConfigChange('web_search', !config.web_search)
   }
 
   const handleClearMessages = () => {
@@ -135,17 +130,22 @@ export function PlaygroundInputTools({
             render={
               <PromptInputButton
                 aria-label={t('Search')}
+                aria-pressed={config.web_search}
                 className='text-muted-foreground hover:text-foreground hover:bg-muted/70 font-medium'
                 disabled={disabled}
                 onClick={handleSearchAction}
-                variant='ghost'
+                variant={config.web_search ? 'secondary' : 'ghost'}
               >
                 <GlobeIcon size={16} />
               </PromptInputButton>
             }
           />
           <TooltipContent>
-            <p>{t('Search')}</p>
+            <p>
+              {t(
+                'Search the web through the selected model. Requires upstream support and may incur additional charges.'
+              )}
+            </p>
           </TooltipContent>
         </Tooltip>
 

@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,57 @@ func newResponsesChatTestContext(t *testing.T, body string, isStream bool) (*gin
 		DisablePing:        true,
 	}
 	return c, recorder, resp, info
+}
+
+func TestResponsesToChatPreservesHostedSearchUsageAndCitations(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	response := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[{"type":"web_search_call","id":"ws_1","status":"completed"},{"type":"function_call","id":"fc_1","name":"web_search","arguments":"{}"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Search result","annotations":[{"type":"url_citation","url":"https://example.com/source","title":"Source","start_index":0,"end_index":13}]}]}],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}`
+	for _, mode := range []string{"json", "stream", "buffered", "terminal only"} {
+		for _, vendorOverride := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/vendor=%t", mode, vendorOverride), func(t *testing.T) {
+				body := response
+				if mode != "json" {
+					body = "data: {\"type\":\"response.completed\",\"response\":" + response + "}\n\n"
+					if mode != "terminal only" {
+						body = "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_1\",\"status\":\"completed\"}}\n\n" + body
+					}
+				}
+				c, recorder, resp, info := newResponsesChatTestContext(t, body, mode == "stream" || mode == "terminal only")
+				info.WebSearchBillingKey = dto.BuildInToolWebSearch
+				if vendorOverride {
+					info.VendorToolUsage = func(raw []byte) map[string]int {
+						assert.Contains(t, string(raw), `"input_tokens":2`)
+						return map[string]int{dto.BuildInToolWebSearch: 0}
+					}
+				}
+				var usage *dto.Usage
+				var apiErr *types.NewAPIError
+				switch mode {
+				case "json":
+					resp.Header.Set("Content-Type", "application/json")
+					usage, apiErr = OaiResponsesToChatHandler(c, info, resp)
+				case "buffered":
+					usage, apiErr = OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+				default:
+					usage, apiErr = OaiResponsesToChatStreamHandler(c, info, resp)
+				}
+				require.Nil(t, apiErr)
+				require.NotNil(t, usage)
+				assert.Equal(t, 2, usage.PromptTokens)
+				assert.Equal(t, 3, usage.CompletionTokens)
+				assert.Equal(t, 5, usage.TotalTokens)
+				assert.Contains(t, recorder.Body.String(), "https://example.com/source")
+				require.NotNil(t, info.ResponsesUsageInfo)
+				count := 1
+				if vendorOverride {
+					count = 0
+				}
+				assert.Equal(t, count, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearch].CallCount)
+			})
+		}
+	}
 }
 
 func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {

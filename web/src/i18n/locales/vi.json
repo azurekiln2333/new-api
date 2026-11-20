@@ -6098,6 +6098,7 @@
     "Search rules...": "Tìm kiếm quy tắc…",
     "Search tags...": "Tìm thẻ...",
     "Search the public web at inference time": "Tìm kiếm web công khai trong khi suy luận",
+    "Search the web through the selected model. Requires upstream support and may incur additional charges.": "Tìm kiếm trên web bằng mô hình đã chọn. Cần nhà cung cấp hỗ trợ và có thể phát sinh thêm phí.",
     "Search vendor names or descriptions": "Tìm tên hoặc mô tả nhà cung cấp",
     "Search vendors": "Tìm nhà cung cấp",
     "Search vendors...": "Tìm nhà cung cấp...",

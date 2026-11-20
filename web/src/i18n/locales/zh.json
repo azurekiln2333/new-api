@@ -6098,6 +6098,7 @@
     "Search rules...": "搜索规则…",
     "Search tags...": "搜索标签...",
     "Search the public web at inference time": "推理时检索公开互联网",
+    "Search the web through the selected model. Requires upstream support and may incur additional charges.": "通过所选模型联网搜索。需要上游支持，可能产生额外费用。",
     "Search vendor names or descriptions": "搜索供应商名称或简介",
     "Search vendors": "搜索供应商",
     "Search vendors...": "搜索供应商...",

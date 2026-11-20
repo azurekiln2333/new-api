@@ -134,6 +134,106 @@ func TestChannelSupportedEndpointsChooseOutboundRequest(t *testing.T) {
 	}
 }
 
+func TestPlaygroundWebSearchPreservesFinalUpstreamIntent(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	service.InitHttpClient()
+	settings := model_setting.GetGlobalSettings()
+	previous := *settings
+	t.Cleanup(func() { *settings = previous })
+	settings.PassThroughRequestEnabled = false
+	settings.ChatCompletionsToResponsesPolicy.Enabled = false
+	for _, tc := range []struct {
+		name, endpoint, removed string
+		passthrough             bool
+	}{
+		{name: "chat", endpoint: "chat"},
+		{name: "responses", endpoint: "responses"},
+		{name: "passthrough", endpoint: "chat", passthrough: true},
+		{name: "removed chat search", endpoint: "chat", removed: "web_search_options"},
+		{name: "removed converted search", endpoint: "responses", removed: "web_search_options"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			captured := make(chan []byte, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				captured <- body
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":{"message":"Search is unsupported by this upstream model","type":"invalid_request_error","code":"unsupported_search"}}`)
+			}))
+			defer server.Close()
+			body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"web_search_options":{"search_context_size":"medium"}}`
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/pg/chat/completions", strings.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, "test-key")
+			channelSettings := dto.ChannelSettings{SupportedEndpoints: []string{tc.endpoint}, PassThroughBodyEnabled: tc.passthrough}
+			if tc.passthrough {
+				channelSettings.SupportedEndpoints = nil
+			}
+			common.SetContextKey(c, constant.ContextKeyChannelSetting, channelSettings)
+			var request dto.GeneralOpenAIRequest
+			require.NoError(t, common.Unmarshal([]byte(body), &request))
+			info := relaycommon.GenRelayInfoOpenAI(c, &request)
+			if tc.removed != "" {
+				common.SetContextKey(c, constant.ContextKeyChannelParamOverride, map[string]any{"operations": []any{map[string]any{"path": tc.removed, "mode": "delete"}}})
+			}
+			apiErr := TextHelper(c, info)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			if tc.removed != "" {
+				assert.Empty(t, captured, "lost search intent must fail before calling upstream")
+				assert.Equal(t, relaytypes.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
+				return
+			}
+			require.Len(t, captured, 1, apiErr.Error())
+			assert.Contains(t, apiErr.Error(), "Search is unsupported")
+			var sent map[string]any
+			require.NoError(t, common.Unmarshal(<-captured, &sent))
+			if tc.endpoint == "responses" {
+				assert.Equal(t, []any{map[string]any{"type": "web_search", "search_context_size": "medium"}}, sent["tools"])
+				assert.Equal(t, dto.BuildInToolWebSearch, info.WebSearchBillingKey)
+			} else {
+				assert.Equal(t, map[string]any{"search_context_size": "medium"}, sent["web_search_options"])
+			}
+		})
+	}
+}
+
+func TestPlaygroundWebSearchAcceptsProviderSearchRepresentations(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/pg/chat/completions", nil)
+	info := &relaycommon.RelayInfo{IsPlayground: true, Request: &dto.GeneralOpenAIRequest{WebSearchOptions: &dto.WebSearchOptions{SearchContextSize: "medium"}}}
+	for _, body := range []string{
+		`{"web_search_options":{}}`, `{"enable_search":true}`, `{"web_search":{"enable":true}}`,
+		`{"search_parameters":{"mode":"auto"}}`, `{"plugins":[{"id":"web"}]}`,
+		`{"tools":[{"type":"web_search"}]}`, `{"tools":[{"type":"web_search_preview"}]}`,
+		`{"tools":[{"type":"web_search_20250305"}]}`, `{"tools":[{"type":"web_search","web_search":{"enable":true}}]}`,
+		`{"tools":[{"googleSearch":{}}]}`, `{"tools":[{"google_search":{}}]}`, `{"tools":[{"googleSearchRetrieval":{}}]}`,
+	} {
+		assert.Nil(t, validatePlaygroundWebSearch(c, info, []byte(body)), body)
+	}
+	for _, body := range []string{`{}`, `{"tools":[{"type":"function","name":"web_search"}]}`, `{"tools":[{"type":"web_search","web_search":{"enable":false}}]}`, `{"search_parameters":{"mode":"off"}}`} {
+		apiErr := validatePlaygroundWebSearch(c, info, []byte(body))
+		require.NotNil(t, apiErr, body)
+		assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	}
+	info.IsPlayground = false
+	assert.Nil(t, validatePlaygroundWebSearch(c, info, []byte(`{}`)))
+	info.IsPlayground = true
+	info.Request = &dto.GeneralOpenAIRequest{}
+	assert.Nil(t, validatePlaygroundWebSearch(c, info, []byte(`{}`)))
+}
+
 func TestChannelEndpointDeclarationsRejectUnsupportedAdaptors(t *testing.T) {
 	for _, channelType := range []int{constant.ChannelTypeOpenAI, constant.ChannelTypeAzure, constant.ChannelTypeOpenAIMax, constant.ChannelTypeOpenRouter, constant.ChannelTypeXinference} {
 		assert.NoError(t, common.ValidateChannelSupportedEndpoints(channelType, &dto.ChannelSettings{SupportedEndpoints: []string{"chat", "responses"}}))
@@ -224,14 +324,17 @@ func TestChannelEndpointResponsesConversionPreservesClientFormat(t *testing.T) {
 	previous := *settings
 	t.Cleanup(func() { *settings = previous })
 	settings.PassThroughRequestEnabled = false
-	for _, client := range []string{"chat", "messages"} {
+	for _, client := range []string{"chat", "messages", "playground search"} {
 		for _, stream := range []bool{false, true} {
 			name := client + "/json"
 			if stream {
 				name = client + "/sse"
 			}
 			t.Run(name, func(t *testing.T) {
+				captured := make(chan []byte, 1)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, _ := io.ReadAll(r.Body)
+					captured <- body
 					if stream {
 						w.Header().Set("Content-Type", "text/event-stream")
 						_, _ = io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-4o\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"total_tokens\":5}}}\n\n")
@@ -253,6 +356,13 @@ func TestChannelEndpointResponsesConversionPreservesClientFormat(t *testing.T) {
 					},
 				}
 				var request any = &dto.GeneralOpenAIRequest{Model: "gpt-4o", Stream: &stream, Messages: []dto.Message{{Role: "user", Content: "hello"}}}
+				if client == "playground search" {
+					c.Request = httptest.NewRequest(http.MethodPost, "/pg/chat/completions", nil)
+					info.IsPlayground = true
+					chatRequest := request.(*dto.GeneralOpenAIRequest)
+					chatRequest.WebSearchOptions = &dto.WebSearchOptions{SearchContextSize: "medium"}
+					info.Request = chatRequest
+				}
 				if client == "messages" {
 					info.RelayFormat = relaytypes.RelayFormatClaude
 					request = &dto.ClaudeRequest{Model: "gpt-4o", Stream: &stream, Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}}}
@@ -269,6 +379,11 @@ func TestChannelEndpointResponsesConversionPreservesClientFormat(t *testing.T) {
 				assert.Equal(t, 3, usage.CompletionTokens)
 				assert.Equal(t, 5, usage.TotalTokens)
 				assert.Equal(t, []relaytypes.RelayFormat{info.RelayFormat, relaytypes.RelayFormatOpenAIResponses}, info.RequestConversionChain)
+				if client == "playground search" {
+					var sent map[string]any
+					require.NoError(t, common.Unmarshal(<-captured, &sent))
+					assert.Equal(t, []any{map[string]any{"type": "web_search", "search_context_size": "medium"}}, sent["tools"])
+				}
 				if stream {
 					if client == "messages" {
 						assert.Contains(t, recorder.Body.String(), "event: message_stop")

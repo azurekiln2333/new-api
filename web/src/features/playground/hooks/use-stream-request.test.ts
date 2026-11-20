@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import type { ChatCompletionRequest } from '../types'
 import { createStreamRequestController } from './use-stream-request'
@@ -196,4 +196,65 @@ describe('latest-wins stream request coordination', () => {
 
     expect(updates).toEqual(['current'])
   })
+})
+
+test('delivers citation-only SSE events and ignores citations after cancellation', async () => {
+  const source = new FakeStreamSource()
+  const onSources = vi.fn()
+  const controller = createStreamRequestController({
+    getHeaders: async () => ({}),
+    createSource: () => source,
+    setStreaming: () => undefined,
+  })
+  await controller.send(payload, { ...noopCallbacks, onSources })
+  const event = JSON.stringify({
+    choices: [
+      {
+        delta: {
+          annotations: [
+            {
+              type: 'url_citation',
+              url_citation: { url: 'https://example.com/a', title: 'Article' },
+            },
+          ],
+        },
+      },
+    ],
+  })
+  source.emit('message', event)
+  expect(onSources).toHaveBeenCalledWith([
+    { href: 'https://example.com/a', title: 'Article' },
+  ])
+  controller.stop()
+  source.emit('message', event)
+  expect(onSources).toHaveBeenCalledTimes(1)
+})
+
+test('surfaces upstream search errors sent as ordinary SSE data frames', async () => {
+  const source = new FakeStreamSource()
+  const onError = vi.fn()
+  const onComplete = vi.fn()
+  const controller = createStreamRequestController({
+    getHeaders: async () => ({}),
+    createSource: () => source,
+    setStreaming: () => undefined,
+  })
+  await controller.send(payload, { ...noopCallbacks, onError, onComplete })
+  source.emit(
+    'message',
+    JSON.stringify({
+      error: {
+        code: 'unsupported_search',
+        message: 'This model does not support web search',
+      },
+    })
+  )
+  source.emit('message', '[DONE]')
+  expect(onError).toHaveBeenCalledWith(
+    'This model does not support web search',
+    'unsupported_search'
+  )
+  expect(onError).toHaveBeenCalledTimes(1)
+  expect(onComplete).not.toHaveBeenCalled()
+  expect(source.closed).toBe(true)
 })

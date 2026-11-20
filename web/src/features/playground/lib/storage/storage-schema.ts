@@ -45,6 +45,7 @@ export const playgroundConfigSchema = z.object({
   // falls back to the default value.
   reasoning_effort: reasoningEffortSchema.optional(),
   stream: z.boolean().optional(),
+  web_search: z.boolean().optional(),
 })
 
 export const parameterEnabledSchema = z.object({

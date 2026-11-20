@@ -23,6 +23,8 @@ import {
   applyChatCompletionResponse,
   applyStreamingChunk,
   completeAssistantMessage,
+  extractCitationSources,
+  mergeMessageSources,
 } from '../message-streaming-utils'
 import { createLoadingAssistantMessage } from '../message-utils'
 
@@ -79,7 +81,9 @@ describe('chat completion reasoning', () => {
     let message = createLoadingAssistantMessage(0)
 
     for (const update of updates) {
-      message = applyStreamingChunk(message, update.type, update.chunk)
+      if (update.type === 'content' || update.type === 'reasoning') {
+        message = applyStreamingChunk(message, update.type, update.chunk)
+      }
     }
     const completed = completeAssistantMessage(message)
 
@@ -125,5 +129,60 @@ describe('chat completion reasoning', () => {
       { type: 'reasoning', chunk: 'Thought' },
       { type: 'content', chunk: 'Answer' },
     ])
+  })
+})
+
+describe('web search sources', () => {
+  const annotations = [
+    {
+      type: 'url_citation',
+      url_citation: { url: 'https://example.com/a', title: 'Article' },
+    },
+    { type: 'url_citation', url: 'https://example.com/a', title: 'Duplicate' },
+    { type: 'url_citation', url: 'https://example.com/b' },
+    { type: 'url_citation', url: 'javascript:alert(1)' },
+    { type: 'url_citation', url: 'https://user:secret@example.com/private' },
+    { type: 'url_citation', url: '/relative' },
+    { type: 'url_citation', url_citation: null },
+    { type: 'file_citation', url: 'https://example.com/file' },
+  ]
+  const expected = [
+    { href: 'https://example.com/a', title: 'Article' },
+    { href: 'https://example.com/b', title: 'example.com' },
+  ]
+
+  test('extracts deduplicated web citations and ignores unsafe or malformed URLs', () => {
+    expect(extractCitationSources(annotations)).toEqual(expected)
+    expect(extractCitationSources(null)).toEqual([])
+    expect(extractCitationSources({})).toEqual([])
+  })
+
+  test('JSON responses populate the existing message sources', () => {
+    const completed = applyChatCompletionResponse(
+      createLoadingAssistantMessage(0),
+      {
+        id: 'search',
+        object: 'chat.completion',
+        created: 0,
+        model: 'search-model',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'Answer', annotations },
+            finish_reason: 'stop',
+          },
+        ],
+      }
+    )
+    expect(completed?.sources).toEqual(expected)
+    expect(completed?.versions[0].content).toBe('Answer')
+  })
+
+  test('citation-only SSE deltas merge without duplicating earlier sources', () => {
+    const updates = parseStreamMessageUpdates(
+      JSON.stringify({ choices: [{ delta: { annotations } }] })
+    )
+    expect(updates).toEqual([{ type: 'sources', sources: expected }])
+    expect(mergeMessageSources([expected[0]], expected)).toEqual(expected)
   })
 })

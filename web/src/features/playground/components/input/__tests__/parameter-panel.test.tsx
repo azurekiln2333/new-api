@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 
 import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from '../../../constants'
+import { PlaygroundInputTools } from '../playground-input-tools'
 import { PlaygroundParameterPanel } from '../playground-parameter-panel'
 
 test('changing reasoning effort reports the selected value', async () => {
@@ -72,4 +73,33 @@ test('the reasoning effort control follows the parameter enable switch', async (
     'reasoning_effort',
     true
   )
+})
+
+test('web search toggles explicitly and follows the input disabled state', async () => {
+  const user = userEvent.setup()
+  const onConfigChange = vi.fn()
+  const props = {
+    config: DEFAULT_CONFIG,
+    parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+    onConfigChange,
+    onParameterEnabledChange: vi.fn(),
+  }
+  const { rerender } = render(<PlaygroundInputTools {...props} />)
+  const search = screen.getByRole('button', { name: 'Search' })
+  expect(search).toHaveAttribute('aria-pressed', 'false')
+  await user.click(search)
+  expect(onConfigChange).toHaveBeenLastCalledWith('web_search', true)
+
+  rerender(
+    <PlaygroundInputTools
+      {...props}
+      config={{ ...DEFAULT_CONFIG, web_search: true }}
+    />
+  )
+  expect(search).toHaveAttribute('aria-pressed', 'true')
+  await user.click(search)
+  expect(onConfigChange).toHaveBeenLastCalledWith('web_search', false)
+
+  rerender(<PlaygroundInputTools {...props} disabled />)
+  expect(search).toBeDisabled()
 })

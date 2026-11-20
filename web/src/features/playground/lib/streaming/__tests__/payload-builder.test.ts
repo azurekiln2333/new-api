@@ -65,3 +65,14 @@ describe('buildChatCompletionPayload reasoning effort', () => {
     expect('reasoning_effort' in payload).toBe(false)
   })
 })
+
+test('web search is off by default and only sends intent when enabled', () => {
+  expect(DEFAULT_CONFIG.web_search).toBe(false)
+  expect(payloadFor({})).not.toHaveProperty('web_search_options')
+  expect(payloadFor({ web_search: true }).web_search_options).toEqual({
+    search_context_size: 'medium',
+  })
+  expect(payloadFor({ web_search: false })).not.toHaveProperty(
+    'web_search_options'
+  )
+})
