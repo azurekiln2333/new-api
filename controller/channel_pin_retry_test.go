@@ -38,6 +38,8 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
 	previousRetries, previousLogs, previousErrors := common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled
 	previousCount, previousBatch := constant.CountToken, common.BatchUpdateEnabled
+	previousStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
 	previousRatios, previousGroups := ratio_setting.ModelRatio2JSONString(), ratio_setting.GroupRatio2JSONString()
 	previousRetryCodes := operation_setting.AutomaticRetryStatusCodesToString()
 	affinity := operation_setting.GetChannelAffinitySetting()
@@ -52,6 +54,7 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 	t.Cleanup(func() {
 		common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled = previousRetries, previousLogs, previousErrors
 		constant.CountToken, common.BatchUpdateEnabled = previousCount, previousBatch
+		constant.StreamingTimeout = previousStreamingTimeout
 		quotaSettings.EnableFreeModelPreConsume = previousFreePreConsume
 		*affinity = previousAffinity
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
@@ -63,6 +66,7 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 		name       string
 		status     int
 		body       string
+		streamBody string
 		retries    int
 		secondFail bool
 		firstByte  bool
@@ -83,12 +87,15 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 		{name: "saved zero budget", status: 404, body: `{"error":{"message":"model removed","type":"invalid_request_error"}}`, wantStatus: 404, wantReason: "attempt_budget_exhausted"},
 		{name: "pinned channel", status: 403, body: `{"error":{"message":"group disabled","type":"invalid_request_error"}}`, retries: 2, pinned: true, wantStatus: 403, wantReason: "pinned_channel"},
 		{name: "strict session", status: 404, body: `{"error":{"message":"model removed","type":"invalid_request_error"}}`, retries: 2, strict: true, wantStatus: 404, wantReason: "strict_session"},
+		{name: "stream failed before any output", status: 200, streamBody: "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_A\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"upstream crashed\"}}}\n\n", retries: 2, wantStatus: 200, wantSecond: 1},
+		{name: "stream truncated before any output", status: 200, streamBody: "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_A\",\"status\":\"in_progress\"}}\n\n", retries: 2, wantStatus: 200, wantSecond: 1},
+		{name: "stream failure after output is not replayed", status: 200, streamBody: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial answer\"}\n\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_A\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"upstream crashed\"}}}\n\n", retries: 2, wantStatus: 200, wantSecond: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			common.RetryTimes = tc.retries
 			var initialUserQuota, initialTokenQuota int
 			reservedQuotas := make(chan int, 2)
-			if tc.firstByte {
+			if tc.firstByte || tc.streamBody != "" {
 				previousPrices := ratio_setting.ModelPrice2JSONString()
 				previousUnits, previousTrust := common.QuotaPerUnit, quotaSettings.TrustQuotaUSD
 				common.QuotaPerUnit, quotaSettings.TrustQuotaUSD, common.LogConsumeEnabled = 500000, 0, true
@@ -113,12 +120,21 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 			firstCanceled := make(chan struct{}, 5)
 			first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				firstCalls.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(tc.status)
-				if tc.firstByte {
+				if tc.firstByte || tc.streamBody != "" {
 					quota, err := model.GetUserQuota(user.Id, false)
 					assert.NoError(t, err)
 					reservedQuotas <- quota
+				}
+				if tc.streamBody != "" {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.streamBody)
+					w.(http.Flusher).Flush()
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				if tc.firstByte {
 					w.(http.Flusher).Flush()
 					<-r.Context().Done()
 					firstCanceled <- struct{}{}
@@ -129,7 +145,7 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 			t.Cleanup(first.Close)
 			second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				secondCalls.Add(1)
-				if tc.firstByte {
+				if tc.firstByte || tc.streamBody != "" {
 					quota, err := model.GetUserQuota(user.Id, false)
 					assert.NoError(t, err)
 					reservedQuotas <- quota
@@ -138,6 +154,11 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 				if tc.secondFail {
 					w.WriteHeader(http.StatusNotFound)
 					_, _ = io.WriteString(w, `{"error":{"message":"last upstream model removed","type":"invalid_request_error","code":"model_not_found"}}`)
+					return
+				}
+				if tc.streamBody != "" {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer from B\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-from-B\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n")
 					return
 				}
 				_, _ = io.WriteString(w, `{"id":"response-from-B","object":"response","status":"completed","model":"upstream-failover-test","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
@@ -169,7 +190,11 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 				Relay(c, types.RelayFormatOpenAIResponses)
 				events = service.RequestPolicy(c).Events()
 			})
-			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"upstream-failover-test","input":"hello"}`))
+			requestBody := `{"model":"upstream-failover-test","input":"hello"}`
+			if tc.streamBody != "" {
+				requestBody = `{"model":"upstream-failover-test","input":"hello","stream":true}`
+			}
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(requestBody))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Authorization", "Bearer sk-"+token.Key)
 			request.Header.Set("X-Session", t.Name())
@@ -183,8 +208,12 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 			assert.Equal(t, tc.wantStatus, recorder.Code, recorder.Body.String())
 			assert.Equal(t, int32(1), firstCalls.Load(), "a failed channel is not retried after eligible channels are exhausted")
 			assert.Equal(t, tc.wantSecond, secondCalls.Load())
-			if tc.wantStatus == http.StatusOK {
+			if tc.wantStatus == http.StatusOK && tc.wantSecond > 0 {
 				assert.Contains(t, recorder.Body.String(), "response-from-B")
+			}
+			if tc.streamBody != "" && tc.wantSecond == 0 {
+				assert.Contains(t, recorder.Body.String(), "partial answer", "output already delivered to the client is never replayed")
+				assert.NotContains(t, recorder.Body.String(), "answer from B")
 			}
 			if tc.firstByte {
 				select {
@@ -196,9 +225,12 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 				require.Nil(t, capacityErr, "the failed attempt must release its channel slot")
 				lease.Release()
 				assert.True(t, slices.ContainsFunc(events, func(event service.PolicyEvent) bool { return event.Decision.Reason == "upstream_first_byte_timeout" }))
-				require.Len(t, reservedQuotas, 2)
-				for range 2 {
-					assert.Equal(t, initialUserQuota-1, <-reservedQuotas, "both attempts share the original one-unit reservation")
+			}
+			if tc.firstByte || tc.streamBody != "" {
+				attempts := int(tc.wantSecond) + 1
+				require.Len(t, reservedQuotas, attempts)
+				for range attempts {
+					assert.Equal(t, initialUserQuota-1, <-reservedQuotas, "all attempts share the original one-unit reservation")
 				}
 				quota, err := model.GetUserQuota(user.Id, false)
 				require.NoError(t, err)
@@ -207,9 +239,13 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 				require.NoError(t, model.DB.Model(token).Select("remain_quota").Scan(&tokenQuota).Error)
 				assert.Equal(t, initialTokenQuota-1, tokenQuota)
 				var logs []model.Log
-				require.NoError(t, model.LOG_DB.Where("token_id = ?", token.Id).Find(&logs).Error)
-				require.Len(t, logs, 1, "the empty timed-out response must not settle or create a consume log")
-				assert.Equal(t, channels[1].Id, logs[0].ChannelId)
+				require.NoError(t, model.LOG_DB.Where("token_id = ? AND channel_id IN ? AND type = ?", token.Id, []int{channels[0].Id, channels[1].Id}, model.LogTypeConsume).Find(&logs).Error)
+				require.Len(t, logs, 1, "only the productive attempt settles, including a failed partial response")
+				settledChannel := channels[0].Id
+				if tc.wantSecond > 0 {
+					settledChannel = channels[1].Id
+				}
+				assert.Equal(t, settledChannel, logs[0].ChannelId)
 				assert.Equal(t, 1, logs[0].Quota)
 			}
 			if tc.secondFail {

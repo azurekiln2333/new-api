@@ -54,16 +54,18 @@ type RequestPolicyState struct {
 	CurrentChannelID       int
 	FailedChannelIDs       []int
 	SaturatedChannelIDs    []int
+	UpstreamBusyChannelIDs []int
 	AffinityReleased       bool
 	selectedAutoGroupRetry *autoGroupAdmissionRetry
 	mu                     sync.Mutex
 	events                 []PolicyEvent
 }
 
-// ChannelSelectionExclusions keeps local capacity rejections hard even when
-// the administrator permits retrying an upstream-failed channel.
+// ChannelSelectionExclusions keeps known local/upstream capacity rejections
+// excluded even when ordinary upstream failures may be retried on the same channel.
 func (s *RequestPolicyState) ChannelSelectionExclusions() []int {
 	excluded := slices.Clone(s.SaturatedChannelIDs)
+	excluded = append(excluded, s.UpstreamBusyChannelIDs...)
 	if operation_setting.GetChannelAffinitySetting().RetryAvoidFailedChannels {
 		excluded = append(excluded, s.FailedChannelIDs...)
 	}

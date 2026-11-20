@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -177,7 +178,6 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
-
 	defer service.CloseResponseBodyGracefully(resp)
 
 	responseId := helper.GetResponseID(c)
@@ -190,114 +190,138 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
-	streamErr := (*types.NewAPIError)(nil)
-	// upstreamFailed records a response.failed / response.error event and
-	// failedUsage the usage it reported, if any.
-	upstreamFailed := false
-	var failedUsage *dto.Usage
-	tools := responsesToolUsage{}
 
+	// Install after the response plugin so held framing cannot reach its
+	// capture/envelope writers and accidentally make this attempt non-retryable.
+	gate := helper.StreamCommitGateFrom(c)
+	if gate == nil {
+		holdBudget := helper.DefaultStreamCommitHoldBudget
+		if info.ChannelMeta != nil {
+			if seconds := service.EffectiveUpstreamFirstByteTimeoutSeconds(info.ChannelSetting); seconds > 0 {
+				holdBudget = time.Duration(seconds) * time.Second
+			}
+		}
+		gate = helper.InstallStreamCommitGate(c, holdBudget)
+		defer gate.Finish(c)
+	}
+	gate.Hold()
+
+	var streamErr *types.NewAPIError
+	knownUsage := &dto.Usage{}
+	var observedText strings.Builder
+	sawWork := false
+	tools := responsesToolUsage{}
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo == nil {
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
 	}
 
-	// writeFailed stops the stream after a failed client write. When the client
-	// went away the upstream already produced output, so the request settles
-	// normally instead of failing; any other write error stays a server error.
 	writeFailed := func(err error) bool {
 		if c.Request.Context().Err() != nil {
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, err)
-			return false
 		}
 		streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		return false
 	}
 
-	sendGeminiResponse := func(geminiResponse *dto.GeminiChatResponse) bool {
-		if geminiResponse == nil {
-			return true
-		}
-		geminiResponseStr, err := common.Marshal(geminiResponse)
-		if err != nil {
-			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
-			return false
-		}
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
-		_ = helper.FlushWriter(c)
-		return true
-	}
-
 	sendStreamResult := func(result relayconvert.ResponseResult) bool {
+		var eventName string
 		switch value := result.Value.(type) {
 		case dto.ChatCompletionsStreamResponse:
 			if len(value.Choices) == 0 && value.Usage == nil {
 				return true
 			}
-			if err := helper.ObjectData(c, &value); err != nil {
-				return writeFailed(err)
-			}
-			return true
 		case *dto.ChatCompletionsStreamResponse:
 			if value == nil || (len(value.Choices) == 0 && value.Usage == nil) {
 				return true
 			}
-			if err := helper.ObjectData(c, value); err != nil {
-				return writeFailed(err)
-			}
-			return true
 		case dto.ClaudeResponse:
-			if err := helper.ClaudeData(c, value); err != nil {
-				return writeFailed(err)
-			}
-			return true
+			eventName = value.Type
 		case *dto.ClaudeResponse:
 			if value == nil {
 				return true
 			}
-			if err := helper.ClaudeData(c, *value); err != nil {
-				return writeFailed(err)
-			}
-			return true
+			eventName = value.Type
 		case dto.GeminiChatResponse:
-			return sendGeminiResponse(&value)
 		case *dto.GeminiChatResponse:
-			return sendGeminiResponse(value)
+			if value == nil {
+				return true
+			}
 		default:
 			streamErr = types.NewOpenAIError(fmt.Errorf("unsupported converted stream response type %T", result.Value), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			return false
 		}
+		if err := c.Request.Context().Err(); err != nil {
+			return writeFailed(err)
+		}
+		payload, err := common.Marshal(result.Value)
+		if err != nil {
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+			return false
+		}
+		frame := "data: " + string(payload) + "\n\n"
+		if eventName != "" {
+			frame = "event: " + eventName + "\n" + frame
+		}
+		// Render helpers that discard Write/Flush errors cannot be used here:
+		// a failed downstream write must retain upstream usage and stop output.
+		if _, err := c.Writer.Write([]byte(frame)); err != nil {
+			return writeFailed(err)
+		}
+		if err := helper.FlushWriter(c); err != nil {
+			return writeFailed(err)
+		}
+		return true
 	}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-		if streamErr != nil {
-			stopStream(sr, streamErr)
-			return
-		}
-
 		var streamResp dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResp); err != nil {
-			logger.LogError(c, common.LogText("failed to unmarshal responses stream event: %s", err.Error()))
-			sr.Error(err)
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusBadGateway)
+			stopStream(sr, streamErr)
 			return
 		}
 
+		// Accounting facts belong to the upstream event, even when conversion,
+		// committing held framing, or writing the converted event fails next.
+		service.ObserveResponsesOutcome(info, &streamResp)
 		if streamResp.Response != nil {
 			info.ObserveResponseModel(streamResp.Response.Model)
-		}
-		tools.observe(info, &streamResp, common.StringToByteSlice(data))
-		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
-			upstreamFailed = true
-			if streamResp.Response != nil {
-				failedUsage = streamResp.Response.Usage
-				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
-					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
-					stopStream(sr, streamErr)
-					return
+			if streamResp.Response.Usage != nil {
+				knownUsage = dto.MergeUsageNonZero(knownUsage, relayconvert.UsageFromResponsesUsage(streamResp.Response.Usage))
+				service.ApplyResponsesUsage(knownUsage, streamResp.Response.Usage)
+			}
+			if observedText.Len() == 0 && len(streamResp.Response.Output) > 0 {
+				observedText.WriteString(relayconvert.ExtractOutputTextFromResponses(streamResp.Response))
+				observedText.WriteString(relayconvert.ExtractReasoningTextFromResponses(streamResp.Response))
+				for _, item := range streamResp.Response.Output {
+					observedText.WriteString(item.ArgumentsString())
 				}
 			}
-			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		}
+		switch streamResp.Type {
+		case "response.output_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta",
+			"response.reasoning_summary_text.delta", "response.reasoning_text.delta", "response.refusal.delta":
+			observedText.WriteString(streamResp.Delta)
+		}
+		failed := isResponsesFailureEvent(streamResp)
+		toolEvent := streamResp
+		if failed {
+			toolEvent.Type = "response.failed"
+		}
+		tools.observe(info, &toolEvent, common.StringToByteSlice(data))
+		sawWork = sawWork || knownUsage.TotalTokens > 0 || knownUsage.PromptTokens > 0 || knownUsage.CompletionTokens > 0 ||
+			responsesFailureHasBillableWork(streamResp) || (!failed && isResponsesSubstantiveEvent(streamResp))
+		if failed {
+			streamErr = responsesStreamFailure(streamResp, data)
 			stopStream(sr, streamErr)
 			return
+		}
+		if sawWork || info.StreamStatus.ResponseOutcome() != string(relaycommon.ResponseOutcomeUnknown) {
+			if err := gate.Commit(); err != nil {
+				writeFailed(err)
+				stopStream(sr, streamErr)
+				return
+			}
 		}
 
 		results, err := service.ConvertStreamResponseChunk(c, info, state, &streamResp)
@@ -312,84 +336,95 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				return
 			}
 		}
+		if info.StreamStatus.ResponseOutcome() != string(relaycommon.ResponseOutcomeUnknown) {
+			sr.Done()
+		}
 	})
 
+	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
+	info.StreamStatus.RequireTerminal()
+	if streamErr == nil {
+		streamErr = responsesStreamTruncation(info.StreamStatus)
+	}
+	if streamErr == nil && !info.StreamStatus.IsNormalEnd() {
+		endErr := info.StreamStatus.EndError
+		if endErr == nil {
+			endErr = fmt.Errorf("upstream stream stopped: %s", info.StreamStatus.EndReason)
+		}
+		streamErr = types.NewOpenAIError(endErr, types.ErrorCodeBadResponse, http.StatusBadGateway)
+	}
+
+	usage := dto.MergeUsageNonZero(state.Usage(), knownUsage)
+	text := observedText.String()
+	if convertedText := state.UsageText(); len(convertedText) > len(text) {
+		text = convertedText
+	}
+	if sawWork && (usage.PromptTokens == 0 || (usage.CompletionTokens == 0 && text != "")) {
+		estimate := service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
+		if usage.PromptTokens == 0 {
+			usage.PromptTokens = estimate.PromptTokens
+		}
+		if usage.CompletionTokens == 0 {
+			usage.CompletionTokens = estimate.CompletionTokens
+		}
+		usage.TotalTokens = max(usage.TotalTokens, usage.PromptTokens+usage.CompletionTokens)
+		if usage.BillingUsage != nil {
+			usage.BillingUsage = dto.CloneBillingUsageWithEstimatedCompletion(usage.BillingUsage, usage.CompletionTokens)
+		}
+	}
+	state.SetUsage(usage)
+
+	finishFailure := func(failure *types.NewAPIError) (*dto.Usage, *types.NewAPIError) {
+		info.StreamStatus.MarkFailed(string(failure.GetErrorCode()), string(failure.GetErrorType()), failure.StatusCode)
+		if !sawWork && !gate.Committed() {
+			gate.Discard()
+			return nil, failure
+		}
+		// Returning an error makes the host refund this attempt. Once work or
+		// output exists, preserve settlement and narrate failure in the stream.
+		if c.Request.Context().Err() == nil {
+			if err := gate.Commit(); err == nil {
+				failure.SetMessage(common.MessageWithRequestId(failure.Error(), c.GetString(common.RequestIdKey)))
+				writeConvertedTerminalError(c, info, failure)
+			} else {
+				info.StreamStatus.RecordError(err.Error())
+			}
+		}
+		return usage, nil
+	}
 	if streamErr != nil {
-		if !upstreamFailed || state.UsageText() == "" {
-			return nil, streamErr
-		}
-		// The upstream failed after output reached the client: bill the
-		// delivered output (upstream usage when reported, otherwise the
-		// estimate) and send the client the same error the failed request
-		// path writes. stream_status already records the failure.
-		usage := relayconvert.UsageFromResponsesUsage(failedUsage)
-		if usage.TotalTokens == 0 {
-			usage = state.Usage()
-		}
-		if usage == nil || usage.TotalTokens == 0 {
-			usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
-		} else if usage.CompletionTokens == 0 || usage.PromptTokens == 0 {
-			// As in the native Responses accumulator, reported usage that
-			// omits the output or the prompt is completed from the estimate of
-			// the delivered output and the prompt.
-			estimate := service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
-			if usage.CompletionTokens == 0 {
-				usage.CompletionTokens = estimate.CompletionTokens
-			}
-			if usage.PromptTokens == 0 {
-				usage.PromptTokens = estimate.PromptTokens
-			}
-			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-			if usage.BillingUsage != nil {
-				usage.BillingUsage = dto.CloneBillingUsageWithEstimatedCompletion(usage.BillingUsage, usage.CompletionTokens)
-			}
-		}
-		logger.LogError(c, common.LogText("responses stream failed after output was delivered, billing the delivered output: %s", streamErr.Error()))
-		streamErr.SetMessage(common.MessageWithRequestId(streamErr.Error(), c.GetString(common.RequestIdKey)))
-		if info.RelayFormat == types.RelayFormatClaude {
-			c.JSON(streamErr.StatusCode, gin.H{"type": "error", "error": streamErr.ToClaudeError(common.UpstreamAddresses(c)...)})
-		} else {
-			c.JSON(streamErr.StatusCode, gin.H{"error": streamErr.ToOpenAIError(common.UpstreamAddresses(c)...)})
-		}
-		return usage, nil
+		helper.StoreUpstreamRetryAfter(c, resp.Header.Get("Retry-After"))
+		return finishFailure(streamErr)
 	}
 
-	usage := state.Usage()
-	if usage == nil || usage.TotalTokens == 0 {
-		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
-		state.SetUsage(usage)
+	if err := gate.Commit(); err != nil {
+		return finishFailure(types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError))
 	}
-	if info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
-		return usage, nil
-	}
-
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo != nil {
 		info.ClaudeConvertInfo.Usage = usage
 	}
 	finalResults, err := service.FinalizeStreamResponse(c, info, state)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		return finishFailure(types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError))
 	}
 	for _, result := range finalResults {
 		if !sendStreamResult(result) {
-			if streamErr != nil {
-				return nil, streamErr
-			}
-			return usage, nil
+			return finishFailure(streamErr)
 		}
 	}
-	if info.RelayFormat == types.RelayFormatOpenAI && info.ShouldIncludeUsage && usage != nil {
-		if err := helper.ObjectData(c, helper.GenerateFinalUsageResponse(responseId, createAt, info.UpstreamModelName, *usage)); err != nil {
-			writeFailed(err)
-			if streamErr != nil {
-				return nil, streamErr
-			}
-			return usage, nil
+	if info.RelayFormat == types.RelayFormatOpenAI && info.ShouldIncludeUsage {
+		result := relayconvert.ResponseResult{Value: helper.GenerateFinalUsageResponse(responseId, createAt, info.UpstreamModelName, *usage)}
+		if !sendStreamResult(result) {
+			return finishFailure(streamErr)
 		}
 	}
-
 	if info.RelayFormat == types.RelayFormatOpenAI {
-		helper.Done(c)
+		if _, err := c.Writer.Write([]byte("data: [DONE]\n\n")); err != nil {
+			return finishFailure(types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError))
+		}
+		if err := helper.FlushWriter(c); err != nil {
+			return finishFailure(types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError))
+		}
 	}
 	return usage, nil
 }
@@ -444,4 +479,25 @@ func (u *responsesToolUsage) observeItem(info *relaycommon.RelayInfo, item *dto.
 		u.seen[alias] = struct{}{}
 	}
 	info.CountBillableToolCall(item.Type, item.Name)
+}
+
+// writeConvertedTerminalError emits the incoming protocol's terminal error
+// frame on an open stream. Writing a JSON body here would corrupt the SSE the
+// client is already reading.
+func writeConvertedTerminalError(c *gin.Context, info *relaycommon.RelayInfo, streamErr *types.NewAPIError) {
+	if info.RelayFormat == types.RelayFormatClaude {
+		payload, err := common.Marshal(gin.H{"type": "error", "error": streamErr.ToClaudeError(common.UpstreamAddresses(c)...)})
+		if err != nil {
+			return
+		}
+		_, _ = c.Writer.Write([]byte("event: error\ndata: " + string(payload) + "\n\n"))
+		_ = helper.FlushWriter(c)
+		return
+	}
+	payload, err := common.Marshal(gin.H{"error": streamErr.ToOpenAIError(common.UpstreamAddresses(c)...)})
+	if err != nil {
+		return
+	}
+	_, _ = c.Writer.Write([]byte("data: " + string(payload) + "\n\n"))
+	_ = helper.FlushWriter(c)
 }

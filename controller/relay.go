@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -96,6 +97,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		requestplugin.Report(c, relayFormat, relayInfo, ingressRecord, newAPIError)
 	}()
 
+	var streamEnvelope *helper.StreamCommentEnvelope
+	// Keep the sink open through final error rendering, including a report
+	// capture installed outside it by the selected channel's Reply plugins.
+	defer func() {
+		if streamEnvelope != nil {
+			streamEnvelope.Finish(c)
+		}
+	}()
+
 	defer func() {
 		if newAPIError != nil {
 			if service.IsUpstreamFirstByteTimeout(newAPIError) || newAPIError.GetErrorCode() == types.ErrorCodeUpstreamFirstByteTimeout {
@@ -105,7 +115,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			upstreamURLs := common.UpstreamAddresses(c)
-			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
+			streamStarted := c.Writer.Written()
+			if streamEnvelope != nil {
+				streamStarted = streamStarted || streamEnvelope.ConnectionWritten()
+			}
+			if relayFormat != types.RelayFormatOpenAIRealtime && streamStarted &&
 				strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
 				writeRelayStreamError(c, relayFormat, newAPIError)
 				return
@@ -185,6 +199,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
 	}()
 
+	// The request-wide sink serializes comments and output below attempt/plugin
+	// wrappers. Comment-only writes keep an idle connection alive and retryable.
+	if relayInfo.IsStream && relayFormat != types.RelayFormatOpenAIRealtime {
+		streamEnvelope = helper.InstallStreamCommentEnvelope(c)
+	}
+
 	retryParam := &service.RetryParam{
 		Ctx:         c,
 		TokenGroup:  relayInfo.TokenGroup,
@@ -195,7 +215,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for retryParam.GetRetry() <= common.RetryTimes {
 		relayInfo.StreamStatus = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
@@ -211,12 +231,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer lease.Release() // protects setup panics before the attempt scope
 		service.AppendUsedChannel(c, channel.Id)
 		newAPIError = func() (attemptErr *types.NewAPIError) {
+			// Retry-After belongs to this attempt, never a previous channel.
+			helper.ClearUpstreamRetryAfter(c)
 			originalRequest := c.Request
 			c.Request = originalRequest.WithContext(lease.Context())
 			defer func() {
 				completed := attemptErr == nil && (relayInfo.StreamStatus == nil || relayInfo.StreamStatus.IsNormalEnd() && !relayInfo.StreamStatus.HasErrors())
-				if coordinationErr := lease.Err(); coordinationErr != nil && !completed {
+				if coordinationErr := lease.Err(); coordinationErr != nil && !completed && attemptErr != nil {
 					attemptErr = coordinationErr
+				}
+				// Report a recognized upstream refusal before releasing the slot so
+				// the next attempt does not pick the same busy channel.
+				if attemptErr != nil && service.ClassifyUpstreamRejection(attemptErr) == service.UpstreamRejectionConcurrency {
+					state := service.RequestPolicy(c)
+					if !slices.Contains(state.UpstreamBusyChannelIDs, channel.Id) {
+						state.UpstreamBusyChannelIDs = append(state.UpstreamBusyChannelIDs, channel.Id)
+					}
 				}
 				lease.Release()
 				c.Request = originalRequest
@@ -254,6 +284,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			// Restore the writer after this attempt, before its capacity lease ends.
 			finishReply := requestplugin.Reply(c, relayFormat, relayInfo)
 			defer finishReply()
+			// Protocol-aware handlers opt into Hold after upstream selection.
+			// A Responses request converted from a different upstream protocol
+			// keeps writing through unless that handler can safely discard it.
+			if relayInfo.IsStream && relayFormat == types.RelayFormatOpenAIResponses {
+				gate := helper.InstallStreamCommitGate(c, streamCommitHoldBudget(settings))
+				defer gate.Finish(c)
+			}
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				if ws == nil {
@@ -282,6 +319,18 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		if relayFormat != types.RelayFormatOpenAIRealtime && !c.Writer.Written() && c.Request.Context().Err() == nil &&
+			service.ClassifyUpstreamRejection(newAPIError) == service.UpstreamRejectionConcurrency {
+			// A recognized refusal did no billable work. Exclude the channel and
+			// try the remaining candidates without spending the ordinary
+			// upstream-error retry budget.
+			state := service.RequestPolicy(c)
+			if !slices.Contains(state.UpstreamBusyChannelIDs, channel.Id) {
+				state.UpstreamBusyChannelIDs = append(state.UpstreamBusyChannelIDs, channel.Id)
+			}
+			service.RecordPolicyFailure(c, channel.Id, newAPIError, service.PolicyDecision{Action: "wait", Reason: "upstream_concurrency", Source: "capacity"})
+			continue
+		}
 
 		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
@@ -290,6 +339,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if decision.Action != "retry" {
 			break
 		}
+		retryParam.IncreaseRetry()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -297,6 +347,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryLogStr := common.LogText("retry: %s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
+}
+
+// streamCommitHoldBudget bounds how long a streaming Responses attempt may keep
+// its first bytes retryable. A configured upstream first-byte timeout is the
+// natural bound; otherwise the helper's default applies.
+func streamCommitHoldBudget(settings dto.ChannelSettings) time.Duration {
+	if seconds := service.EffectiveUpstreamFirstByteTimeoutSeconds(settings); seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return helper.DefaultStreamCommitHoldBudget
 }
 
 func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *types.NewAPIError) {
@@ -310,6 +370,17 @@ func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *t
 	upstreamURLs := common.UpstreamAddresses(c)
 	if format == types.RelayFormatClaude {
 		_ = helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: apiError.ToClaudeError(upstreamURLs...)})
+		return
+	}
+	if format == types.RelayFormatOpenAIResponses {
+		payload := gin.H{"type": "response.failed", "response": gin.H{
+			"status": "failed", "error": apiError.ToOpenAIError(upstreamURLs...),
+		}}
+		body, err := common.Marshal(payload)
+		if err == nil {
+			_, _ = c.Writer.Write([]byte("event: response.failed\ndata: " + string(body) + "\n\n"))
+			_ = helper.FlushWriter(c)
+		}
 		return
 	}
 	_ = helper.ObjectData(c, gin.H{"error": apiError.ToOpenAIError(upstreamURLs...)})

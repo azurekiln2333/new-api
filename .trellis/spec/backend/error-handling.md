@@ -173,6 +173,78 @@ Wrong: independently load the locked channel to validate and load it again to us
 Correct: validate filters against the same successful channel snapshot restored
 by `restoreConnectionContext`, preserving lookup failures as failures.
 
+## Pre-output upstream failures and stream lifecycle
+
+### 1. Scope / Trigger
+
+HTTP refusals and native/converted Responses streams may fail before producing
+an answer, including HTTP 200 followed by `response.failed`, `error`, a failed
+terminal envelope, or EOF before a required terminal event.
+
+### 2. Signatures
+
+`ClassifyUpstreamError(code, type, message)` consumes upstream error-envelope
+fields only. `StreamCommitGate` owns each attempt's held framing;
+`StreamCommentEnvelope` serializes request-wide connection writes and tracks
+comment-only keepalive separately from delivered content.
+
+### 3. Contracts
+
+Known structured concurrency codes and the bounded, anchored compatibility
+message `stream disconnected before completion: concurrency limit exceeded for
+user` identify capacity refusal. Quota and ordinary rate-limit codes retain
+their separate meanings; arbitrary prompt/output text never classifies a
+refusal. Busy exclusions survive disabled ordinary failed-channel avoidance.
+
+Install the attempt gate before upstream dispatch. Preserve wrapper order:
+gate -> request-plugin Reply -> serialized connection envelope -> connection.
+Protocol-aware handlers explicitly hold initialization frames until usable output,
+bounded bytes or hold timeout. Unknown handlers must write through by default;
+a controller-wide Hold can discard a successful response from a handler that
+does not implement Commit. Set SSE headers once before writer goroutines; write
+each complete event as one
+frame. Finish must stop and join timers/writers idempotently. Never bypass Reply
+or silently swallow final errors when removing wrappers.
+
+Observe usage and productive output before deciding a failure is replayable.
+Once work is billable or output is exposed, emit the incoming protocol's terminal
+error, settle actual usage once and never retry/refund the consumed attempt.
+Native Responses uses `response.failed`; converted Chat and Messages use their
+own protocol framing. Only zero-work pre-output failures can switch channels.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Initialization only, then definite failure | Discard attempt framing; eligible retry |
+| Generic 429 or quota error | Ordinary configured retry policy; no concurrency queue |
+| Productive output or known usage, then failure | Terminal stream error and one settlement |
+| Required terminal event missing before output | Retryable upstream truncation |
+| Required terminal missing after output | Stream error without replay |
+| Client canceled, pin, strict binding or exhausted budget | Preserve applicable retry boundary |
+
+### 5. Good / Base / Bad Cases
+
+Good: created/error from A is hidden and B supplies one clean response. Base:
+successful streams retain event order and usage. Bad: model output containing
+the word concurrency changes channel state, or a partial billed answer is replayed.
+
+### 6. Tests Required
+
+Extend controller routing and native/converted Responses suites for delayed
+HTTP errors, early SSE errors, terminal variants, EOF, cancellation, output and
+usage. Assert exact accounting and no first-attempt IDs or duplicate answer.
+Helper race tests use deterministic writer barriers, join before recorder reads,
+and cover repeated Finish, hold timeout, complete frame ordering and plugin
+wrappers. Run Linux race checks and independent modules in cloud CI.
+
+### 7. Wrong versus Correct
+
+Wrong: use raw `Writer.Written()` after a comment as proof of a delivered answer,
+or reset the entire writer chain to retry. Correct: retain the explicit
+comment/content distinction, remove only the owned attempt layer, and stop all
+of its writers before beginning another attempt.
+
 ## Error Types
 
 <!-- Custom error classes/types -->

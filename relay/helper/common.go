@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,27 +168,7 @@ func FlushWriter(c *gin.Context) (err error) {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return errors.New("streaming error: flusher not found")
-	}
-
-	flusher.Flush()
-	// Gin's http.Flusher wrapper discards the underlying FlushError result.
-	// Flush wrappers first so their buffers are preserved, then surface any
-	// stored write error from an error-aware writer underneath them.
-	var writer http.ResponseWriter = c.Writer
-	for {
-		if flusher, ok := writer.(interface{ FlushError() error }); ok {
-			return flusher.FlushError()
-		}
-		unwrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter })
-		if !ok {
-			break
-		}
-		writer = unwrapper.Unwrap()
-	}
-	return nil
+	return flushStreamWriter(c.Writer)
 }
 
 func requestContextDone(c *gin.Context) bool {
@@ -219,12 +200,9 @@ func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {
 	jsonData, err := common.Marshal(resp)
 	if err != nil {
 		common.SysError(common.LogText("error marshalling stream response: %s", err.Error()))
-	} else {
-		c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-		c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonData)})
+		return err
 	}
-	_ = FlushWriter(c)
-	return nil
+	return writeStreamFrame(c, resp.Type, string(jsonData))
 }
 
 func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
@@ -232,9 +210,7 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 		return
 	}
 
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
-	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s\n", data)})
-	_ = FlushWriter(c)
+	_ = writeStreamFrame(c, resp.Type, data+"\n")
 }
 
 func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
@@ -242,15 +218,7 @@ func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data st
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	event := common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)}
-	if err := event.Render(c.Writer); err != nil {
-		return err
-	}
-	event.Data = fmt.Sprintf("data: %s", data)
-	if err := event.Render(c.Writer); err != nil {
-		return err
-	}
-	return FlushWriter(c)
+	return writeStreamFrame(c, resp.Type, data)
 }
 
 func StringData(c *gin.Context, str string) error {
@@ -262,7 +230,22 @@ func StringData(c *gin.Context, str string) error {
 		return fmt.Errorf("request context done: %w", c.Request.Context().Err())
 	}
 
-	c.Render(-1, common.CustomEvent{Data: "data: " + str})
+	return writeStreamFrame(c, "", str)
+}
+
+// writeStreamFrame sends a whole SSE frame through the existing writer chain.
+// Header setup happens once, before any timer or keepalive can flush a frame;
+// CustomEvent.Render rewrites the shared Header map on every individual write.
+func writeStreamFrame(c *gin.Context, event, data string) error {
+	SetEventStreamHeaders(c)
+	frame := "data: " + strings.ReplaceAll(data, "\r", "\\r") + "\n\n"
+	if event != "" {
+		event = strings.NewReplacer("\r", "\\r", "\n", "\\n").Replace(event)
+		frame = "event: " + event + "\n" + frame
+	}
+	if _, err := c.Writer.Write([]byte(frame)); err != nil {
+		return err
+	}
 	return FlushWriter(c)
 }
 

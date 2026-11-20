@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -50,6 +51,17 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
 		return PolicyDecision{Action: "stop", Reason: "client_cancelled", Source: "system"}
 	}
+	rejection := RecognizedUpstreamRejection(err)
+	if rejection == UpstreamRejectionConcurrency && c != nil {
+		state := RequestPolicy(c)
+		channelID := state.CurrentChannelID
+		if channelID <= 0 {
+			channelID = c.GetInt("channel_id")
+		}
+		if channelID > 0 && !slices.Contains(state.UpstreamBusyChannelIDs, channelID) {
+			state.UpstreamBusyChannelIDs = append(state.UpstreamBusyChannelIDs, channelID)
+		}
+	}
 	// A credential that needs a new login only leaves another candidate on a
 	// multi-key channel. A single-key channel remains a failed channel.
 	keyCanFailOver := c != nil && common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) && errors.Is(err, ErrPluginCredentialNeedsLogin)
@@ -92,6 +104,12 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 		return PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}
 	}
 	if operation_setting.ShouldRetryByStatusCode(code) {
+		// Name a recognized refusal so logs distinguish an upstream
+		// concurrency rejection from a general rate limit or quota exhaustion.
+		// The retry outcome still follows the configured status ranges.
+		if rejection != UpstreamRejectionNone {
+			return PolicyDecision{Action: "retry", Reason: string(rejection), Source: "upstream"}
+		}
 		return PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}
 	}
 	return PolicyDecision{Action: "stop", Reason: "status_not_retryable", Source: "global"}

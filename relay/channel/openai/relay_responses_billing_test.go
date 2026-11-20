@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -134,8 +135,6 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
 		{name: "midstream disconnect followed by cleanup EOF", event: "response.output_text.delta", cancel: true, closeEOF: true, wantEnd: relaycommon.StreamEndReasonClientGone, wantError: true},
 		{name: "cancellation before flush", event: "response.completed", responseStatus: "completed", cancel: true, cancelBeforeFlush: true, wantEnd: relaycommon.StreamEndReasonClientGone, wantError: true},
 		{name: "event write failure", event: "response.completed", responseStatus: "completed", failWrite: 1, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
-		{name: "data write failure", event: "response.completed", responseStatus: "completed", failWrite: 2, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
-		{name: "delimiter write failure", event: "response.completed", responseStatus: "completed", failWrite: 3, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
 		{name: "flush failure", event: "response.completed", responseStatus: "completed", failFlush: true, wantEnd: relaycommon.StreamEndReasonHandlerStop, wantError: true},
 		{name: "protocol error before completion", event: "response.completed", responseStatus: "completed", priorError: true, cancel: true, wantEnd: relaycommon.StreamEndReasonClientGone, wantError: true},
 		{name: "upstream read failure before handler returns", event: "response.completed", responseStatus: "completed", scannerError: true, wantEnd: relaycommon.StreamEndReasonScannerErr, wantError: true},
@@ -190,7 +189,11 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
 			require.Nil(t, apiErr)
 			require.NotNil(t, usage)
 			require.NotNil(t, info.StreamStatus)
-			assert.Equal(t, tc.wantEnd, info.StreamStatus.EndReason)
+			if tc.responseStatus == "failed" {
+				assert.Contains(t, []relaycommon.StreamEndReason{relaycommon.StreamEndReasonEOF, relaycommon.StreamEndReasonHandlerStop}, info.StreamStatus.EndReason)
+			} else {
+				assert.Equal(t, tc.wantEnd, info.StreamStatus.EndReason)
+			}
 			assert.Equal(t, tc.responseStatus, info.StreamStatus.ResponseOutcome())
 			log := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 1, 0, 1).Snapshot()["stream_status"].(map[string]any)
 			assert.Equal(t, tc.wantError, log["status"] == "error")
@@ -202,7 +205,9 @@ func TestOaiResponsesStreamHandlerCompletionLifecycle(t *testing.T) {
 				require.Contains(t, info.ResponsesUsageInfo.BuiltInTools, dto.BuildInToolImageGeneration)
 				assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
 			}
-			if tc.failWrite == 0 {
+			if tc.responseStatus == "failed" {
+				assert.Contains(t, writer.Body.String(), "event: response.failed\n")
+			} else if tc.failWrite == 0 {
 				assert.Contains(t, writer.Body.String(), payload+"\n\n")
 			} else {
 				assert.ErrorIs(t, info.StreamStatus.EndError, writer.writeErr)
@@ -705,4 +710,182 @@ func TestAzureHostedWebSearch(t *testing.T) {
 			assert.Equal(t, map[string]int{"bing_web_search": 5}, billed)
 		})
 	}
+}
+
+// A 200 that turns into an upstream refusal before any usable output must not
+// reach the client: the attempt stays uncommitted so the relay loop can fail
+// over, and the structured code decides the status the gateway reports.
+func TestOaiResponsesStreamHandlerFailsBeforeCommit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	for _, tc := range []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:       "concurrency failure event",
+			body:       `data: {"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"concurrency_limit_exceeded","message":"too many concurrent requests"}}}` + "\n\n",
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "quota error event",
+			body:       `data: {"type":"response.error","code":"insufficient_quota","message":"no credit"}` + "\n\n",
+			wantStatus: http.StatusPaymentRequired,
+		},
+		{
+			name:       "stream truncated before output",
+			body:       `data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}` + "\n\n",
+			wantStatus: http.StatusBadGateway,
+		},
+		{
+			name:       "done marker without terminal response",
+			body:       "data: [DONE]\n\n",
+			wantStatus: http.StatusBadGateway,
+		},
+		{
+			name:       "failed status on completed envelope",
+			body:       `data: {"type":"response.completed","response":{"status":"failed","error":{"code":"concurrency_limit_exceeded","message":"concurrency limit exceeded"}}}` + "\n\n",
+			wantStatus: http.StatusTooManyRequests,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "gpt-5.1", IsStream: true, DisablePing: true, StartTime: time.Now(),
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+			}
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(tc.body)),
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			}
+			// The relay loop installs the attempt gate before dispatch.
+			gate := helper.InstallStreamCommitGate(c, time.Minute)
+			defer gate.Finish(c)
+
+			_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, tc.wantStatus, apiErr.StatusCode)
+			assert.False(t, c.Writer.Written(), "an uncommitted attempt must leave the response untouched")
+			assert.Empty(t, w.Body.String())
+		})
+	}
+}
+
+// Once the client has usable output, a later failure is delivered inside the
+// open stream. It is never replayed, because the client already saw the answer.
+func TestOaiResponsesStreamHandlerKeepsPostCommitFailureInStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	const delta = `{"type":"response.output_text.delta","delta":"partial answer"}`
+	const failed = `{"type":"response.failed","response":{"id":"resp_1","status":"failed","usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14},"error":{"code":"server_error","message":"upstream died"}}}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.1", IsStream: true, DisablePing: true, StartTime: time.Now(),
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("data: " + delta + "\n\ndata: " + failed + "\n\n")),
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+
+	gate := helper.InstallStreamCommitGate(c, time.Minute)
+	defer gate.Finish(c)
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+	// The client already saw output, so the attempt is not replayed: it keeps
+	// the delivered usage and receives the protocol's terminal error event.
+	require.Nil(t, apiErr, "the host settles only a nil handler error")
+	require.NotNil(t, usage)
+	assert.Equal(t, 11, usage.PromptTokens)
+	assert.Equal(t, 3, usage.CompletionTokens)
+	assert.Equal(t, 14, usage.TotalTokens)
+	assert.True(t, c.Writer.Written())
+	assert.Contains(t, w.Body.String(), "partial answer")
+	assert.Contains(t, w.Body.String(), "upstream died")
+	require.NotNil(t, info.StreamStatus)
+	assert.Equal(t, string(relaycommon.ResponseOutcomeFailed), info.StreamStatus.ResponseOutcome())
+}
+
+func TestResponsesFailedWorkKeepsExactUsage(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	for _, tc := range []struct {
+		name      string
+		kind      string
+		failWrite bool
+	}{
+		{name: "terminal usage", kind: "response.failed"},
+		{name: "error alias usage", kind: "response.error"},
+		{name: "held frame write failure", kind: "response.failed", failWrite: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			created := `{"type":"response.created","response":{"id":"held-attempt"}}`
+			failed := fmt.Sprintf(`{"type":%q,"response":{"status":"failed","usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14},"output":[{"id":"search_1","type":"web_search_call","status":"completed"}],"error":{"code":"server_error","message":"upstream stopped"}}}`, tc.kind)
+			writer := &responsesLifecycleWriter{ResponseRecorder: httptest.NewRecorder(), writeErr: errors.New("client write failed")}
+			if tc.failWrite {
+				writer.failWrite = 1
+			}
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			info := &relaycommon.RelayInfo{OriginModelName: "gpt-4o", IsStream: true, DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-4o"}}
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: " + created + "\n\ndata: " + failed + "\n\n"))}
+			gate := helper.InstallStreamCommitGate(c, time.Minute)
+			t.Cleanup(func() { gate.Finish(c) })
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+			require.Nil(t, apiErr, "return the billable result to the host exactly once")
+			require.NotNil(t, usage)
+			assert.Equal(t, 11, usage.PromptTokens)
+			assert.Equal(t, 3, usage.CompletionTokens)
+			assert.Equal(t, 14, usage.TotalTokens)
+			assert.True(t, gate.Committed())
+			assert.True(t, info.StreamStatus.ResponseFailed())
+			require.Contains(t, info.ResponsesUsageInfo.BuiltInTools, dto.BuildInToolWebSearchPreview)
+			assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview].CallCount)
+			if tc.failWrite {
+				assert.Empty(t, writer.Body.String())
+			} else {
+				assert.Contains(t, writer.Body.String(), "event: response.failed\n")
+			}
+		})
+	}
+}
+
+func TestResponsesPostOutputTruncationEmitsFailure(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{OriginModelName: "gpt-4o", IsStream: true, DisablePing: true, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-4o"}}
+	info.SetEstimatePromptTokens(9)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial answer\"}\n\n"))}
+	gate := helper.InstallStreamCommitGate(c, time.Minute)
+	t.Cleanup(func() { gate.Finish(c) })
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, 9, usage.PromptTokens)
+	assert.Positive(t, usage.CompletionTokens)
+	assert.True(t, info.StreamStatus.ResponseFailed())
+	assert.Contains(t, w.Body.String(), "partial answer")
+	assert.Contains(t, w.Body.String(), "event: response.failed\n")
+	assert.NotContains(t, w.Body.String(), "data: [DONE]")
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
@@ -208,7 +210,11 @@ func TestDecideRelayRetryReasons(t *testing.T) {
 		{name: "retry status matched", err: upstream(http.StatusTooManyRequests), retries: 1, want: PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}},
 		{name: "status outside retry rules", err: upstream(http.StatusBadRequest), retries: 1, want: PolicyDecision{Action: "stop", Reason: "status_not_retryable", Source: "global"}},
 		{name: "attempt budget exhausted", err: upstream(http.StatusTooManyRequests), retries: 0, want: PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}},
-		{name: "upstream gateway timeout", err: upstream(http.StatusGatewayTimeout), retries: 1, want: PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}},
+		{name: "upstream concurrency rejection", err: types.WithOpenAIError(types.OpenAIError{Code: "concurrency_limit_exceeded", Message: "busy"}, http.StatusTooManyRequests), retries: 1, want: PolicyDecision{Action: "retry", Reason: "upstream_concurrency", Source: "upstream"}},
+		{name: "known message concurrency rejection", err: types.WithOpenAIError(types.OpenAIError{Message: "stream disconnected before completion: concurrency limit exceeded for user"}, http.StatusBadGateway), retries: 1, want: PolicyDecision{Action: "retry", Reason: "upstream_concurrency", Source: "upstream"}},
+		{name: "upstream rate limit rejection", err: types.WithOpenAIError(types.OpenAIError{Code: "rate_limit_exceeded", Message: "slow down"}, http.StatusTooManyRequests), retries: 1, want: PolicyDecision{Action: "retry", Reason: "upstream_rate_limit", Source: "upstream"}},
+		{name: "upstream quota rejection follows the configured 402 rule", err: types.WithOpenAIError(types.OpenAIError{Code: "insufficient_quota", Message: "no credit"}, http.StatusPaymentRequired), retries: 1, want: PolicyDecision{Action: "retry", Reason: "upstream_quota_exhausted", Source: "upstream"}},
+		{name: "generic 429 keeps the generic reason", err: upstream(http.StatusTooManyRequests), retries: 1, want: PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}}, {name: "upstream gateway timeout", err: upstream(http.StatusGatewayTimeout), retries: 1, want: PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}},
 		{name: "typed first byte timeout ignores mapped status", err: types.NewErrorWithStatusCode(&upstreamFirstByteTimeoutError{}, types.ErrorCodeUpstreamFirstByteTimeout, http.StatusBadRequest), retries: 1, want: PolicyDecision{Action: "retry", Reason: "upstream_first_byte_timeout", Source: "system"}},
 		{name: "typed timeout still respects budget", err: types.NewErrorWithStatusCode(&upstreamFirstByteTimeoutError{}, types.ErrorCodeUpstreamFirstByteTimeout, http.StatusGatewayTimeout), retries: 0, want: PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}},
 		{name: "cancelled client never retries", err: upstream(http.StatusBadGateway), retries: 1, setup: func(c *gin.Context) {
@@ -352,6 +358,130 @@ func TestShouldDisableChannelIgnoresLocalErrors(t *testing.T) {
 				wantHealth = "channel_disable_requested"
 			}
 			assert.Equal(t, wantHealth, events[1].Health, "the logged health matches the disable decision")
+		})
+	}
+}
+
+func TestClassifyUpstreamRejectionPreservesProtocolCategories(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		code      string
+		errorType string
+		status    int
+		want      UpstreamRejection
+		wantCode  int
+	}{
+		{name: "concurrency code", code: "concurrency_limit_exceeded", status: http.StatusTooManyRequests, want: UpstreamRejectionConcurrency, wantCode: http.StatusTooManyRequests},
+		{name: "concurrency type", errorType: "concurrency_exceeded", status: http.StatusTooManyRequests, want: UpstreamRejectionConcurrency, wantCode: http.StatusTooManyRequests},
+		{name: "quota code", code: "insufficient_quota", status: http.StatusTooManyRequests, want: UpstreamRejectionQuota, wantCode: http.StatusPaymentRequired},
+		{name: "quota type wins over contradictory concurrency code", code: "concurrency_limit_exceeded", errorType: "insufficient_quota", status: http.StatusTooManyRequests, want: UpstreamRejectionQuota, wantCode: http.StatusPaymentRequired},
+		{name: "rate limit code", code: "rate_limit_exceeded", status: http.StatusTooManyRequests, want: UpstreamRejectionRateLimit, wantCode: http.StatusTooManyRequests},
+		{name: "generic 429 stays a rate limit", status: http.StatusTooManyRequests, want: UpstreamRejectionRateLimit, wantCode: http.StatusTooManyRequests},
+		{name: "generic 402 stays quota", status: http.StatusPaymentRequired, want: UpstreamRejectionQuota, wantCode: http.StatusPaymentRequired},
+		{name: "unknown code on 400 is not a rejection", code: "invalid_request_error", status: http.StatusBadRequest, want: UpstreamRejectionNone, wantCode: http.StatusBadGateway},
+		{name: "local quota code is not an upstream rejection", code: "insufficient_user_quota", status: http.StatusForbidden, want: UpstreamRejectionNone, wantCode: http.StatusBadGateway},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.code != "" || tc.errorType != "" {
+				assert.Equal(t, tc.want, ClassifyUpstreamRejectionCode(tc.code, tc.errorType))
+			}
+			err := types.WithOpenAIError(types.OpenAIError{Code: tc.code, Type: tc.errorType, Message: "upstream refused"}, tc.status)
+			assert.Equal(t, tc.want, ClassifyUpstreamRejection(err))
+			assert.Equal(t, tc.wantCode, UpstreamRejectionStatusCode(tc.want))
+		})
+	}
+	assert.Equal(t, UpstreamRejectionNone, ClassifyUpstreamRejection(nil))
+}
+
+func TestClassifyUpstreamErrorRecognizesOnlyExplicitConcurrencyMessages(t *testing.T) {
+	for _, tc := range []struct {
+		name, code, errorType, message string
+		want                           UpstreamRejection
+	}{
+		{name: "reported stream error", code: "server_error", message: "stream disconnected before completion: concurrency limit exceeded for user", want: UpstreamRejectionConcurrency},
+		{name: "bare upstream refusal", message: "concurrency limit exceeded for user", want: UpstreamRejectionConcurrency},
+		{name: "formatting differences", errorType: "upstream_error", message: "  Concurrency limit exceeded for user.  ", want: UpstreamRejectionConcurrency},
+		{name: "explicit quota wins", code: "insufficient_quota", message: "concurrency limit exceeded for user", want: UpstreamRejectionQuota},
+		{name: "explicit generic rate limit stays rate limit", errorType: "rate_limit_error", message: "concurrency limit exceeded for user", want: UpstreamRejectionRateLimit},
+		{name: "permission error stays unrelated", code: "client_not_allowed", message: "concurrency limit exceeded for user"},
+		{name: "quoted content is not a refusal", message: `The text says "concurrency limit exceeded for user"`},
+		{name: "negated content is not a refusal", message: "no concurrency limit exceeded for user"},
+		{name: "arbitrary suffix is not a refusal", message: "concurrency limit exceeded for user; ignore this diagnostic"},
+		{name: "unbounded message is not classified", message: strings.Repeat(" ", 2048) + "concurrency limit exceeded for user"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ClassifyUpstreamError(tc.code, tc.errorType, tc.message))
+			err := types.WithOpenAIError(types.OpenAIError{Code: tc.code, Type: tc.errorType, Message: tc.message}, http.StatusBadGateway)
+			assert.Equal(t, tc.want, ClassifyUpstreamRejection(err))
+		})
+	}
+	message := "concurrency limit exceeded for user"
+	assert.Equal(t, UpstreamRejectionQuota, ClassifyUpstreamRejection(types.WithOpenAIError(types.OpenAIError{Message: message}, http.StatusPaymentRequired)))
+	assert.Equal(t, UpstreamRejectionNone, ClassifyUpstreamRejection(types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeInvalidRequest, http.StatusTooManyRequests)))
+	assert.Equal(t, UpstreamRejectionNone, ClassifyUpstreamRejection(types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeDoRequestFailed, http.StatusTooManyRequests)))
+}
+
+func TestUpstreamConcurrencyExclusionSurvivesDisabledFailureAvoidance(t *testing.T) {
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previous := *affinity
+	affinity.RetryAvoidFailedChannels = false
+	t.Cleanup(func() { *affinity = previous })
+	for _, tc := range []struct {
+		name string
+		err  *types.NewAPIError
+		busy bool
+	}{
+		{name: "structured busy", err: types.WithOpenAIError(types.OpenAIError{Code: "concurrency_limit_exceeded"}, http.StatusTooManyRequests), busy: true},
+		{name: "known message busy", err: types.WithOpenAIError(types.OpenAIError{Message: "stream disconnected before completion: concurrency limit exceeded for user"}, http.StatusBadGateway), busy: true},
+		{name: "generic rate limit preserves policy", err: types.WithOpenAIError(types.OpenAIError{Code: "rate_limit_exceeded"}, http.StatusTooManyRequests)},
+		{name: "quota preserves policy", err: types.WithOpenAIError(types.OpenAIError{Code: "insufficient_quota"}, http.StatusPaymentRequired)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			state := RequestPolicy(c)
+			state.BeginAttempt(&model.Channel{Id: 74001}, "default")
+			decision := DecideRelayRetry(c, tc.err, 1)
+			assert.Equal(t, "retry", decision.Action)
+			DecideRelayRetry(c, tc.err, 1)
+			if tc.busy {
+				assert.Equal(t, []int{74001}, state.ChannelSelectionExclusions(), "a recognized busy candidate is excluded once even when ordinary failed candidates may repeat")
+			} else {
+				assert.Empty(t, state.ChannelSelectionExclusions(), "other failures keep the configured retry-avoidance behavior")
+			}
+		})
+	}
+}
+
+func TestUpstreamConcurrencyKeepsRetryStopBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		retries      int
+		setup        func(*gin.Context)
+	}{
+		{name: "budget exhausted", retries: 0, reason: "attempt_budget_exhausted"},
+		{name: "output already sent", retries: 1, reason: "response_started", setup: func(c *gin.Context) { _, _ = c.Writer.WriteString("data: answer\n\n") }},
+		{name: "pinned", retries: 1, reason: "pinned_channel", setup: func(c *gin.Context) {
+			GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: 74002, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})
+		}},
+		{name: "strict session", retries: 1, reason: "strict_session", setup: func(c *gin.Context) { c.Set(ginKeyChannelAffinitySkipRetry, true) }},
+		{name: "client cancelled", retries: 1, reason: "client_cancelled", setup: func(c *gin.Context) {
+			ctx, cancel := context.WithCancel(c.Request.Context())
+			cancel()
+			c.Request = c.Request.WithContext(ctx)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			RequestPolicy(c).BeginAttempt(&model.Channel{Id: 74002}, "default")
+			if tc.setup != nil {
+				tc.setup(c)
+			}
+			err := types.WithOpenAIError(types.OpenAIError{Code: "concurrency_limit_exceeded"}, http.StatusTooManyRequests)
+			decision := DecideRelayRetry(c, err, tc.retries)
+			assert.Equal(t, "stop", decision.Action)
+			assert.Equal(t, tc.reason, decision.Reason)
 		})
 	}
 }

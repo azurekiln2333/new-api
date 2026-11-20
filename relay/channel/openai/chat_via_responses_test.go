@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -384,4 +386,215 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		require.NotEqualf(t, -1, idx, "missing %q after byte offset %d", part, offset)
 		offset += idx + len(part)
 	}
+}
+
+// A failed converted stream that reported usage for the failed attempt must be
+// billed instead of discarded: dropping the usage would make the attempt free
+// and retryable.
+func TestConvertedStreamFailureWithReportedUsageIsBilled(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+
+	body := "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"bad_response\",\"message\":\"upstream exploded\"},\"usage\":{\"input_tokens\":7,\"output_tokens\":0,\"total_tokens\":7}}}\n\n"
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+	require.Nil(t, apiErr, "billing a failed attempt with usage must not hand the error back for a retry")
+	require.NotNil(t, usage)
+	assert.Equal(t, 7, usage.PromptTokens)
+	assert.Equal(t, 7, usage.TotalTokens)
+	// The failed attempt is narrated to the client as the protocol terminal
+	// error, never replayed.
+	assert.Contains(t, recorder.Body.String(), "bad_response")
+}
+
+func TestConvertedStreamRefusalKeepsFramingRetryable(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+
+	for _, format := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude} {
+		for _, tc := range []struct {
+			name   string
+			last   string
+			status int
+		}{
+			{
+				name:   "code only failure",
+				last:   `data: {"type":"response.failed","response":{"status":"failed","error":{"code":"concurrency_limit_exceeded","message":"concurrency limit exceeded for user"},"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`,
+				status: http.StatusTooManyRequests,
+			},
+			{
+				name:   "top level error",
+				last:   `data: {"type":"error","error":{"code":"concurrency_limit_exceeded","message":"concurrency limit exceeded for user"}}`,
+				status: http.StatusTooManyRequests,
+			},
+			{name: "EOF", status: http.StatusBadGateway},
+			{name: "DONE without terminal", last: "data: [DONE]", status: http.StatusBadGateway},
+			{name: "malformed event", last: `data: {"type":`, status: http.StatusBadGateway},
+		} {
+			t.Run(string(format)+"/"+tc.name, func(t *testing.T) {
+				body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-test\"}}\n\n" + tc.last + "\n\n"
+				c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+				info.RelayFormat = format
+				info.SetEstimatePromptTokens(11)
+				resp.Header.Set("Retry-After", "3")
+
+				usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+				require.NotNil(t, apiErr)
+				assert.Equal(t, tc.status, apiErr.StatusCode)
+				assert.Nil(t, usage, "framing alone must not charge the prompt")
+				assert.Empty(t, recorder.Body.String(), "created must not commit role/message_start")
+				assert.False(t, c.Writer.Written(), "the relay loop must be able to select another channel")
+				assert.Equal(t, "3", helper.UpstreamRetryAfter(c))
+				assert.True(t, info.StreamStatus.ResponseFailed())
+			})
+		}
+	}
+}
+
+func TestConvertedStreamFailureAfterOutputKeepsUsage(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+
+	for _, format := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude} {
+		for _, terminal := range []string{
+			`data: {"type":"response.failed","response":{"status":"failed","error":{"code":"concurrency_limit_exceeded","message":"concurrency limit exceeded for user"}}}`,
+			"",
+		} {
+			t.Run(fmt.Sprintf("%s/terminal=%t", format, terminal != ""), func(t *testing.T) {
+				body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n" +
+					"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" + terminal + "\n\n"
+				c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+				info.RelayFormat = format
+				info.SetEstimatePromptTokens(11)
+
+				usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+				require.Nil(t, apiErr, "the host settles the partial attempt only when the error is nil")
+				require.NotNil(t, usage)
+				assert.Equal(t, 11, usage.PromptTokens)
+				assert.Positive(t, usage.CompletionTokens)
+				assert.Equal(t, usage.PromptTokens+usage.CompletionTokens, usage.TotalTokens)
+				assert.True(t, info.StreamStatus.ResponseFailed())
+				assert.Contains(t, recorder.Body.String(), "hello")
+				assert.Equal(t, 1, strings.Count(recorder.Body.String(), `"error":`))
+				assert.NotContains(t, recorder.Body.String(), "data: [DONE]")
+				assert.NotContains(t, recorder.Body.String(), "event: message_stop")
+				if format == types.RelayFormatClaude {
+					assert.Contains(t, recorder.Body.String(), "event: error\n")
+				}
+			})
+		}
+	}
+}
+
+func TestConvertedStreamConversionFailurePreservesObservedUsage(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+
+	for _, tc := range []struct {
+		name     string
+		last     string
+		reported bool
+	}{
+		{
+			name: "delta rejected by converter",
+			last: `data: {"type":"response.reasoning_text.delta","output_index":0,"delta":"additional reasoning"}`,
+		},
+		{
+			name:     "terminal usage before converter error",
+			last:     `data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":5,"total_tokens":12},"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{}"}]}}`,
+			reported: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hello\"}\n\n" + tc.last + "\n\n"
+			c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+			info.RelayFormat = types.RelayFormatClaude
+			info.SetEstimatePromptTokens(11)
+
+			usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			if tc.reported {
+				assert.Equal(t, 7, usage.PromptTokens)
+				assert.Equal(t, 5, usage.CompletionTokens)
+				assert.Equal(t, 12, usage.TotalTokens)
+			} else {
+				assert.Equal(t, 11, usage.PromptTokens)
+				firstDeltaUsage := service.ResponseText2Usage(c, "hello", info.UpstreamModelName, 11)
+				assert.Greater(t, usage.CompletionTokens, firstDeltaUsage.CompletionTokens, "the rejected delta remains billable")
+			}
+			assert.True(t, info.StreamStatus.ResponseFailed())
+			assert.Contains(t, recorder.Body.String(), "event: error\n")
+			assert.NotContains(t, recorder.Body.String(), "event: message_stop")
+		})
+	}
+}
+
+type convertedStreamFailingWriter struct {
+	gin.ResponseWriter
+	failOn string
+}
+
+func (w *convertedStreamFailingWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.failOn) {
+		return 0, errors.New("downstream write failed")
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func TestConvertedStreamWriteFailurePreservesUpstreamUsage(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+
+	for _, format := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude} {
+		t.Run(string(format), func(t *testing.T) {
+			body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12}}}\n\n"
+			c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+			info.RelayFormat = format
+			c.Writer = &convertedStreamFailingWriter{ResponseWriter: c.Writer, failOn: "assistant"}
+
+			usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr, "a failed held-frame write must not erase terminal usage")
+			require.NotNil(t, usage)
+			assert.Equal(t, 7, usage.PromptTokens)
+			assert.Equal(t, 5, usage.CompletionTokens)
+			assert.Equal(t, 12, usage.TotalTokens)
+			assert.True(t, info.StreamStatus.ResponseFailed())
+			assert.NotContains(t, recorder.Body.String(), "data: [DONE]")
+			assert.NotContains(t, recorder.Body.String(), "event: message_stop")
+		})
+	}
+}
+
+func TestConvertedStreamCommittedFramingIsNotReplayed(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+
+	body := "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"concurrency_limit_exceeded\",\"message\":\"concurrency limit exceeded for user\"}}}\n\n"
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.SetEstimatePromptTokens(11)
+	gate := helper.InstallStreamCommitGate(c, helper.DefaultStreamCommitHoldBudget)
+	defer gate.Finish(c)
+	require.NoError(t, gate.Commit())
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Zero(t, usage.TotalTokens, "committed framing is not billable model output")
+	assert.True(t, info.StreamStatus.ResponseFailed())
+	assert.Contains(t, recorder.Body.String(), `"error":`)
+	assert.NotContains(t, recorder.Body.String(), "data: [DONE]")
 }

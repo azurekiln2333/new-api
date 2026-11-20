@@ -16,4 +16,20 @@ Preserve all parent compatibility/security/billing/i18n rules, existing uncommit
 
 ## Status
 
-Planning; no product edits/tests. Final consolidated review and task activation precede implementation. R25 publication is authorized; target-server details remain a delivery prerequisite.
+Implementation in progress. Product publication is authorized. All further automated validation runs in GitHub CI; the user prohibited local tests, builds, lint and browser verification, and canceled server verification.
+
+## Approved follow-up: unavailable upstream models (2026-11-20)
+
+The user reported `404: Model "gpt-6-astra" is not supported by any configured account in this group` and requested automatic channel failover and remembering that the failed channel no longer serves that model.
+
+- Recognize explicit upstream model-unavailable errors, including the reported envelope, separately from an ordinary endpoint/path 404, authentication failure, capacity rejection or invalid request.
+- Retry another eligible channel before output, subject to cancellation, explicit pins, strict-session requirements and bounded attempts. Record the actual reason when routing cannot continue.
+- Persist an unavailable marker scoped to the channel, attempted model and affected credential. Subsequent ordinary requests skip that unavailable combination. Preserve other models and other credentials that can serve the same model, including user-bound credentials.
+- Keep configured model names intact and expose the unavailable state in channel details. Administrators can restore/recheck it; a changed credential or mapping must not inherit an obsolete observation.
+- Respect model aliases and group permissions, cache invalidation across instances, concurrent configuration edits and secret-free diagnostics. A model-output sentence or a prompt containing the error text must never alter channel capabilities.
+- Cover positive recognition, false positives, alternate-channel success, no remaining channel, persistence/cache refresh, mapping and multi-key isolation in focused existing regression suites. Real SQLite/MySQL/PostgreSQL verification runs in cloud CI.
+- Commit the model-unavailability follow-up independently for rollback.
+
+## Resource-aware execution
+
+After the user reported memory exhaustion, run at most two worker executors at once. Four pi panes receive responsibilities in two batches. Preserve all existing work and do not launch local validation processes.
