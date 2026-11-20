@@ -19,15 +19,19 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { TaskPluginOption } from '../../api'
 import { channelSchema, type ChannelBalanceDetail } from '../../types'
+import { ChannelBalanceDetails } from '../channel-balance-details'
 import { BalanceCell } from '../channels-columns'
 import { ChannelsProvider } from '../channels-provider'
 
@@ -185,4 +189,38 @@ test('a plugin channel whose plugin cannot query a balance shows none and offers
   expect(tooltip).not.toHaveTextContent('Click to update balance')
   await user.click(badge)
   expect(api.get).not.toHaveBeenCalledWith('/api/channel/update_balance/5')
+})
+
+test('stored balance errors translate fixed gateway text and preserve provider text', async () => {
+  const i18n = i18next.createInstance()
+  await i18n.init({
+    lng: 'zhCN',
+    resources: { zhCN: { translation: zh.translation } },
+  })
+  const result: ChannelBalanceDetail = {
+    amount: null,
+    currency: 'USD',
+    unlimited: false,
+    windows: [],
+    error: 'channel balance source changed during the query',
+  }
+  const view = render(
+    <I18nextProvider i18n={i18n}>
+      <ChannelBalanceDetails result={result} />
+    </I18nextProvider>
+  )
+
+  expect(screen.getByText('上次错误： 查询期间渠道余额来源已更改')).toBeVisible()
+
+  const providerError = ' Task timed out '
+  view.rerender(
+    <I18nextProvider i18n={i18n}>
+      <ChannelBalanceDetails result={{ ...result, error: providerError }} />
+    </I18nextProvider>
+  )
+
+  expect(screen.getByText('上次错误： Task timed out')).toBeVisible()
+  expect(screen.getByRole('listitem').textContent).toBe(
+    `上次错误： ${providerError}`
+  )
 })

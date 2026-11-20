@@ -31,7 +31,9 @@ import {
   waitFor,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { useState } from 'react'
+import { I18nextProvider } from 'react-i18next'
 import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -45,6 +47,7 @@ import {
   applyPriceSyncSelections,
   pricingValuesByModel,
 } from '@/features/model-pricing/pricing'
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -645,6 +648,120 @@ it('shows a source failure instead of a no-differences result and retries the se
   ).toBeVisible()
   expect(post).toHaveBeenCalledTimes(2)
   expect(post.mock.calls[0]).toEqual(post.mock.calls[1])
+})
+
+it('translates nested gateway failures and preserves provider detail for full and partial pricing failures', async () => {
+  const i18n = i18next.createInstance()
+  await i18n.init({
+    lng: 'zhCN',
+    resources: { zhCN: { translation: zh.translation } },
+  })
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/ratio_sync/channels') {
+      return {
+        data: {
+          success: true,
+          data: [
+            {
+              id: 7,
+              name: 'Gateway',
+              base_url: 'https://gateway.test',
+              type: 1,
+              status: 1,
+            },
+            {
+              id: 8,
+              name: 'Provider',
+              base_url: 'https://provider.test',
+              type: 1,
+              status: 1,
+            },
+            {
+              id: 9,
+              name: 'Working',
+              base_url: 'https://working.test',
+              type: 1,
+              status: 1,
+            },
+          ],
+        },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          entries: [],
+          empty_version: 'empty',
+          options: pricingOptions({}),
+        },
+      },
+    }
+  })
+  const failures = [
+    {
+      name: 'Gateway(7)',
+      status: 'error',
+      error: 'channel origin changed during price sync',
+    },
+    { name: 'Provider(8)', status: 'error', error: 'Task timed out' },
+  ]
+  vi.spyOn(api, 'post')
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: { prices: {}, differences: {}, test_results: failures },
+      },
+    })
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          prices: {},
+          differences: {},
+          test_results: [...failures, { name: 'Working(9)', status: 'success' }],
+        },
+      },
+    })
+  const warning = vi.spyOn(toast, 'warning').mockReturnValue('pricing-warning')
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  const view = render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>
+        <UpstreamRatioSync />
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+  try {
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('button', { name: i18n.t('Select price sources') })
+    )
+    await screen.findByRole('checkbox', {
+      name: i18n.t('Select {{name}}', { name: 'Gateway' }),
+    })
+    await user.click(screen.getByRole('checkbox', { name: i18n.t('Select all') }))
+    await user.click(
+      screen.getByRole('button', { name: i18n.t('Confirm Selection') })
+    )
+
+    const errorMsg =
+      'Gateway(7): 价格同步期间渠道源站已更改, Provider(8): Task timed out'
+    expect(await screen.findByText(errorMsg)).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: i18n.t('Retry') }))
+
+    await waitFor(() =>
+      expect(warning).toHaveBeenCalledWith(
+        i18n.t('Some channels failed: {{errorMsg}}', { errorMsg })
+      )
+    )
+  } finally {
+    view.unmount()
+    client.clear()
+  }
 })
 
 it('preserves upstream expression text so a repeated comparison remains unchanged', () => {

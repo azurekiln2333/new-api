@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatTimestampToDate } from '@/lib/format'
 import { resolveLocalizedText } from '@/lib/localized-text'
+import { translateChannelManagementError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import type { ChannelBalanceResult } from '../types'
@@ -40,7 +41,8 @@ export function ChannelBalanceDetails(props: ChannelBalanceDetailsProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const windows = props.result?.windows ?? []
-  const error = props.result?.error?.trim()
+  const rawError = props.result?.error
+  const error = rawError?.trim() ? rawError : undefined
   if (windows.length === 0 && !props.updatedTime && !error) return null
 
   return (
@@ -66,7 +68,7 @@ export function ChannelBalanceDetails(props: ChannelBalanceDetailsProps) {
       ) : null}
       {error && (
         <li className='wrap-anywhere'>
-          {t('Last error:')} {error}
+          {t('Last error:')} {translateChannelManagementError(t, error)}
         </li>
       )}
     </ul>

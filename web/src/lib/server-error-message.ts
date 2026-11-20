@@ -154,6 +154,50 @@ function messageText(value: unknown): string | undefined {
   return value
 }
 
+/** Only these exact gateway failures are safe to translate in raw error fields. */
+export function translateChannelManagementError(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  text: string
+): string {
+  switch (text) {
+    case 'invalid upstream address':
+      return t('invalid upstream address', { skipInterpolation: true })
+    case 'channel origin changed during price sync':
+      return t('channel origin changed during price sync', {
+        skipInterpolation: true,
+      })
+    case 'failed to read the upstream response':
+    case 'upstream returned an unsuccessful pricing response':
+      return t('Upstream request failed', { skipInterpolation: true })
+    case 'upstream response is too large':
+      return t('Response too large', { skipInterpolation: true })
+    case 'channel concurrency settings changed during admission':
+      return t('channel concurrency settings changed during admission', {
+        skipInterpolation: true,
+      })
+    case 'channel is no longer enabled':
+      return t('channel is no longer enabled', { skipInterpolation: true })
+    case 'channel balance plugin changed during admission':
+      return t('channel balance plugin changed during admission', {
+        skipInterpolation: true,
+      })
+    case 'channel balance key changed during admission':
+      return t('channel balance key changed during admission', {
+        skipInterpolation: true,
+      })
+    case 'channel balance key is no longer enabled':
+      return t('channel balance key is no longer enabled', {
+        skipInterpolation: true,
+      })
+    case 'channel balance source changed during the query':
+      return t('channel balance source changed during the query', {
+        skipInterpolation: true,
+      })
+    default:
+      return text
+  }
+}
+
 /**
  * The backend sends web console messages as English source text in
  * `message_key` (a key of the locale files) plus `message_params`, and keeps
@@ -167,7 +211,10 @@ export function getServerMessage(value: unknown): string | undefined {
       isRecord(value.message_params) ? value.message_params : undefined
     )
   }
-  return messageText(value.message)
+  const message = messageText(value.message)
+  return message === undefined
+    ? undefined
+    : translateChannelManagementError(i18next.t, message)
 }
 
 /**

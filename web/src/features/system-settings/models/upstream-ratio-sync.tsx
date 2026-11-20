@@ -46,6 +46,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import {
   requireServerSuccess,
   createServerError,
+  translateChannelManagementError,
 } from '@/lib/server-error-message'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -269,10 +270,13 @@ export function UpstreamRatioSync() {
       ) {
         throw new Error(
           results
-            .map(
-              (result) =>
-                `${getUpstreamDisplayName(result.name, t)}: ${result.error}`
-            )
+            .map((result) => {
+              const error = translateChannelManagementError(
+                t,
+                result.error ?? ''
+              )
+              return `${getUpstreamDisplayName(result.name, t)}: ${error}`
+            })
             .join(', ')
         )
       }
@@ -291,10 +295,13 @@ export function UpstreamRatioSync() {
         toast.warning(
           t('Some channels failed: {{errorMsg}}', {
             errorMsg: errors
-              .map(
-                (result) =>
-                  `${getUpstreamDisplayName(result.name, t)}: ${result.error}`
-              )
+              .map((result) => {
+                const error = translateChannelManagementError(
+                  t,
+                  result.error ?? ''
+                )
+                return `${getUpstreamDisplayName(result.name, t)}: ${error}`
+              })
               .join(', '),
           })
         )

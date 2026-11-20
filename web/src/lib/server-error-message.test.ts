@@ -17,11 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import i18next from 'i18next'
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+
+import zh from '@/i18n/locales/zh.json'
 
 import {
   getServerErrorMessage,
   getServerErrorMessageKey,
+  getServerMessage,
+  translateChannelManagementError,
   translateServerText,
 } from './server-error-message'
 
@@ -117,5 +121,87 @@ describe('server error message mapping', () => {
     } finally {
       await i18next.changeLanguage('en')
     }
+  })
+})
+
+describe('channel management error translation', () => {
+  let originalLanguage: string
+  let originalResources: Record<string, string> | undefined
+
+  beforeEach(async () => {
+    originalLanguage = i18next.language
+    originalResources = i18next.hasResourceBundle('zhCN', 'translation')
+      ? structuredClone(i18next.getResourceBundle('zhCN', 'translation'))
+      : undefined
+    i18next.addResourceBundle('zhCN', 'translation', zh.translation)
+    await i18next.changeLanguage('zhCN')
+  })
+
+  afterEach(async () => {
+    i18next.removeResourceBundle('zhCN', 'translation')
+    if (originalResources) {
+      i18next.addResourceBundle('zhCN', 'translation', originalResources)
+    }
+    await i18next.changeLanguage(originalLanguage)
+  })
+
+  test('translates fixed raw gateway failures in the active language', () => {
+    const messages = [
+      ['invalid upstream address', '上游地址无效'],
+      [
+        'channel origin changed during price sync',
+        '价格同步期间渠道源站已更改',
+      ],
+      ['failed to read the upstream response', '上游请求失败'],
+      ['upstream response is too large', '响应过大'],
+      ['upstream returned an unsuccessful pricing response', '上游请求失败'],
+      [
+        'channel concurrency settings changed during admission',
+        '等待准入期间渠道并发设置已更改',
+      ],
+      ['channel is no longer enabled', '渠道已停用'],
+      [
+        'channel balance plugin changed during admission',
+        '等待准入期间渠道余额插件已更改',
+      ],
+      [
+        'channel balance key changed during admission',
+        '等待准入期间渠道余额查询密钥已更改',
+      ],
+      ['channel balance key is no longer enabled', '渠道余额查询密钥已停用'],
+      [
+        'channel balance source changed during the query',
+        '查询期间渠道余额来源已更改',
+      ],
+    ]
+
+    for (const [message, expected] of messages) {
+      expect(
+        getServerErrorMessage({
+          response: { data: { success: false, message } },
+        })
+      ).toBe(expected)
+    }
+  })
+
+  test('preserves unknown provider text even when it has a locale entry', () => {
+    for (const message of [
+      'Task timed out',
+      'invalid upstream address: provider detail',
+      ' invalid upstream address ',
+      'provider returned {{secret}} and $t(Task timed out)',
+    ]) {
+      expect(getServerMessage({ message })).toBe(message)
+      expect(translateChannelManagementError(i18next.t, message)).toBe(message)
+    }
+  })
+
+  test('keeps structured message keys ahead of raw gateway failures', () => {
+    expect(
+      getServerMessage({
+        message: 'invalid upstream address',
+        message_key: 'Task timed out',
+      })
+    ).toBe('任务超时')
   })
 })
