@@ -10,11 +10,17 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 type CodexCredentialRefreshOptions struct {
 	ResetCaches bool
+	ExpectedKey *string
 }
+
+// ErrCodexCredentialSourceChanged means a refresh cannot replace the current credential.
+var ErrCodexCredentialSourceChanged = errors.New("codex channel: credential source changed during refresh")
 
 type CodexOAuthKey struct {
 	IDToken      string `json:"id_token,omitempty"`
@@ -40,27 +46,31 @@ func parseCodexOAuthKey(raw string) (*CodexOAuthKey, error) {
 }
 
 func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts CodexCredentialRefreshOptions) (*CodexOAuthKey, *model.Channel, error) {
-	ch, err := model.GetChannelById(channelID, true)
-	if err != nil {
+	refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	ch := &model.Channel{}
+	if err := model.DB.WithContext(refreshCtx).Session(&gorm.Session{Logger: gormlogger.Discard}).First(ch, "id = ?", channelID).Error; err != nil {
 		return nil, nil, err
-	}
-	if ch == nil {
-		return nil, nil, fmt.Errorf("channel not found")
 	}
 	if ch.Type != constant.ChannelTypeCodex {
 		return nil, nil, fmt.Errorf("channel type is not Codex")
 	}
+	if ch.ChannelInfo.IsMultiKey {
+		return nil, nil, errors.New("codex channel: credential refresh requires a single key")
+	}
+	if opts.ExpectedKey != nil && ch.Key != *opts.ExpectedKey {
+		return nil, nil, ErrCodexCredentialSourceChanged
+	}
+	sourceKey := ch.Key
 
-	oauthKey, err := parseCodexOAuthKey(strings.TrimSpace(ch.Key))
+	oauthKey, err := parseCodexOAuthKey(strings.TrimSpace(sourceKey))
 	if err != nil {
 		return nil, nil, err
 	}
 	if strings.TrimSpace(oauthKey.RefreshToken) == "" {
 		return nil, nil, fmt.Errorf("codex channel: refresh_token is required to refresh credential")
 	}
-
-	refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 
 	res, err := RefreshCodexOAuthTokenWithProxy(refreshCtx, oauthKey.RefreshToken, ch.GetSetting().Proxy)
 	if err != nil {
@@ -91,8 +101,22 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		return nil, nil, err
 	}
 
-	if err := model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error; err != nil {
-		return nil, nil, err
+	_, err = model.UpdateChannelOtherInfoLocked(refreshCtx, ch.Id, func(current *model.Channel) (map[string]any, error) {
+		// Compare in Go: SQL text equality may ignore case on MySQL.
+		if current.Type != constant.ChannelTypeCodex || current.ChannelInfo.IsMultiKey || current.Key != sourceKey {
+			return nil, ErrCodexCredentialSourceChanged
+		}
+		return map[string]any{"key": string(encoded)}, nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrCodexCredentialSourceChanged) {
+			return nil, nil, ErrCodexCredentialSourceChanged
+		}
+		if refreshCtx.Err() != nil {
+			return nil, nil, refreshCtx.Err()
+		}
+		// Driver errors may contain the replacement credential.
+		return nil, nil, errors.New("codex channel: failed to persist refreshed credential")
 	}
 	model.BumpSyncTopic(model.SyncTopicChannels)
 

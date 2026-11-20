@@ -17,6 +17,98 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestOllamaModelDiscoveryRequiresAnInventory(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		wantModels []OllamaModel
+	}{
+		{name: "valid empty", body: `{"models":[]}`, wantModels: []OllamaModel{}},
+		{name: "valid nonempty", body: `{"models":[{"name":"example:latest"}]}`, wantModels: []OllamaModel{{Name: "example:latest"}}},
+		{name: "missing models", body: `{}`},
+		{name: "null envelope", body: `null`},
+		{name: "null models", body: `{"models":null}`},
+		{name: "wrong models type", body: `{"models":{}}`},
+		{name: "missing model name", body: `{"models":[{}]}`},
+		{name: "null model entry", body: `{"models":[null]}`},
+		{name: "blank model name", body: `{"models":[{"name":" \t"}]}`},
+		{name: "malformed entry with valid model", body: `{"models":[{"name":"example:latest"},{}]}`},
+		{name: "error envelope", body: `{"error":"private upstream detail"}`},
+		{name: "error with models", body: `{"error":"private upstream detail","models":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/api/tags", r.URL.Path)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer upstream.Close()
+			models, err := FetchOllamaModels(t.Context(), upstream.URL, "", OllamaRequestOptions{})
+			if tc.wantModels == nil {
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "private upstream detail")
+				assert.Nil(t, models)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantModels, models)
+		})
+	}
+}
+
+func TestOllamaPullUsesExplicitStreamModeAndRequiresSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		stream  bool
+		body    string
+		wantErr string
+		updates []string
+	}{
+		{name: "nonstream success", body: `{"status":"success"}`},
+		{name: "nonstream error in HTTP 200", body: `{"status":"success","error":"private upstream detail"}`, wantErr: "failed to pull model"},
+		{name: "nonstream missing terminal", body: `{"status":"pulling manifest"}`, wantErr: "no success status received"},
+		{name: "stream success", stream: true, body: "{\"status\":\"pulling manifest\"}\n{\"status\":\"success\"}\n", updates: []string{"pulling manifest", "success"}},
+		{name: "stream error frame", stream: true, body: "{\"status\":\"pulling manifest\"}\n{\"error\":\"private upstream detail\"}\n{\"status\":\"success\"}\n", wantErr: "failed to pull model", updates: []string{"pulling manifest"}},
+		{name: "stream EOF before success", stream: true, body: "{\"status\":\"pulling manifest\"}\n", wantErr: "no success status received", updates: []string{"pulling manifest"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method)
+				assert.Equal(t, "/prefix/api/pull", r.URL.Path)
+				assert.Equal(t, "Bearer configured-key", r.Header.Get("Authorization"))
+				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+				var request struct {
+					Name   string `json:"name"`
+					Stream *bool  `json:"stream"`
+				}
+				if assert.NoError(t, common.DecodeJson(r.Body, &request)) && assert.NotNil(t, request.Stream) {
+					assert.Equal(t, tc.stream, *request.Stream)
+				}
+				assert.Equal(t, "sample-model", request.Name)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer upstream.Close()
+			options := OllamaRequestOptions{Header: http.Header{"Authorization": {"Bearer configured-key"}}}
+			base := upstream.URL + "/prefix/"
+			var updates []string
+			var err error
+			if tc.stream {
+				err = PullOllamaModelStream(t.Context(), base, "unused-key", "sample-model", options, func(progress OllamaPullResponse) {
+					updates = append(updates, progress.Status)
+				})
+			} else {
+				err = PullOllamaModel(t.Context(), base, "unused-key", "sample-model", options)
+			}
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantErr)
+				assert.NotContains(t, err.Error(), "private upstream detail")
+			}
+			assert.Equal(t, tc.updates, updates)
+		})
+	}
+}
+
 func TestOllamaChatHandlerNonStreamToolCalls(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

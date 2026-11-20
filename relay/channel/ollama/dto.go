@@ -72,6 +72,7 @@ type OllamaEmbeddingResponse struct {
 
 type OllamaTagsResponse struct {
 	Models []OllamaModel `json:"models"`
+	Error  string        `json:"error,omitempty"`
 }
 
 type OllamaModel struct {
@@ -93,11 +94,12 @@ type OllamaModelDetail struct {
 
 type OllamaPullRequest struct {
 	Name   string `json:"name"`
-	Stream bool   `json:"stream,omitempty"`
+	Stream *bool  `json:"stream,omitempty"`
 }
 
 type OllamaPullResponse struct {
 	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
 	Digest    string `json:"digest,omitempty"`
 	Total     int64  `json:"total,omitempty"`
 	Completed int64  `json:"completed,omitempty"`

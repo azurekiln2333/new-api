@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
@@ -22,6 +26,217 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOllamaChannelManagementHandlers(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path string
+		stream             *bool
+		handler            gin.HandlerFunc
+	}{
+		{name: "pull", method: http.MethodPost, path: "/api/pull", stream: common.GetPointer(false), handler: OllamaPullModel},
+		{name: "stream pull", method: http.MethodPost, path: "/api/pull", stream: common.GetPointer(true), handler: OllamaPullModelStream},
+		{name: "delete", method: http.MethodDelete, path: "/api/delete", handler: OllamaDeleteModel},
+		{name: "version", method: http.MethodGet, path: "/api/version", handler: OllamaVersion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupChannelCreateTest(t)
+			var channelID int
+			var requests atomic.Int32
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				assert.Equal(t, tc.method, r.Method)
+				assert.Equal(t, "/prefix"+tc.path, r.URL.Path)
+				assert.Equal(t, "route.ollama.internal", r.Host)
+				assert.Equal(t, "Bearer enabled-key", r.Header.Get("Authorization"))
+				assert.Equal(t, "enabled-key", r.Header.Get("X-Static-Key"))
+				assert.Empty(t, r.Header.Get("X-Browser"))
+				assert.Empty(t, r.Header.Get("X-Copied"))
+				sample := service.ReadChannelConcurrency(r.Context(), []int{channelID})[channelID]
+				if assert.NotNil(t, sample.Current) {
+					assert.Equal(t, 1, *sample.Current)
+				}
+				if r.Method != http.MethodGet {
+					var body struct {
+						Name   string `json:"name"`
+						Stream *bool  `json:"stream"`
+					}
+					if assert.NoError(t, common.DecodeJson(r.Body, &body)) {
+						assert.Equal(t, "example-model", body.Name)
+						assert.Equal(t, tc.stream, body.Stream)
+					}
+				}
+				if tc.method == http.MethodGet {
+					_, _ = io.WriteString(w, `{"version":"test-version"}`)
+				} else if tc.stream != nil && *tc.stream {
+					_, _ = io.WriteString(w, "{\"status\":\"pulling manifest\"}\n{\"status\":\"success\"}\n")
+				} else {
+					_, _ = io.WriteString(w, `{"status":"success"}`)
+				}
+			}))
+			defer proxy.Close()
+			channel := &model.Channel{
+				Type: constant.ChannelTypeOllama, Name: "ollama-management-" + tc.name,
+				Status:  common.ChannelStatusManuallyDisabled,
+				BaseURL: common.GetPointer("http://ollama.internal/prefix"), Key: "disabled-key\nenabled-key",
+				HeaderOverride: common.GetPointer(`{"Host":"route.ollama.internal","X-Static-Key":"{api_key}","X-Copied":"{client_header:X-Browser}","*":""}`),
+				ChannelInfo:    model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled}},
+			}
+			channel.SetSetting(dto.ChannelSettings{Proxy: proxy.URL, MaxConcurrentRequests: common.GetPointer(1)})
+			require.NoError(t, model.DB.Create(channel).Error)
+			channelID = channel.Id
+			t.Cleanup(func() { require.NoError(t, model.DB.Delete(channel).Error) })
+
+			body := fmt.Sprintf(`{"channel_id":%d,"model_name":"example-model"}`, channel.Id)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(tc.method, "/api/channel/ollama", strings.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Request.Header.Set("Authorization", "Bearer browser-session")
+			c.Request.Header.Set("X-Browser", "must-not-be-forwarded")
+			c.Request.Header.Set("Origin", "https://not-allowed.example")
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(channel.Id)}}
+			tc.handler(c)
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			assert.Equal(t, int32(1), requests.Load())
+			assert.Empty(t, recorder.Header().Get("Access-Control-Allow-Origin"))
+			if tc.stream != nil && *tc.stream {
+				assert.Contains(t, recorder.Body.String(), `"status":"pulling manifest"`)
+				assert.Contains(t, recorder.Body.String(), "data: [DONE]")
+			} else {
+				var response struct {
+					Success bool `json:"success"`
+				}
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				assert.True(t, response.Success, recorder.Body.String())
+			}
+			sample := service.ReadChannelConcurrency(t.Context(), []int{channel.Id})[channel.Id]
+			require.NotNil(t, sample.Current)
+			assert.Zero(t, *sample.Current)
+		})
+	}
+}
+
+func TestOllamaChannelManagementReloadsPolicyAndPropagatesCancellation(t *testing.T) {
+	setupChannelCreateTest(t)
+	started := make(chan struct{})
+	closed := make(chan struct{})
+	var channelID int
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		if _, err := io.Copy(io.Discard, r.Body); !assert.NoError(t, err) {
+			return
+		}
+		assert.Equal(t, "Bearer current-key", r.Header.Get("Authorization"))
+		assert.Equal(t, "current-key", r.Header.Get("X-Static-Key"))
+		assert.Equal(t, "current.ollama.internal", r.Host)
+		assert.Equal(t, "/new/api/pull", r.URL.Path)
+		sample := service.ReadChannelConcurrency(r.Context(), []int{channelID})[channelID]
+		if assert.NotNil(t, sample.Current) {
+			assert.Equal(t, 1, *sample.Current, "cap regrant must not leave a nested lease")
+		}
+		_, _ = io.WriteString(w, "{\"status\":\"pulling manifest\"}\n")
+		w.(http.Flusher).Flush()
+		close(started)
+		<-r.Context().Done()
+		close(closed)
+	}))
+	defer proxy.Close()
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOllama, Name: "ollama-reload-cancel",
+		BaseURL: common.GetPointer("http://old.ollama.internal/old"), Key: "old-key",
+	}
+	channel.SetSetting(dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+	require.NoError(t, model.DB.Create(channel).Error)
+	channelID = channel.Id
+	t.Cleanup(func() { require.NoError(t, model.DB.Delete(channel).Error) })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	admission := service.NewChannelDiagnosticAdmission(ctx, 0)
+	defer admission.Close()
+	options := ollamaManagementOptions(ctx, channel, admission)
+	setting, err := common.Marshal(dto.ChannelSettings{Proxy: proxy.URL, MaxConcurrentRequests: common.GetPointer(2)})
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(map[string]any{
+		"base_url": "http://new.ollama.internal/new", "key": "current-key", "setting": string(setting),
+		"header_override": `{"X-Static-Key":"{api_key}","Host":"current.ollama.internal"}`,
+	}).Error)
+	done := make(chan error, 1)
+	go func() {
+		done <- ollama.PullOllamaModelStream(ctx, *channel.BaseURL, "", "model", options, nil)
+	}()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("stream stopped before dispatch: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream did not reach the current upstream")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller cancellation did not stop the upstream stream")
+	}
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream body was not closed")
+	}
+	sample := service.ReadChannelConcurrency(t.Context(), []int{channel.Id})[channel.Id]
+	require.NotNil(t, sample.Current)
+	assert.Zero(t, *sample.Current)
+}
+
+func TestChannelManagementBrowserDiscoveryHonorsCancellation(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	var requests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = io.WriteString(w, `{"data":[{"id":"unexpected"}]}`)
+	}))
+	defer upstream.Close()
+	channel := &model.Channel{
+		Name: "canceled-browser-discovery", Type: constant.ChannelTypeOpenAI,
+		BaseURL: &upstream.URL, Key: "first-key\nsecond-key", Models: "existing",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2},
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	t.Cleanup(func() { require.NoError(t, model.DB.Delete(channel).Error) })
+	for _, action := range []string{"saved models", "preview models", "fetch_key_models", "sync_key_models"} {
+		t.Run(action, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			body, err := common.Marshal(MultiKeyManageRequest{
+				ChannelId: channel.Id, Action: action, KeyIndex: common.GetPointer(1), Apply: true,
+			})
+			require.NoError(t, err)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Set("id", rootID)
+			c.Set("role", common.RoleRootUser)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/multi_key/manage", bytes.NewReader(body)).WithContext(ctx)
+			c.Request.Header.Set("Content-Type", "application/json")
+			if action == "saved models" {
+				c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(channel.Id)}}
+				FetchUpstreamModels(c)
+			} else if action == "preview models" {
+				FetchModels(c)
+			} else {
+				ManageMultiKeys(c)
+			}
+			var response struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.False(t, response.Success, recorder.Body.String())
+			assert.Zero(t, requests.Load(), "a canceled browser operation must not dispatch")
+			var stored model.Channel
+			require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+			assert.Equal(t, "existing", stored.Models, "canceled sync must not apply a partial result")
+		})
+	}
+}
 
 func TestGetChannelDefaultBaseURLsUsesBuiltInDefaults(t *testing.T) {
 	originalBaseURLs := constant.ChannelBaseURLs

@@ -2,17 +2,21 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,10 +53,15 @@ func TestParseOpenAIModelIDsStrictResponseContract(t *testing.T) {
 		{name: "missing data", body: `{"object":"list"}`, wantError: "data is required"},
 		{name: "null data", body: `{"data":null}`, wantError: "data is required"},
 		{name: "empty data", body: `{"data":[]}`, wantError: "no valid model IDs"},
-		{name: "all IDs empty", body: `{"data":[{"id":""},{"id":"   "}]}`, wantError: "no valid model IDs"},
+		{name: "missing ID", body: `{"data":[{}]}`, wantError: "model ID is required"},
+		{name: "null entry", body: `{"data":[null]}`, wantError: "model ID is required"},
+		{name: "all IDs empty", body: `{"data":[{"id":""},{"id":"   "}]}`, wantError: "model ID is required"},
+		{name: "mixed invalid entry", body: `{"data":[{"id":"valid"},{}]}`, wantError: "model ID is required"},
+		{name: "error envelope", body: `{"data":[],"error":{"message":"private"}}`, wantError: "upstream returned an error response"},
+		{name: "failed envelope", body: `{"data":[],"success":false}`, wantError: "upstream returned an error response"},
 		{
-			name: "filters empty IDs and normalizes valid IDs",
-			body: `{"data":[{"id":" gpt-4.1 "},{"id":""},{"id":"gpt-4.1"},{"id":"o3"}]}`,
+			name: "normalizes valid IDs",
+			body: `{"data":[{"id":" gpt-4.1 "},{"id":"gpt-4.1"},{"id":"o3"}]}`,
 			want: []string{"gpt-4.1", "o3"},
 		},
 	}
@@ -69,6 +78,9 @@ func TestParseOpenAIModelIDsStrictResponseContract(t *testing.T) {
 			require.Equal(t, test.want, models)
 		})
 	}
+	models, err := parseAuthoritativeOpenAIModelIDs([]byte(`{"data":[]}`))
+	require.NoError(t, err)
+	assert.Empty(t, models, "an explicit valid empty inventory remains authoritative")
 }
 
 func TestFetchAdvancedCustomModelsAppliesHeaderOverrideAfterRouteAuth(t *testing.T) {
@@ -333,7 +345,7 @@ func TestFetchModelsAdvancedCustomEditPreviewUsesSavedKeyAndExplicitClears(t *te
 func TestFailedAdvancedCustomDetectionDoesNotStageFullRemoval(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[]}`))
+		_, _ = w.Write([]byte(`{"data":[null]}`))
 	}))
 	defer server.Close()
 
@@ -347,7 +359,7 @@ func TestFailedAdvancedCustomDetectionDoesNotStageFullRemoval(t *testing.T) {
 	require.NoError(t, db.Create(channel).Error)
 
 	modelsChanged, autoAdded, err := checkAndPersistChannelUpstreamModelUpdates(channel, &settings, true, true)
-	require.ErrorContains(t, err, "no valid model IDs")
+	require.ErrorContains(t, err, "model ID is required")
 	require.False(t, modelsChanged)
 	require.Zero(t, autoAdded)
 	require.Empty(t, settings.UpstreamModelUpdateLastDetectedModels)
@@ -359,6 +371,161 @@ func TestFailedAdvancedCustomDetectionDoesNotStageFullRemoval(t *testing.T) {
 	require.Empty(t, persistedSettings.UpstreamModelUpdateLastDetectedModels)
 	require.Empty(t, persistedSettings.UpstreamModelUpdateLastRemovedModels)
 	require.Equal(t, "gpt-4.1,o3", reloaded.Models)
+}
+
+func TestChannelManagementModelDiscoveryPersistence(t *testing.T) {
+	setupChannelCreateTest(t)
+	for _, mode := range []string{"apply", "routing edited", "replaced source", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			channel := &model.Channel{
+				Name: "model-update-" + mode, Type: constant.ChannelTypeOpenAI,
+				Key: "saved-key", Models: "old", Group: "default",
+				ParamOverride: common.GetPointer(`{"temperature":0.5}`),
+			}
+			channel.SetOtherSettings(dto.ChannelOtherSettings{
+				UpstreamModelUpdateLastDetectedModels: []string{"new"},
+				UpstreamModelUpdateLastRemovedModels:  []string{"old"},
+			})
+			require.NoError(t, channel.Insert())
+			t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+			var source model.Channel
+			require.NoError(t, model.DB.Select(channelUpstreamModelUpdateSelectFields).First(&source, channel.Id).Error)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if mode == "replaced source" {
+				require.NoError(t, model.DB.Model(channel).Update("key", "replacement-key").Error)
+			}
+			if mode == "routing edited" {
+				require.NoError(t, model.DB.Model(channel).Updates(map[string]any{
+					"group": "updated", "priority": int64(7), "weight": uint(9), "tag": "updated-tag",
+				}).Error)
+			}
+			if mode == "canceled" {
+				cancel()
+			}
+			_, _, _, _, changed, err := applyChannelUpstreamModelUpdates(ctx, &source, []string{"new"}, nil, []string{"old"})
+			stored, loadErr := model.GetChannelById(channel.Id, true)
+			require.NoError(t, loadErr)
+			if mode == "replaced source" || mode == "canceled" {
+				require.Error(t, err)
+				assert.False(t, changed)
+				assert.Equal(t, "old", stored.Models)
+				assert.Equal(t, "old", source.Models, "failed persistence must not mutate the source snapshot")
+				assert.Equal(t, []string{"new"}, stored.GetOtherSettings().UpstreamModelUpdateLastDetectedModels)
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, changed)
+			assert.Equal(t, "new", stored.Models)
+			assert.Equal(t, stored.Models, source.Models)
+			assert.Empty(t, stored.GetOtherSettings().UpstreamModelUpdateLastDetectedModels)
+			assert.Empty(t, stored.GetOtherSettings().UpstreamModelUpdateLastRemovedModels)
+			var abilities []model.Ability
+			require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+			require.Len(t, abilities, 1)
+			assert.Equal(t, "new", abilities[0].Model)
+			if mode == "routing edited" {
+				assert.Equal(t, "updated", abilities[0].Group)
+				assert.Equal(t, common.GetPointer(int64(7)), abilities[0].Priority)
+				assert.Equal(t, uint(9), abilities[0].Weight)
+				assert.Equal(t, common.GetPointer("updated-tag"), abilities[0].Tag)
+				assert.Equal(t, stored.Group, source.Group)
+				assert.Equal(t, stored.Priority, source.Priority)
+				assert.Equal(t, stored.Weight, source.Weight)
+				assert.Equal(t, stored.Tag, source.Tag)
+			}
+		})
+	}
+}
+
+func TestChannelManagementModelDiscoveryCancellation(t *testing.T) {
+	setupChannelCreateTest(t)
+	started, closed := make(chan struct{}), make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(closed)
+	}))
+	defer upstream.Close()
+	channel := &model.Channel{Name: "model-update-cancel", Type: constant.ChannelTypeOpenAI, Key: "saved-key", Models: "old", BaseURL: &upstream.URL}
+	channel.SetSetting(dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+	channel.SetOtherSettings(dto.ChannelOtherSettings{UpstreamModelUpdateLastCheckTime: 123})
+	require.NoError(t, model.DB.Create(channel).Error)
+	t.Cleanup(func() { require.NoError(t, model.DB.Delete(channel).Error) })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		settings := channel.GetOtherSettings()
+		_, _, err := checkAndPersistChannelUpstreamModelUpdatesContext(ctx, channel, &settings, true, true)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("model discovery did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(3 * time.Second):
+		t.Fatal("model discovery ignored caller cancellation")
+	}
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream request remained open")
+	}
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(123), stored.GetOtherSettings().UpstreamModelUpdateLastCheckTime)
+	assert.Equal(t, "old", stored.Models)
+	sample := service.ReadChannelConcurrency(t.Context(), []int{channel.Id})[channel.Id]
+	require.NotNil(t, sample.Current)
+	assert.Zero(t, *sample.Current)
+}
+
+func TestChannelManagementModelPreviewUsesCurrentPolicyAndSavedCapacity(t *testing.T) {
+	setupChannelCreateTest(t)
+	var channelID int
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer typed-key", r.Header.Get("Authorization"))
+		assert.Equal(t, "typed-key", r.Header.Get("X-Current"))
+		assert.Empty(t, r.Header.Get("X-Stale"))
+		sample := service.ReadChannelConcurrency(r.Context(), []int{channelID})[channelID]
+		if assert.NotNil(t, sample.Current) {
+			assert.Equal(t, 1, *sample.Current)
+		}
+		_, _ = io.WriteString(w, `{"data":[{"id":"draft-model"}]}`)
+	}))
+	defer upstream.Close()
+	channel := &model.Channel{
+		Name: "model-preview-current-policy", Type: constant.ChannelTypeOpenAI, Key: "saved-key",
+		BaseURL: common.GetPointer("http://127.0.0.1:1"), HeaderOverride: common.GetPointer(`{"X-Stale":"old"}`),
+	}
+	channel.SetSetting(dto.ChannelSettings{Proxy: "http://127.0.0.1:1", MaxConcurrentRequests: common.GetPointer(1)})
+	require.NoError(t, model.DB.Create(channel).Error)
+	channelID = channel.Id
+	t.Cleanup(func() { require.NoError(t, model.DB.Delete(channel).Error) })
+	draft := newSingleKeyChannel(channel, "typed-key")
+	currentSettings, err := common.Marshal(dto.ChannelSettings{Proxy: "http://127.0.0.1:1", MaxConcurrentRequests: common.GetPointer(2), TLSInsecureSkipVerify: true})
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(channel).Updates(map[string]any{
+		"setting": string(currentSettings), "header_override": `{"X-Current":"{api_key}"}`,
+	}).Error)
+	preview := fetchModelsRequest{ChannelID: channel.Id, Key: "typed-key", BaseURL: &upstream.URL, Proxy: common.GetPointer("")}
+	models, err := fetchChannelUpstreamModelIDsForRequest(t.Context(), draft, channelModelDiscoveryOptions{Preview: &preview, SourceType: channel.Type})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"draft-model"}, models)
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "saved-key", stored.Key)
+	assert.Equal(t, "http://127.0.0.1:1", stored.GetBaseURL())
+	assert.Equal(t, "http://127.0.0.1:1", stored.GetSetting().Proxy)
+	sample := service.ReadChannelConcurrency(t.Context(), []int{channel.Id})[channel.Id]
+	require.NotNil(t, sample.Current)
+	assert.Zero(t, *sample.Current)
 }
 
 // TestFetchModelsUsesTypedKeyForSavedChannel pins the edit-form discovery of a

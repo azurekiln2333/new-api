@@ -16,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -816,6 +818,64 @@ func TestMultiKeyModelDiscoveryUsesOneKey(t *testing.T) {
 		assert.False(t, rejected.Success)
 		assert.NotEmpty(t, rejected.Message)
 	}
+
+	t.Run("a refreshed nonzero plugin key keeps its index on retry", func(t *testing.T) {
+		const pluginKey = "multikey-discovery-refresh"
+		_, err := jsplugin.DefaultRegistry.Register(`
+export const meta = {apiVersion: 1, key: "multikey-discovery-refresh", name: "Discovery refresh",
+  version: "1.0.0", author: {name: "Test"}, relay: [{incoming_path: "/v1/models", upstream_path: "/v1/models"}]};
+export function refresh(ctx) {
+  const token = ctx.credential.token + "-next";
+  return {credential: {token}, headers: {Authorization: "Bearer " + token}, expiresAt: utils.unixNow() + 3600};
+}`, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(pluginKey) })
+		requests := make(chan string, 4)
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Header.Get("Authorization")
+			requests <- key
+			assert.Equal(t, "/v1/models", r.URL.Path)
+			if key == "Bearer second-next" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			if key != "Bearer second-next-next" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"id":"second-model"}]}`))
+		}))
+		t.Cleanup(upstream.Close)
+		first, err := (jsplugin.Credential{Plugin: pluginKey, Data: []byte(`{"token":"first"}`),
+			Headers: map[string]string{"Authorization": "Bearer first"}}).Line()
+		require.NoError(t, err)
+		second, err := (jsplugin.Credential{Plugin: pluginKey, Data: []byte(`{"token":"second"}`),
+			Headers: map[string]string{"Authorization": "Bearer second"}, ExpiresAt: time.Now().Add(-time.Minute).Unix()}).Line()
+		require.NoError(t, err)
+		pluginChannel := insertPluginChannel(t, pluginKey, upstream.URL, first+"\n"+second, true)
+		t.Cleanup(func() { require.NoError(t, pluginChannel.Delete()) })
+
+		recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: pluginChannel.Id, Action: "fetch_key_models", KeyIndex: common.GetPointer(1)})
+		var result struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Models []string `json:"models"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+		require.True(t, result.Success, recorder.Body.String())
+		assert.Equal(t, []string{"second-model"}, result.Data.Models)
+		require.Len(t, requests, 2)
+		assert.Equal(t, "Bearer second-next", <-requests)
+		assert.Equal(t, "Bearer second-next-next", <-requests)
+		stored, err := model.GetChannelById(pluginChannel.Id, true)
+		require.NoError(t, err)
+		require.Len(t, stored.GetKeys(), 2)
+		assert.Equal(t, first, stored.GetKeys()[0], "refresh must never select the neighboring accountless credential")
+		credential, ok := jsplugin.ParseCredential(stored.GetKeys()[1])
+		require.True(t, ok)
+		assert.Equal(t, "Bearer second-next-next", credential.Headers["Authorization"])
+	})
 }
 
 // TestMultiKeyModelSyncPreviewAndApply pins the channel-wide sync: a preview
@@ -897,5 +957,98 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 	for i, modelName := range []string{"model-a", "model-b", "model-shared"} {
 		assert.Equal(t, modelName, abilities[i].Model)
 		assert.True(t, abilities[i].Enabled, "a synced model must be routable")
+	}
+
+	for _, failure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("authoritative enabled-key union/failure=%t", failure), func(t *testing.T) {
+			keys := "sk-alpha\nsk-disabled\nsk-beta"
+			if failure {
+				keys += "\nsk-broken"
+			}
+			source := &model.Channel{Name: t.Name(), Type: constant.ChannelTypeOpenAI, Key: keys,
+				Models: "model-a,model-b,model-old", Group: "default", BaseURL: &baseURL,
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: len(strings.Split(keys, "\n")),
+					MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled}},
+			}
+			settings := dto.ChannelOtherSettings{UpstreamModelUpdateAutoSyncEnabled: true,
+				UpstreamModelUpdateLastDetectedModels: []string{"previous-add"},
+				UpstreamModelUpdateLastRemovedModels:  []string{"previous-remove"}}
+			source.SetOtherSettings(settings)
+			require.NoError(t, source.Insert())
+			t.Cleanup(func() { require.NoError(t, source.Delete()) })
+			changed, added, err := checkAndPersistChannelUpstreamModelUpdatesContext(t.Context(), source, &settings, true, true)
+			if failure {
+				require.Error(t, err)
+				assert.False(t, changed)
+				assert.Zero(t, added)
+			} else {
+				require.NoError(t, err)
+				assert.True(t, changed)
+				assert.Equal(t, 1, added)
+			}
+			stored, err := model.GetChannelById(source.Id, true)
+			require.NoError(t, err)
+			if failure {
+				assert.Equal(t, "model-a,model-b,model-old", stored.Models, "partial inventory cannot auto-apply additions")
+				assert.Equal(t, []string{"previous-add"}, stored.GetOtherSettings().UpstreamModelUpdateLastDetectedModels)
+				assert.Equal(t, []string{"previous-remove"}, stored.GetOtherSettings().UpstreamModelUpdateLastRemovedModels, "partial inventory cannot become removal evidence")
+			} else {
+				assert.Equal(t, "model-a,model-b,model-old,model-shared", stored.Models)
+				assert.Empty(t, stored.GetOtherSettings().UpstreamModelUpdateLastDetectedModels)
+				assert.Equal(t, []string{"model-old"}, stored.GetOtherSettings().UpstreamModelUpdateLastRemovedModels, "models present on either enabled key must remain")
+			}
+		})
+	}
+
+	for _, schedulingEdit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("apply preserves concurrent configuration/scheduling=%t", schedulingEdit), func(t *testing.T) {
+			var source *model.Channel
+			replacement := `{"X-Configuration":"replacement"}`
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "Bearer sk-source", r.Header.Get("Authorization"))
+				column, value := "header_override", any(replacement)
+				if schedulingEdit {
+					info := source.ChannelInfo
+					info.MultiKeyMode = constant.MultiKeyModePolling
+					info.MultiKeyPollingIndex = 1
+					info.MultiKeyDisabledReason = map[int]string{1: "current reason"}
+					info.MultiKeyDisabledTime = map[int]int64{1: 123456}
+					column, value = "channel_info", info
+				}
+				if err := model.DB.Model(&model.Channel{}).Where("id = ?", source.Id).Update(column, value).Error; !assert.NoError(t, err) {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				_, _ = w.Write([]byte(`{"data":[{"id":"model-new"}]}`))
+			}))
+			t.Cleanup(upstream.Close)
+			source = &model.Channel{Name: t.Name(), Type: constant.ChannelTypeOpenAI, Key: "sk-source\nsk-disabled",
+				Models: "model-original", Group: "default", BaseURL: &upstream.URL,
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2,
+					MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled}}}
+			require.NoError(t, source.Insert())
+			t.Cleanup(func() { require.NoError(t, source.Delete()) })
+			recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: source.Id, Action: "sync_key_models", Apply: true})
+			var response struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.Equal(t, schedulingEdit, response.Success, recorder.Body.String())
+			stored, err := model.GetChannelById(source.Id, true)
+			require.NoError(t, err)
+			if schedulingEdit {
+				assert.Equal(t, "model-original,model-new", stored.Models)
+				assert.Equal(t, []string{"model-new"}, stored.ChannelInfo.MultiKeyModels[0])
+				assert.Equal(t, constant.MultiKeyModePolling, stored.ChannelInfo.MultiKeyMode)
+				assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
+				assert.Equal(t, map[int]string{1: "current reason"}, stored.ChannelInfo.MultiKeyDisabledReason)
+				assert.Equal(t, map[int]int64{1: 123456}, stored.ChannelInfo.MultiKeyDisabledTime)
+				return
+			}
+			assert.Equal(t, "model-original", stored.Models)
+			require.NotNil(t, stored.HeaderOverride)
+			assert.Equal(t, replacement, *stored.HeaderOverride)
+			assert.Empty(t, stored.ChannelInfo.MultiKeyModels)
+		})
 	}
 }

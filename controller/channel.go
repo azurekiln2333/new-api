@@ -364,7 +364,7 @@ func FetchUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	ids, err := fetchChannelUpstreamModelIDs(channel)
+	ids, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel)
 	if err != nil {
 		common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
 		return
@@ -1758,12 +1758,14 @@ func FetchModels(c *gin.Context) {
 	}
 
 	var channel *model.Channel
+	discoveryOptions := channelModelDiscoveryOptions{Preview: &req}
 	if req.ChannelID > 0 {
 		savedChannel, err := model.GetChannelById(req.ChannelID, true)
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
+		discoveryOptions.SourceType = savedChannel.Type
 		if savedChannel.Type == constant.ChannelTypeAdvancedCustom {
 			channel, err = buildAdvancedCustomModelPreviewChannel(req)
 			if err != nil {
@@ -1823,6 +1825,22 @@ func FetchModels(c *gin.Context) {
 			Key:     key,
 			BaseURL: &baseURL,
 		}
+		if req.HeaderOverride != nil {
+			rawHeaderOverride := strings.TrimSpace(*req.HeaderOverride)
+			if rawHeaderOverride != "" {
+				var headerOverride map[string]any
+				if err := common.UnmarshalJsonStr(rawHeaderOverride, &headerOverride); err != nil {
+					common.ApiError(c, common.NewMessage("Header override must be valid JSON format"))
+					return
+				}
+			}
+			channel.HeaderOverride = &rawHeaderOverride
+		}
+		if req.Proxy != nil {
+			channelSettings := channel.GetSetting()
+			channelSettings.Proxy = strings.TrimSpace(*req.Proxy)
+			channel.SetSetting(channelSettings)
+		}
 		if req.Type == constant.ChannelTypeTaskPlugin {
 			if err := applyTaskPluginModelPreview(channel, req); err != nil {
 				common.ApiError(c, err)
@@ -1830,7 +1848,7 @@ func FetchModels(c *gin.Context) {
 			}
 		}
 	}
-	models, err := fetchChannelUpstreamModelIDs(channel)
+	models, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel, discoveryOptions)
 	if err != nil {
 		common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
 		return
@@ -2620,7 +2638,7 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiErrorT(c, "Key index out of range")
 			return
 		}
-		models, err := fetchChannelUpstreamModelIDs(newSingleKeyChannel(channel, keys[keyIndex]))
+		models, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel, channelModelDiscoveryOptions{KeyIndex: &keyIndex})
 		if err != nil {
 			common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
 			return
@@ -2637,7 +2655,7 @@ func ManageMultiKeys(c *gin.Context) {
 		results := make([]MultiKeyModelsResult, len(keys))
 		var wg sync.WaitGroup
 		capacity := make(chan struct{}, multiKeyModelSyncConcurrency)
-		for keyIndex, key := range keys {
+		for keyIndex := range keys {
 			results[keyIndex] = MultiKeyModelsResult{KeyIndex: keyIndex}
 			// A disabled key is reported without contacting the upstream: the
 			// operator sees it was left alone, and a failing credential is not
@@ -2647,9 +2665,14 @@ func ManageMultiKeys(c *gin.Context) {
 				continue
 			}
 			wg.Go(func() {
-				capacity <- struct{}{}
-				defer func() { <-capacity }()
-				models, err := fetchChannelUpstreamModelIDs(newSingleKeyChannel(channel, key))
+				select {
+				case capacity <- struct{}{}:
+					defer func() { <-capacity }()
+				case <-c.Request.Context().Done():
+					results[keyIndex].Error = c.Request.Context().Err().Error()
+					return
+				}
+				models, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel, channelModelDiscoveryOptions{KeyIndex: &keyIndex})
 				if err != nil {
 					results[keyIndex].Error = err.Error()
 					return
@@ -2658,6 +2681,10 @@ func ManageMultiKeys(c *gin.Context) {
 			})
 		}
 		wg.Wait()
+		if err := c.Request.Context().Err(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 
 		channelModels := normalizeModelNames(channel.GetModels())
 		discovered := make([]string, 0, len(results))
@@ -2680,6 +2707,8 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
+		source := *channel
+		channel.ChannelInfo.MultiKeyModels = maps.Clone(channel.ChannelInfo.MultiKeyModels)
 		channel.Models = strings.Join(mergeModelNames(channelModels, addedModels), ",")
 		for _, result := range results {
 			if result.Error != "" || len(result.Models) == 0 {
@@ -2701,11 +2730,29 @@ func ManageMultiKeys(c *gin.Context) {
 			}
 			channel.ChannelInfo.MultiKeyModels[keyIndex] = scope
 		}
-		err = channel.Update()
+		persistCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+		_, err = model.UpdateChannelOtherInfoLocked(persistCtx, channel.Id, func(current *model.Channel) (map[string]any, error) {
+			if !sameChannelModelUpdateSource(&source, current) {
+				return nil, fmt.Errorf("channel configuration changed during model discovery")
+			}
+			current.ChannelInfo.MultiKeyModels = channel.ChannelInfo.MultiKeyModels
+			return map[string]any{"models": channel.Models, "channel_info": current.ChannelInfo}, nil
+		})
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
+		stored, err := reloadManagementChannel(persistCtx, channel.Id)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := stored.UpdateAbilities(nil); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		model.BumpSyncTopic(model.SyncTopicChannels)
 		model.InitChannelCache()
 		response["applied"] = true
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
@@ -2726,6 +2773,38 @@ func multiKeyActionRequiresSensitiveWrite(action string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// ollamaManagementOptions leaves admission to the HTTP helper. Its reload
+// rebuilds static headers and key/transport policy after every grant, including
+// a cap change, without ever borrowing another channel or copying browser headers.
+func ollamaManagementOptions(ctx context.Context, channel *model.Channel, admission *service.ChannelDiagnosticAdmission) ollama.OllamaRequestOptions {
+	return ollama.OllamaRequestOptions{
+		Header: make(http.Header), Settings: channel.GetSetting(),
+		ChannelID: channel.Id, Admission: admission,
+		Reload: func() (string, http.Header, dto.ChannelSettings, error) {
+			var current model.Channel
+			if err := model.DB.WithContext(ctx).First(&current, channel.Id).Error; err != nil {
+				return "", nil, dto.ChannelSettings{}, err
+			}
+			if current.Type != constant.ChannelTypeOllama {
+				return "", nil, dto.ChannelSettings{}, common.NewMessage("This operation is only supported for Ollama channels")
+			}
+			key, _, apiErr := current.GetNextEnabledKey()
+			if apiErr != nil {
+				return "", nil, dto.ChannelSettings{}, common.NewMessage("No enabled channel key")
+			}
+			key = strings.TrimSpace(key)
+			headers, err := buildFetchModelsHeaders(&current, key)
+			if err != nil {
+				return "", nil, dto.ChannelSettings{}, common.NewMessage("Invalid channel header override")
+			}
+			if (key == "" || key == "EMPTY") && headers.Get("Authorization") == "Bearer "+key {
+				headers.Del("Authorization")
+			}
+			return channelBaseURL(&current), headers, current.GetSetting(), nil
+		},
 	}
 }
 
@@ -2776,8 +2855,11 @@ func OllamaPullModel(c *gin.Context) {
 		baseURL = channel.GetBaseURL()
 	}
 
-	key := strings.Split(channel.Key, "\n")[0]
-	err = ollama.PullOllamaModel(baseURL, key, req.ModelName)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
+	defer cancel()
+	admission := service.NewChannelDiagnosticAdmission(ctx, 0)
+	defer admission.Close()
+	err = ollama.PullOllamaModel(ctx, baseURL, "", req.ModelName, ollamaManagementOptions(ctx, channel, admission))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -2839,31 +2921,40 @@ func OllamaPullModelStream(c *gin.Context) {
 		baseURL = channel.GetBaseURL()
 	}
 
-	// 设置 SSE 头部
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Hour)
+	defer cancel()
+	admission := service.NewChannelDiagnosticAdmission(ctx, 0)
+	defer admission.Close()
+
+	// Console administration does not grant wildcard CORS access.
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	c.Header("Access-Control-Allow-Origin", "*")
 
-	key := strings.Split(channel.Key, "\n")[0]
-
-	// 创建进度回调函数
 	progressCallback := func(progress ollama.OllamaPullResponse) {
-		data, _ := json.Marshal(progress)
-		fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
+		if ctx.Err() != nil {
+			return
+		}
+		data, _ := common.Marshal(progress)
+		if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", data); err != nil {
+			cancel()
+			return
+		}
 		c.Writer.Flush()
 	}
 
-	// 执行拉取
-	err = ollama.PullOllamaModelStream(baseURL, key, req.ModelName, progressCallback)
+	err = ollama.PullOllamaModelStream(ctx, baseURL, "", req.ModelName, ollamaManagementOptions(ctx, channel, admission), progressCallback)
+	if ctx.Err() != nil {
+		return
+	}
 
 	if err != nil {
-		errorData, _ := json.Marshal(gin.H{
+		errorData, _ := common.Marshal(gin.H{
 			"error": err.Error(),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(errorData))
 	} else {
-		successData, _ := json.Marshal(gin.H{
+		successData, _ := common.Marshal(gin.H{
 			"message": fmt.Sprintf("Model %s pulled successfully", req.ModelName),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(successData))
@@ -2921,8 +3012,11 @@ func OllamaDeleteModel(c *gin.Context) {
 		baseURL = channel.GetBaseURL()
 	}
 
-	key := strings.Split(channel.Key, "\n")[0]
-	err = ollama.DeleteOllamaModel(baseURL, key, req.ModelName)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Minute)
+	defer cancel()
+	admission := service.NewChannelDiagnosticAdmission(ctx, 0)
+	defer admission.Close()
+	err = ollama.DeleteOllamaModel(ctx, baseURL, "", req.ModelName, ollamaManagementOptions(ctx, channel, admission))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -2970,8 +3064,11 @@ func OllamaVersion(c *gin.Context) {
 		baseURL = channel.GetBaseURL()
 	}
 
-	key := strings.Split(channel.Key, "\n")[0]
-	version, err := ollama.FetchOllamaVersion(baseURL, key)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	admission := service.NewChannelDiagnosticAdmission(ctx, 0)
+	defer admission.Close()
+	version, err := ollama.FetchOllamaVersion(ctx, baseURL, "", ollamaManagementOptions(ctx, channel, admission))
 	if err != nil {
 		common.ApiErrorT(c, "Failed to fetch Ollama version: {{error}}", map[string]any{"error": err.Error()})
 		return

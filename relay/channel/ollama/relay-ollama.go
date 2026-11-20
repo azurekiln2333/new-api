@@ -1,6 +1,8 @@
 package ollama
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -338,245 +340,214 @@ func ollamaEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	return usage, nil
 }
 
-func FetchOllamaModels(baseURL, apiKey string) ([]OllamaModel, error) {
-	url := fmt.Sprintf("%s/api/tags", baseURL)
+// OllamaRequestOptions supplies management transport and static headers. A
+// nil Header preserves the optional default Bearer key. Use Reload for a
+// persisted channel whose request acquires its own admission.
+type OllamaRequestOptions struct {
+	Header    http.Header
+	Settings  dto.ChannelSettings
+	Admission *service.ChannelDiagnosticAdmission
+	ChannelID int
+	Reload    func() (baseURL string, headers http.Header, settings dto.ChannelSettings, err error)
+}
 
-	client := &http.Client{}
-	request, err := http.NewRequest("GET", url, nil)
+func doOllamaManagementRequest(ctx context.Context, method, baseURL, path, apiKey string, body []byte, options OllamaRequestOptions, timeout time.Duration) (*http.Response, error) {
+	prepare := func(base string, headers http.Header) (*http.Request, error) {
+		base = strings.TrimRight(strings.TrimSpace(base), "/")
+		if base == "" {
+			return nil, fmt.Errorf("baseURL is empty")
+		}
+		var reader io.Reader
+		if body != nil {
+			reader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, base+path, reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request")
+		}
+		if headers != nil {
+			req.Header = headers.Clone()
+		} else if key := strings.TrimSpace(apiKey); key != "" && key != "EMPTY" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		if body != nil && req.Header.Get("Content-Type") == "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		return req, nil
+	}
+	request, err := prepare(baseURL, options.Header)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
+		return nil, err
 	}
-
-	// Ollama 通常不需要 Bearer token，但为了兼容性保留
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
+	call := service.ChannelManagementCall{
+		Request: request, Settings: options.Settings, ChannelID: options.ChannelID,
+		Admission: options.Admission, Timeout: timeout, NoRedirect: method != http.MethodGet,
 	}
+	if options.Reload != nil {
+		call.Reload = func() (*http.Request, dto.ChannelSettings, error) {
+			base, headers, settings, err := options.Reload()
+			if err != nil {
+				return nil, dto.ChannelSettings{}, err
+			}
+			// A reloaded channel with no Authorization must not fall back to
+			// the old key. An empty map means deliberately unauthenticated.
+			if headers == nil {
+				headers = make(http.Header)
+			}
+			fresh, err := prepare(base, headers)
+			return fresh, settings, err
+		}
+	}
+	return service.DoChannelManagementRequest(call)
+}
 
-	response, err := client.Do(request)
+const maxOllamaManagementResponse = 10 << 20
+
+func readOllamaManagementResponse(resp *http.Response) ([]byte, error) {
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned error %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxOllamaManagementResponse+1))
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %v", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		return nil, fmt.Errorf("server returned error %d: %s", response.StatusCode, string(body))
+	if len(body) > maxOllamaManagementResponse {
+		return nil, fmt.Errorf("upstream response is too large")
 	}
+	return body, nil
+}
 
+func FetchOllamaModels(ctx context.Context, baseURL, apiKey string, options OllamaRequestOptions) ([]OllamaModel, error) {
+	resp, err := doOllamaManagementRequest(ctx, http.MethodGet, baseURL, "/api/tags", apiKey, nil, options, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := readOllamaManagementResponse(resp)
+	if err != nil {
+		return nil, err
+	}
 	var tagsResponse OllamaTagsResponse
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %v", err)
+	if err := common.Unmarshal(body, &tagsResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse response")
 	}
-
-	err = common.Unmarshal(body, &tagsResponse)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse response: %v", err)
+	// A genuinely empty inventory is [], not an omitted/null models field or
+	// an error sent with HTTP 200. Only the former may drive model removals.
+	if tagsResponse.Error != "" || tagsResponse.Models == nil {
+		return nil, fmt.Errorf("invalid Ollama model inventory")
 	}
-
+	for _, model := range tagsResponse.Models {
+		if strings.TrimSpace(model.Name) == "" {
+			return nil, fmt.Errorf("invalid Ollama model inventory")
+		}
+	}
 	return tagsResponse.Models, nil
 }
 
 // 拉取 Ollama 模型 (非流式)
-func PullOllamaModel(baseURL, apiKey, modelName string) error {
-	url := fmt.Sprintf("%s/api/pull", baseURL)
-
-	pullRequest := OllamaPullRequest{
-		Name:   modelName,
-		Stream: false, // 非流式，简化处理
-	}
-
-	requestBody, err := common.Marshal(pullRequest)
+func PullOllamaModel(ctx context.Context, baseURL, apiKey, modelName string, options OllamaRequestOptions) error {
+	body, err := common.Marshal(OllamaPullRequest{Name: modelName, Stream: common.GetPointer(false)})
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %v", err)
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
-
-	client := &http.Client{
-		Timeout: 30 * 60 * 1000 * time.Millisecond, // 30分钟超时，支持大模型
-	}
-	request, err := http.NewRequest("POST", url, strings.NewReader(string(requestBody)))
+	resp, err := doOllamaManagementRequest(ctx, http.MethodPost, baseURL, "/api/pull", apiKey, body, options, 30*time.Minute)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		return err
 	}
-
-	request.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	response, err := client.Do(request)
+	defer resp.Body.Close()
+	data, err := readOllamaManagementResponse(resp)
 	if err != nil {
-		return fmt.Errorf("request failed: %v", err)
+		return err
 	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		return fmt.Errorf("failed to pull model, status %d: %s", response.StatusCode, string(body))
+	var result OllamaPullResponse
+	if err := common.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("failed to parse pull response")
 	}
-
+	if result.Error != "" || strings.EqualFold(result.Status, "error") {
+		return fmt.Errorf("failed to pull model")
+	}
+	if !strings.EqualFold(result.Status, "success") {
+		return fmt.Errorf("model pull did not complete: no success status received")
+	}
 	return nil
 }
 
 // 流式拉取 Ollama 模型 (支持进度回调)
-func PullOllamaModelStream(baseURL, apiKey, modelName string, progressCallback func(OllamaPullResponse)) error {
-	url := fmt.Sprintf("%s/api/pull", baseURL)
-
-	pullRequest := OllamaPullRequest{
-		Name:   modelName,
-		Stream: true, // 启用流式
-	}
-
-	requestBody, err := common.Marshal(pullRequest)
+func PullOllamaModelStream(ctx context.Context, baseURL, apiKey, modelName string, options OllamaRequestOptions, progressCallback func(OllamaPullResponse)) error {
+	body, err := common.Marshal(OllamaPullRequest{Name: modelName, Stream: common.GetPointer(true)})
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %v", err)
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
-
-	client := &http.Client{
-		Timeout: 60 * 60 * 1000 * time.Millisecond, // 1小时超时，支持超大模型
-	}
-	request, err := http.NewRequest("POST", url, strings.NewReader(string(requestBody)))
+	resp, err := doOllamaManagementRequest(ctx, http.MethodPost, baseURL, "/api/pull", apiKey, body, options, time.Hour)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to pull model, status %d", resp.StatusCode)
 	}
 
-	request.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("request failed: %v", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		return fmt.Errorf("failed to pull model, status %d: %s", response.StatusCode, string(body))
-	}
-
-	// 读取流式响应
-	scanner := helper.NewStreamScanner(response.Body)
-	successful := false
+	scanner := helper.NewStreamScanner(resp.Body)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-
 		var pullResponse OllamaPullResponse
-		if err := common.Unmarshal([]byte(line), &pullResponse); err != nil {
-			continue // 忽略解析失败的行
+		if err := common.Unmarshal(line, &pullResponse); err != nil {
+			continue
 		}
-
+		// Ollama can report errors after sending HTTP 200. Don't pass the
+		// upstream error text through the browser progress callback.
+		if pullResponse.Error != "" || strings.EqualFold(pullResponse.Status, "error") {
+			return fmt.Errorf("failed to pull model")
+		}
 		if progressCallback != nil {
 			progressCallback(pullResponse)
 		}
-
-		// 检查是否出现错误或完成
-		if strings.EqualFold(pullResponse.Status, "error") {
-			return fmt.Errorf("failed to pull model: %s", strings.TrimSpace(line))
-		}
 		if strings.EqualFold(pullResponse.Status, "success") {
-			successful = true
-			break
+			return nil
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("failed to read stream response: %v", err)
+		return fmt.Errorf("failed to read stream response: %w", err)
 	}
-
-	if !successful {
-		return fmt.Errorf("model pull did not complete: no success status received")
-	}
-
-	return nil
+	return fmt.Errorf("model pull did not complete: no success status received")
 }
 
 // 删除 Ollama 模型
-func DeleteOllamaModel(baseURL, apiKey, modelName string) error {
-	url := fmt.Sprintf("%s/api/delete", baseURL)
-
-	deleteRequest := OllamaDeleteRequest{
-		Name: modelName,
-	}
-
-	requestBody, err := common.Marshal(deleteRequest)
+func DeleteOllamaModel(ctx context.Context, baseURL, apiKey, modelName string, options OllamaRequestOptions) error {
+	body, err := common.Marshal(OllamaDeleteRequest{Name: modelName})
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %v", err)
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
-
-	client := &http.Client{}
-	request, err := http.NewRequest("DELETE", url, strings.NewReader(string(requestBody)))
+	resp, err := doOllamaManagementRequest(ctx, http.MethodDelete, baseURL, "/api/delete", apiKey, body, options, time.Minute)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		return err
 	}
-
-	request.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("request failed: %v", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
-		return fmt.Errorf("failed to delete model, status %d: %s", response.StatusCode, string(body))
-	}
-
-	return nil
+	defer resp.Body.Close()
+	_, err = readOllamaManagementResponse(resp)
+	return err
 }
 
-func FetchOllamaVersion(baseURL, apiKey string) (string, error) {
-	trimmedBase := strings.TrimRight(baseURL, "/")
-	if trimmedBase == "" {
-		return "", fmt.Errorf("baseURL is empty")
-	}
-
-	url := fmt.Sprintf("%s/api/version", trimmedBase)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	request, err := http.NewRequest("GET", url, nil)
+func FetchOllamaVersion(ctx context.Context, baseURL, apiKey string, options OllamaRequestOptions) (string, error) {
+	resp, err := doOllamaManagementRequest(ctx, http.MethodGet, baseURL, "/api/version", apiKey, nil, options, 10*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %v", err)
+		return "", err
 	}
-
-	if apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	response, err := client.Do(request)
+	defer resp.Body.Close()
+	body, err := readOllamaManagementResponse(resp)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %v", err)
+		return "", err
 	}
-	defer response.Body.Close()
-
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %v", err)
-	}
-
-	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to query version, status %d: %s", response.StatusCode, string(body))
-	}
-
 	var versionResp struct {
 		Version string `json:"version"`
 	}
-
 	if err := common.Unmarshal(body, &versionResp); err != nil {
-		return "", fmt.Errorf("failed to parse response: %v", err)
+		return "", fmt.Errorf("failed to parse response")
 	}
-
 	if versionResp.Version == "" {
 		return "", fmt.Errorf("no version information returned")
 	}
-
 	return versionResp.Version, nil
 }

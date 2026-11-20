@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -603,70 +604,83 @@ type GeminiModelsResponse struct {
 	NextPageToken string            `json:"nextPageToken"`
 }
 
-func FetchGeminiModels(baseURL, apiKey string, setting dto.ChannelSettings) ([]string, error) {
-	client, err := service.GetHttpClientWithProxySettings(setting.Proxy, setting)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client: %v", err)
-	}
+func FetchGeminiModels(ctx context.Context, baseURL, apiKey string, setting dto.ChannelSettings, headers http.Header) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
+	// The caller holds one discovery lease across every page.
 	allModels := make([]string, 0)
 	nextPageToken := ""
-	maxPages := 100 // Safety limit to prevent infinite loops
+	seenPageTokens := make(map[string]struct{})
+	const maxPages = 100
 
 	for range maxPages {
-		url := fmt.Sprintf("%s/v1beta/models", baseURL)
+		requestURL := strings.TrimRight(baseURL, "/") + "/v1beta/models"
 		if nextPageToken != "" {
-			url = fmt.Sprintf("%s?pageToken=%s", url, nextPageToken)
+			requestURL += "?pageToken=" + url.QueryEscape(nextPageToken)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		request, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to create request: %v", err)
+			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 
 		request.Header.Set("x-goog-api-key", apiKey)
-
-		response, err := client.Do(request)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("request failed: %v", err)
+		for name, values := range headers {
+			request.Header.Del(name)
+			for _, value := range values {
+				request.Header.Add(name, value)
+			}
 		}
 
-		if response.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(response.Body)
-			response.Body.Close()
-			cancel()
-			return nil, fmt.Errorf("server returned error %d: %s", response.StatusCode, string(body))
+		response, err := service.DoChannelManagementRequest(service.ChannelManagementCall{
+			Request: request, Settings: setting,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
 		}
 
 		body, err := io.ReadAll(response.Body)
-		response.Body.Close()
-		cancel()
+		_ = response.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("failed to read response: %v", err)
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+		if response.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("server returned error %d: %s", response.StatusCode, string(body))
 		}
 
-		var modelsResponse GeminiModelsResponse
+		var modelsResponse struct {
+			GeminiModelsResponse
+			Error any `json:"error"`
+		}
 		if err = common.Unmarshal(body, &modelsResponse); err != nil {
-			return nil, fmt.Errorf("failed to parse response: %v", err)
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+		if modelsResponse.Error != nil || modelsResponse.Models == nil {
+			return nil, errors.New("invalid Gemini models response")
 		}
 
 		for _, model := range modelsResponse.Models {
 			modelNameValue, ok := model.Name.(string)
 			if !ok {
-				continue
+				return nil, errors.New("invalid Gemini model name")
 			}
 			modelName := strings.TrimPrefix(modelNameValue, "models/")
+			if strings.TrimSpace(modelName) == "" {
+				return nil, errors.New("invalid Gemini model name")
+			}
 			allModels = append(allModels, modelName)
 		}
 
 		nextPageToken = modelsResponse.NextPageToken
 		if nextPageToken == "" {
-			break
+			return allModels, nil
 		}
+		if _, repeated := seenPageTokens[nextPageToken]; repeated {
+			return nil, errors.New("repeated Gemini model page token")
+		}
+		seenPageTokens[nextPageToken] = struct{}{}
 	}
 
-	return allModels, nil
+	return nil, errors.New("Gemini model pagination limit exceeded")
 }
