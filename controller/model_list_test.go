@@ -572,7 +572,7 @@ func TestSetupLoginDoesNotTouchPasswordWhenPasswordFieldOmitted(t *testing.T) {
 			Role:        user.Role,
 			Status:      user.Status,
 			Group:       user.Group,
-		}, nil, c)
+		}, nil, nil, c)
 	})
 
 	recorder := httptest.NewRecorder()

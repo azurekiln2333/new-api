@@ -33,7 +33,7 @@ func VerifyLogin(c *gin.Context) {
 		writeSecurityOperationError(c, service.ErrProofMethod)
 		return
 	}
-	bundle, migration, err := service.VerifyLoginCode(request.FlowToken, request.Code, c.ClientIP(), c.Request.UserAgent())
+	bundle, migration, err := service.VerifyLoginCode(c.Request.Context(), request.FlowToken, request.Code, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
@@ -140,7 +140,7 @@ func LoginPasskeyFinish(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	bundle, migration, err := service.CompleteLoginVerification(request.FlowToken, verification, service.VerificationMethodPasskey, c.ClientIP(), c.Request.UserAgent())
+	bundle, migration, err := service.CompleteLoginVerification(c.Request.Context(), request.FlowToken, verification, service.VerificationMethodPasskey, c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return

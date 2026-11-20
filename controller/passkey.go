@@ -417,7 +417,7 @@ func PasskeyLoginFinish(c *gin.Context) {
 	}
 
 	c.Set("login_verification_method", service.VerificationMethodPasskey)
-	setupLoginAtAuthVersion(modelUser, modelUser.AuthVersion, c)
+	setupLoginAtAuthVersion(modelUser, modelUser.AuthVersion, nil, c)
 }
 
 func AdminResetPasskey(c *gin.Context) {

@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 // AvatarURLMaxLength bounds a stored avatar address. Provider picture claims are
@@ -41,38 +42,91 @@ func NormalizeAvatarURL(raw string) string {
 	return parsed.String()
 }
 
+// PendingLoginAvatar is the normalized avatar decision captured when a provider
+// login starts but still needs a second factor. It holds no credential: only a
+// validated https address, or the instruction to clear the stored avatar when the
+// provider reported that the account has none. The browser never supplies it; it
+// travels inside the server-created verification flow payload and is applied only
+// when that flow completes a login.
+type PendingLoginAvatar struct {
+	URL   string
+	Clear bool
+}
+
+// NewPendingLoginAvatar resolves the avatar decision for a provider login. It
+// returns nil when the provider has no picture claim, when an empty claim must
+// keep the stored avatar, or when the reported address is unusable.
+func NewPendingLoginAvatar(provider Provider, avatarURL string) *PendingLoginAvatar {
+	if avatarProvider, ok := provider.(AvatarProvider); !ok || !avatarProvider.SupportsAvatar() {
+		return nil
+	}
+	if normalized := NormalizeAvatarURL(avatarURL); normalized != "" {
+		return &PendingLoginAvatar{URL: normalized}
+	}
+	if keep, ok := provider.(AvatarKeepOnEmptyProvider); ok && keep.AvatarKeepOnEmpty() {
+		return nil
+	}
+	if strings.TrimSpace(avatarURL) != "" {
+		return nil
+	}
+	return &PendingLoginAvatar{Clear: true}
+}
+
+// ApplyPendingLoginAvatar stores the decision captured at primary authentication.
+// It must only be called after the login has fully completed; every failure is
+// logged and never propagated, so an avatar can not fail or roll back a login.
+func ApplyPendingLoginAvatar(ctx context.Context, userId int, pending *PendingLoginAvatar) {
+	if pending == nil || userId <= 0 || (pending.URL == "" && !pending.Clear) {
+		return
+	}
+	storeUserAvatar(ctx, userId, pending.URL)
+}
+
 // SyncUserAvatar stores the picture the provider reported for the signing-in
 // account, so the dashboard shows the provider avatar instead of the initials
 // fallback. It is called on every OAuth/OIDC login.
 //
 // Providers that do not report a picture are skipped: for them an empty value is
-// not evidence that the stored avatar is gone. For providers that do report one,
-// an empty claim clears the stored avatar and an unparsable one is ignored so a
-// transient provider change cannot wipe a usable address.
+// not evidence that the stored avatar is gone. Providers that may omit the claim
+// entirely implement AvatarKeepOnEmptyProvider and keep the stored avatar on an
+// empty claim. For the remaining providers that do report one, an empty claim
+// clears the stored avatar and an unparsable one is ignored so a transient
+// provider change cannot wipe a usable address.
 func SyncUserAvatar(ctx context.Context, user *model.User, provider Provider, avatarURL string) {
 	if user == nil || user.Id <= 0 {
 		return
 	}
-	if _, ok := provider.(AvatarProvider); !ok {
+	if avatarProvider, ok := provider.(AvatarProvider); !ok || !avatarProvider.SupportsAvatar() {
 		return
 	}
-	next := NormalizeAvatarURL(avatarURL)
-	if next == "" && strings.TrimSpace(avatarURL) != "" {
-		logger.LogWarn(ctx, common.LogText("[OAuth] ignored an unusable avatar address from %s for user %d", provider.GetName(), user.Id))
+	pending := NewPendingLoginAvatar(provider, avatarURL)
+	if pending == nil {
+		if strings.TrimSpace(avatarURL) != "" {
+			logger.LogWarn(ctx, common.LogText("[OAuth] ignored an unusable avatar address from %s for user %d", provider.GetName(), user.Id))
+		}
 		return
 	}
-	current, err := model.GetUserSetting(user.Id, true)
+	if current, changed := storeUserAvatar(ctx, user.Id, pending.URL); changed {
+		user.SetSetting(current)
+	}
+}
+
+// storeUserAvatar writes the already validated avatar address ("" clears it) and
+// reports the stored setting plus whether it changed. Read and write errors are
+// logged and never returned.
+func storeUserAvatar(ctx context.Context, userId int, next string) (dto.UserSetting, bool) {
+	current, err := model.GetUserSetting(userId, true)
 	if err != nil {
-		logger.LogError(ctx, common.LogText("[OAuth] failed to read the setting of user %d: %s", user.Id, err.Error()))
-		return
+		logger.LogError(ctx, common.LogText("[OAuth] failed to read the setting of user %d: %s", userId, err.Error()))
+		return dto.UserSetting{}, false
 	}
 	if current.AvatarUrl == next {
-		return
+		return current, false
 	}
 	current.AvatarUrl = next
-	if err := model.UpdateUserSetting(user.Id, current); err != nil {
-		logger.LogError(ctx, common.LogText("[OAuth] failed to store the avatar of user %d: %s", user.Id, err.Error()))
-		return
+	if err := model.UpdateUserSetting(userId, current); err != nil {
+		logger.LogError(ctx, common.LogText("[OAuth] failed to store the avatar of user %d: %s", userId, err.Error()))
+		return current, false
 	}
-	user.SetSetting(current)
+	return current, true
 }

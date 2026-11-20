@@ -50,6 +50,15 @@ type AvatarProvider interface {
 	SupportsAvatar() bool
 }
 
+// AvatarKeepOnEmptyProvider is implemented by AvatarProvider providers whose
+// user info may omit the picture claim entirely. For them an empty claim leaves
+// any stored avatar alone instead of clearing it; a provider that always reports
+// a claim keeps the default AvatarProvider behavior where an empty picture means
+// the account no longer has one.
+type AvatarKeepOnEmptyProvider interface {
+	AvatarKeepOnEmpty() bool
+}
+
 // VerifiedEmailProvider is implemented by providers that can list the email
 // addresses they have confirmed for the signed-in account. The login flow uses
 // it to match a provider account against an existing account's email.

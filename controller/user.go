@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -96,7 +97,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	setupLogin(&user, nil, c)
+	setupLogin(&user, nil, nil, c)
 }
 
 // loginMethodFromContext 根据请求路径推导登录方式，用于登录审计日志。
@@ -145,31 +146,35 @@ func recordLoginAudit(user *model.User, c *gin.Context) {
 
 // setupLogin evaluates the shared login policy after primary authentication.
 // Only a completed Passkey ceremony may go directly to session issuance. A
-// pending legacy GitHub binding rewrite travels inside the challenge and is
-// written only when the verification completes.
-func setupLogin(user *model.User, migration *service.LegacyGitHubMigration, c *gin.Context) {
-	challenge, err := service.StartLoginVerification(user, loginMethodFromContext(c), migration)
+// pending legacy GitHub binding rewrite and the provider avatar decision travel
+// inside the challenge and are applied only when the verification completes.
+// pendingAvatar is stored only on the path that issues a session in this request:
+// a banned account or a pending MFA/Passkey challenge must not apply provider
+// data that belongs to a completed login. It returns whether a session was
+// issued.
+func setupLogin(user *model.User, migration *service.LegacyGitHubMigration, pendingAvatar *oauth.PendingLoginAvatar, c *gin.Context) bool {
+	challenge, err := service.StartLoginVerificationWithAvatar(user, loginMethodFromContext(c), migration, pendingAvatar)
 	if err != nil {
 		writeSecurityOperationError(c, err)
-		return
+		return false
 	}
 	if challenge != nil {
 		setAuthNoStore(c)
 		common.ApiSuccess(c, challenge)
-		return
+		return false
 	}
-	setupLoginAtAuthVersion(user, user.AuthVersion, c)
+	return setupLoginAtAuthVersion(user, user.AuthVersion, pendingAvatar, c)
 }
 
-func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin.Context) {
+func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, pendingAvatar *oauth.PendingLoginAvatar, c *gin.Context) bool {
 	if user == nil || user.Id <= 0 || user.Status != common.UserStatusEnabled {
 		common.ApiErrorT(c, "User has been banned")
-		return
+		return false
 	}
 	currentUser, err := model.GetSelfUserById(user.Id)
 	if err != nil {
 		common.ApiError(c, err)
-		return
+		return false
 	}
 	var bundle *service.AuthBundle
 	if expectedAuthVersion > 0 {
@@ -190,9 +195,20 @@ func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin
 	}
 	if err != nil {
 		writeAuthSessionError(c, err)
-		return
+		return false
+	}
+	// The avatar captured at primary authentication is applied only once the
+	// session was issued: a rejected login (stale auth version, issuance failure)
+	// leaves the stored avatar untouched. A failed avatar write is logged and
+	// never fails the issued login.
+	oauth.ApplyPendingLoginAvatar(c.Request.Context(), user.Id, pendingAvatar)
+	if pendingAvatar != nil {
+		if refreshed, err := model.GetUserSetting(user.Id, true); err == nil {
+			currentUser.SetSetting(refreshed)
+		}
 	}
 	writeLoginResponse(c, currentUser, bundle)
+	return true
 }
 
 func writeLoginResponse(c *gin.Context, user *model.User, bundle *service.AuthBundle) {

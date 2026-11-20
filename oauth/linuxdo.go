@@ -31,6 +31,9 @@ type linuxdoUser struct {
 	Active     bool   `json:"active"`
 	TrustLevel int    `json:"trust_level"`
 	Silenced   bool   `json:"silenced"`
+	// AvatarTemplate is the documented Linux DO avatar claim. Keep the raw value
+	// so an unexpected type cannot reject an otherwise valid login.
+	AvatarTemplate json.RawMessage `json:"avatar_template"`
 }
 
 func (p *LinuxDOProvider) GetName() string {
@@ -87,7 +90,7 @@ func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin
 		AccessToken string `json:"access_token"`
 		Message     string `json:"message"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&tokenRes); err != nil {
+	if err := common.DecodeJson(res.Body, &tokenRes); err != nil {
 		logger.LogError(ctx, common.LogText("[OAuth-LinuxDO] ExchangeToken decode error: %s", err.Error()))
 		return nil, err
 	}
@@ -127,7 +130,7 @@ func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 	logger.LogDebug(ctx, "[OAuth-LinuxDO] GetUserInfo response status: %d", res.StatusCode)
 
 	var linuxdoUser linuxdoUser
-	if err := json.NewDecoder(res.Body).Decode(&linuxdoUser); err != nil {
+	if err := common.DecodeJson(res.Body, &linuxdoUser); err != nil {
 		logger.LogError(ctx, common.LogText("[OAuth-LinuxDO] GetUserInfo decode error: %s", err.Error()))
 		return nil, err
 	}
@@ -156,12 +159,55 @@ func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 		ProviderUserID: strconv.Itoa(linuxdoUser.Id),
 		Username:       linuxdoUser.Username,
 		DisplayName:    linuxdoUser.Name,
+		AvatarURL:      resolveLinuxDOAvatarURL(linuxdoAvatarTemplateValue(linuxdoUser.AvatarTemplate)),
 		Extra: map[string]any{
 			"trust_level": linuxdoUser.TrustLevel,
 			"active":      linuxdoUser.Active,
 			"silenced":    linuxdoUser.Silenced,
 		},
 	}, nil
+}
+
+// linuxdoAvatarTemplateValue returns the template string when the provider sent
+// a JSON string, and "" for an absent, blank or non-string value. A malformed
+// avatar claim is ignored so it cannot reject the login.
+func linuxdoAvatarTemplateValue(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+// resolveLinuxDOAvatarURL accepts a complete HTTPS avatar address. The documented
+// claim does not establish a base host or placeholder syntax, so relative paths
+// and unresolved templates leave the stored avatar unchanged. No image is fetched
+// by the gateway.
+func resolveLinuxDOAvatarURL(template string) string {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return ""
+	}
+	decoded, err := url.PathUnescape(template)
+	if err != nil || strings.ContainsAny(decoded, "{}") {
+		return ""
+	}
+	return NormalizeAvatarURL(template)
+}
+
+// SupportsAvatar reports that GetUserInfo reads the Linux DO avatar_template
+// claim, which the login flow stores as the account avatar.
+func (p *LinuxDOProvider) SupportsAvatar() bool {
+	return true
+}
+
+// AvatarKeepOnEmpty reports that Linux DO may omit avatar_template entirely; an
+// absent claim must not clear an avatar the account already stored.
+func (p *LinuxDOProvider) AvatarKeepOnEmpty() bool {
+	return true
 }
 
 func (p *LinuxDOProvider) IsUserIDTaken(providerUserID string) bool {

@@ -1,10 +1,12 @@
 package service
 
 import (
+	"context"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/oauth"
 	"gorm.io/gorm"
 )
 
@@ -32,6 +34,11 @@ type loginFlowPayload struct {
 	// The GitHub binding rewrite waiting for this verification, if any.
 	PendingGitHubID       string `json:"pending_github_id,omitempty"`
 	PendingGitHubLegacyID string `json:"pending_github_legacy_id,omitempty"`
+	// The provider avatar decision captured at primary authentication. It is
+	// applied only when this flow completes a login; an expired, cancelled or
+	// failed flow only ever carries it in its own server-created payload.
+	PendingAvatarURL   string `json:"pending_avatar_url,omitempty"`
+	PendingAvatarClear bool   `json:"pending_avatar_clear,omitempty"`
 }
 
 // LoginVerification is server-owned state read from a primary-authenticated flow.
@@ -43,6 +50,17 @@ type LoginVerification struct {
 }
 
 func StartLoginVerification(user *model.User, loginMethod string, migration *LegacyGitHubMigration) (*LoginChallenge, error) {
+	return startLoginVerification(user, loginMethod, migration, nil)
+}
+
+// StartLoginVerificationWithAvatar carries the provider avatar decision into the
+// pending verification, so a login that completes with a second factor still
+// applies the avatar it captured at primary authentication.
+func StartLoginVerificationWithAvatar(user *model.User, loginMethod string, migration *LegacyGitHubMigration, pendingAvatar *oauth.PendingLoginAvatar) (*LoginChallenge, error) {
+	return startLoginVerification(user, loginMethod, migration, pendingAvatar)
+}
+
+func startLoginVerification(user *model.User, loginMethod string, migration *LegacyGitHubMigration, pendingAvatar *oauth.PendingLoginAvatar) (*LoginChallenge, error) {
 	if user == nil || user.Id <= 0 || user.AuthVersion <= 0 || loginMethod == "" {
 		return nil, model.ErrAuthFlowInvalid
 	}
@@ -75,6 +93,9 @@ func StartLoginVerification(user *model.User, loginMethod string, migration *Leg
 	payload := loginFlowPayload{AuthVersion: state.AuthVersion, LoginMethod: loginMethod}
 	if migration != nil {
 		payload.PendingGitHubID, payload.PendingGitHubLegacyID = migration.GitHubID, migration.LegacyID
+	}
+	if pendingAvatar != nil {
+		payload.PendingAvatarURL, payload.PendingAvatarClear = pendingAvatar.URL, pendingAvatar.Clear
 	}
 	encoded, err := common.Marshal(payload)
 	if err != nil {
@@ -133,7 +154,7 @@ func requireLoginVerificationMethod(state *model.UserVerificationState, method s
 	return ErrProofMethod
 }
 
-func VerifyLoginCode(token, code, ip, userAgent string) (*AuthBundle, *LegacyGitHubMigration, error) {
+func VerifyLoginCode(ctx context.Context, token, code, ip, userAgent string) (*AuthBundle, *LegacyGitHubMigration, error) {
 	verification, err := RequireLoginVerification(token, VerificationMethodTwoFA)
 	if err != nil {
 		return nil, nil, err
@@ -145,15 +166,17 @@ func VerifyLoginCode(token, code, ip, userAgent string) (*AuthBundle, *LegacyGit
 	if err := VerifyTwoFactorCode(twoFA, code); err != nil {
 		return nil, nil, err
 	}
-	return CompleteLoginVerification(token, verification, VerificationMethodTwoFA, ip, userAgent)
+	return CompleteLoginVerification(ctx, token, verification, VerificationMethodTwoFA, ip, userAgent)
 }
 
 // CompleteLoginVerification must only run after a concrete factor ceremony.
 // Recheck the bound version and method while consuming the flow and creating the
 // session atomically; a different request cannot reuse this authorization. The
 // returned migration is non-nil when the flow's pending GitHub binding rewrite
-// was written together with the session.
-func CompleteLoginVerification(token string, verification *LoginVerification, method, ip, userAgent string) (*AuthBundle, *LegacyGitHubMigration, error) {
+// was written together with the session. The provider avatar captured at primary
+// authentication is applied only after the session is issued, so a failed,
+// expired or cancelled verification leaves the stored avatar untouched.
+func CompleteLoginVerification(ctx context.Context, token string, verification *LoginVerification, method, ip, userAgent string) (*AuthBundle, *LegacyGitHubMigration, error) {
 	if verification == nil || verification.Flow == nil || verification.State == nil {
 		return nil, nil, model.ErrAuthFlowInvalid
 	}
@@ -194,6 +217,12 @@ func CompleteLoginVerification(token string, verification *LoginVerification, me
 		_, _ = model.RevokeUserSession(session.UserID, session.SID, "token_issue_failed")
 		return nil, nil, err
 	}
+	// The avatar captured at primary authentication is applied only now that the
+	// login is complete; a failure is logged and never undoes the session.
+	oauth.ApplyPendingLoginAvatar(ctx, session.UserID, &oauth.PendingLoginAvatar{
+		URL:   verification.payload.PendingAvatarURL,
+		Clear: verification.payload.PendingAvatarClear,
+	})
 	return bundle, migration, nil
 }
 

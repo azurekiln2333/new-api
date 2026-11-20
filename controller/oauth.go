@@ -393,16 +393,16 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 		return
 	}
 
-	oauth.SyncUserAvatar(c.Request.Context(), user, provider, oauthUser.AvatarURL)
-
 	// 8. Check user status
 	if user.Status != common.UserStatusEnabled {
 		common.ApiErrorT(c, "User has been banned")
 		return
 	}
 
-	// 9. Setup login
-	setupLogin(user, migration, c)
+	// 9. Setup login. The provider avatar decision travels with the login: it is
+	// applied when this request issues a session, or after a required MFA/Passkey
+	// step completes. A banned account never reaches either path.
+	setupLogin(user, migration, oauth.NewPendingLoginAvatar(provider, oauthUser.AvatarURL), c)
 }
 
 // handleOAuthBind handles binding OAuth account to existing user

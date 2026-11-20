@@ -155,6 +155,12 @@ jobs:
             TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestPlaygroundChannelNavigationAuthorizationAndRouting'
           done
 
+      - name: Verify login avatar updates on MySQL and PostgreSQL
+        run: |
+          for DIALECT in mysql postgres; do
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestOAuthLogin.*Avatar|TestUserSettingsPreserveProviderAvatar|TestSecurityLogin'
+          done
+
       - name: Check concurrent admission and timeout races
         env:
           CGO_ENABLED: '1'

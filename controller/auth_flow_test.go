@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -631,6 +632,11 @@ type authFlowTestOAuthProvider struct {
 	userInfoErr   error
 	exchangeCalls int
 	userInfoCalls int
+	userInfo      *oauth.OAuthUser
+	avatarCapable bool
+	// takenUser binds the provider identity to an existing account instead of
+	// creating one on login, which is how a disabled account is exercised.
+	takenUser *model.User
 }
 
 func (*authFlowTestOAuthProvider) GetName() string { return "Auth Flow Test" }
@@ -647,32 +653,80 @@ func (provider *authFlowTestOAuthProvider) GetUserInfo(context.Context, *oauth.O
 	if provider.userInfoErr != nil {
 		return nil, provider.userInfoErr
 	}
+	if provider.userInfo != nil {
+		return provider.userInfo, nil
+	}
 	return &oauth.OAuthUser{ProviderUserID: "external-user"}, nil
 }
-func (*authFlowTestOAuthProvider) IsUserIDTaken(string) bool                      { return false }
-func (*authFlowTestOAuthProvider) FillUserByProviderID(*model.User, string) error { return nil }
-func (*authFlowTestOAuthProvider) SetProviderUserID(*model.User, string)          {}
-func (*authFlowTestOAuthProvider) GetProviderPrefix() string                      { return "flow_" }
-func (*authFlowTestOAuthProvider) ProviderUserIDColumn() string                   { return "" }
+func (provider *authFlowTestOAuthProvider) SupportsAvatar() bool { return provider.avatarCapable }
+func (provider *authFlowTestOAuthProvider) IsUserIDTaken(string) bool {
+	return provider.takenUser != nil
+}
+func (provider *authFlowTestOAuthProvider) FillUserByProviderID(user *model.User, _ string) error {
+	if provider.takenUser == nil {
+		return nil
+	}
+	*user = *provider.takenUser
+	return nil
+}
+func (*authFlowTestOAuthProvider) SetProviderUserID(*model.User, string) {}
+func (*authFlowTestOAuthProvider) GetProviderPrefix() string             { return "flow_" }
+func (*authFlowTestOAuthProvider) ProviderUserIDColumn() string          { return "" }
 
 func setupAuthFlowControllerTest(t *testing.T) *authFlowTestOAuthProvider {
 	t.Helper()
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousRedis := common.RedisEnabled
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	common.RedisEnabled = false
-	previousType := common.MainDatabaseType()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.AuthFlow{}, &model.User{}, &model.UserSession{}, &model.AuditLog{}))
-	model.DB, model.LOG_DB = db, db
-	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	// Same dialect switch as the security-enrollment fixture: SQLite by default,
+	// real MySQL/PostgreSQL through TEST_SECURITY_DIALECT + TEST_<DIALECT>_DSN.
+	dialect := os.Getenv("TEST_SECURITY_DIALECT")
+	if dialect == "" {
+		dialect = "sqlite"
+	}
+	var db *gorm.DB
+	if dialect == "sqlite" {
+		var err error
+		db, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+	} else {
+		db, _ = newAuditTestDatabase(t, dialect, os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN"))
+	}
+	logDB := db
+	if dialect != "sqlite" {
+		logDB, _ = newAuditTestDatabase(t, dialect, os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN"))
+	}
+	require.NoError(t, db.AutoMigrate(&model.AuthFlow{}, &model.User{}, &model.UserSession{}, &model.AuditLog{}, &model.TwoFA{}, &model.PasskeyCredential{}))
+	if logDB != db {
+		require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
+	}
+	model.DB, model.LOG_DB = db, logDB
+	dbType := common.DatabaseTypeSQLite
+	if dialect == "mysql" {
+		dbType = common.DatabaseTypeMySQL
+	}
+	if dialect == "postgres" {
+		dbType = common.DatabaseTypePostgreSQL
+	}
+	common.SetDatabaseTypes(dbType, dbType)
 	provider := &authFlowTestOAuthProvider{}
 	oauth.Register("auth-flow-test", provider)
 	t.Cleanup(func() {
 		oauth.Unregister("auth-flow-test")
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.RedisEnabled = previousRedis
-		common.SetMainDatabaseType(previousType)
+		common.SetDatabaseTypes(previousMain, previousLog)
+		connection, err := db.DB()
+		if err == nil {
+			_ = connection.Close()
+		}
+		if logDB != db {
+			logConnection, err := logDB.DB()
+			if err == nil {
+				_ = logConnection.Close()
+			}
+		}
 	})
 	return provider
 }
@@ -1320,6 +1374,322 @@ func TestSecurityLoginPreferenceNotification(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestOAuthLoginSyncsProviderAvatar(t *testing.T) {
+	provider := setupAuthFlowControllerTest(t)
+	provider.userInfo = &oauth.OAuthUser{
+		ProviderUserID: "external-user",
+		AvatarURL:      "https://cdn.example.com/avatar/provider.png",
+	}
+	provider.avatarCapable = true
+
+	token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+		Purpose: model.AuthFlowPurposeOAuth, Provider: "auth-flow-test", Intent: model.AuthFlowIntentLogin,
+		Payload: `{}`, ExpiresAt: time.Now().Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.GET("/api/oauth/:provider", HandleOAuth)
+	request := httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test?state="+token+"&code=test", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	var result struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success, response.Body.String())
+	assert.NotEmpty(t, response.Header().Values("Set-Cookie"), "the login still issues its session")
+
+	var created model.User
+	require.NoError(t, model.DB.Order("id DESC").First(&created).Error)
+	stored, err := model.GetUserSetting(created.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "https://cdn.example.com/avatar/provider.png", stored.AvatarUrl)
+}
+
+func TestOAuthLoginAvatarFailureDoesNotBlockLogin(t *testing.T) {
+	provider := setupAuthFlowControllerTest(t)
+	// The provider reports an unusable picture: the avatar sync must log and keep
+	// going instead of failing the login.
+	provider.userInfo = &oauth.OAuthUser{
+		ProviderUserID: "external-user",
+		AvatarURL:      "http://insecure.example.com/avatar.png",
+	}
+	provider.avatarCapable = true
+
+	token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+		Purpose: model.AuthFlowPurposeOAuth, Provider: "auth-flow-test", Intent: model.AuthFlowIntentLogin,
+		Payload: `{}`, ExpiresAt: time.Now().Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.GET("/api/oauth/:provider", HandleOAuth)
+	request := httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test?state="+token+"&code=test", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	var result struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.True(t, result.Success, response.Body.String())
+	assert.NotEmpty(t, response.Header().Values("Set-Cookie"), "avatar sync never blocks session issuance")
+
+	var created model.User
+	require.NoError(t, model.DB.Order("id DESC").First(&created).Error)
+	stored, err := model.GetUserSetting(created.Id, true)
+	require.NoError(t, err)
+	assert.Empty(t, stored.AvatarUrl)
+}
+
+func TestOAuthLoginAvatarSyncRequiresAnIssuedSession(t *testing.T) {
+	existing := "https://cdn.example.com/avatar/existing.png"
+	pending := &oauth.PendingLoginAvatar{URL: "https://connect.linux.do/user_avatar/alice/120.png"}
+
+	t.Run("a banned account keeps its stored avatar", func(t *testing.T) {
+		provider := setupAuthFlowControllerTest(t)
+		provider.userInfo = &oauth.OAuthUser{
+			ProviderUserID: "external-user",
+			AvatarURL:      pending.URL,
+		}
+		provider.avatarCapable = true
+
+		banned := &model.User{
+			Username:    "banned-avatar-user",
+			Password:    "unused-password-hash",
+			Role:        common.RoleCommonUser,
+			Status:      common.UserStatusDisabled,
+			Group:       "default",
+			Setting:     `{"language":"en","avatar_url":"` + existing + `"}`,
+			AuthVersion: 1,
+			AffCode:     "banned-avatar-aff",
+			LinuxDOId:   "external-user",
+		}
+		provider.takenUser = banned
+		require.NoError(t, model.DB.Create(banned).Error)
+
+		token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+			Purpose: model.AuthFlowPurposeOAuth, Provider: "auth-flow-test", Intent: model.AuthFlowIntentLogin,
+			Payload: `{}`, ExpiresAt: time.Now().Add(time.Minute),
+		})
+		require.NoError(t, err)
+
+		router := gin.New()
+		router.GET("/api/oauth/:provider", HandleOAuth)
+		request := httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test?state="+token+"&code=test", nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		assert.Empty(t, response.Header().Values("Set-Cookie"))
+		stored, err := model.GetUserSetting(banned.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, existing, stored.AvatarUrl)
+	})
+
+	t.Run("a stale auth version keeps the stored avatar", func(t *testing.T) {
+		setupAuthFlowControllerTest(t)
+		user := createAvatarFlowUser(t, existing)
+
+		router := gin.New()
+		router.GET("/login", func(c *gin.Context) {
+			setupLoginAtAuthVersion(user, user.AuthVersion+1, pending, c)
+		})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/login", nil))
+
+		assert.Empty(t, response.Header().Values("Set-Cookie"))
+		assert.NotContains(t, response.Body.String(), `"success":true`)
+		stored, err := model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, existing, stored.AvatarUrl)
+	})
+
+	t.Run("a session issuance failure keeps the stored avatar", func(t *testing.T) {
+		setupAuthFlowControllerTest(t)
+		user := createAvatarFlowUser(t, existing)
+
+		require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register("avatar_session_failure", func(tx *gorm.DB) {
+			if tx.Statement.Table == "user_sessions" {
+				tx.AddError(errors.New("private session creation failure"))
+			}
+		}))
+		t.Cleanup(func() { _ = model.DB.Callback().Create().Before("gorm:create").Remove("avatar_session_failure") })
+
+		router := gin.New()
+		router.GET("/login", func(c *gin.Context) {
+			setupLoginAtAuthVersion(user, user.AuthVersion, pending, c)
+		})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/login", nil))
+
+		assert.Empty(t, response.Header().Values("Set-Cookie"))
+		assert.NotContains(t, response.Body.String(), `"success":true`)
+		stored, err := model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, existing, stored.AvatarUrl)
+	})
+
+	t.Run("a failed avatar write preserves the successful session", func(t *testing.T) {
+		setupAuthFlowControllerTest(t)
+		user := createAvatarFlowUser(t, existing)
+		require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register("avatar_setting_failure", func(tx *gorm.DB) {
+			if tx.Statement.Table == "users" {
+				if values, ok := tx.Statement.Dest.(map[string]any); ok {
+					if _, updatesSetting := values["setting"]; updatesSetting {
+						tx.AddError(errors.New("avatar setting storage unavailable"))
+					}
+				}
+			}
+		}))
+		t.Cleanup(func() { _ = model.DB.Callback().Update().Remove("avatar_setting_failure") })
+		router := gin.New()
+		router.GET("/login", func(c *gin.Context) {
+			setupLoginAtAuthVersion(user, user.AuthVersion, pending, c)
+		})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/login", nil))
+
+		var result securityEnrollmentResponse
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success, response.Body.String())
+		assert.NotEmpty(t, response.Header().Values("Set-Cookie"))
+		stored, err := model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, existing, stored.AvatarUrl)
+	})
+}
+
+// createAvatarFlowUser creates an enabled account with an existing stored avatar
+// for the login-avatar ordering regressions.
+func createAvatarFlowUser(t *testing.T, avatarURL string) *model.User {
+	t.Helper()
+	user := &model.User{
+		Username:    "avatar-flow-user",
+		Password:    "unused-password-hash",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		Setting:     `{"language":"en","avatar_url":"` + avatarURL + `"}`,
+		AuthVersion: 1,
+		AffCode:     "avatar-flow-aff",
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	return user
+}
+
+func TestOAuthLoginAvatarSyncCompletesAfterMFA(t *testing.T) {
+	existing := "https://cdn.example.com/avatar/existing.png"
+	pending := &oauth.PendingLoginAvatar{URL: "https://connect.linux.do/user_avatar/alice/120.png"}
+
+	setup := func(t *testing.T) (*model.User, *model.TwoFA) {
+		t.Helper()
+		user, _ := setupSecurityEnrollmentTest(t)
+		require.NoError(t, model.DB.Model(user).Update("setting", `{"language":"en","avatar_url":"`+existing+`"}`).Error)
+		factor := &model.TwoFA{UserId: user.Id, Secret: "JBSWY3DPEHPK3PXP", IsEnabled: true}
+		require.NoError(t, model.DB.Create(factor).Error)
+		return user, factor
+	}
+
+	t.Run("a completed MFA login stores the provider avatar", func(t *testing.T) {
+		user, factor := setup(t)
+		challenge, err := service.StartLoginVerificationWithAvatar(user, "oauth:linuxdo", nil, pending)
+		require.NoError(t, err)
+		require.NotNil(t, challenge)
+
+		code, err := totp.GenerateCode(factor.Secret, time.Now())
+		require.NoError(t, err)
+		body, err := common.Marshal(map[string]string{"flow_token": challenge.FlowToken, "code": code})
+		require.NoError(t, err)
+		response := securityEnrollmentRequest("POST", "/api/user/login/verify", string(body), "", service.AuthIdentity{}, VerifyLogin)
+
+		var result securityEnrollmentResponse
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success, response.Body.String())
+		assert.NotEmpty(t, response.Header().Values("Set-Cookie"))
+
+		stored, err := model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, pending.URL, stored.AvatarUrl)
+		stored.AvatarUrl = existing
+		require.NoError(t, model.UpdateUserSetting(user.Id, stored))
+		replay := securityEnrollmentRequest("POST", "/api/user/login/verify", string(body), "", service.AuthIdentity{}, VerifyLogin)
+		require.NoError(t, common.Unmarshal(replay.Body.Bytes(), &result))
+		assert.False(t, result.Success, "a consumed flow must not reapply its avatar")
+		stored, err = model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, existing, stored.AvatarUrl)
+	})
+
+	t.Run("a failed MFA code leaves the stored avatar unchanged", func(t *testing.T) {
+		user, _ := setup(t)
+		challenge, err := service.StartLoginVerificationWithAvatar(user, "oauth:linuxdo", nil, pending)
+		require.NoError(t, err)
+		require.NotNil(t, challenge)
+
+		body, err := common.Marshal(map[string]string{"flow_token": challenge.FlowToken, "code": "invalid"})
+		require.NoError(t, err)
+		response := securityEnrollmentRequest("POST", "/api/user/login/verify", string(body), "", service.AuthIdentity{}, VerifyLogin)
+
+		var result securityEnrollmentResponse
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		assert.False(t, result.Success)
+		assert.Empty(t, response.Header().Values("Set-Cookie"))
+
+		stored, err := model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, existing, stored.AvatarUrl)
+	})
+
+	t.Run("an expired verification leaves the stored avatar unchanged", func(t *testing.T) {
+		user, factor := setup(t)
+		challenge, err := service.StartLoginVerificationWithAvatar(user, "oauth:linuxdo", nil, pending)
+		require.NoError(t, err)
+		require.NotNil(t, challenge)
+		require.NoError(t, model.DB.Model(&model.AuthFlow{}).
+			Where("purpose = ?", model.AuthFlowPurposeLoginVerification).
+			Update("expires_at", time.Now().Add(-time.Minute)).Error)
+
+		code, err := totp.GenerateCode(factor.Secret, time.Now())
+		require.NoError(t, err)
+		body, err := common.Marshal(map[string]string{"flow_token": challenge.FlowToken, "code": code})
+		require.NoError(t, err)
+		response := securityEnrollmentRequest("POST", "/api/user/login/verify", string(body), "", service.AuthIdentity{}, VerifyLogin)
+
+		var result securityEnrollmentResponse
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		assert.False(t, result.Success)
+
+		stored, err := model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, existing, stored.AvatarUrl)
+	})
+
+	t.Run("a verified passkey applies the server-owned avatar", func(t *testing.T) {
+		user, _ := setup(t)
+		key := newSecurityLoginPasskey(t, user.Id)
+		challenge, err := service.StartLoginVerificationWithAvatar(user, "oauth:linuxdo", nil, pending)
+		require.NoError(t, err)
+		require.NotNil(t, challenge)
+		passkeyToken, assertionChallenge := beginSecurityLoginPasskey(t, challenge.FlowToken)
+		body, err := common.Marshal(map[string]any{
+			"flow_token": challenge.FlowToken, "passkey_flow_token": passkeyToken,
+			"credential":         securityPasskeyResponse(t, key, assertionChallenge, false, 0),
+			"pending_avatar_url": "https://client.example/ignored.png",
+		})
+		require.NoError(t, err)
+		response := securityEnrollmentRequest("POST", "/api/user/login/passkey/finish", string(body), "", service.AuthIdentity{}, LoginPasskeyFinish)
+		var result securityEnrollmentResponse
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success, response.Body.String())
+		assert.NotEmpty(t, response.Header().Values("Set-Cookie"))
+		stored, err := model.GetUserSetting(user.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, pending.URL, stored.AvatarUrl)
+	})
 }
 
 func TestUserSettingsPreserveProviderAvatar(t *testing.T) {
