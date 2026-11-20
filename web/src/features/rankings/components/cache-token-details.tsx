@@ -19,15 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber, formatTokens } from '@/lib/format'
+import { formatNumber } from '@/lib/format'
 
+import { formatRankingTokens } from '../lib/format'
 import type { RankingTokenTotals } from '../types'
 
 /**
  * Cache read / write token breakdown shown under a token total.
  *
- * Both quantities show exact and compact values. Labels and values wrap when
- * the container is narrow; the block renders nothing when both are zero.
+ * Both quantities use the same compact units as the total. Each label stays
+ * beside its value; the two pairs may wrap together on narrow containers.
+ * Exact counts remain in the title. The block hides when both counts are zero.
  */
 export function CacheTokenDetails(
   props: Pick<RankingTokenTotals, 'cache_read_tokens' | 'cache_creation_tokens'>
@@ -49,14 +51,14 @@ export function CacheTokenDetails(
       {entries.map((entry) => (
         <div
           key={entry.label}
-          className='flex max-w-full flex-wrap items-baseline gap-1'
+          className='flex items-baseline gap-1 whitespace-nowrap'
         >
           <dt>{entry.label}</dt>
           <dd
             className='text-foreground/80 font-mono tabular-nums'
             title={formatNumber(entry.value, locale)}
           >
-            {formatTokens(entry.value, locale)}
+            {formatRankingTokens(entry.value, locale)}
           </dd>
         </div>
       ))}

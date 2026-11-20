@@ -39,7 +39,7 @@ import {
 } from '@/components/ui/select'
 import { searchChannels } from '@/features/channels/api'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatTokens } from '@/lib/format'
+import { formatNumber } from '@/lib/format'
 import { getServerErrorMessage } from '@/lib/server-error-message'
 
 import {
@@ -100,13 +100,15 @@ const STATE_LABELS: Record<string, string> = {
 // returned and what it cost, or why it produced nothing.
 function probeSummary(
   probe: FingerprintProbe,
-  t: (key: string, options?: Record<string, unknown>) => string
+  t: (key: string, options?: Record<string, unknown>) => string,
+  locale: Intl.LocalesArgument
 ) {
   if (probe.state === 'complete') {
-    return ` · ${probe.parsed_count}/${probe.expected_count} · ${formatTokens(
-      probe.prompt_tokens + probe.output_tokens
+    return ` · ${probe.parsed_count}/${probe.expected_count} · ${formatNumber(
+      probe.prompt_tokens + probe.output_tokens,
+      locale
     )} ${t('tokens')} · ${t('output limit {{tokens}}', {
-      tokens: formatTokens(probe.max_tokens),
+      tokens: formatNumber(probe.max_tokens, locale),
     })}`
   }
   return probe.error ? ` · ${translateRunMessage(probe.error, t)}` : ''
@@ -124,27 +126,30 @@ function translateRunMessage(
   if (message === KNOWN_REPLY_REASON) {
     return t(KNOWN_REPLY_REASON)
   }
-  const budgetStop = /^Stopped before reaching the (\d+) token budget; the remaining budget cannot cover another request\.$/.exec(
-    message
-  )
+  const budgetStop =
+    /^Stopped before reaching the (\d+) token budget; the remaining budget cannot cover another request\.$/.exec(
+      message
+    )
   if (budgetStop) {
     return t(
       'Stopped before reaching the {{budget}} token budget; the remaining budget cannot cover another request.',
       { budget: budgetStop[1] }
     )
   }
-  const received = /^Received (\d+)\/3 valid samples\. Three valid samples are required\.$/.exec(
-    message
-  )
+  const received =
+    /^Received (\d+)\/3 valid samples\. Three valid samples are required\.$/.exec(
+      message
+    )
   if (received) {
     return t(
       'Received {{used}}/3 valid samples. Three valid samples are required.',
       { used: received[1] }
     )
   }
-  const ranked = /^Ranked (\d+) valid samples?\. Confidence requires three valid samples\.$/.exec(
-    message
-  )
+  const ranked =
+    /^Ranked (\d+) valid samples?\. Confidence requires three valid samples\.$/.exec(
+      message
+    )
   if (ranked) {
     return t(
       'Ranked {{used}} valid samples. Confidence requires three valid samples.',
@@ -159,9 +164,10 @@ function translateRunMessage(
   if (STATIC_REASONS.includes(message)) {
     return t(message)
   }
-  const strict = /^Strict mode requires 3\/3 successful samples; received (\d+)\/3\.$/.exec(
-    message
-  )
+  const strict =
+    /^Strict mode requires 3\/3 successful samples; received (\d+)\/3\.$/.exec(
+      message
+    )
   if (strict) {
     return t(
       'Strict mode requires 3/3 successful samples; received {{used}}/3.',
@@ -210,7 +216,8 @@ export function ChannelFingerprint() {
     // Search uses the existing channel search endpoint, so a deployment with
     // more channels than one page still allows selecting any of them.
     queryKey: ['fingerprint-channels', debouncedKeyword],
-    queryFn: () => searchChannels({ keyword: debouncedKeyword, p: 1, page_size: 30 }),
+    queryFn: () =>
+      searchChannels({ keyword: debouncedKeyword, p: 1, page_size: 30 }),
     staleTime: 60_000,
     meta: { errorToast: false },
   })
@@ -290,7 +297,9 @@ export function ChannelFingerprint() {
 
   const completedProbes =
     job?.probes.filter((probe) => probe.state === 'complete').length ?? 0
-  const progress = job ? Math.round((completedProbes / job.probes.length) * 100) : 0
+  const progress = job
+    ? Math.round((completedProbes / job.probes.length) * 100)
+    : 0
   const canStart =
     !!channelId &&
     !!model.trim() &&
@@ -302,7 +311,9 @@ export function ChannelFingerprint() {
 
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Channel fingerprint')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>
+        {t('Channel fingerprint')}
+      </SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='space-y-4'>
           <Alert>
@@ -325,7 +336,9 @@ export function ChannelFingerprint() {
                     aria-label={t('Search channels')}
                     value={channelKeyword}
                     placeholder={t('Search channels')}
-                    onChange={(event) => changeChannelKeyword(event.target.value)}
+                    onChange={(event) =>
+                      changeChannelKeyword(event.target.value)
+                    }
                     disabled={controlsDisabled}
                   />
                   <Select
@@ -368,7 +381,9 @@ export function ChannelFingerprint() {
                   <Label htmlFor='fingerprint-endpoint'>{t('Endpoint')}</Label>
                   <Select
                     value={endpoint}
-                    onValueChange={(value) => setEndpoint(value ?? ENDPOINTS[0].value)}
+                    onValueChange={(value) =>
+                      setEndpoint(value ?? ENDPOINTS[0].value)
+                    }
                     disabled={controlsDisabled}
                   >
                     <SelectTrigger id='fingerprint-endpoint'>
@@ -413,7 +428,9 @@ export function ChannelFingerprint() {
                     step={1000}
                     value={tokenBudget}
                     onChange={(event) =>
-                      setTokenBudget(Math.max(1000, Number(event.target.value) || 1000))
+                      setTokenBudget(
+                        Math.max(1000, Number(event.target.value) || 1000)
+                      )
                     }
                     disabled={controlsDisabled}
                   />
@@ -431,7 +448,10 @@ export function ChannelFingerprint() {
                 </p>
               )}
               <div className='flex flex-wrap gap-2'>
-                <Button onClick={() => startMutation.mutate()} disabled={!canStart}>
+                <Button
+                  onClick={() => startMutation.mutate()}
+                  disabled={!canStart}
+                >
                   {startMutation.isPending ? (
                     <Loader2 className='animate-spin' aria-hidden='true' />
                   ) : (
@@ -481,8 +501,8 @@ export function ChannelFingerprint() {
                     })}
                     {' · '}
                     {t('{{used}} of {{budget}} tokens used', {
-                      used: formatTokens(job.tokens_used),
-                      budget: formatTokens(job.token_budget),
+                      used: formatNumber(job.tokens_used, locale),
+                      budget: formatNumber(job.token_budget, locale),
                     })}
                     {' · '}
                     {t('{{used}} of {{budget}} requests sent', {
@@ -492,7 +512,10 @@ export function ChannelFingerprint() {
                   </p>
                 </div>
                 {pollError && (
-                  <div role='alert' className='flex flex-wrap items-center gap-2'>
+                  <div
+                    role='alert'
+                    className='flex flex-wrap items-center gap-2'
+                  >
                     <p className='text-destructive text-sm'>{pollError}</p>
                     <Button variant='outline' size='sm' onClick={retryPoll}>
                       {t('Retry')}
@@ -520,14 +543,16 @@ export function ChannelFingerprint() {
                       </span>
                       <span className='text-muted-foreground text-xs'>
                         {t(STATE_LABELS[probe.state] ?? 'Unknown')}
-                        {probeSummary(probe, t)}
+                        {probeSummary(probe, t, locale)}
                       </span>
                     </li>
                   ))}
                 </ul>
                 {job.analysis && !!job.analysis.Results?.length && (
                   <div className='space-y-2'>
-                    <h3 className='text-sm font-medium'>{t('Closest matches')}</h3>
+                    <h3 className='text-sm font-medium'>
+                      {t('Closest matches')}
+                    </h3>
                     <ol className='space-y-1'>
                       {job.analysis.Results.map((candidate) => (
                         <li
@@ -557,7 +582,9 @@ export function ChannelFingerprint() {
                 <dl className='text-muted-foreground grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs'>
                   <dt>{t('Reference bank built')}</dt>
                   <dd className='break-words'>
-                    {job.analysis?.BankVersion || job.detector_version || t('Unknown')}
+                    {job.analysis?.BankVersion ||
+                      job.detector_version ||
+                      t('Unknown')}
                   </dd>
                   {job.bank_sha256 && (
                     <>
@@ -568,7 +595,9 @@ export function ChannelFingerprint() {
                   {job.detector_sha256 && (
                     <>
                       <dt>{t('Detector checksum')}</dt>
-                      <dd className='font-mono break-all'>{job.detector_sha256}</dd>
+                      <dd className='font-mono break-all'>
+                        {job.detector_sha256}
+                      </dd>
                     </>
                   )}
                   <dt>{t('Started')}</dt>
@@ -595,7 +624,9 @@ export function ChannelFingerprint() {
           )}
 
           {channelsQuery.isError && (
-            <ErrorState description={getServerErrorMessage(channelsQuery.error)} />
+            <ErrorState
+              description={getServerErrorMessage(channelsQuery.error)}
+            />
           )}
         </div>
       </SectionPageLayout.Content>

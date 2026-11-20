@@ -19,9 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { toIntlLocale } from '@/i18n/languages'
-import { formatTokens } from '@/lib/format'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
+import { formatRankingTokens } from '../lib/format'
 import type { ModelRanking } from '../types'
 import { CacheTokenDetails } from './cache-token-details'
 import { ModelLink, VendorLink } from './entity-links'
@@ -120,7 +120,7 @@ function ModelList(props: {
                   : 'text-foreground font-mono text-sm font-semibold tabular-nums'
               }
             >
-              {formatTokens(row.total_tokens, locale)}
+              {formatRankingTokens(row.total_tokens, locale)}
               {!compact && (
                 <>
                   {' '}

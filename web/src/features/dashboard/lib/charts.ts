@@ -26,7 +26,7 @@ import type {
   ProcessedUserChartData,
 } from '@/features/dashboard/types'
 import { getCurrencyDisplay } from '@/lib/currency'
-import { formatCompactNumber, formatTokens } from '@/lib/format'
+import { formatCompactNumber, formatNumber } from '@/lib/format'
 import { formatChartTime, type TimeGranularity } from '@/lib/time'
 
 type TFunction = (key: string) => string
@@ -86,9 +86,9 @@ export function processChartData(
     Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)
   const formatQuotaValue = (value: number) => renderQuotaCompat(value, 4)
   const formatQuotaTotal = (value: number) => renderQuotaCompat(value, 2)
-  // Text totals and tooltips retain exact token counts; axes stay compact.
+  // Token values are exact in tooltips; totals and axes stay compact.
   const formatMetricValue = (value: number) =>
-    showTokens ? formatTokens(value, locale) : formatQuotaValue(value)
+    showTokens ? formatNumber(value, locale) : formatQuotaValue(value)
 
   const MAX_TOOLTIP_MODELS = 15
   const isOtherTooltipKey = (key: string) =>
@@ -217,7 +217,7 @@ export function processChartData(
         },
       },
       totalQuotaDisplay: formatQuotaTotal(0),
-      totalTokensDisplay: formatTokens(0, locale),
+      totalTokensDisplay: formatCompactNumber(0, locale),
       totalCountDisplay: formatInt(0),
     }
   }
@@ -730,7 +730,7 @@ export function processChartData(
       animation: true,
     },
     totalQuotaDisplay: formatQuotaTotal(totalQuotaRaw),
-    totalTokensDisplay: formatTokens(totalTokensRaw, locale),
+    totalTokensDisplay: formatCompactNumber(totalTokensRaw, locale),
     totalCountDisplay: formatInt(totalTimes),
   }
 }
@@ -761,9 +761,9 @@ export function processUserChartData(
   const quotaPerUnit = config.quotaPerUnit
   const showTokens = metric === 'tokens'
 
-  // Quota keeps its currency-aware rendering; token text includes exact counts.
+  // Quota keeps its currency-aware rendering; token rankings stay compact.
   const formatVal = (raw: number) =>
-    showTokens ? formatTokens(raw, locale) : renderQuotaCompat(raw, 2)
+    showTokens ? formatCompactNumber(raw, locale) : renderQuotaCompat(raw, 2)
   const toUsage = (raw: number) =>
     showTokens ? raw : Number((raw / quotaPerUnit).toFixed(4))
   const metricValue = (item: QuotaDataItem) =>

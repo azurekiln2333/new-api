@@ -30,7 +30,7 @@ import type { QuotaDataItem } from '@/features/dashboard/types'
 import { useStatus } from '@/hooks/use-status'
 import { toIntlLocale } from '@/i18n/languages'
 import { getCurrencyLabel, isCurrencyDisplayEnabled } from '@/lib/currency'
-import { formatTokens, formatNumber, formatQuota } from '@/lib/format'
+import { formatCompactNumber, formatNumber, formatQuota } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -247,7 +247,7 @@ export function SummaryCards() {
   const items = useSummaryCardsConfig({
     ...summaryValues,
     todayUsageDisplay,
-    tokensDisplay: formatTokens(recentTokens, locale),
+    tokensDisplay: formatCompactNumber(recentTokens, locale),
     currencyEnabled,
     currencyLabel,
   }).map((config, index) => {

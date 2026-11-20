@@ -20,6 +20,31 @@ For commercial licensing, please contact support@quantumnous.com
 // Rankings formatting helpers
 // ----------------------------------------------------------------------------
 
+import { formatNumber } from '@/lib/format'
+
+/** Keep ranking totals and cache quantities in the same fixed K/M/B/T units. */
+export function formatRankingTokens(
+  value: number,
+  locale?: Intl.LocalesArgument
+): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0'
+  }
+  if (value >= 1_000_000_000_000) {
+    return `${(value / 1_000_000_000_000).toFixed(2)}T`
+  }
+  if (value >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(value >= 10_000_000_000 ? 1 : 2)}B`
+  }
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 1 : 2)}M`
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`
+  }
+  return formatNumber(value, locale)
+}
+
 /** Format a 0..1 share as a percentage with two decimals. */
 export function formatShare(share: number): string {
   if (!Number.isFinite(share) || share <= 0) return '0%'

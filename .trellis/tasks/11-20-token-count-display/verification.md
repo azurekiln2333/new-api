@@ -84,3 +84,29 @@ src/features/users/components/__tests__/quota-display.test.tsx
 - `web/src/features/usage-logs/components/dialogs/details-dialog.tsx`: R12 adds `toIntlLocale`, derives locale in `TokenBreakdown`/`DetailsDialog`, and uses `formatTokens(value, locale)` for input/output/cache/image/audio/text counts. The `conversionLabel` empty-chain/Unknown change belongs to R4 and must be staged separately. Arbitrary billable usage quantities and all monetary rows were preserved.
 
 Root owns the Git index and commits. No files were staged or committed by this subtask; no R2 changes were made.
+
+## User correction completed — November 20, 2026
+
+This section supersedes the earlier all-surface formatting scope. The channel
+card/detail contract keeps exact-plus-abbreviation formatting. Log formatting
+was restored separately in `79cd2f5c7` and is unchanged by this follow-up.
+
+The remaining non-channel uses introduced by `7100b258f` have been restored
+against that commit's parent: dashboard summaries/stat cards and user chart
+rankings use their prior compact values; distribution chart tooltips use plain
+exact counts. Rankings reuse their prior fixed K/M/B/T precision in
+`formatRankingTokens`, with exact cache counts in titles and non-wrapping
+label/value pairs. User balances use `formatQuotaWithCurrency` again, preserving
+the independent Total Used column, raw numeric sorting and currency semantics.
+The newer fingerprint page uses plain exact counts for usage, budget and output
+limits. Interface languages still pass through `toIntlLocale`.
+
+Existing dashboard, ranking-cache and user-quota assertions were adjusted to the
+restored displays; no test files were added. Source-reference inspection leaves
+shared `formatTokens` in channel metrics and its own tests only. No channel,
+usage-log, pricing, accounting, permission or data-selection behavior changed.
+
+Only source review, edits and targeted formatting were performed. No local
+test, lint, typecheck, build or browser verification was run. Earlier passes
+above do not verify this correction; root owns the next exact-commit cloud CI
+run and publication. No verification pass is claimed for these final edits.

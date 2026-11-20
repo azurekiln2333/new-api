@@ -241,6 +241,20 @@ jobs:
           src/features/usage-logs/components/__tests__/mobile-card.test.tsx
           src/features/usage-logs/components/__tests__/usage-facts.test.tsx
           src/features/usage-logs/lib/format.ts
+          src/features/dashboard/components/models/log-stat-cards.tsx
+          src/features/dashboard/components/overview/summary-cards.tsx
+          src/features/dashboard/lib/charts.ts
+          src/features/dashboard/lib/__tests__/charts.test.ts
+          src/features/rankings/components/cache-token-details.tsx
+          src/features/rankings/components/market-share-section.tsx
+          src/features/rankings/components/model-leaderboard.tsx
+          src/features/rankings/components/models-section.tsx
+          src/features/rankings/lib/format.ts
+          src/features/rankings/__tests__/cache-tokens.test.tsx
+          src/features/service-status/fingerprint.tsx
+          src/features/users/components/user-quota-cell.tsx
+          src/features/users/components/users-columns.tsx
+          src/features/users/components/__tests__/quota-display.test.tsx
 
       - name: Test
         run: bun run test

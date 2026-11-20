@@ -38,3 +38,13 @@ use `formatNumber` with the normalized locale: `41,258 / 115` and
 height. Expanded log cards and token breakdowns also show plain exact counts;
 the existing collapsed mobile rows retain their compact summaries. Cover the
 desktop example in the existing usage-log mobile-card/table-cell fixture.
+
+Do not apply the channel exact-plus-abbreviation formatter to other features.
+Dashboard summaries and user rankings keep their prior compact displays;
+distribution chart tooltips keep plain exact counts. Rankings retain their
+fixed K/M/B/T precision through `formatRankingTokens`, with exact cache counts
+in titles. User balances and the separately sortable Total Used column reuse
+`formatQuotaWithCurrency`, including token display mode. The fingerprint page
+uses plain `formatNumber` counts for usage, budgets and output limits. Keep
+normalized Intl locales at these call sites. Outside its own tests, shared
+`formatTokens` is used only by channel metrics.

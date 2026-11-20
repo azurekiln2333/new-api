@@ -22,10 +22,10 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { toIntlLocale } from '@/i18n/languages'
-import { formatCompactNumber, formatTokens } from '@/lib/format'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
+import { formatRankingTokens } from '../lib/format'
 import type {
   ModelHistorySeries,
   ModelRanking,
@@ -105,7 +105,7 @@ export function ModelsSection(props: ModelsSectionProps) {
           orient: 'left',
           label: {
             formatMethod: (val: number | string) =>
-              formatCompactNumber(Number(val), locale),
+              formatRankingTokens(Number(val), locale),
             style: { fill: chartTextColor, fontSize: 10 },
           },
           grid: {
@@ -121,7 +121,7 @@ export function ModelsSection(props: ModelsSectionProps) {
               key: (datum: Record<string, unknown>) =>
                 String(datum?.model ?? ''),
               value: (datum: Record<string, unknown>) =>
-                formatTokens(Number(datum?.tokens) || 0, locale),
+                formatRankingTokens(Number(datum?.tokens) || 0, locale),
             },
           ],
         },
@@ -147,7 +147,7 @@ export function ModelsSection(props: ModelsSectionProps) {
             const overflow = array.slice(TOOLTIP_MAX_ROWS)
             const result = visible.map((item) => ({
               key: item.key,
-              value: formatTokens(Number(item.value) || 0, locale),
+              value: formatRankingTokens(Number(item.value) || 0, locale),
             }))
             if (overflow.length > 0) {
               const otherSum = overflow.reduce(
@@ -156,12 +156,12 @@ export function ModelsSection(props: ModelsSectionProps) {
               )
               result.push({
                 key: t('+{{count}} more', { count: overflow.length }),
-                value: formatTokens(otherSum, locale),
+                value: formatRankingTokens(otherSum, locale),
               })
             }
             result.unshift({
               key: t('Total:'),
-              value: formatTokens(sum, locale),
+              value: formatRankingTokens(sum, locale),
             })
             return result
           },
@@ -186,7 +186,7 @@ export function ModelsSection(props: ModelsSectionProps) {
         </div>
         <div className='max-w-full shrink-0 self-end text-right sm:max-w-[50%] sm:self-auto'>
           <div className='text-foreground font-mono text-2xl font-semibold tabular-nums'>
-            {formatTokens(props.totals.total_tokens, locale)}
+            {formatRankingTokens(props.totals.total_tokens, locale)}
           </div>
           <div className='text-muted-foreground/80 text-[10px] font-medium tracking-widest uppercase'>
             {t('tokens')}

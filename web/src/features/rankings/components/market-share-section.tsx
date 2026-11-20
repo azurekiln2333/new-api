@@ -22,11 +22,10 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { toIntlLocale } from '@/i18n/languages'
-import { formatTokens } from '@/lib/format'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
-import { formatShare } from '../lib/format'
+import { formatRankingTokens, formatShare } from '../lib/format'
 import type { RankingPeriod, VendorRanking, VendorShareSeries } from '../types'
 import { CacheTokenDetails } from './cache-token-details'
 import { VendorLink } from './entity-links'
@@ -176,7 +175,7 @@ export function MarketShareSection(props: MarketShareSectionProps) {
               key: (datum: Record<string, unknown>) =>
                 String(datum?.vendor ?? ''),
               value: (datum: Record<string, unknown>) =>
-                `${(Number(datum?.share) * 100).toFixed(1)}% · ${formatTokens(Number(datum?.tokens) || 0, locale)}`,
+                `${(Number(datum?.share) * 100).toFixed(1)}% · ${formatRankingTokens(Number(datum?.tokens) || 0, locale)}`,
             },
           ],
         },
@@ -303,7 +302,7 @@ function VendorList(props: {
           </VendorLink>
           <div className='max-w-[55%] shrink-0 text-right'>
             <div className='text-foreground font-mono text-sm font-semibold tabular-nums'>
-              {formatTokens(vendor.total_tokens, locale)}
+              {formatRankingTokens(vendor.total_tokens, locale)}
             </div>
             <div className='text-muted-foreground/80 font-mono text-[11px] tabular-nums'>
               {formatShare(vendor.share)}

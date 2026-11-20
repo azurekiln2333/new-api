@@ -33,12 +33,7 @@ import type {
   DashboardFilters,
 } from '@/features/dashboard/types'
 import { toIntlLocale } from '@/i18n/languages'
-import {
-  formatCompactNumber,
-  formatNumber,
-  formatQuota,
-  formatTokens,
-} from '@/lib/format'
+import { formatCompactNumber, formatNumber, formatQuota } from '@/lib/format'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -129,19 +124,8 @@ export function LogStatCards(props: LogStatCardsProps) {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const items = statCardsConfig.map((config) => {
     const rawValue = config.getValue(adaptedStats, timeRangeMinutes)
-    const isTokenCount = [
-      'tokens',
-      'cacheRead',
-      'cacheCreation',
-      'avgTpm',
-    ].includes(config.key)
     let formatted
-    if (isTokenCount) {
-      formatted = {
-        displayValue: formatTokens(rawValue, locale),
-        fullValue: formatNumber(rawValue, locale),
-      }
-    } else if (config.key === 'quota') {
+    if (config.key === 'quota') {
       const quota = formatQuota(rawValue)
       formatted = { displayValue: quota, fullValue: quota }
     } else {
@@ -153,7 +137,6 @@ export function LogStatCards(props: LogStatCardsProps) {
       title: config.title,
       value: formatted.displayValue,
       fullValue: formatted.fullValue,
-      isTokenCount,
       desc: config.description,
       icon: config.icon,
       iconTone: config.iconTone,
@@ -188,12 +171,7 @@ export function LogStatCards(props: LogStatCardsProps) {
             valueContent = (
               <>
                 <div
-                  className={cn(
-                    'text-foreground mt-1 max-w-full font-mono text-base leading-tight font-bold tracking-tight tabular-nums sm:mt-2 sm:leading-normal',
-                    it.isTokenCount
-                      ? 'break-words sm:text-base'
-                      : 'truncate sm:text-2xl'
-                  )}
+                  className='text-foreground mt-1 max-w-full truncate font-mono text-base leading-tight font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl sm:leading-normal'
                   title={it.fullValue}
                 >
                   {it.value}

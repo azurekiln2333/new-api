@@ -22,7 +22,6 @@ import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { StatusBadge } from '@/components/status-badge'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency, getCurrencyDisplay } from '@/lib/currency'
-import { formatTokens } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -39,19 +38,18 @@ export function UserQuotaCell(props: UserQuotaCellProps) {
   const { meta: currency } = getCurrencyDisplay()
   const quotaUnit = currency.kind === 'tokens' ? t('Tokens') : currency.symbol
   const hasQuota = props.remaining !== 0 || props.used !== 0
-  const formattedRemaining =
-    currency.kind === 'tokens'
-      ? formatTokens(props.remaining, locale)
-      : formatQuotaWithCurrency(props.remaining, { showSymbol: false })
-  const formattedUsed =
-    currency.kind === 'tokens'
-      ? formatTokens(props.used, locale)
-      : formatQuotaWithCurrency(props.used, { showSymbol: false })
+  const formattedRemaining = formatQuotaWithCurrency(props.remaining, {
+    showSymbol: false,
+    locale,
+  })
+  const formattedUsed = formatQuotaWithCurrency(props.used, {
+    showSymbol: false,
+    locale,
+  })
 
   return (
     <QuotaDetailsPopover
       title={`${t('Quota')} (${quotaUnit})`}
-      triggerClassName='whitespace-normal'
       triggerLabel={
         hasQuota
           ? `${t('Available Balance')} ${formattedRemaining}; ${t('Used amount')} ${formattedUsed}`
@@ -65,7 +63,7 @@ export function UserQuotaCell(props: UserQuotaCellProps) {
       {hasQuota ? (
         <span
           className={cn(
-            'text-sm break-words tabular-nums',
+            'text-sm tabular-nums',
             props.remaining < 0 && 'text-destructive',
             props.remaining === 0 && 'text-muted-foreground'
           )}

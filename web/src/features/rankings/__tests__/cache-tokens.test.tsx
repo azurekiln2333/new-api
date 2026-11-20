@@ -85,18 +85,18 @@ test('model rows show separate cache reads and writes without adding them to tot
   expect(within(model).getByText('50')).toBeInTheDocument()
 })
 
-test('cache quantities show exact counts with the same compact unit as the token total', async () => {
+test('cache quantities use the same compact unit as the token total', async () => {
   await renderRankings(
     <CacheTokenDetails
       cache_read_tokens={3_020_000_000}
       cache_creation_tokens={1_500_000}
     />
   )
-  expect(await screen.findByText('3,020,000,000 (3B)')).toBeInTheDocument()
-  expect(screen.getByText('1,500,000 (1.5M)')).toBeInTheDocument()
+  expect(await screen.findByText('3.02B')).toBeInTheDocument()
+  expect(screen.getByText('1.50M')).toBeInTheDocument()
 })
 
-test('a cache amount keeps its exact value and adds local compact units on language switch', async () => {
+test('a cache amount keeps its fixed compact units on language switch', async () => {
   const i18n = await renderRankings(
     <CacheTokenDetails
       cache_read_tokens={3_020_000_000}
@@ -104,9 +104,9 @@ test('a cache amount keeps its exact value and adds local compact units on langu
     />
   )
   await act(() => i18n.changeLanguage('zhCN'))
-  expect(screen.getByText('3,020,000,000 (3B / 30.2亿)')).toBeInTheDocument()
+  expect(screen.getByText('3.02B')).toBeInTheDocument()
   await act(() => i18n.changeLanguage('zhTW'))
-  expect(screen.getByText('3,020,000,000 (3B / 30.2億)')).toBeInTheDocument()
+  expect(screen.getByText('3.02B')).toBeInTheDocument()
 })
 
 test('cache block renders nothing when both quantities are zero', async () => {
@@ -129,7 +129,7 @@ test('a single zero quantity keeps the cache pair complete', async () => {
   expect(within(writePair).getByText('50')).toBeInTheDocument()
 })
 
-test('a long cache count can wrap without hiding its exact value', async () => {
+test('each cache label stays beside its compact value', async () => {
   await renderRankings(
     <CacheTokenDetails
       cache_read_tokens={3_020_000_000}
@@ -138,9 +138,9 @@ test('a long cache count can wrap without hiding its exact value', async () => {
   )
   const rawRead = await screen.findByText('Cache Read')
   const pair = rawRead.parentElement as HTMLElement
-  expect(pair.className).toContain('flex-wrap')
-  expect(pair.className).not.toContain('whitespace-nowrap')
-  expect(within(pair).getByText('3,020,000,000 (3B)')).toBeVisible()
+  expect(pair.className).not.toContain('flex-wrap')
+  expect(pair.className).toContain('whitespace-nowrap')
+  expect(within(pair).getByText('3.02B')).toBeVisible()
 })
 
 test('cache value exposes its exact count in the title', async () => {
@@ -150,7 +150,7 @@ test('cache value exposes its exact count in the title', async () => {
       cache_creation_tokens={0}
     />
   )
-  const value = await screen.findByText('3,020,000,000 (3B)')
+  const value = await screen.findByText('3.02B')
   expect(value).toHaveAttribute('title', '3,020,000,000')
 })
 
