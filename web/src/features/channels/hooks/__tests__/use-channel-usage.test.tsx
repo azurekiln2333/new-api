@@ -33,6 +33,10 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import {
+  ChannelRowActionsLayoutContext,
+  type ChannelRowActionsLayout,
+} from '../../components/channel-row-actions-context'
+import {
   ChannelUsageContext,
   ChannelUsedTokens,
 } from '../../components/channel-usage-context'
@@ -67,7 +71,8 @@ function QueryWrapper(props: { children: ReactNode }) {
   )
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await i18n.changeLanguage('en')
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 })
 
@@ -160,30 +165,48 @@ test('summaries hook requests the new id set when the page changes', async () =>
 
 function renderUsedTokens(
   map: Record<number, ChannelUsageSummary>,
-  tooltipOpen = false
+  tooltipOpen = false,
+  layout: ChannelRowActionsLayout = 'table'
 ) {
   render(
     <I18nextProvider i18n={i18n}>
       <ChannelUsageContext.Provider value={map}>
-        <ChannelUsedTokens channelId={1} tooltipOpen={tooltipOpen} />
+        <ChannelRowActionsLayoutContext.Provider value={layout}>
+          <ChannelUsedTokens channelId={1} tooltipOpen={tooltipOpen} />
+        </ChannelRowActionsLayoutContext.Provider>
       </ChannelUsageContext.Provider>
     </I18nextProvider>
   )
 }
 
-test('used tokens shows the exact and compact total without clipping wrapped lines', () => {
-  renderUsedTokens({
-    1: usage({ total_tokens: 1_500_000, prompt_tokens: 1_000_000 }),
-  })
-
-  expect(screen.getByText('1,500,000 (1.5M)')).toBeVisible()
-  expect(screen.getByText('1,500,000 (1.5M)')).toHaveClass(
-    'h-auto',
-    'whitespace-normal'
+test('used tokens keeps a single compact line on the card', () => {
+  renderUsedTokens(
+    { 1: usage({ total_tokens: 1_500_000, prompt_tokens: 1_000_000 }) },
+    false,
+    'card'
   )
+
+  const value = screen.getByText('1.5M')
+  expect(value).toBeVisible()
+  expect(value).toHaveClass('truncate', 'tabular-nums')
+  // The exact count stays out of the card line; it belongs to the tooltip.
+  expect(screen.queryByText('1,500,000 (1.5M)')).not.toBeInTheDocument()
 })
 
-test('used tokens keeps the input/output split in a tooltip instead of the row text', () => {
+test('used tokens can be focused from the keyboard to read the exact value', () => {
+  renderUsedTokens(
+    { 1: usage({ total_tokens: 1_500_000, prompt_tokens: 1_000_000 }) },
+    false,
+    'card'
+  )
+
+  const value = screen.getByText('1.5M')
+  expect(value).toHaveAttribute('tabindex', '0')
+  value.focus()
+  expect(value).toHaveFocus()
+})
+
+test('used tokens keeps the exact value in the hover explanation', () => {
   renderUsedTokens(
     {
       1: usage({
@@ -193,13 +216,43 @@ test('used tokens keeps the input/output split in a tooltip instead of the row t
         request_count: 42,
       }),
     },
-    true
+    true,
+    'card'
   )
 
   const split = document.querySelector('[data-slot=tooltip-content]')
   expect(split?.textContent).toBe(
-    'Total tokens: 1,500,000\nInput tokens: 1,000,000\nOutput tokens: 500,000\nRequests: 42'
+    'Total tokens: 1,500,000 (1.5M)\nInput tokens: 1,000,000\nOutput tokens: 500,000\nRequests: 42'
   )
+})
+
+test('used tokens keeps the exact total and abbreviation visible in table layout', () => {
+  renderUsedTokens({ 1: usage({ total_tokens: 1_500_000 }) })
+
+  const value = screen.getByText('1,500,000 (1.5M)')
+  expect(value).toBeVisible()
+  expect(value).toHaveClass('whitespace-normal', 'tabular-nums')
+  expect(value).not.toHaveClass('truncate')
+  expect(value.closest('[data-slot=status-badge]')).toBeNull()
+})
+
+test('used tokens updates the card abbreviation when the interface language changes', async () => {
+  renderUsedTokens(
+    { 1: usage({ total_tokens: 318_574_217 }) },
+    false,
+    'card'
+  )
+  expect(screen.getByText('318.6M')).toBeVisible()
+
+  await act(async () => {
+    await i18n.changeLanguage('zhCN')
+  })
+  expect(screen.getByText('3.2亿')).toBeVisible()
+
+  await act(async () => {
+    await i18n.changeLanguage('zhTW')
+  })
+  expect(screen.getByText('3.2億')).toBeVisible()
 })
 
 test('used tokens shows a dash when the channel has no usage entry', () => {

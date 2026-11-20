@@ -18,3 +18,11 @@ each row, with direct dt/dd pairs inside its metric groups. Normal-width cards
 keep paired values side by side; narrow cards wrap without truncating controls.
 Retain the priority event target and accessible card/name actions when changing
 the layout. Shared cells remain the source of values and formatting.
+
+`ChannelUsedTokens` uses `compact` only in card layout: call the shared
+`formatCompactNumber` with a normalized Intl locale to display Chinese 万/亿
+on one line, without a badge frame. Its keyboard-focusable tooltip uses
+`formatTokens` to show the exact integer followed by parenthesized compact
+values. The table and details retain the full value. Do not change global
+formatter defaults or add one polling request per card; reuse usage and
+concurrency contexts, including privacy masking and aggregate rows.

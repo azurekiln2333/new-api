@@ -31,7 +31,7 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
-import { formatTokens } from '@/lib/format'
+import { formatCompactNumber, formatTokens } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CHANNEL_STATUS } from '../../constants'
@@ -215,7 +215,21 @@ async function renderCardView(usage?: { total_tokens: number } | null) {
   return card as HTMLElement
 }
 
-it('shows the tokens consumed through a channel', async () => {
+it('shows the tokens consumed through a channel as a single compact line', async () => {
+  const card = await renderCardView()
+
+  // The card keeps the readable abbreviation only; the exact count and its
+  // parenthesized explanation belong to hover and the details drawer.
+  expect(
+    await within(card).findByText(formatCompactNumber(CONSUMED_TOKENS, 'en'))
+  ).toBeVisible()
+  expect(
+    within(card).queryByText(formatTokens(CONSUMED_TOKENS, 'en'))
+  ).not.toBeInTheDocument()
+})
+
+it('keeps the exact consumed token count and abbreviation visible in table view', async () => {
+  localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'table')
   await renderChannelsPage()
 
   expect(
@@ -228,7 +242,7 @@ it('shows a dash instead of tokens when the channel has no usage record', async 
 
   expect(card.textContent).toContain('-')
   expect(
-    screen.queryByText(formatTokens(CONSUMED_TOKENS, 'en'))
+    screen.queryByText(formatCompactNumber(CONSUMED_TOKENS, 'en'))
   ).not.toBeInTheDocument()
 })
 
