@@ -192,21 +192,36 @@ func TestFetchAdvancedCustomModelsRedactsQueryKeyFromTransportErrors(t *testing.
 	require.EqualError(t, queryError, "dial [REDACTED]: connection refused")
 }
 
-func TestFetchOrdinaryOpenAIModelsKeepsExistingEmptyDataBehavior(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"object":"list"}`))
-	}))
-	defer server.Close()
+func TestFetchOrdinaryOpenAIModelsRequiresExplicitInventory(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{name: "empty inventory", body: `{"object":"list","data":[]}`},
+		{name: "missing inventory", body: `{"object":"list"}`, wantErr: "invalid OpenAI Models response: data is required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
 
-	baseURL := server.URL
-	channel := &model.Channel{
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "ordinary-key",
-		BaseURL: &baseURL,
+			baseURL := server.URL
+			channel := &model.Channel{
+				Type:    constant.ChannelTypeOpenAI,
+				Key:     "ordinary-key",
+				BaseURL: &baseURL,
+			}
+			models, err := fetchChannelUpstreamModelIDs(channel)
+			if tc.wantErr != "" {
+				require.EqualError(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Empty(t, models)
+		})
 	}
-	models, err := fetchChannelUpstreamModelIDs(channel)
-	require.NoError(t, err)
-	require.Empty(t, models)
 }
 
 func TestFetchModelsAdvancedCustomCreatePreview(t *testing.T) {
