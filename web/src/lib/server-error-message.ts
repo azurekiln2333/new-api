@@ -227,6 +227,10 @@ function translateFixedChannelManagementError(
     case 'repeated Gemini model page token':
     case 'Gemini model pagination limit exceeded':
     case 'invalid Ollama model inventory':
+    case 'invalid OpenAI Models response: data is required':
+    case 'invalid OpenAI Models response: model ID is required':
+    case 'OpenAI Models response contains no valid model IDs':
+    case 'upstream returned an error response':
     case 'failed to parse response':
     case 'failed to parse pull response':
     case 'Invalid response':
