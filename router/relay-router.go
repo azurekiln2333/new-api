@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service/authz"
 
 	"github.com/gin-gonic/gin"
 )
@@ -64,9 +65,9 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute())
 	{
-		playgroundRouter.POST("/chat/completions", controller.Playground)
+		playgroundRouter.GET("/channels", middleware.AdminAuth(), middleware.RequirePermission(authz.ChannelRead), controller.PlaygroundChannels)
+		playgroundRouter.POST("/chat/completions", middleware.UserAuth(), middleware.Distribute(), controller.Playground)
 	}
 	relayV1Router := router.Group("/v1")
 	relayV1Router.Use(middleware.RouteTag("relay"))

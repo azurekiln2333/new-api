@@ -55,6 +55,52 @@ describe.each([
   { viewport: 'desktop', width: 1024 },
   { viewport: 'mobile', width: 390 },
 ])('model ordering on $viewport', ({ width }) => {
+  test('switches between groups and channels and clears the explicit channel when returning', async () => {
+    vi.stubGlobal('innerWidth', width)
+    const user = userEvent.setup()
+    const onChannelChange = vi.fn()
+    const props = {
+      models: [{ label: 'gpt-2', value: 'gpt-2' }],
+      selectedModel: 'gpt-2',
+      onModelChange: vi.fn(),
+      groups: [{ label: 'Default', value: 'default' }],
+      selectedGroup: 'default',
+      onGroupChange: vi.fn(),
+      channels: [{ label: 'Channel A', value: 12 }],
+      onChannelChange,
+    }
+    const view = render(<ModelGroupSelector {...props} />)
+    await user.click(screen.getByRole('combobox'))
+    await user.click(screen.getByRole('button', { name: 'Channels' }))
+    await user.click(screen.getByRole('button', { name: 'Channel A' }))
+    expect(onChannelChange).toHaveBeenCalledWith(12)
+
+    view.rerender(<ModelGroupSelector {...props} selectedChannel={12} />)
+    await user.click(screen.getByRole('button', { name: 'Groups' }))
+    expect(onChannelChange).toHaveBeenLastCalledWith(undefined)
+    expect(screen.getByRole('button', { name: 'Default' })).toBeVisible()
+    expect(props.onModelChange).not.toHaveBeenCalled()
+  })
+
+  test('does not expose channels when the caller has no channel navigation permission', async () => {
+    vi.stubGlobal('innerWidth', width)
+    const user = userEvent.setup()
+    render(
+      <ModelGroupSelector
+        models={[]}
+        selectedModel=''
+        onModelChange={vi.fn()}
+        groups={[]}
+        selectedGroup=''
+        onGroupChange={vi.fn()}
+      />
+    )
+    await user.click(screen.getByRole('combobox'))
+    expect(
+      screen.queryByRole('button', { name: 'Channels' })
+    ).not.toBeInTheDocument()
+  })
+
   test('sorts names naturally with raw model ID ties without changing the input or saved selection', async () => {
     vi.stubGlobal('innerWidth', width)
     const user = userEvent.setup()

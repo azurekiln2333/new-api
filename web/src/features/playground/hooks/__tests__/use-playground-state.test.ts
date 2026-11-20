@@ -50,6 +50,23 @@ afterEach(() => {
 })
 
 describe('usePlaygroundState conversations', () => {
+  test('keeps channel pins ephemeral and clears them atomically when changing groups', async () => {
+    const view = await renderPlaygroundState()
+    act(() => {
+      view.result.current.updateConfig('channel_id', 12)
+    })
+    expect(view.result.current.config.channel_id).toBe(12)
+    expect(localStorage.getItem(`${STORAGE_KEYS.CONFIG}:1`)).not.toContain(
+      'channel_id'
+    )
+    act(() => {
+      view.result.current.updateConfig('group', 'another-group')
+    })
+    expect(view.result.current.config.group).toBe('another-group')
+    expect(view.result.current.config.channel_id).toBeUndefined()
+    view.unmount()
+  })
+
   test('shows legacy history and a warning when migration storage is full', async () => {
     const messages = [userMessage('keep legacy history', 'legacy')]
     localStorage.setItem(

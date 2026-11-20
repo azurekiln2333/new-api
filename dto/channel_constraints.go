@@ -5,11 +5,13 @@ type ChannelPinSource string
 const (
 	PinSourceToken      ChannelPinSource = "token"       // Rank 0, highest
 	PinSourceOriginTask ChannelPinSource = "origin_task" // Rank 10
+	PinSourcePlayground ChannelPinSource = "playground"
 )
 
 const (
 	PinRankToken      = 0
 	PinRankOriginTask = 10
+	PinRankPlayground = 0
 )
 
 type PinRetryMode int

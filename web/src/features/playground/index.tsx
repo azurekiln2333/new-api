@@ -98,13 +98,15 @@ export function Playground() {
     clearMessages()
   }
 
-  const { isLoadingModels } = usePlaygroundOptions({
-    currentGroup: config.group,
-    currentModel: config.model,
-    setGroups,
-    setModels,
-    updateConfig,
-  })
+  const { isLoadingModels, channels, channelUnavailable, canSend } =
+    usePlaygroundOptions({
+      currentGroup: config.group,
+      currentModel: config.model,
+      currentChannel: config.channel_id,
+      setGroups,
+      setModels,
+      updateConfig,
+    })
 
   // A reply streams into the conversation that is active when it starts, so a
   // conversation switch stops the generation instead of mixing the two chats.
@@ -195,21 +197,32 @@ export function Playground() {
           <PlaygroundChat
             messages={messages}
             isLoadingMessages={isLoadingMessages}
-            onRegenerateMessage={handleRegenerateMessage}
+            onRegenerateMessage={(...args) => {
+              if (canSend) handleRegenerateMessage(...args)
+            }}
             onEditMessage={handleEditMessage}
             onDeleteMessage={handleDeleteMessage}
-            onSelectPrompt={handleSendMessage}
+            onSelectPrompt={(text) => {
+              if (canSend) handleSendMessage(text)
+            }}
             isGenerating={isGenerating}
             editingKey={editingMessageKey}
             onCancelEdit={handleEditOpenChange}
             onSaveEdit={(newContent) => applyEdit(newContent, false)}
-            onSaveEditAndSubmit={(newContent) => applyEdit(newContent, true)}
+            onSaveEditAndSubmit={(newContent) => {
+              if (canSend) applyEdit(newContent, true)
+            }}
           />
         </div>
 
         {/* Input area: center content and constrain to the same container width */}
         <div className='mx-auto w-full max-w-4xl'>
           <PlaygroundInput
+            channels={channels}
+            channelValue={config.channel_id}
+            onChannelChange={(value) => updateConfig('channel_id', value)}
+            channelUnavailable={channelUnavailable}
+            canSend={canSend}
             config={config}
             disabled={isGenerating}
             groups={groups}

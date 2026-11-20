@@ -247,6 +247,9 @@ export function usePlaygroundState() {
     <K extends keyof PlaygroundConfig>(key: K, value: PlaygroundConfig[K]) => {
       setConfig((prev) => {
         const updated = { ...prev, [key]: value }
+        if (key === 'group') {
+          updated.channel_id = undefined
+        }
         saveConfig(updated)
         return updated
       })

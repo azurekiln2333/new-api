@@ -35,13 +35,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { hasPermission } from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
+import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getUserGroups, getUserModels } from '../api'
+import { getPlaygroundChannels, getUserGroups, getUserModels } from '../api'
 import {
   getGroupFallback,
   getModelFallback,
@@ -53,6 +56,7 @@ import type { GroupOption, ModelOption, PlaygroundConfig } from '../types'
 type UsePlaygroundOptionsParams = {
   currentGroup: string
   currentModel: string
+  currentChannel?: number
   setGroups: (groups: GroupOption[]) => void
   setModels: (models: ModelOption[]) => void
   updateConfig: <K extends keyof PlaygroundConfig>(
@@ -64,11 +68,34 @@ type UsePlaygroundOptionsParams = {
 export function usePlaygroundOptions({
   currentGroup,
   currentModel,
+  currentChannel,
   setGroups,
   setModels,
   updateConfig,
 }: UsePlaygroundOptionsParams) {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const canSelectChannel =
+    (user?.role ?? 0) >= ROLE.ADMIN && hasPermission(user, 'channel', 'read')
+  const channelsQuery = useQuery({
+    queryKey: ['playground-channels', user?.id, currentGroup],
+    queryFn: () => getPlaygroundChannels(currentGroup),
+    enabled: canSelectChannel && currentGroup !== '',
+    staleTime: 30_000,
+  })
+  const selectedChannel = channelsQuery.data?.find(
+    (channel) => channel.id === currentChannel
+  )
+  const channels = useMemo(
+    () =>
+      canSelectChannel
+        ? (channelsQuery.data ?? []).map((channel) => ({
+            label: channel.name,
+            value: channel.id,
+          }))
+        : undefined,
+    [canSelectChannel, channelsQuery.data]
+  )
 
   const {
     data: modelsData,
@@ -76,7 +103,7 @@ export function usePlaygroundOptions({
     isError: isModelsError,
     isLoading: isLoadingModels,
   } = useQuery({
-    queryKey: ['playground-models', currentGroup],
+    queryKey: ['playground-models', user?.id, currentGroup],
     queryFn: async () =>
       requireServerSuccess(await getUserModels(currentGroup)),
     enabled: currentGroup !== '',
@@ -87,9 +114,41 @@ export function usePlaygroundOptions({
     error: groupsError,
     isError: isGroupsError,
   } = useQuery({
-    queryKey: ['playground-groups'],
+    queryKey: ['playground-groups', user?.id],
     queryFn: async () => requireServerSuccess(await getUserGroups()),
   })
+
+  const availableModels = useMemo(() => {
+    if (!currentChannel) return modelsData
+    if (!canSelectChannel || channelsQuery.isError || !selectedChannel) {
+      return []
+    }
+    return selectedChannel.models.map((model) => ({
+      label: model,
+      value: model,
+    }))
+  }, [
+    canSelectChannel,
+    channelsQuery.isError,
+    currentChannel,
+    modelsData,
+    selectedChannel,
+  ])
+  const channelUnavailable = Boolean(
+    currentChannel &&
+    (!canSelectChannel ||
+      channelsQuery.isError ||
+      (!channelsQuery.isPending && !selectedChannel))
+  )
+
+  useEffect(() => {
+    if (canSelectChannel && channelsQuery.isError) {
+      handleServerError(
+        channelsQuery.error,
+        t('Failed to load playground channels')
+      )
+    }
+  }, [canSelectChannel, channelsQuery.error, channelsQuery.isError, t])
 
   useEffect(() => {
     if (!isModelsError) return
@@ -116,20 +175,29 @@ export function usePlaygroundOptions({
   }, [isGroupsError, groupsError, t])
 
   useEffect(() => {
-    if (!modelsData) return
+    if (!availableModels) return
 
-    setModels(modelsData)
-    const fallback = getModelFallback(modelsData, currentModel)
+    setModels(availableModels)
+    if (currentChannel && (!selectedChannel || channelUnavailable)) return
+    const fallback = getModelFallback(availableModels, currentModel)
 
     if (fallback) {
       updateConfig('model', fallback)
       return
     }
 
-    if (shouldClearModelForGroup(modelsData, currentModel)) {
+    if (shouldClearModelForGroup(availableModels, currentModel)) {
       updateConfig('model', '')
     }
-  }, [modelsData, currentModel, setModels, updateConfig])
+  }, [
+    availableModels,
+    channelUnavailable,
+    currentChannel,
+    selectedChannel,
+    currentModel,
+    setModels,
+    updateConfig,
+  ])
 
   useEffect(() => {
     if (!groupsData) return
@@ -144,5 +212,12 @@ export function usePlaygroundOptions({
 
   return {
     isLoadingModels,
+    channels,
+    channelUnavailable,
+    canSend: Boolean(
+      !isLoadingModels &&
+      !channelUnavailable &&
+      availableModels?.some((model) => model.value === currentModel)
+    ),
   }
 }

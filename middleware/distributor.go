@@ -17,9 +17,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/MoeForge/moego/ojson"
@@ -54,6 +54,75 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		if c.Request.URL.Path == "/pg/chat/completions" {
+			var request struct {
+				Group     string `json:"group"`
+				ChannelID *int   `json:"channel_id"`
+			}
+			if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+				return
+			}
+			userGroup := c.GetString("group")
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
+			if request.Group != "" {
+				if !service.GroupInUserUsableGroups(userGroup, request.Group) {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+					return
+				}
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, request.Group)
+			}
+			if request.ChannelID != nil {
+				if c.GetBool("use_access_token") || c.GetInt("role") < common.RoleAdminUser || !authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelRead) {
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgAuthChannelSelectForbidden))
+					return
+				}
+				if *request.ChannelID <= 0 {
+					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+					return
+				}
+				selected, err := model.CacheGetChannel(*request.ChannelID)
+				if err != nil || selected == nil {
+					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+					return
+				}
+				group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+				effectiveGroup, eligible := service.PlaygroundChannelModels(selected, c.GetInt("id"), userGroup, group)[modelRequest.Model]
+				if !eligible {
+					abortWithOpenAiMessage(c, http.StatusForbidden, noAvailableChannelMessage(c, group, modelRequest.Model))
+					return
+				}
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, effectiveGroup)
+				constraints.AddPin(taskdto.ChannelPin{ChannelId: selected.Id, Source: taskdto.PinSourcePlayground, Rank: taskdto.PinRankPlayground, RetryMode: taskdto.PinRetrySingleAttempt})
+				// The pin is gateway metadata. Remove it from the reusable body too,
+				// because passthrough channels forward that body without DTO filtering.
+				var body map[string]common.RawMessage
+				if err := common.UnmarshalBodyReusable(c, &body); err != nil {
+					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+					return
+				}
+				for key := range body {
+					if strings.EqualFold(key, "channel_id") {
+						delete(body, key)
+					}
+				}
+				encoded, err := common.Marshal(body)
+				if err != nil {
+					abortWithOpenAiMessage(c, http.StatusInternalServerError, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+					return
+				}
+				storage, err := common.CreateBodyStorage(encoded)
+				if err != nil {
+					abortWithOpenAiMessage(c, http.StatusInternalServerError, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+					return
+				}
+				common.CleanupBodyStorage(c)
+				c.Set(common.KeyBodyStorage, storage)
+				c.Set(common.KeyRequestBody, nil)
+				c.Request.Body = io.NopCloser(storage)
+				c.Request.ContentLength = storage.Size()
+			}
+		}
 		_, pinned, _ := constraints.ResolvedPin()
 		if !pinned {
 			// Select a channel for the user
@@ -81,23 +150,6 @@ func Distribute() func(c *gin.Context) {
 				if modelRequest.Model == "" {
 					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
 					return
-				}
-				// check path is /pg/chat/completions
-				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
-					usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-					playgroundRequest := &dto.PlayGroundRequest{}
-					err = common.UnmarshalBodyReusable(c, playgroundRequest)
-					if err != nil {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
-						return
-					}
-					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
-							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
-							return
-						}
-						common.SetContextKey(c, constant.ContextKeyUsingGroup, playgroundRequest.Group)
-					}
 				}
 			}
 		}
@@ -142,6 +194,10 @@ func Distribute() func(c *gin.Context) {
 		// auth failure. Every other setup outcome keeps the previous behaviour: task
 		// routes that select no channel call this with a nil channel and carry on.
 		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr != nil && constraints.SuppressesRetry() {
+			abortWithOpenAiMessage(c, setupErr.StatusCode, noAvailableChannelMessage(c, common.GetContextKeyString(c, constant.ContextKeyUsingGroup), modelRequest.Model), setupErr.GetErrorCode())
+			return
+		}
 		if setupErr != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelKeyScopeUnsatisfied {
 			policyState := service.RequestPolicy(c)
 			for attempt := 1; setupErr != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelKeyScopeUnsatisfied && attempt <= maxKeyScopeFallbacks; attempt++ {
@@ -177,7 +233,7 @@ func Distribute() func(c *gin.Context) {
 		c.Next()
 		// A channel reached through a user-bound key is exclusive to that user, so
 		// it must not enter session affinity that other users could hit.
-		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest && !service.UserBoundChannelRouted(c) {
+		if channel != nil && !pinned && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest && !service.UserBoundChannelRouted(c) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}

@@ -21,7 +21,10 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PromptInputButton } from '@/components/ai-elements/prompt-input'
-import { ModelGroupSelector } from '@/components/model-group-selector'
+import {
+  ModelGroupSelector,
+  type ModelGroupSelectorProps,
+} from '@/components/model-group-selector'
 
 import { getInputControlState } from '../../lib'
 import type { GroupOption, ModelOption } from '../../types'
@@ -30,6 +33,10 @@ type PlaygroundInputControlsProps = {
   disabled?: boolean
   groups: GroupOption[]
   groupValue: string
+  channels?: ModelGroupSelectorProps['channels']
+  channelValue?: number
+  onChannelChange?: ModelGroupSelectorProps['onChannelChange']
+  canSend?: boolean
   isGenerating?: boolean
   isModelLoading?: boolean
   models: ModelOption[]
@@ -45,6 +52,10 @@ export function PlaygroundInputControls({
   disabled,
   groups,
   groupValue,
+  channels,
+  channelValue,
+  onChannelChange,
+  canSend = true,
   isGenerating,
   isModelLoading = false,
   models,
@@ -69,6 +80,9 @@ export function PlaygroundInputControls({
 
   const renderSelector = () => (
     <ModelGroupSelector
+      channels={channels}
+      selectedChannel={channelValue}
+      onChannelChange={onChannelChange}
       selectedModel={modelValue}
       models={models}
       onModelChange={onModelChange}
@@ -93,7 +107,7 @@ export function PlaygroundInputControls({
     ) : (
       <PromptInputButton
         className='bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground h-8 px-3 font-medium shadow-sm'
-        disabled={!canSubmit}
+        disabled={!canSubmit || !canSend}
         type='submit'
         variant='default'
       >

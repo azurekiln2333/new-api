@@ -44,6 +44,10 @@ export function buildChatCompletionPayload(
     stream: config.stream,
   }
 
+  if (config.channel_id !== undefined && config.channel_id > 0) {
+    payload.channel_id = config.channel_id
+  }
+
   if (config.web_search) {
     payload.web_search_options = { search_context_size: 'medium' }
   }

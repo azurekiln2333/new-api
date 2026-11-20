@@ -59,6 +59,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 
@@ -567,6 +568,9 @@ export interface ModelGroupSelectorProps {
   selectedGroup: string
   groups: GroupOption[]
   onGroupChange: (value: string) => void
+  channels?: { label: string; value: number }[]
+  selectedChannel?: number
+  onChannelChange?: (value: number | undefined) => void
   // Common props
   className?: string
   disabled?: boolean
@@ -583,12 +587,22 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
   selectedGroup,
   groups,
   onGroupChange,
+  channels,
+  selectedChannel,
+  onChannelChange,
   className,
   disabled = false,
 }) => {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [navigation, setNavigation] = useState<'groups' | 'channels'>(
+    selectedChannel ? 'channels' : 'groups'
+  )
+  const showChannels = channels !== undefined && navigation === 'channels'
+  const currentChannel = channels?.find(
+    (channel) => channel.value === selectedChannel
+  )
   const isMobile = useIsMobile()
   const groupScrollContainerRef = useRef<HTMLDivElement | null>(null)
   const selectedGroupOptionRef = useRef<HTMLButtonElement | null>(null)
@@ -662,7 +676,7 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
       window.cancelAnimationFrame(firstFrameId)
       window.cancelAnimationFrame(secondFrameId)
     }
-  }, [open, selectedGroup, selectedModel])
+  }, [open, selectedGroup, selectedModel, selectedChannel, showChannels])
 
   const renderTrigger = () => (
     <Button
@@ -683,7 +697,9 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
         {currentModel?.label || t('Model')}
       </span>
       <span className='bg-muted text-muted-foreground hidden max-w-20 shrink-0 rounded px-1.5 py-0.5 text-[10px] sm:inline-flex'>
-        {currentGroup?.label || t('Group')}
+        {selectedChannel
+          ? currentChannel?.label || `${t('Channel')} #${selectedChannel}`
+          : currentGroup?.label || t('Group')}
       </span>
       <ChevronsUpDown className='text-muted-foreground ml-auto size-3.5 shrink-0 opacity-60' />
     </Button>
@@ -696,9 +712,32 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
         !isMobile && modelGroupSelectorLayoutClasses.groupColumn
       )}
     >
-      <div className='text-muted-foreground px-1 text-[11px] leading-4 font-medium'>
-        {t('Model Group')}
-      </div>
+      {channels !== undefined && onChannelChange ? (
+        <ToggleGroup
+          aria-label={t('Model navigation')}
+          className='w-full'
+          size='sm'
+          variant='outline'
+          value={[showChannels ? 'channels' : 'groups']}
+          onValueChange={(values) => {
+            const next = values[0]
+            if (next !== 'groups' && next !== 'channels') return
+            setNavigation(next)
+            if (next === 'groups') onChannelChange(undefined)
+          }}
+        >
+          <ToggleGroupItem className='flex-1 text-xs' value='groups'>
+            {t('Groups')}
+          </ToggleGroupItem>
+          <ToggleGroupItem className='flex-1 text-xs' value='channels'>
+            {t('Channels')}
+          </ToggleGroupItem>
+        </ToggleGroup>
+      ) : (
+        <div className='text-muted-foreground px-1 text-[11px] leading-4 font-medium'>
+          {t('Model Group')}
+        </div>
+      )}
       <div
         className={cn(
           'grid gap-1',
@@ -706,35 +745,69 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
         )}
         ref={groupScrollContainerRef}
       >
-        {groups.map((group) => {
-          const isSelected = selectedGroup === group.value
+        {showChannels
+          ? channels.map((channel) => (
+              <Button
+                aria-pressed={selectedChannel === channel.value}
+                className='h-auto min-w-0 justify-between px-2.5 py-2 text-left text-xs'
+                disabled={disabled}
+                key={channel.value}
+                onClick={() => onChannelChange?.(channel.value)}
+                ref={
+                  selectedChannel === channel.value
+                    ? selectedGroupOptionRef
+                    : undefined
+                }
+                title={channel.label}
+                variant={
+                  selectedChannel === channel.value ? 'secondary' : 'ghost'
+                }
+              >
+                <span className='min-w-0 truncate'>{channel.label}</span>
+                <Check
+                  className={cn(
+                    'size-3.5 shrink-0',
+                    selectedChannel === channel.value
+                      ? 'opacity-100'
+                      : 'opacity-0'
+                  )}
+                />
+              </Button>
+            ))
+          : groups.map((group) => {
+              const isSelected = selectedGroup === group.value
 
-          return (
-            <button
-              className={cn(
-                'flex min-w-0 items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-[12px] leading-4 transition-colors',
-                isSelected
-                  ? 'bg-primary/10 text-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-              disabled={disabled}
-              key={group.value}
-              onClick={() => handleGroupChange(group.value)}
-              ref={isSelected ? selectedGroupOptionRef : undefined}
-              type='button'
-            >
-              <span className='min-w-0 truncate font-medium'>
-                {group.label}
-              </span>
-              <Check
-                className={cn(
-                  'size-3.5 shrink-0',
-                  isSelected ? 'opacity-100' : 'opacity-0'
-                )}
-              />
-            </button>
-          )
-        })}
+              return (
+                <button
+                  className={cn(
+                    'flex min-w-0 items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-[12px] leading-4 transition-colors',
+                    isSelected
+                      ? 'bg-primary/10 text-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                  )}
+                  disabled={disabled}
+                  key={group.value}
+                  onClick={() => handleGroupChange(group.value)}
+                  ref={isSelected ? selectedGroupOptionRef : undefined}
+                  type='button'
+                >
+                  <span className='min-w-0 truncate font-medium'>
+                    {group.label}
+                  </span>
+                  <Check
+                    className={cn(
+                      'size-3.5 shrink-0',
+                      isSelected ? 'opacity-100' : 'opacity-0'
+                    )}
+                  />
+                </button>
+              )
+            })}
+        {showChannels && channels.length === 0 && (
+          <p className='text-muted-foreground px-2 py-3 text-xs'>
+            {t('No channels available')}
+          </p>
+        )}
       </div>
     </div>
   )

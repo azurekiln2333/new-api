@@ -68,6 +68,7 @@ export interface ContentPart {
 export interface ChatCompletionRequest {
   model: string
   group?: string
+  channel_id?: number
   messages: ChatCompletionMessage[]
   stream: boolean
   temperature?: number
@@ -134,6 +135,7 @@ export type ReasoningEffort =
 export interface PlaygroundConfig {
   model: string
   group: string
+  channel_id?: number
   temperature: number
   top_p: number
   max_tokens: number

@@ -27,6 +27,20 @@ import type {
   GroupOption,
 } from './types'
 
+export type PlaygroundChannelOption = {
+  id: number
+  name: string
+  models: string[]
+}
+
+export async function getPlaygroundChannels(
+  group: string
+): Promise<PlaygroundChannelOption[]> {
+  const { data } = await api.get('/pg/channels', { params: { group } })
+  requireServerSuccess(data)
+  return Array.isArray(data.data) ? data.data : []
+}
+
 /**
  * Send chat completion request (non-streaming)
  */
