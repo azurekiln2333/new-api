@@ -29,8 +29,10 @@ import React, {
 } from 'react'
 
 import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
+import { useChannelConcurrency } from '../hooks/use-channel-concurrency'
 import { channelsQueryKeys } from '../lib'
 import type { Channel } from '../types'
+import { ChannelConcurrencyContext } from './channel-concurrency-context'
 
 // ============================================================================
 // Types
@@ -71,6 +73,12 @@ type ChannelsContextType = {
   priorityActionContainer: HTMLDivElement | null
   setPriorityActionContainer: (container: HTMLDivElement | null) => void
   upstream: UpstreamUpdateState
+  /**
+   * Publishes the channel IDs the cards currently show. The provider owns the
+   * single live-concurrency subscription so cards and the details drawer read
+   * one sample instead of each polling on its own.
+   */
+  setConcurrencyIds: (ids: number[]) => void
 }
 
 // ============================================================================
@@ -108,12 +116,27 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   const [sensitiveVisible, setSensitiveVisible] = useState(true)
   const [priorityActionContainer, setPriorityActionContainer] =
     useState<HTMLDivElement | null>(null)
+  const [concurrencyIds, setConcurrencyIdsState] = useState<number[]>([])
+  // Keyed setter: the table republishes ids on every data render, so it must
+  // only cause a render when the actual visible set changed.
+  const setConcurrencyIds = useCallback((ids: number[]) => {
+    setConcurrencyIdsState((previous) => {
+      if (previous.length === ids.length) {
+        const same = previous.every((id, index) => id === ids[index])
+        if (same) return previous
+      }
+      return ids
+    })
+  }, [])
 
   const queryClient = useQueryClient()
   const refreshChannels = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all })
   }, [queryClient])
   const upstream = useChannelUpstreamUpdates(refreshChannels)
+  // The open drawer's channel joins the visible set, so opening details on a
+  // visible card reuses the sample already on screen.
+  const concurrency = useChannelConcurrency(concurrencyIds)
 
   // useState setters are stable, so the context value only needs to change when
   // an actual state value changes. Memoizing avoids handing every consumer
@@ -137,6 +160,7 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       priorityActionContainer,
       setPriorityActionContainer,
       upstream,
+      setConcurrencyIds,
     }),
     [
       open,
@@ -148,12 +172,24 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
       sensitiveVisible,
       priorityActionContainer,
       upstream,
+      setConcurrencyIds,
     ]
+  )
+
+  const concurrencyValue = useMemo(
+    () => ({
+      entriesById: concurrency.entriesById,
+      isPending: concurrency.isPending,
+      stale: concurrency.stale,
+    }),
+    [concurrency.entriesById, concurrency.isPending, concurrency.stale]
   )
 
   return (
     <ChannelsContext.Provider value={value}>
-      {children}
+      <ChannelConcurrencyContext.Provider value={concurrencyValue}>
+        {children}
+      </ChannelConcurrencyContext.Provider>
     </ChannelsContext.Provider>
   )
 }

@@ -1463,6 +1463,15 @@ func GetChannelsByIds(ids []int) ([]*Channel, error) {
 	return channels, err
 }
 
+// GetChannelConcurrencySettings reads only the fields needed by the live
+// dashboard sampler, avoiding channel credentials and large key metadata on
+// each refresh.
+func GetChannelConcurrencySettings(ids []int) ([]*Channel, error) {
+	var channels []*Channel
+	err := DB.Select("id", "setting").Where("id IN ?", ids).Find(&channels).Error
+	return channels, err
+}
+
 func BatchSetChannelTag(ids []int, tag *string) error {
 	// 开启事务
 	tx := DB.Begin()

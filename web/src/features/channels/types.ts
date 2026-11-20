@@ -506,3 +506,21 @@ export interface ChannelModelUsage {
 export interface ChannelUsageDetail extends ChannelUsageSummary {
   models: ChannelModelUsage[]
 }
+
+/** Which coordinator produced a live concurrency sample. */
+export type ChannelConcurrencyScope = 'cluster' | 'instance'
+
+/**
+ * One channel's live attempt sample from `GET /api/channel/concurrency`.
+ * `current` is null when the sample is unavailable — never a stand-in for a
+ * real zero. `limit` is null for an unlimited channel, so the UI shows the
+ * current count without inventing a cap.
+ */
+export interface ChannelConcurrencyEntry {
+  id: number
+  current: number | null
+  limit: number | null
+  scope: ChannelConcurrencyScope
+  /** Coordinator/server clock, Unix milliseconds. */
+  sample_time: number
+}

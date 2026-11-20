@@ -65,6 +65,12 @@ export const channelsQueryKeys = {
     [...channelsQueryKeys.usage(), 'summaries', ids] as const,
   usageDetail: (id: number) =>
     [...channelsQueryKeys.usage(), 'detail', id] as const,
+  // One key for the whole visible set: cards and the open details drawer share
+  // this single sample, so there is no per-card query and no per-card timer.
+  // The id set is part of the key so a page change resamples instead of
+  // serving another page's numbers.
+  concurrency: (ids: number[]) =>
+    [...channelsQueryKeys.all, 'concurrency', ids] as const,
   pluginCredentials: (id: number) =>
     [...channelsQueryKeys.detail(id), 'plugin_credentials'] as const,
 }

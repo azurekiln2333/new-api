@@ -139,6 +139,9 @@ export function ChannelsTable() {
     priorityActionContainer,
     setCurrentRow,
     setOpen,
+    currentRow,
+    open,
+    setConcurrencyIds,
   } = useChannels()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
@@ -355,6 +358,20 @@ export function ChannelsTable() {
   )
   const { usageByChannel, refetch: refetchUsage } =
     useChannelUsageSummaries(pageChannelIds)
+
+  // Publish the visible set (plus the open drawer's channel) to the provider,
+  // which owns the one live-concurrency subscription shared by cards and the
+  // details drawer. Tag aggregate rows own no channel and are excluded.
+  const concurrencyIds = useMemo(() => {
+    const ids = (pageChannels ?? [])
+      .filter((channel) => !isTagAggregateRow(channel))
+      .map((channel) => channel.id)
+    if (open === 'channel-details' && currentRow) ids.push(currentRow.id)
+    return [...new Set(ids)].sort((a, b) => a - b)
+  }, [pageChannels, open, currentRow])
+  useEffect(() => {
+    setConcurrencyIds(concurrencyIds)
+  }, [concurrencyIds, setConcurrencyIds])
 
   const [viewMode, setViewMode] = useDataTableViewMode({
     storageKey: CHANNELS_VIEW_MODE_STORAGE_KEY,

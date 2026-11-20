@@ -132,6 +132,24 @@ async function renderChannelsPage(
         },
       }
     }
+    if (url === '/api/channel/concurrency') {
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              {
+                id: channel.id,
+                current: 2,
+                limit: 5,
+                scope: 'instance',
+                sample_time: 1_700_000_000_000,
+              },
+            ],
+          },
+        },
+      }
+    }
     if (url === '/api/channel/usage') {
       return {
         data: {
@@ -328,7 +346,7 @@ it('opens the channel details from the focused card body with Space', async () =
   ).toHaveTextContent('channel-details:3')
 })
 
-it('pairs the card metrics into usage, priority/weight and response rows', async () => {
+it('pairs the card metrics into usage, priority/weight, response and concurrency rows', async () => {
   const card = await renderCardView()
   const rows = [
     ...card.querySelectorAll<HTMLElement>('[data-card-metric-row]'),
@@ -337,6 +355,7 @@ it('pairs the card metrics into usage, priority/weight and response rows', async
     'usage',
     'priority',
     'response',
+    'concurrency',
   ])
 
   // Each row is a description list whose terms and values stay direct
@@ -369,12 +388,18 @@ it('pairs the card metrics into usage, priority/weight and response rows', async
     (label) => label.textContent
   )
   expect(responseLabels).toEqual(['Response', 'Last Tested'])
+
+  // The live sample keeps its own single-metric row.
+  const concurrencyLabels = [...rows[3].querySelectorAll('dt')].map(
+    (label) => label.textContent
+  )
+  expect(concurrencyLabels).toEqual(['Concurrency'])
 })
 
 it('lets each card metric row wrap instead of overflowing a narrow card', async () => {
   const card = await renderCardView()
   const rows = card.querySelectorAll<HTMLElement>('[data-card-metric-row]')
-  expect(rows).toHaveLength(3)
+  expect(rows).toHaveLength(4)
   for (const row of rows) {
     // Wrapping is the narrow-width fallback: pair members stack instead of
     // pushing past the card edge.
@@ -388,4 +413,66 @@ it('keeps the channel group out of the card and leaves it to the details', async
 
   expect(within(card).queryByText('vip')).not.toBeInTheDocument()
   expect(card.querySelector('[data-group-model-row]')).toBeNull()
+})
+
+it('shows the live concurrency of the card from one batched page request', async () => {
+  const card = await renderCardView()
+
+  expect(await within(card).findByText('2/5')).toBeVisible()
+  const concurrencyCalls = vi
+    .mocked(api.get)
+    .mock.calls.filter(([url]) => url === '/api/channel/concurrency')
+  expect(concurrencyCalls).toHaveLength(1)
+  expect(concurrencyCalls[0][1]).toMatchObject({
+    params: { ids: String(channel.id) },
+  })
+})
+
+it('renders an unavailable concurrency sample as unknown instead of zero', async () => {
+  const card = await renderCardView()
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url === '/api/channel/concurrency') {
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              {
+                id: channel.id,
+                current: null,
+                limit: 5,
+                scope: 'cluster',
+                sample_time: 1_700_000_000_000,
+              },
+            ],
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: [] } }
+  })
+
+  // Force one refresh with the unavailable payload.
+  await userEvent.setup().click(await within(card).findByText('2/5'))
+  await waitFor(() => expect(card.textContent).toContain('Unavailable'))
+})
+
+it('reuses the card sample when the same channel details are opened', async () => {
+  const card = await renderCardView()
+  expect(await within(card).findByText('2/5')).toBeVisible()
+  const before = vi
+    .mocked(api.get)
+    .mock.calls.filter(([url]) => url === '/api/channel/concurrency').length
+
+  await userEvent.setup().click(within(card).getByText('Used tokens'))
+
+  expect(
+    screen.getByRole('status', { name: 'Dialog state' })
+  ).toHaveTextContent('channel-details:3')
+  const after = vi
+    .mocked(api.get)
+    .mock.calls.filter(([url]) => url === '/api/channel/concurrency').length
+  // The open drawer joins the existing visible set, so the key is unchanged and
+  // the drawer renders the same sample without another coordinator round trip.
+  expect(after).toBe(before)
 })

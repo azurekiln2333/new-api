@@ -46,6 +46,7 @@ import {
   getChannelTypeLabel,
 } from '../../lib/channel-utils'
 import type { Channel } from '../../types'
+import { ChannelConcurrencySummary } from './channel-concurrency-summary'
 import { ChannelGroupModels } from './channel-group-models'
 import { ChannelUsageSummary } from './channel-usage-summary'
 
@@ -158,6 +159,7 @@ export function ChannelDetailsDrawer(props: ChannelDetailsDrawerProps) {
         <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5'>
           {props.channel ? (
             <div className='space-y-6'>
+              <ChannelConcurrencySummary channelId={props.channel.id} />
               <ChannelGroupModels channel={props.channel} />
               {body}
             </div>

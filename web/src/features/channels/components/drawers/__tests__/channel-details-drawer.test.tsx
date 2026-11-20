@@ -26,7 +26,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { formatNumber, formatTimestampToDate, formatTokens } from '@/lib/format'
 
-import type { Channel, ChannelUsageDetail } from '../../../types'
+import type {
+  Channel,
+  ChannelConcurrencyEntry,
+  ChannelUsageDetail,
+} from '../../../types'
+import { ChannelConcurrencyContext } from '../../channel-concurrency-context'
 import { ChannelDetailsDrawer } from '../channel-details-drawer'
 
 const i18n = createInstance()
@@ -122,15 +127,30 @@ function renderDrawer(props: {
   channel: Channel | null
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  concurrency?: {
+    entriesById: Record<number, ChannelConcurrencyEntry>
+    isPending: boolean
+    stale: boolean
+  }
 }) {
   render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={client}>
-        <ChannelDetailsDrawer
-          channel={props.channel}
-          open={props.open ?? true}
-          onOpenChange={props.onOpenChange ?? (() => {})}
-        />
+        <ChannelConcurrencyContext.Provider
+          value={
+            props.concurrency ?? {
+              entriesById: {},
+              isPending: false,
+              stale: false,
+            }
+          }
+        >
+          <ChannelDetailsDrawer
+            channel={props.channel}
+            open={props.open ?? true}
+            onOpenChange={props.onOpenChange ?? (() => {})}
+          />
+        </ChannelConcurrencyContext.Provider>
       </QueryClientProvider>
     </I18nextProvider>
   )
@@ -259,6 +279,103 @@ describe('ChannelDetailsDrawer', () => {
 
     expect(await screen.findByRole('table')).toBeVisible()
     expect(get).toHaveBeenCalledTimes(2)
+  })
+
+  it('settles to unavailable instead of waiting forever when no sample arrives', async () => {
+    mockDetailApi(usageWithModels)
+    renderDrawer({
+      channel,
+      concurrency: { entriesById: {}, isPending: false, stale: false },
+    })
+
+    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    expect(within(concurrency).getByText('Unavailable')).toBeVisible()
+    expect(within(concurrency).queryByText('…')).not.toBeInTheDocument()
+  })
+
+  it('shows the live concurrency sample shared with the cards', async () => {
+    mockDetailApi(usageWithModels)
+    renderDrawer({
+      channel,
+      concurrency: {
+        entriesById: {
+          7: {
+            id: 7,
+            current: 3,
+            limit: 8,
+            scope: 'cluster',
+            sample_time: 1_700_000_000_000,
+          },
+        },
+        isPending: false,
+        stale: false,
+      },
+    })
+
+    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    const current = concurrency.querySelector('[data-concurrency-current]')
+    expect(current?.textContent).toContain('3')
+    expect(within(concurrency).getByText('8')).toBeVisible()
+    expect(within(concurrency).getByText('Cluster')).toBeVisible()
+    expect(
+      within(concurrency).getByText(
+        formatTimestampToDate(1_700_000_000_000, 'milliseconds')
+      )
+    ).toBeVisible()
+  })
+
+  it('reports an unlimited channel without inventing a concurrency cap', async () => {
+    mockDetailApi(usageWithModels)
+    renderDrawer({
+      channel,
+      concurrency: {
+        entriesById: {
+          7: {
+            id: 7,
+            current: 4,
+            limit: null,
+            scope: 'instance',
+            sample_time: 1_700_000_000_000,
+          },
+        },
+        isPending: false,
+        stale: false,
+      },
+    })
+
+    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    expect(
+      concurrency.querySelector('[data-concurrency-current]')?.textContent
+    ).toContain('4')
+    expect(within(concurrency).getByText('No limit')).toBeVisible()
+    expect(within(concurrency).getByText('Instance')).toBeVisible()
+  })
+
+  it('shows an unavailable sample and stale warning instead of a false zero', async () => {
+    mockDetailApi(usageWithModels)
+    renderDrawer({
+      channel,
+      concurrency: {
+        entriesById: {
+          7: {
+            id: 7,
+            current: null,
+            limit: 8,
+            scope: 'cluster',
+            sample_time: 1_700_000_000_000,
+          },
+        },
+        isPending: false,
+        stale: true,
+      },
+    })
+
+    const concurrency = await screen.findByRole('region', { name: 'Concurrency' })
+    expect(within(concurrency).getByText('Unavailable')).toBeVisible()
+    expect(
+      within(concurrency).getByText('Last known sample; the latest refresh failed')
+    ).toBeVisible()
+    expect(within(concurrency).queryByText('0 / 8')).not.toBeInTheDocument()
   })
 
   it('lists every channel group with the models it reaches', async () => {

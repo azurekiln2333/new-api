@@ -40,6 +40,7 @@ import type {
   ChannelBalanceResponse,
   ChannelOpsResponse,
   ChannelTestResponse,
+  ChannelConcurrencyEntry,
   ChannelUpdateRequest,
   ChannelUsageDetail,
   ChannelUsageSummary,
@@ -119,6 +120,22 @@ export async function getChannelUsageDetail(
     data: ChannelUsageDetail
   }>(`/api/channel/${channelId}/usage`, { signal, disableDuplicate: true })
   return requireServerSuccess(response.data).data
+}
+
+/** One bounded batch of live concurrency samples; callers cap `ids` at 200. */
+export async function getChannelConcurrency(
+  ids: number[],
+  signal?: AbortSignal
+): Promise<ChannelConcurrencyEntry[]> {
+  const response = await api.get<{
+    success: boolean
+    data: { items: ChannelConcurrencyEntry[] }
+  }>('/api/channel/concurrency', {
+    params: { ids: ids.join(',') },
+    signal,
+    disableDuplicate: true,
+  })
+  return requireServerSuccess(response.data).data.items ?? []
 }
 
 export type TaskPluginOption = {

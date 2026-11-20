@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow } from '../lib'
 import type { Channel } from '../types'
+import { ChannelConcurrencyCell } from './channel-concurrency-context'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels } from './channels-provider'
 
@@ -191,6 +192,23 @@ function ChannelCardComponent({
                 <dt className={labelClass}>{t('Last Tested')}</dt>
                 <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
                   {testCell ?? <span className='text-muted-foreground'>-</span>}
+                </dd>
+              </div>
+            </dl>
+
+            {/* Live concurrency is sampled once for the whole visible set;
+              the card only reads the shared sample. */}
+            <dl
+              data-card-metric-row='concurrency'
+              className='flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1'
+            >
+              <div className='flex min-w-0 items-center gap-1.5'>
+                <dt className={labelClass}>{t('Concurrency')}</dt>
+                <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
+                  <ChannelConcurrencyCell
+                    channelId={row.original.id}
+                    aggregate={isTagRow}
+                  />
                 </dd>
               </div>
             </dl>

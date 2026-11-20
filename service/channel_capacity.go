@@ -22,6 +22,36 @@ import (
 const channelCapacityLeaseTTL = 30 * time.Second
 const channelCapacityRedisTimeout = 2 * time.Second
 
+// Unlimited counting is telemetry only; it must not add the full coordinator
+// timeout to a request that would otherwise leave immediately.
+const channelCapacityTelemetryTimeout = 500 * time.Millisecond
+
+// A degraded owner's marker outlives several retries so a single failed retry
+// does not make an incomplete cluster sample look complete.
+const channelCapacityTelemetryRetry = 2 * time.Second
+
+// The marker must outlive more than one retry interval, otherwise a reader
+// landing between a marker's expiry and the next publish would see a complete
+// sample while a live owner is still missing from the count.
+const channelCapacityMarkerTTL = 3 * channelCapacityTelemetryRetry
+
+// Publishing a marker after a failed registration needs its own short context:
+// the registration context is usually already expired at that point. Admission
+// latency stays bounded because the two attempts run sequentially with these
+// fixed timeouts.
+const channelCapacityMarkerTimeout = channelCapacityTelemetryTimeout / 2
+
+func channelCapacityKey(channelID int) string {
+	return fmt.Sprintf("new-api:channel-capacity:%d", channelID)
+}
+
+// The marker key is shared: any gateway that lost a live owner's counter entry
+// publishes a marker there, so every instance reports an incomplete sample
+// instead of a silently low cluster count.
+func channelCapacityMarkerKey(channelID int) string {
+	return fmt.Sprintf("new-api:channel-capacity-incomplete:%d", channelID)
+}
+
 // Server time and owner tokens prevent a delayed gateway from renewing an
 // expired lease or releasing the slot of a later owner. Expired owners are
 // removed atomically before checking capacity; the key expires when idle.
@@ -33,6 +63,39 @@ if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then return 0 end
 redis.call('ZADD', KEYS[1], now + tonumber(ARGV[3]), ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
+`)
+
+// Unlimited channels are counted without a cap: the same lease lifecycle owns
+// the owner token, while zero/unset still means "never reject".
+var channelCapacityCountAdmitScript = redis.NewScript(`
+local clock = redis.call('TIME')
+local now = clock[1] * 1000 + math.floor(clock[2] / 1000)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+redis.call('ZADD', KEYS[1], now + tonumber(ARGV[2]), ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return 1
+`)
+
+// Owner markers expire on their own; the write-time reap only bounds the set
+// and never touches the capacity key.
+var channelCapacityMarkerScript = redis.NewScript(`
+local clock = redis.call('TIME')
+local now = clock[1] * 1000 + math.floor(clock[2] / 1000)
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+redis.call('ZADD', KEYS[1], now + tonumber(ARGV[2]), ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+return 1
+`)
+
+// Non-mutating read. Every invocation reads its own Redis server TIME, so the
+// returned time belongs to that channel's count; a pipelined batch is not one
+// atomic instant. Expired owners and markers are excluded, never reaped here.
+var channelCapacityCountScript = redis.NewScript(`
+local clock = redis.call('TIME')
+local now = clock[1] * 1000 + math.floor(clock[2] / 1000)
+local current = redis.call('ZCOUNT', KEYS[1], '(' .. now, '+inf')
+local incomplete = redis.call('ZCOUNT', KEYS[2], '(' .. now, '+inf')
+return {now, current, incomplete}
 `)
 
 var channelCapacityRenewScript = redis.NewScript(`
@@ -50,10 +113,45 @@ var localChannelCapacity = struct {
 	active map[int]int
 }{active: make(map[int]int)}
 
+// channelCapacityLostOwners counts live unlimited attempts on this gateway that
+// are outside the shared count. It makes the local sampler report unavailable
+// even when the shared marker could not be published, which is the case during
+// a coordinator outage or a one-sided partition. It cannot discover another
+// gateway's partition; the cluster sample is therefore best effort and may
+// briefly undercount, never a claimed exact value.
+var channelCapacityLostOwners = struct {
+	sync.Mutex
+	counts map[int]int
+}{counts: make(map[int]int)}
+
+func addLostChannelCapacityOwner(channelID int) {
+	channelCapacityLostOwners.Lock()
+	channelCapacityLostOwners.counts[channelID]++
+	channelCapacityLostOwners.Unlock()
+}
+
+func removeLostChannelCapacityOwner(channelID int) {
+	channelCapacityLostOwners.Lock()
+	if remaining := channelCapacityLostOwners.counts[channelID] - 1; remaining > 0 {
+		channelCapacityLostOwners.counts[channelID] = remaining
+	} else {
+		delete(channelCapacityLostOwners.counts, channelID)
+	}
+	channelCapacityLostOwners.Unlock()
+}
+
+func hasLostChannelCapacityOwner(channelID int) bool {
+	channelCapacityLostOwners.Lock()
+	defer channelCapacityLostOwners.Unlock()
+	return channelCapacityLostOwners.counts[channelID] > 0
+}
+
 // ChannelCapacityLease owns one admitted upstream attempt. The caller must
 // release it after the handler/connection has closed, even on panic. Renewal
 // continues until cleanup: native submission streams deliberately outlive the
-// client. Unlimited channels need no counter or background worker.
+// client. Unlimited channels are counted without a cap: they own a local count
+// plus a best-effort shared owner entry, and their telemetry loss is recorded
+// instead of canceling the traffic.
 type ChannelCapacityLease struct {
 	ctx       context.Context
 	control   context.Context
@@ -64,9 +162,33 @@ type ChannelCapacityLease struct {
 	key       string
 	owner     string
 	done      chan struct{}
+	// unlimited leases count without rejecting. A telemetry failure may never
+	// cancel their traffic, so their context carries a typed-nil lease and a
+	// separate retention handle.
+	unlimited bool
+	// handleMu guards the retention handle count. The owning attempt holds one;
+	// each detached continuation that asks for cancellation support holds one
+	// more, so draining the attempt cannot drop work that is still running.
+	handleMu sync.Mutex
+	handles  int
+	drained  bool
+	// telemetryMu guards the owner-entry state shared by maintenance and
+	// release. Release stops maintenance before reading it, so the state is
+	// stable when release acts on it.
+	telemetryMu         sync.Mutex
+	telemetryRegistered bool
+	telemetryMarker     bool
+	telemetryLost       bool
+	markerKey           string
 }
 
 type channelCapacityContextKey struct{}
+
+// channelCapacityUnlimitedKey carries the unlimited retention handle across a
+// deliberate context.WithoutCancel. It deliberately does not carry a
+// cancellable lease: unlimited admission has no coordination loss to propagate,
+// and a stale detached context must never rebind a new attempt's lease.
+type channelCapacityUnlimitedKey struct{}
 
 func newChannelCapacityLease(parent context.Context, channelID int) *ChannelCapacityLease {
 	control, cancelControl := context.WithCancelCause(context.Background())
@@ -75,6 +197,9 @@ func newChannelCapacityLease(parent context.Context, channelID int) *ChannelCapa
 		cancelControl(cause)
 		cancelRequest(cause)
 	}}
+	// Mask an inherited unlimited counting handle: a detached previous attempt's
+	// context must not make this limited attempt retain that old owner.
+	ctx = context.WithValue(ctx, channelCapacityUnlimitedKey{}, (*ChannelCapacityLease)(nil))
 	lease.ctx = context.WithValue(ctx, channelCapacityContextKey{}, lease)
 	return lease
 }
@@ -82,9 +207,15 @@ func newChannelCapacityLease(parent context.Context, channelID int) *ChannelCapa
 // WithChannelCapacityCancellation restores lease-loss cancellation after a
 // deliberate context.WithoutCancel. Client cancellation remains detached; the
 // admitted provider work must still stop if its distributed slot is lost.
+// An unlimited attempt has no slot to lose, but its detached continuation keeps
+// the attempt's counting handle until both the attempt and that continuation
+// finish, so a long detached stream is not reported as gone.
 func WithChannelCapacityCancellation(ctx context.Context) (context.Context, context.CancelFunc) {
 	lease, _ := ctx.Value(channelCapacityContextKey{}).(*ChannelCapacityLease)
 	if lease == nil {
+		if unlimited, _ := ctx.Value(channelCapacityUnlimitedKey{}).(*ChannelCapacityLease); unlimited != nil {
+			return ctx, unlimited.retainCountingHandle()
+		}
 		return ctx, func() {}
 	}
 	bound, cancel := context.WithCancelCause(ctx)
@@ -107,8 +238,48 @@ func (l *ChannelCapacityLease) Err() *types.NewAPIError {
 	return nil
 }
 
+// retainCountingHandle holds the unlimited attempt's counting owner across a
+// detached continuation. A drained or released owner is never revived, so a
+// stale detached context from a previous attempt cannot resurrect it.
+func (l *ChannelCapacityLease) retainCountingHandle() context.CancelFunc {
+	l.handleMu.Lock()
+	if l.drained || !l.unlimited {
+		l.handleMu.Unlock()
+		return func() {}
+	}
+	l.handles++
+	l.handleMu.Unlock()
+	var once sync.Once
+	return func() { once.Do(l.releaseCountingHandle) }
+}
+
+// releaseCountingHandle drops one holder. The last holder performs cleanup, so
+// the attempt's own Release after a detached continuation still counts it once.
+func (l *ChannelCapacityLease) releaseCountingHandle() {
+	l.handleMu.Lock()
+	if l.drained {
+		l.handleMu.Unlock()
+		return
+	}
+	l.handles--
+	last := l.handles <= 0
+	if last {
+		l.drained = true
+	}
+	l.handleMu.Unlock()
+	if last {
+		l.releaseUnlimited()
+	}
+}
+
 func (l *ChannelCapacityLease) Release() {
 	if l == nil || l.cancel == nil {
+		return
+	}
+	if l.unlimited {
+		// The owning attempt contributes exactly one holder, so repeated Release
+		// calls cannot drain a count a detached continuation still holds.
+		l.once.Do(l.releaseCountingHandle)
 		return
 	}
 	l.once.Do(func() {
@@ -147,12 +318,13 @@ func AcquireChannelCapacity(ctx context.Context, channelID int, settings dto.Cha
 	if err := ctx.Err(); err != nil {
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, http.StatusRequestTimeout, types.ErrOptionWithSkipRetry())
 	}
-	if settings.MaxConcurrentRequests == nil || *settings.MaxConcurrentRequests <= 0 {
-		// Native submission retries can carry a detached previous attempt's
-		// context values. Unlimited admission must not rebind that old lease.
-		return &ChannelCapacityLease{ctx: context.WithValue(ctx, channelCapacityContextKey{}, (*ChannelCapacityLease)(nil))}, nil
+	limit := 0
+	if settings.MaxConcurrentRequests != nil && *settings.MaxConcurrentRequests > 0 {
+		limit = *settings.MaxConcurrentRequests
 	}
-	limit := *settings.MaxConcurrentRequests
+	if limit == 0 {
+		return acquireUnlimitedChannelCapacity(ctx, channelID), nil
+	}
 	if !common.RedisEnabled {
 		localChannelCapacity.Lock()
 		defer localChannelCapacity.Unlock()
@@ -170,8 +342,230 @@ func AcquireChannelCapacity(ctx context.Context, channelID int, settings dto.Cha
 	return acquireRedisChannelCapacity(ctx, common.RDB, channelID, limit)
 }
 
+// acquireUnlimitedChannelCapacity counts an attempt without ever rejecting it.
+// Native submission retries can carry a detached previous attempt's context
+// values, so the lease context keeps a typed-nil lease and cannot rebind that
+// old attempt; counting never becomes an admission or cancellation signal.
+func acquireUnlimitedChannelCapacity(ctx context.Context, channelID int) *ChannelCapacityLease {
+	control, cancelControl := context.WithCancelCause(context.Background())
+	lease := &ChannelCapacityLease{
+		ctx:       context.WithValue(ctx, channelCapacityContextKey{}, (*ChannelCapacityLease)(nil)),
+		control:   control,
+		cancel:    cancelControl,
+		channelID: channelID,
+		unlimited: true,
+		handles:   1,
+		markerKey: channelCapacityMarkerKey(channelID),
+	}
+	lease.ctx = context.WithValue(lease.ctx, channelCapacityUnlimitedKey{}, lease)
+	// The local owner lifecycle exists in both modes: it is the instance's
+	// sample in memory mode and the last-resort signal when the shared count is
+	// known to be missing this live attempt.
+	localChannelCapacity.Lock()
+	localChannelCapacity.active[channelID]++
+	localChannelCapacity.Unlock()
+	if !common.RedisEnabled {
+		return lease
+	}
+	key := channelCapacityKey(channelID)
+	owner := uuid.NewString()
+	if common.RDB == nil {
+		// A coordinator may appear while this attempt is still running. Until it
+		// does, this live attempt is outside the shared count, so keep the local
+		// lost-owner record until release: a later sample must report unavailable
+		// rather than a false zero. The traffic itself is never rejected.
+		lease.telemetryMu.Lock()
+		lease.telemetryLost = true
+		lease.telemetryMu.Unlock()
+		addLostChannelCapacityOwner(channelID)
+		return lease
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, channelCapacityTelemetryTimeout)
+	counted, err := channelCapacityCountAdmitScript.Run(commandCtx, common.RDB, []string{key}, owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+	cancel()
+	if err == nil && counted == 1 {
+		lease.client, lease.key, lease.owner = common.RDB, key, owner
+		lease.done = make(chan struct{})
+		lease.telemetryRegistered = true
+		go lease.maintainUnlimited()
+		return lease
+	}
+	if err == nil {
+		// The write outcome is ambiguous; expiration bounds this token.
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), channelCapacityTelemetryTimeout)
+		_ = common.RDB.ZRem(cleanupCtx, key, owner).Err()
+		cleanupCancel()
+	}
+	// A failed registration leaves a live owner outside the shared count. Publish
+	// the shared marker with its own bounded context (the registration context
+	// has usually expired by now) and record the owner locally as a last-resort
+	// signal. The maintenance loop then retries registration immediately.
+	lease.client, lease.key, lease.owner = common.RDB, key, owner
+	lease.done = make(chan struct{})
+	lease.telemetryLost = true
+	addLostChannelCapacityOwner(channelID)
+	if lease.publishTelemetryMarker() == nil {
+		lease.telemetryMarker = true
+	}
+	go lease.maintainUnlimited()
+	return lease
+}
+
+// publishTelemetryMarker records this owner in the shared incomplete set with
+// an independent short context, so a registration timeout cannot also doom the
+// marker write.
+func (l *ChannelCapacityLease) publishTelemetryMarker() error {
+	markerCtx, markerCancel := context.WithTimeout(context.Background(), channelCapacityMarkerTimeout)
+	defer markerCancel()
+	_, err := channelCapacityMarkerScript.Run(markerCtx, l.client, []string{l.markerKey}, l.owner, channelCapacityMarkerTTL.Milliseconds()).Int()
+	return err
+}
+
+// releaseUnlimited stops the maintenance loop first, then reads the owner state
+// it stabilized, then drains the local lifecycle and this owner's exact
+// coordinator entries. The owner entry is removed unconditionally: an ambiguous
+// write may have registered it even though this gateway never saw a success.
+// Losing telemetry never resurrects a drained owner.
+func (l *ChannelCapacityLease) releaseUnlimited() {
+	l.cancel(context.Canceled)
+	if l.done != nil {
+		<-l.done
+	}
+	l.telemetryMu.Lock()
+	lost := l.telemetryLost
+	l.telemetryRegistered, l.telemetryMarker, l.telemetryLost = false, false, false
+	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), channelCapacityTelemetryTimeout)
+	if l.client != nil {
+		pipe := l.client.Pipeline()
+		pipe.ZRem(releaseCtx, l.key, l.owner)
+		pipe.ZRem(releaseCtx, l.markerKey, l.owner)
+		_, _ = pipe.Exec(releaseCtx)
+	}
+	releaseCancel()
+	l.telemetryMu.Unlock()
+	if lost {
+		removeLostChannelCapacityOwner(l.channelID)
+	}
+	localChannelCapacity.Lock()
+	if remaining := localChannelCapacity.active[l.channelID] - 1; remaining > 0 {
+		localChannelCapacity.active[l.channelID] = remaining
+	} else {
+		delete(localChannelCapacity.active, l.channelID)
+	}
+	localChannelCapacity.Unlock()
+}
+
+// maintainUnlimited keeps a live owner's shared entries fresh. A failed initial
+// registration retries immediately; an already registered owner waits for its
+// renewal deadline instead of writing twice at admission. A coordinator failure
+// never cancels the traffic.
+func (l *ChannelCapacityLease) maintainUnlimited() {
+	defer close(l.done)
+	l.telemetryMu.Lock()
+	delay := time.Duration(0)
+	if l.telemetryRegistered {
+		delay = channelCapacityLeaseTTL / 3
+	}
+	l.telemetryMu.Unlock()
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-l.control.Done():
+			return
+		case <-timer.C:
+			healthy := l.refreshUnlimited()
+			delay = channelCapacityTelemetryRetry
+			if healthy {
+				delay = channelCapacityLeaseTTL / 3
+			}
+			timer.Reset(delay)
+		}
+	}
+}
+
+// refreshUnlimited renews the owner entry, re-registers a live owner after a
+// coordinator interruption, and keeps the incomplete marker aligned with it.
+// Coordinator errors only publish the marker; they never cancel the traffic.
+func (l *ChannelCapacityLease) refreshUnlimited() bool {
+	ctx, cancel := context.WithTimeout(l.control, channelCapacityTelemetryTimeout)
+	defer cancel()
+	l.telemetryMu.Lock()
+	registered, marked := l.telemetryRegistered, l.telemetryMarker
+	l.telemetryMu.Unlock()
+
+	if registered {
+		renewed, err := channelCapacityRenewScript.Run(ctx, l.client, []string{l.key}, l.owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+		if err == nil && renewed == 1 {
+			return l.reconcileTelemetry(marked)
+		}
+		// The entry is gone or unreachable: this owner is no longer counted.
+		l.telemetryMu.Lock()
+		l.telemetryRegistered = false
+		l.telemetryMu.Unlock()
+	}
+	// Re-register the still-running owner. A released lease has already
+	// stopped this loop, so a drained owner is never resurrected.
+	counted, err := channelCapacityCountAdmitScript.Run(ctx, l.client, []string{l.key}, l.owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+	if err == nil && counted == 1 {
+		l.telemetryMu.Lock()
+		l.telemetryRegistered = true
+		l.telemetryMu.Unlock()
+		return l.reconcileTelemetry(marked)
+	}
+	// Both the renewal and the re-registration failed, so this live attempt is
+	// outside the shared count. Record it locally as well as in the shared
+	// marker: the local record still makes this gateway's sample unavailable
+	// when the marker itself cannot be written.
+	l.markTelemetryLost()
+	if err := l.publishTelemetryMarker(); err != nil {
+		return false
+	}
+	l.telemetryMu.Lock()
+	l.telemetryMarker = true
+	l.telemetryMu.Unlock()
+	return false
+}
+
+// markTelemetryLost records once that a live owner is missing from the shared
+// count, so the local sampler stops reporting a complete-looking number.
+func (l *ChannelCapacityLease) markTelemetryLost() {
+	l.telemetryMu.Lock()
+	first := !l.telemetryLost
+	l.telemetryLost = true
+	l.telemetryMu.Unlock()
+	if first {
+		addLostChannelCapacityOwner(l.channelID)
+	}
+}
+
+// reconcileTelemetry runs after the owner entry is live again: the shared
+// marker and the local lost-owner record are cleared with independent bounded
+// contexts, so an expired probe context cannot leave a false incomplete state.
+func (l *ChannelCapacityLease) reconcileTelemetry(marked bool) bool {
+	if marked {
+		clearCtx, clearCancel := context.WithTimeout(context.Background(), channelCapacityMarkerTimeout)
+		err := l.client.ZRem(clearCtx, l.markerKey, l.owner).Err()
+		clearCancel()
+		if err != nil {
+			return false
+		}
+		l.telemetryMu.Lock()
+		l.telemetryMarker = false
+		l.telemetryMu.Unlock()
+	}
+	l.telemetryMu.Lock()
+	lost := l.telemetryLost
+	l.telemetryLost = false
+	l.telemetryMu.Unlock()
+	if lost {
+		removeLostChannelCapacityOwner(l.channelID)
+	}
+	return true
+}
+
 func acquireRedisChannelCapacity(ctx context.Context, client *redis.Client, channelID, limit int) (*ChannelCapacityLease, *types.NewAPIError) {
-	key := fmt.Sprintf("new-api:channel-capacity:%d", channelID)
+	key := channelCapacityKey(channelID)
 	owner := uuid.NewString()
 	commandCtx, cancel := context.WithTimeout(ctx, channelCapacityRedisTimeout)
 	admitted, err := channelCapacityAcquireScript.Run(commandCtx, client, []string{key}, limit, owner, channelCapacityLeaseTTL.Milliseconds()).Int()

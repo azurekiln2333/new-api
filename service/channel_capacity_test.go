@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -185,6 +186,101 @@ func TestChannelCapacityAdmissionRestrictions(t *testing.T) {
 	}
 }
 
+func TestChannelCapacityUnlimitedCountsInLocalMode(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
+	channelID := 71010
+	for _, unlimited := range []*int{nil, common.GetPointer(0)} {
+		settings := dto.ChannelSettings{MaxConcurrentRequests: unlimited}
+		first, apiErr := AcquireChannelCapacity(context.Background(), channelID, settings)
+		require.Nil(t, apiErr)
+		second, apiErr := AcquireChannelCapacity(context.Background(), channelID, settings)
+		require.Nil(t, apiErr, "zero or unset never rejects")
+		samples := ReadChannelConcurrency(context.Background(), []int{channelID, channelID + 1})
+		require.NotNil(t, samples[channelID].Current)
+		assert.Equal(t, 2, *samples[channelID].Current, "unlimited attempts are counted, not dropped")
+		assert.Equal(t, ChannelConcurrencyScopeInstance, samples[channelID].Scope)
+		assert.False(t, samples[channelID].SampleTime.IsZero())
+		require.NotNil(t, samples[channelID+1].Current)
+		assert.Equal(t, 0, *samples[channelID+1].Current, "an idle channel is zero, never unavailable")
+		first.Release()
+		first.Release()
+		samples = ReadChannelConcurrency(context.Background(), []int{channelID})
+		require.NotNil(t, samples[channelID].Current)
+		assert.Equal(t, 1, *samples[channelID].Current, "release is idempotent")
+		second.Release()
+		samples = ReadChannelConcurrency(context.Background(), []int{channelID})
+		require.NotNil(t, samples[channelID].Current)
+		assert.Equal(t, 0, *samples[channelID].Current)
+	}
+}
+
+func TestChannelCapacityUnlimitedTelemetryLossNeverRejects(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousRedis, previousClient := common.RedisEnabled, common.RDB
+	common.RedisEnabled, common.RDB = true, nil
+	t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+	channelID := 71011
+	lease, apiErr := AcquireChannelCapacity(context.Background(), channelID, dto.ChannelSettings{})
+	require.Nil(t, apiErr, "an unreachable coordinator may not reject unlimited traffic")
+	assert.True(t, hasLostChannelCapacityOwner(channelID), "a live attempt without a coordinator stays marked until release")
+	samples := ReadChannelConcurrency(context.Background(), []int{channelID})
+	assert.Nil(t, samples[channelID].Current, "a cluster count that omits a live owner is unavailable, not zero")
+	assert.Equal(t, ChannelConcurrencyScopeCluster, samples[channelID].Scope)
+	lease.Release()
+	assert.False(t, hasLostChannelCapacityOwner(channelID), "release clears the local lost-owner record")
+	samples = ReadChannelConcurrency(context.Background(), []int{channelID})
+	assert.Nil(t, samples[channelID].Current, "without a coordinator the cluster sample stays unavailable")
+}
+
+func TestChannelCapacityUnlimitedDetachedContinuationKeepsCounting(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
+	channelID := 71012
+	lease, apiErr := AcquireChannelCapacity(context.Background(), channelID, dto.ChannelSettings{})
+	require.Nil(t, apiErr)
+	// A detached native submission continues after the client leaves.
+	detached, releaseDetached := WithChannelCapacityCancellation(context.WithoutCancel(lease.Context()))
+	assert.NoError(t, detached.Err(), "an unlimited attempt has no coordination loss to propagate")
+	lease.Release()
+	lease.Release()
+	samples := ReadChannelConcurrency(context.Background(), []int{channelID})
+	require.NotNil(t, samples[channelID].Current)
+	assert.Equal(t, 1, *samples[channelID].Current, "a repeated base release cannot drain work a detached continuation still holds")
+	releaseDetached()
+	releaseDetached()
+	samples = ReadChannelConcurrency(context.Background(), []int{channelID})
+	require.NotNil(t, samples[channelID].Current)
+	assert.Equal(t, 0, *samples[channelID].Current, "the last holder drains the count exactly once")
+
+	// A stale detached context from a drained attempt must not resurrect it.
+	released, apiErr := AcquireChannelCapacity(context.Background(), channelID, dto.ChannelSettings{})
+	require.Nil(t, apiErr)
+	released.Release()
+	_, releaseStale := WithChannelCapacityCancellation(context.WithoutCancel(released.Context()))
+	releaseStale()
+	samples = ReadChannelConcurrency(context.Background(), []int{channelID})
+	require.NotNil(t, samples[channelID].Current)
+	assert.Equal(t, 0, *samples[channelID].Current)
+
+	// A limited attempt inheriting a drained unlimited context must not retain
+	// that old owner nor fail its own lifecycle.
+	limitedChannel := channelID + 1
+	limited, apiErr := AcquireChannelCapacity(context.WithoutCancel(lease.Context()), limitedChannel, dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+	require.Nil(t, apiErr)
+	limitedContext, releaseLimited := WithChannelCapacityCancellation(context.WithoutCancel(limited.Context()))
+	assert.NoError(t, limitedContext.Err())
+	releaseLimited()
+	limited.Release()
+	samples = ReadChannelConcurrency(context.Background(), []int{limitedChannel})
+	require.NotNil(t, samples[limitedChannel].Current)
+	assert.Equal(t, 0, *samples[limitedChannel].Current)
+}
+
 func TestChannelCapacityRedis(t *testing.T) {
 	address := os.Getenv("TEST_REDIS_ADDR")
 	if address == "" {
@@ -263,5 +359,179 @@ func TestChannelCapacityRedis(t *testing.T) {
 		_, apiErr = acquireRedisChannelCapacity(ctx, isolated, channelID+1, 1)
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	})
+	t.Run("unlimited counting with shared coordinator", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, client
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		unlimitedChannel := int(time.Now().UnixNano())
+		settings := dto.ChannelSettings{}
+		first, apiErr := AcquireChannelCapacity(ctx, unlimitedChannel, settings)
+		require.Nil(t, apiErr)
+		second, apiErr := AcquireChannelCapacity(ctx, unlimitedChannel, settings)
+		require.Nil(t, apiErr)
+		samples := ReadChannelConcurrency(ctx, []int{unlimitedChannel, channelID})
+		require.NotNil(t, samples[unlimitedChannel].Current)
+		assert.Equal(t, 2, *samples[unlimitedChannel].Current)
+		assert.Equal(t, ChannelConcurrencyScopeCluster, samples[unlimitedChannel].Scope)
+		assert.False(t, samples[unlimitedChannel].SampleTime.IsZero())
+		assert.Greater(t, samples[unlimitedChannel].SampleTime.UnixMilli(), int64(0))
+		stored, err := client.ZCount(ctx, channelCapacityKey(unlimitedChannel), fmt.Sprintf("(%d", samples[unlimitedChannel].SampleTime.UnixMilli()), "+inf").Result()
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), stored, "the read matches the coordinator count at server time")
+		first.Release()
+		samples = ReadChannelConcurrency(ctx, []int{unlimitedChannel})
+		require.NotNil(t, samples[unlimitedChannel].Current)
+		assert.Equal(t, 1, *samples[unlimitedChannel].Current)
+		second.Release()
+		samples = ReadChannelConcurrency(ctx, []int{unlimitedChannel})
+		require.NotNil(t, samples[unlimitedChannel].Current)
+		assert.Equal(t, 0, *samples[unlimitedChannel].Current)
+		require.NoError(t, client.Del(ctx, channelCapacityKey(unlimitedChannel)).Err())
+	})
+	t.Run("unlimited registration failure preserves traffic and an honest sample", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		isolated := redis.NewClient(&redis.Options{Addr: address, MaxRetries: -1})
+		require.NoError(t, isolated.Close())
+		common.RedisEnabled, common.RDB = true, isolated
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		unlimitedChannel := int(time.Now().UnixNano())
+		lease, apiErr := AcquireChannelCapacity(ctx, unlimitedChannel, dto.ChannelSettings{})
+		require.Nil(t, apiErr, "a failed coordinator command must never reject unlimited traffic")
+		defer lease.Release()
+		assert.NoError(t, lease.Context().Err())
+		assert.Nil(t, lease.Err())
+		// A sampler with a healthy connection must still report the live owner
+		// missing from the count as unavailable, even if its marker write failed.
+		common.RDB = client
+		samples := ReadChannelConcurrency(ctx, []int{unlimitedChannel})
+		assert.Nil(t, samples[unlimitedChannel].Current)
+		lease.Release()
+		samples = ReadChannelConcurrency(ctx, []int{unlimitedChannel})
+		require.NotNil(t, samples[unlimitedChannel].Current)
+		assert.Equal(t, 0, *samples[unlimitedChannel].Current, "release clears the missing-owner signal")
+	})
+	t.Run("read is non-mutating and ignores expired owners", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, client
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		readChannel := int(time.Now().UnixNano())
+		key := channelCapacityKey(readChannel)
+		require.NoError(t, client.ZAdd(ctx, key, &redis.Z{Score: 0, Member: "expired-owner"}).Err())
+		require.NoError(t, client.ZAdd(ctx, key, &redis.Z{Score: float64(time.Now().Add(time.Minute).UnixMilli()), Member: "live-owner"}).Err())
+		t.Cleanup(func() { _ = client.Del(ctx, key).Err() })
+		samples := ReadChannelConcurrency(ctx, []int{readChannel})
+		require.NotNil(t, samples[readChannel].Current)
+		assert.Equal(t, 1, *samples[readChannel].Current, "only unexpired owners are counted")
+		score, err := client.ZScore(ctx, key, "expired-owner").Result()
+		require.NoError(t, err, "a dashboard read must not reap another process's lease")
+		assert.Equal(t, float64(0), score)
+	})
+	t.Run("coordinator loss is unavailable, not zero", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		isolated := redis.NewClient(&redis.Options{Addr: address, MaxRetries: -1})
+		common.RedisEnabled, common.RDB = true, isolated
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		require.NoError(t, isolated.Close())
+		samples := ReadChannelConcurrency(ctx, []int{channelID})
+		assert.Nil(t, samples[channelID].Current)
+		assert.Equal(t, ChannelConcurrencyScopeCluster, samples[channelID].Scope)
+	})
+	t.Run("a live owner missing from the count is re-registered", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, client
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		recoveringChannel := int(time.Now().UnixNano())
+		lease, apiErr := AcquireChannelCapacity(ctx, recoveringChannel, dto.ChannelSettings{})
+		require.Nil(t, apiErr)
+		t.Cleanup(func() {
+			_ = client.Del(ctx, channelCapacityKey(recoveringChannel), channelCapacityMarkerKey(recoveringChannel)).Err()
+		})
+		// Simulate the coordinator losing this live owner's entry; the owner is
+		// still running, so it must return to the shared count.
+		require.NoError(t, client.ZRem(ctx, channelCapacityKey(recoveringChannel), lease.owner).Err())
+		assert.True(t, lease.refreshUnlimited(), "a still-running owner re-registers itself")
+		samples := ReadChannelConcurrency(ctx, []int{recoveringChannel})
+		require.NotNil(t, samples[recoveringChannel].Current)
+		assert.Equal(t, 1, *samples[recoveringChannel].Current)
+		assert.Equal(t, int64(0), client.ZCard(ctx, channelCapacityMarkerKey(recoveringChannel)).Val(), "recovery leaves no incomplete marker")
+		assert.False(t, hasLostChannelCapacityOwner(recoveringChannel))
+		lease.Release()
+		samples = ReadChannelConcurrency(ctx, []int{recoveringChannel})
+		require.NotNil(t, samples[recoveringChannel].Current)
+		assert.Equal(t, 0, *samples[recoveringChannel].Current)
+		assert.Equal(t, int64(0), client.ZCard(ctx, channelCapacityMarkerKey(recoveringChannel)).Val())
+	})
+	t.Run("a locally lost live owner forces an unavailable sample", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, client
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		lostChannel, healthyChannel := int(time.Now().UnixNano()), int(time.Now().UnixNano())+1
+		key := channelCapacityKey(lostChannel)
+		t.Cleanup(func() {
+			_ = client.Del(ctx, key, channelCapacityKey(healthyChannel)).Err()
+			removeLostChannelCapacityOwner(lostChannel)
+		})
+		require.NoError(t, client.ZAdd(ctx, key, &redis.Z{Score: float64(time.Now().Add(time.Minute).UnixMilli()), Member: "lost-owner"}).Err())
+		// The shared marker may be unwritable during a coordinator outage, so the
+		// local record alone must already make this gateway's sample honest.
+		addLostChannelCapacityOwner(lostChannel)
+		samples := ReadChannelConcurrency(ctx, []int{lostChannel, healthyChannel})
+		assert.Nil(t, samples[lostChannel].Current, "an incomplete count is unavailable, not a low number")
+		require.NotNil(t, samples[healthyChannel].Current, "an unrelated channel is still sampled")
+		assert.Equal(t, 0, *samples[healthyChannel].Current)
+		removeLostChannelCapacityOwner(lostChannel)
+		samples = ReadChannelConcurrency(ctx, []int{lostChannel})
+		require.NotNil(t, samples[lostChannel].Current)
+		assert.Equal(t, 1, *samples[lostChannel].Current)
+	})
+	t.Run("a marker published by another gateway makes the sample incomplete", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, client
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		remoteChannel := int(time.Now().UnixNano())
+		key, markerKey := channelCapacityKey(remoteChannel), channelCapacityMarkerKey(remoteChannel)
+		t.Cleanup(func() { _ = client.Del(ctx, key, markerKey).Err() })
+		require.NoError(t, client.ZAdd(ctx, key, &redis.Z{Score: float64(time.Now().Add(time.Minute).UnixMilli()), Member: "peer-owner"}).Err())
+		samples := ReadChannelConcurrency(ctx, []int{remoteChannel})
+		require.NotNil(t, samples[remoteChannel].Current)
+		assert.Equal(t, 1, *samples[remoteChannel].Current)
+		// Another gateway publishes the marker for its own lost owner.
+		_, err := channelCapacityMarkerScript.Run(ctx, client, []string{markerKey}, "peer-lost-owner", channelCapacityMarkerTTL.Milliseconds()).Int()
+		require.NoError(t, err)
+		samples = ReadChannelConcurrency(ctx, []int{remoteChannel})
+		assert.Nil(t, samples[remoteChannel].Current, "a peer's incomplete marker is visible here too")
+		assert.Equal(t, ChannelConcurrencyScopeCluster, samples[remoteChannel].Scope)
+	})
+	t.Run("release removes an ambiguous owner entry", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, client
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		ambiguousChannel := int(time.Now().UnixNano())
+		key := channelCapacityKey(ambiguousChannel)
+		t.Cleanup(func() { _ = client.Del(ctx, key, channelCapacityMarkerKey(ambiguousChannel)).Err() })
+		lease, apiErr := AcquireChannelCapacity(ctx, ambiguousChannel, dto.ChannelSettings{})
+		require.Nil(t, apiErr)
+		// The owner entry exists even though a lost registration reply means the
+		// gateway never observed a success for it.
+		lease.telemetryMu.Lock()
+		lease.telemetryRegistered = false
+		lease.telemetryMu.Unlock()
+		lease.Release()
+		assert.Equal(t, int64(0), client.ZCard(ctx, key).Val(), "release removes the owner entry it may have written")
+		assert.False(t, hasLostChannelCapacityOwner(ambiguousChannel))
+	})
+	t.Run("missing script reloads and retries", func(t *testing.T) {
+		previousRedis, previousClient := common.RedisEnabled, common.RDB
+		common.RedisEnabled, common.RDB = true, client
+		t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedis, previousClient })
+		countChannel := int(time.Now().UnixNano())
+		key := channelCapacityKey(countChannel)
+		require.NoError(t, client.ZAdd(ctx, key, &redis.Z{Score: float64(time.Now().Add(time.Minute).UnixMilli()), Member: "owner"}).Err())
+		t.Cleanup(func() { _ = client.Del(ctx, key).Err() })
+		require.NoError(t, client.ScriptFlush(ctx).Err())
+		samples := ReadChannelConcurrency(ctx, []int{countChannel})
+		require.NotNil(t, samples[countChannel].Current, "SCRIPT FLUSH is recovered by loading the count script once")
+		assert.Equal(t, 1, *samples[countChannel].Current)
 	})
 }
