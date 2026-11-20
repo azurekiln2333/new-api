@@ -166,22 +166,38 @@ func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 }
 
 func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
+	const sourceSetting = `{"task_plugin_key":"original-plugin","max_concurrent_requests":1,"future_setting":{"tenant":"original"}}`
+	const changedCapSetting = `{"task_plugin_key":"original-plugin","max_concurrent_requests":2,"future_setting":{"tenant":"original"}}`
 	for _, tc := range []struct {
-		name         string
-		multiKey     bool
-		replaceCache string
+		name                string
+		multiKey            bool
+		replaceCache        string
+		setting             *string
+		storedSetting       string
+		cachedSetting       string
+		preserveCacheStatus bool
 	}{
 		{name: "single-key disable removes routing"},
 		{name: "multi-key routing stays until the last key is disabled", multiKey: true},
-		{name: "replaced cache key stays enabled and routable", replaceCache: "key"},
-		{name: "replaced cache auth headers stay enabled and routable", replaceCache: "headers"},
-		{name: "replaced cache provider config stays enabled and routable", replaceCache: "settings"},
-		{name: "replaced cache key models stay enabled and routable", multiKey: true, replaceCache: "models"},
-		{name: "replaced cache key users stay enabled and routable", multiKey: true, replaceCache: "users"},
+		{name: "replaced cache key stays enabled and routable", replaceCache: "key", preserveCacheStatus: true},
+		{name: "replaced cache auth headers stay enabled and routable", replaceCache: "headers", preserveCacheStatus: true},
+		{name: "replaced cache provider config stays enabled and routable", replaceCache: "settings", preserveCacheStatus: true},
+		{name: "replaced cache key models stay enabled and routable", multiKey: true, replaceCache: "models", preserveCacheStatus: true},
+		{name: "replaced cache key users stay enabled and routable", multiKey: true, replaceCache: "users", preserveCacheStatus: true},
+		{name: "stored cap change still disables cached routing", multiKey: true, setting: common.GetPointer(sourceSetting), storedSetting: changedCapSetting},
+		{name: "cached cap change is preserved while routing is disabled", setting: common.GetPointer(sourceSetting), cachedSetting: changedCapSetting},
+		{name: "nil cached setting receives a cap-only stored status", storedSetting: `{"max_concurrent_requests":2}`},
+		{name: "cached cap absent from stored settings still disables routing", cachedSetting: `{"max_concurrent_requests":2}`},
+		{name: "empty cached setting receives a cap-only stored status", setting: common.GetPointer(""), storedSetting: `{"max_concurrent_requests":2}`},
+		{name: "cached cap preserves empty stored settings", setting: common.GetPointer(""), cachedSetting: `{"max_concurrent_requests":2}`},
+		{name: "replaced cache plugin binding stays enabled and routable", setting: common.GetPointer(sourceSetting), cachedSetting: `{"task_plugin_key":"replacement-plugin","max_concurrent_requests":2,"future_setting":{"tenant":"original"}}`, preserveCacheStatus: true},
+		{name: "replaced cache unknown setting stays enabled and routable", setting: common.GetPointer(sourceSetting), cachedSetting: `{"task_plugin_key":"original-plugin","max_concurrent_requests":2,"future_setting":{"tenant":"replacement"}}`, preserveCacheStatus: true},
+		{name: "malformed cached setting stays enabled and routable", setting: common.GetPointer(sourceSetting), cachedSetting: `{"max_concurrent_requests":`, preserveCacheStatus: true},
+		{name: "null cached setting stays enabled and routable", setting: common.GetPointer(sourceSetting), cachedSetting: `null`, preserveCacheStatus: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			useScheduledChannelDatabase(t)
-			channel := Channel{Type: constant.ChannelTypeOpenAI, Name: t.Name(), Key: "key-a", Status: common.ChannelStatusEnabled, Models: "checked-status-model", Group: "default"}
+			channel := Channel{Type: constant.ChannelTypeOpenAI, Name: t.Name(), Key: "key-a", Status: common.ChannelStatusEnabled, Models: "checked-status-model", Group: "default", Setting: tc.setting}
 			keys := []string{channel.Key}
 			if tc.multiKey {
 				channel.Key = "key-a\nkey-b"
@@ -190,7 +206,13 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 			}
 			require.NoError(t, channel.Insert())
 			InitChannelCache()
+			if tc.storedSetting != "" {
+				require.NoError(t, DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("setting", tc.storedSetting).Error)
+			}
 			replacement := channel
+			if tc.cachedSetting != "" {
+				replacement.Setting = &tc.cachedSetting
+			}
 			switch tc.replaceCache {
 			case "key":
 				replacement.Key = "KEY-a"
@@ -203,9 +225,10 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 			case "users":
 				replacement.ChannelInfo.MultiKeyUsers = map[int]int{0: 123}
 			}
+			hasReplacement := tc.replaceCache != "" || tc.cachedSetting != ""
 			for index, key := range keys {
 				changed := UpdateChannelStatusChecked(context.Background(), channel.Id, key, common.ChannelStatusAutoDisabled, "Insufficient balance", func(current *Channel) bool {
-					if tc.replaceCache != "" {
+					if hasReplacement {
 						// A current cache publisher can replace the snapshot after the
 						// database validation, before this completed result is published.
 						CacheUpdateChannel(&replacement)
@@ -214,18 +237,21 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 				})
 				require.True(t, changed)
 				wantStatus := common.ChannelStatusAutoDisabled
-				if index < len(keys)-1 || tc.replaceCache != "" {
+				if index < len(keys)-1 || tc.preserveCacheStatus {
 					wantStatus = common.ChannelStatusEnabled
 				}
 				cached, err := CacheGetChannel(channel.Id)
 				require.NoError(t, err)
 				assert.Equal(t, wantStatus, cached.Status)
-				if tc.replaceCache != "" {
+				assert.Equal(t, replacement.Setting, cached.Setting, "status publication must preserve the cached setting bytes")
+				if hasReplacement {
 					assert.Equal(t, replacement.Key, cached.Key, "a source mismatch must preserve the replacement bytes")
 					assert.Equal(t, replacement.HeaderOverride, cached.HeaderOverride)
 					assert.Equal(t, replacement.OtherSettings, cached.OtherSettings)
 					assert.Equal(t, replacement.ChannelInfo.MultiKeyModels, cached.ChannelInfo.MultiKeyModels)
 					assert.Equal(t, replacement.ChannelInfo.MultiKeyUsers, cached.ChannelInfo.MultiKeyUsers)
+				}
+				if tc.preserveCacheStatus {
 					assert.Empty(t, cached.ChannelInfo.MultiKeyStatusList, "an obsolete result must not disable keys in a replacement scope")
 				} else if tc.multiKey {
 					assert.Equal(t, common.ChannelStatusAutoDisabled, cached.ChannelInfo.MultiKeyStatusList[index])

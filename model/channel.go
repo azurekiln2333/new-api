@@ -1533,14 +1533,34 @@ func updateChannelStatus(ctx context.Context, channelId int, usingKey string, st
 				reflect.DeepEqual(cached.ChannelInfo.MultiKeyModels, committed.ChannelInfo.MultiKeyModels) &&
 				maps.Equal(cached.ChannelInfo.MultiKeyUsers, committed.ChannelInfo.MultiKeyUsers) &&
 				cached.OtherSettings == committed.OtherSettings &&
-				(cached.HeaderOverride == nil && committed.HeaderOverride == nil || cached.HeaderOverride != nil && committed.HeaderOverride != nil && *cached.HeaderOverride == *committed.HeaderOverride) &&
-				(cached.Setting == nil && committed.Setting == nil || cached.Setting != nil && committed.Setting != nil && *cached.Setting == *committed.Setting) {
-				updated := *cached
-				updated.ChannelInfo.MultiKeyStatusList = committed.ChannelInfo.MultiKeyStatusList
-				updated.ChannelInfo.MultiKeyDisabledReason = committed.ChannelInfo.MultiKeyDisabledReason
-				updated.ChannelInfo.MultiKeyDisabledTime = committed.ChannelInfo.MultiKeyDisabledTime
-				channelsIDM[channelId] = &updated
-				cacheUpdateChannelStatusLocked(channelId, committed.Status)
+				(cached.HeaderOverride == nil && committed.HeaderOverride == nil || cached.HeaderOverride != nil && committed.HeaderOverride != nil && *cached.HeaderOverride == *committed.HeaderOverride) {
+				sameSettings := cached.Setting == nil && committed.Setting == nil || cached.Setting != nil && committed.Setting != nil && *cached.Setting == *committed.Setting
+				if !sameSettings {
+					// Admission-only cap changes do not invalidate a completed result.
+					// Preserve every other raw setting, including unknown provider fields.
+					cachedSetting, committedSetting := "{}", "{}"
+					if cached.Setting != nil && *cached.Setting != "" {
+						cachedSetting = *cached.Setting
+					}
+					if committed.Setting != nil && *committed.Setting != "" {
+						committedSetting = *committed.Setting
+					}
+					var cachedSettings, committedSettings map[string]json.RawMessage
+					if common.UnmarshalJsonStr(cachedSetting, &cachedSettings) == nil && cachedSettings != nil &&
+						common.UnmarshalJsonStr(committedSetting, &committedSettings) == nil && committedSettings != nil {
+						delete(cachedSettings, "max_concurrent_requests")
+						delete(committedSettings, "max_concurrent_requests")
+						sameSettings = reflect.DeepEqual(cachedSettings, committedSettings)
+					}
+				}
+				if sameSettings {
+					updated := *cached
+					updated.ChannelInfo.MultiKeyStatusList = committed.ChannelInfo.MultiKeyStatusList
+					updated.ChannelInfo.MultiKeyDisabledReason = committed.ChannelInfo.MultiKeyDisabledReason
+					updated.ChannelInfo.MultiKeyDisabledTime = committed.ChannelInfo.MultiKeyDisabledTime
+					channelsIDM[channelId] = &updated
+					cacheUpdateChannelStatusLocked(channelId, committed.Status)
+				}
 			}
 			channelSyncLock.Unlock()
 		}

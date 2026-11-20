@@ -599,7 +599,10 @@ export function refresh(ctx) {
 									_, _ = io.WriteString(w, `{"balance":0,"remaining":0,"isValid":true,"amount":0}`)
 								}))
 								t.Cleanup(server.Close)
-								setting := fmt.Sprintf(`{"task_plugin_key":%q,"max_concurrent_requests":1}`, pluginKey)
+								setting := `{"max_concurrent_requests":1}`
+								if provider == "plugin" {
+									setting = fmt.Sprintf(`{"task_plugin_key":%q,"max_concurrent_requests":1}`, pluginKey)
+								}
 								channel = &model.Channel{Type: constant.ChannelTypeSub2API, BaseURL: &server.URL, Key: "sk-current", Name: t.Name(), Setting: &setting, Balance: 17, Status: common.ChannelStatusEnabled, AutoBan: common.GetPointer(tc.initialAutoBan)}
 								if provider == "plugin" {
 									channel.Type = constant.ChannelTypeTaskPlugin
