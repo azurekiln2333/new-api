@@ -9,7 +9,7 @@
 7. [x] Pi 4: price/inference/shared management/Ollama and Codex discovery implemented; independent service audit found no remaining blocker.
 8. [x] Root and independent reviewers checked double lease, settlement, cancellation, refresh, specialized endpoints and latest policy; final stale ChannelInfo/routing publication fixes included.
 9. [x] Update narrow executable specs without staging unrelated dirty specs; root commits independent changes with hooks disabled.
-10. [ ] Push fork/merge/upstream; inspect exact-SHA cloud CI and fix failures. After checks pass, integrate fork/main and publish unique release tag; verify cloud release/build only.
+10. [x] Pushed fork/merge/upstream; exact-SHA cloud CI 44822062923 passed. Fast-forwarded fork/main to de5c96736f24968a81e62dee8b9960f360915ed1; release run 44824384740 completed successfully. Verified the published custom-20261121-de5c967 tag, seven release assets, four binary checksums and independent amd64/arm64 GHCR evidence. No server verification.
 
 ## Cloud validation only
 
@@ -41,10 +41,9 @@ Workers report exact files, helper contracts, authored-but-unrun tests, risks an
 - Balance ownership includes plugin query chains and cancellation through `channel_balance.go`; keep its inner sender free of duplicate admission.
 - API-origin Midjourney/async task polling is a separate lifecycle boundary. It is not part of the console diagnostics/management acceptance claim; preserve task-bound credentials, and do not infer those pollers are covered by ordinary Relay.
 
-## Remaining integration review
+## Closed integration review
 
-- Pi 1 finishes diagnostic preparation/controller/UI regressions; pi 3 finishes discovery/controller/Gemini; pi 4 now owns Codex model discovery services and existing service tests in addition to its frozen Ollama adaptor.
-- Pi 2 completed metrics/Wham; it now fixes provider-plugin balance refresh provenance and single/multi-key regressions. OAuth refresh may not overwrite a concurrent administrator credential replacement.
-- Independent balance review found refresh provenance and cache publication races. The cache checker owns atomic checked cache status/routing updates; pi 2 owns balance refresh handling. No upstream HTTP operation may run inside the short persistence transaction.
-- Guarded Codex model OAuth refresh is saved/frozen, and pi 4 is integrating ExpectedKey and replacement handling into its consolidated service regressions.
-- Extend cloud database/race selectors for consolidated balance, Wham and discovery regressions before exact-SHA validation.
+- All four pi implementation scopes are finished and frozen: diagnostics/UI, fingerprint/metrics/Wham/balance, discovery/Gemini, and pricing/inference/Ollama/Codex discovery.
+- Independent reviews confirmed guarded credential refresh and result persistence, current scheduling/routing publication, admission/body lifetime and exactly-once usage handling. No remaining source blocker was found.
+- Cloud database and race selectors cover consolidated balance, Wham, multikey discovery and original-key refresh regressions. The final exact-SHA integration run and repeated main-release validation both passed.
+- Task completion and release evidence are recorded in report.md. Follow-up archive/journal commits contain metadata only; product main and the published tag remain the exact tested SHA.

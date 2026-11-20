@@ -17,12 +17,17 @@ Make manual and scheduled tests, fingerprint detection and channel management re
 
 ## Acceptance Criteria
 
-- [ ] Responses-only ordinary/scheduled tests reach Responses; unsupported directions/passthrough conflict fail safely.
-- [ ] Upstream sees applicable prompt/field/parameter/plugin policy; no duplicate charging.
-- [ ] Capacity 1 serializes pinned test work; cancellation and policy changes release or invalidate admission correctly.
-- [ ] Fingerprint defaults to three samples and later samples respect current configuration.
-- [ ] Management requests retain headers/transport/cleanup; multi-key discovery represents all applicable enabled keys safely.
-- [ ] Focused regressions are authored and exact-SHA cloud checks pass before reporting completion.
+- [x] Responses-only ordinary/scheduled tests reach Responses; unsupported directions/passthrough conflict fail safely.
+- [x] Upstream sees applicable prompt/field/parameter/plugin policy; no duplicate charging.
+- [x] Capacity 1 serializes pinned test work; cancellation and policy changes release or invalidate admission correctly.
+- [x] Fingerprint defaults to three samples and later samples respect current configuration.
+- [x] Management requests retain headers/transport/cleanup; multi-key discovery represents all applicable enabled keys safely.
+- [x] Focused regressions are authored and exact-SHA cloud checks pass before reporting completion.
+
+Acceptance evidence: exact-SHA cloud run 44822062923 at
+de5c96736f24968a81e62dee8b9960f360915ed1 passed all three jobs, including
+real SQLite/MySQL/PostgreSQL, Redis and race checks. The same commit was
+fast-forwarded to fork/main; publication is tracked separately in report.md.
 
 ## Notes
 
