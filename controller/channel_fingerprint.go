@@ -85,7 +85,9 @@ func StartChannelFingerprint(c *gin.Context) {
 			TokenBudget: request.TokenBudget,
 		},
 		func(ctx context.Context, challenge lmfp.Challenge, maxOutputTokens uint) (service.FingerprintProbeResult, error) {
-			return runFingerprintProbe(ctx, channel, testUserID, modelName, endpointType, challenge, maxOutputTokens)
+			// Retain only the fixed identity, not the starting credentials or the
+			// resolved automatic endpoint. Each sample resolves current policy.
+			return runFingerprintProbe(ctx, &model.Channel{Id: channelID}, testUserID, modelName, request.EndpointType, challenge, maxOutputTokens)
 		},
 	)
 	if err != nil {
@@ -276,13 +278,35 @@ func runFingerprintProbe(
 	challenge lmfp.Challenge,
 	maxOutputTokens uint,
 ) (service.FingerprintProbeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return service.FingerprintProbeResult{}, err
+	}
+	// A run spans several requests. Do not retain its starting credentials,
+	// model list, endpoint policy or overrides for later samples. Disabled
+	// channels remain testable for explicit administrator recovery, just as in
+	// testChannel; deletion and removal of the selected model do not.
+	current, err := model.GetChannelById(channel.Id, true)
+	if err != nil {
+		return service.FingerprintProbeResult{}, errors.New("fingerprint request could not be completed")
+	}
+	if err := validateFingerprintChannel(current, modelName); err != nil {
+		return service.FingerprintProbeResult{}, err
+	}
+	endpointType = normalizeChannelTestEndpoint(current, endpointType)
+	if endpointType == "" {
+		endpointType = "openai"
+	}
+	if err := validateFingerprintEndpoint(endpointType); err != nil {
+		return service.FingerprintProbeResult{}, err
+	}
 	// The probe prompt and its output budget travel through the context, so the
 	// channel test keeps its existing signature and every other caller unchanged.
+	// It owns admission and post-wait revalidation: never nest another lease here.
 	probeCtx := context.WithValue(ctx, channelTestPromptKey, testPrompt{
 		Prompt:    challenge.Prompt,
 		MaxTokens: maxOutputTokens,
 	})
-	result := testChannel(probeCtx, channel, testUserID, modelName, endpointType, false, -1)
+	result := testChannel(probeCtx, current, testUserID, modelName, endpointType, false, -1)
 	probeResult := service.FingerprintProbeResult{
 		PromptTokens: result.promptTokens,
 		OutputTokens: result.completionTokens,

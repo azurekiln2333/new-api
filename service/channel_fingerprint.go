@@ -136,6 +136,9 @@ func StartChannelFingerprint(
 	if model == "" {
 		return nil, errors.New("a model is required")
 	}
+	if request.Count == 0 {
+		request.Count = fingerprintMaxChallenges
+	}
 	if request.Count < 1 || request.Count > fingerprintMaxChallenges {
 		return nil, fmt.Errorf("the challenge count must be between 1 and %d", fingerprintMaxChallenges)
 	}
@@ -289,8 +292,8 @@ func runFingerprintJob(
 			job.cancelQueuedProbes(i, "")
 			return
 		}
-		// The request limit never exceeds the remaining budget, so the budget is
-		// a real cap on what one probe can ask for rather than a post-hoc check.
+		// Bound the requested output by the remaining scheduling budget. Input
+		// tokens remain an estimate, so this is not an absolute billing cap.
 		maxOutputTokens := uint(min(remaining-fingerprintProbeInputReserve, fingerprintProbeMaxTokens))
 		job.setProbeState(i, "running", "", maxOutputTokens)
 		job.addRequestsUsed(1)

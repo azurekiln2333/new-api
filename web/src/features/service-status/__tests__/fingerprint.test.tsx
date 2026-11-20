@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { I18nextProvider } from 'react-i18next'
@@ -120,6 +127,39 @@ it('states that a match is not proof of identity', async () => {
     )
   ).toBeTruthy()
   expect(screen.getByText(/paid requests to the selected channel/)).toBeTruthy()
+})
+
+it.each([
+  { count: 3, changeCount: false },
+  { count: 1, changeCount: true },
+  { count: 2, changeCount: true },
+])('submits $count challenges while defaulting to three', async (testCase) => {
+  searchChannels.mockResolvedValue(channels)
+  const { startChannelFingerprint } = await import('../fingerprint-api')
+  vi.mocked(startChannelFingerprint).mockResolvedValue(
+    runningJob({ state: 'completed' })
+  )
+  renderPage()
+
+  const user = userEvent.setup()
+  const countInput = screen.getByRole('spinbutton', { name: /^challenges$/i })
+  expect(countInput).toHaveValue(3)
+  expect(countInput).toHaveAttribute('min', '1')
+  expect(countInput).toHaveAttribute('max', '3')
+  if (testCase.changeCount) {
+    fireEvent.change(countInput, { target: { value: String(testCase.count) } })
+  }
+  await user.click(await screen.findByRole('combobox', { name: /channel/i }))
+  await user.click(await screen.findByRole('option', { name: /#7 channel-seven/ }))
+  await user.type(screen.getByLabelText(/model/i), 'gpt-4.1')
+  await user.click(screen.getByRole('button', { name: /start check/i }))
+
+  await waitFor(() =>
+    expect(startChannelFingerprint).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ model: 'gpt-4.1', count: testCase.count })
+    )
+  )
 })
 
 it('shows a failed poll with a retry instead of freezing progress', async () => {

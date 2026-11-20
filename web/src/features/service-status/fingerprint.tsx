@@ -183,7 +183,7 @@ export function ChannelFingerprint() {
   const [channelId, setChannelId] = useState('')
   const [model, setModel] = useState('')
   const [endpoint, setEndpoint] = useState<string>(ENDPOINTS[0].value)
-  const [count, setCount] = useState(1)
+  const [count, setCount] = useState(MAX_CHALLENGES)
   const [tokenBudget, setTokenBudget] = useState(24000)
   const [job, setJob] = useState<FingerprintJob | null>(null)
   const [startError, setStartError] = useState('')

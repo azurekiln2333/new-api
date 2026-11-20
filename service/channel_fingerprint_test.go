@@ -290,13 +290,63 @@ func isolateFingerprintRegistry(t *testing.T) {
 	})
 }
 
+func TestStartChannelFingerprintChallengeCountDefaultsAndOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count int
+		want  int
+	}{
+		{name: "omitted defaults to three", want: 3},
+		{name: "explicit one", count: 1, want: 1},
+		{name: "explicit two", count: 2, want: 2},
+		{name: "explicit three", count: 3, want: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateFingerprintRegistry(t)
+			calls := 0
+			job, err := StartChannelFingerprint(t.Context(), FingerprintRequest{
+				ChannelID: 1, Model: "m", Count: tc.count, TokenBudget: 24000,
+			}, func(context.Context, lmfp.Challenge, uint) (FingerprintProbeResult, error) {
+				calls++
+				return FingerprintProbeResult{PromptTokens: 1, OutputTokens: 1}, errors.New("no scoreable reply")
+			})
+			require.NoError(t, err)
+			live := fingerprintJobs.get(job.ID)
+			require.NotNil(t, live)
+			select {
+			case <-live.done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("fingerprint samples did not finish")
+			}
+			final, err := GetChannelFingerprint(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, final.RequestBudget)
+			assert.Len(t, final.Probes, tc.want)
+			assert.Equal(t, tc.want, calls)
+			assert.Equal(t, tc.want, final.RequestsUsed)
+		})
+	}
+}
+
+func TestStartChannelFingerprintRejectsOutOfRangeChallengeCount(t *testing.T) {
+	for _, count := range []int{-1, 4} {
+		_, err := StartChannelFingerprint(t.Context(), FingerprintRequest{
+			Model: "m", Count: count,
+		}, func(context.Context, lmfp.Challenge, uint) (FingerprintProbeResult, error) {
+			t.Fatal("invalid count must not dispatch a sample")
+			return FingerprintProbeResult{}, nil
+		})
+		require.ErrorContains(t, err, "challenge count must be between 1 and 3")
+	}
+}
+
 func TestStartChannelFingerprintCancelStopsProbeAndReleasesRun(t *testing.T) {
 	isolateFingerprintRegistry(t)
 	probeRunning := make(chan struct{}, 1)
 	probeReturned := make(chan struct{}, 1)
 	job, err := StartChannelFingerprint(
 		context.Background(),
-		FingerprintRequest{ChannelID: 1, ChannelName: "c1", Model: "m1", Count: 1, TokenBudget: 4000},
+		FingerprintRequest{ChannelID: 1, ChannelName: "c1", Model: "m1", Count: 3, TokenBudget: 24000},
 		func(ctx context.Context, _ lmfp.Challenge, _ uint) (FingerprintProbeResult, error) {
 			probeRunning <- struct{}{}
 			<-ctx.Done()
@@ -328,7 +378,11 @@ func TestStartChannelFingerprintCancelStopsProbeAndReleasesRun(t *testing.T) {
 	final, err := GetChannelFingerprint(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "cancelled", final.State)
-	assert.Equal(t, "cancelled", final.Probes[0].State)
+	assert.Equal(t, 1, final.RequestsUsed, "samples stay serial and cancellation prevents later dispatch")
+	require.Len(t, final.Probes, 3)
+	for _, probe := range final.Probes {
+		assert.Equal(t, "cancelled", probe.State)
+	}
 	// A finished run cannot be cancelled again; its handle was released.
 	_, err = CancelChannelFingerprint(job.ID)
 	assert.ErrorIs(t, err, ErrFingerprintJobFinished)
