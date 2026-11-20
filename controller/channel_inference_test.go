@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +24,7 @@ func TestVLLMStatusPartialFailureAndCredentials(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "Bearer test-vllm-key", r.Header.Get("Authorization"))
 		assert.Equal(t, "status-panel", r.Header.Get("X-Source"))
+		assert.Equal(t, "vllm.internal", r.Host)
 		switch r.URL.Path {
 		case "/prefix/health":
 			w.WriteHeader(http.StatusOK)
@@ -38,7 +41,7 @@ func TestVLLMStatusPartialFailureAndCredentials(t *testing.T) {
 	}))
 	defer upstream.Close()
 	base := upstream.URL + "/prefix/"
-	override := `{"X-Source":"status-panel"}`
+	override := `{"X-Source":"status-panel","Host":"vllm.internal"}`
 	channel := &model.Channel{Type: constant.ChannelTypeVLLM, BaseURL: &base, Key: "test-vllm-key", HeaderOverride: &override}
 	status, err := fetchInferenceStatus(context.Background(), channel)
 	require.NoError(t, err)
@@ -54,6 +57,58 @@ func TestVLLMStatusPartialFailureAndCredentials(t *testing.T) {
 	body, err := common.Marshal(status)
 	require.NoError(t, err)
 	assert.NotContains(t, string(body), channel.Key)
+}
+
+func TestChannelManagementInferenceUsesFreshPolicyAndReleasesCapacity(t *testing.T) {
+	setupChannelCreateTest(t)
+	const channelID = 82711
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "current.inference.internal", r.Host)
+		assert.Equal(t, "Bearer current-key", r.Header.Get("Authorization"))
+		sample := service.ReadChannelConcurrency(r.Context(), []int{channelID})[channelID]
+		if assert.NotNil(t, sample.Current) {
+			assert.Equal(t, 1, *sample.Current, "each inference endpoint must hold the channel slot")
+		}
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/version":
+			_, _ = io.WriteString(w, `{"version":"0.25.2"}`)
+		case "/v1/models":
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case "/metrics":
+			_, _ = io.WriteString(w, "vllm:num_requests_running 1\n")
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer upstream.Close()
+	channel := &model.Channel{
+		Id: channelID, Type: constant.ChannelTypeVLLM, Name: "inference-current-policy",
+		BaseURL: &upstream.URL, Key: "current-key",
+		HeaderOverride: common.GetPointer(`{"Host":"current.inference.internal"}`),
+	}
+	settings := dto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1), TLSInsecureSkipVerify: true}
+	channel.SetSetting(settings)
+	require.NoError(t, model.DB.Create(channel).Error)
+	t.Cleanup(func() { require.NoError(t, model.DB.Delete(channel).Error) })
+
+	snapshot := *channel
+	snapshot.Key = "old-key"
+	snapshot.HeaderOverride = common.GetPointer(`{"Host":"old.inference.internal"}`)
+	settings.TLSInsecureSkipVerify = false
+	snapshot.SetSetting(settings)
+	status, err := fetchInferenceStatus(t.Context(), &snapshot)
+	require.NoError(t, err)
+	assert.Equal(t, "0.25.2", status.Version)
+	require.Len(t, status.Endpoints, 4)
+	for _, endpoint := range status.Endpoints {
+		assert.Equal(t, inferenceEndpointStatus{Status: http.StatusOK}, endpoint)
+	}
+	sample := service.ReadChannelConcurrency(t.Context(), []int{channelID})[channelID]
+	require.NotNil(t, sample.Current)
+	assert.Zero(t, *sample.Current)
 }
 
 func TestVLLMStatusRejectsInvalidTargetsAndRedirects(t *testing.T) {

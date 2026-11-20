@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/common/expfmt"
@@ -78,17 +79,16 @@ func getInferenceChannelStatus(c *gin.Context, channelType int) {
 	common.ApiSuccess(c, status)
 }
 
-// fetchInferenceStatus reads only fixed paths on an operator-configured channel.
-// Each endpoint can fail independently; upstream errors never echo credentials.
-func fetchInferenceStatus(ctx context.Context, channel *model.Channel) (*inferenceStatus, error) {
-	if channel.Type != constant.ChannelTypeVLLM && channel.Type != constant.ChannelTypeSGLang {
-		return nil, errors.New("This operation is only supported for vLLM or SGLang channels")
-	}
+func inferenceStatusBaseURL(channel *model.Channel) (string, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(channel.GetBaseURL()), "/")
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		return nil, errors.New("Invalid inference server address")
+		return "", errors.New("Invalid inference server address")
 	}
+	return baseURL, nil
+}
+
+func inferenceStatusHeaders(channel *model.Channel) (http.Header, error) {
 	key, _, keyErr := channel.GetNextEnabledKey()
 	if keyErr != nil {
 		return nil, errors.New("No enabled channel key")
@@ -101,14 +101,27 @@ func fetchInferenceStatus(ctx context.Context, channel *model.Channel) (*inferen
 	if (key == "" || key == "EMPTY") && headers.Get("Authorization") == "Bearer "+key {
 		headers.Del("Authorization")
 	}
-	settings := channel.GetSetting()
-	client, err := service.GetHttpClientWithProxySettings(settings.Proxy, settings)
-	if err != nil {
-		return nil, errors.New("Invalid channel proxy")
+	return headers, nil
+}
+
+// fetchInferenceStatus reads only fixed paths on an operator-configured channel.
+// Each endpoint can fail independently; upstream errors never echo credentials.
+func fetchInferenceStatus(ctx context.Context, channel *model.Channel) (*inferenceStatus, error) {
+	if channel.Type != constant.ChannelTypeVLLM && channel.Type != constant.ChannelTypeSGLang {
+		return nil, errors.New("This operation is only supported for vLLM or SGLang channels")
 	}
-	// Do not mutate the shared client or forward channel credentials on redirects.
-	statusClient := *client
-	statusClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	baseURL, err := inferenceStatusBaseURL(channel)
+	if err != nil {
+		return nil, err
+	}
+	settings := channel.GetSetting()
+	var previewHeaders http.Header
+	if channel.Id == 0 {
+		previewHeaders, err = inferenceStatusHeaders(channel)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -131,9 +144,34 @@ func fetchInferenceStatus(ctx context.Context, channel *model.Channel) (*inferen
 				result.Error = "request_failed"
 				return
 			}
-			req.Header = headers.Clone()
-			req.Host = headers.Get("Host")
-			resp, err := statusClient.Do(req)
+			req.Header = previewHeaders.Clone()
+			// Each endpoint is its own exchange, sharing the panel's deadline
+			// but holding a separate slot until its own response body closes.
+			admission := service.NewChannelDiagnosticAdmission(ctx, 0)
+			defer admission.Close()
+			call := service.ChannelManagementCall{
+				Request: req, Settings: settings, ChannelID: channel.Id,
+				Admission: admission, NoRedirect: true,
+			}
+			if channel.Id > 0 {
+				call.Reload = func() (*http.Request, dto.ChannelSettings, error) {
+					var current model.Channel
+					if err := model.DB.WithContext(ctx).First(&current, channel.Id).Error; err != nil || current.Type != channel.Type {
+						return nil, dto.ChannelSettings{}, errors.New("Channel not found")
+					}
+					base, err := inferenceStatusBaseURL(&current)
+					if err != nil {
+						return nil, dto.ChannelSettings{}, err
+					}
+					fresh, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+					if err != nil {
+						return nil, dto.ChannelSettings{}, err
+					}
+					fresh.Header, err = inferenceStatusHeaders(&current)
+					return fresh, current.GetSetting(), err
+				}
+			}
+			resp, err := service.DoChannelManagementRequest(call)
 			if err != nil {
 				result.Error = "request_failed"
 				return
