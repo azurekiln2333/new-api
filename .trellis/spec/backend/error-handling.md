@@ -119,6 +119,60 @@ SDK retries, without setting gateway SkipRetry.
 
 ---
 
+## Recognized goal-turn channel restrictions
+
+### 1. Scope / Trigger
+
+Channel `setting.deny_goal` restricts explicitly attributed goal turns on HTTP
+relay and each Responses WebSocket message.
+
+### 2. Signatures
+
+`service.ClassifyGoalTurnRequest`, `ClassifyGoalTurnMessage` and
+`ApplyGoalTurnConstraint` add `dto.FilterGoalTurn` to ordinary channel filters.
+
+### 3. Contracts
+
+The canonical value is the JSON string in
+`client_metadata["x-codex-turn-metadata"]`, containing `turn_trigger: "goal"`.
+The descriptor is bounded to 4 KiB. A present body descriptor takes precedence
+over the compatibility header, including malformed or wrong-type values.
+Only the first parsed WebSocket turn may fall back to the handshake header.
+Absent/invalid metadata remains unknown; prose and advertised tools are never
+evidence of a goal turn. This is client-asserted attribution, not complete
+detection of every action associated with a goal.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| Recognized goal, alternate channel permits it | Select eligible alternate |
+| All candidates refuse recognized goal | Local unavailable response; no upstream call |
+| Explicit pin refuses recognized goal | Local refusal; preserve pin |
+| Locked WebSocket channel now refuses the turn | Refuse this turn with reconnect guidance |
+| Channel lookup fails on a reused socket | Reject; never bypass the filter |
+| Missing/malformed/oversized metadata | Unknown; no goal-only exclusion |
+
+### 5. Good / Base / Bad Cases
+
+Good: a goal turn uses another eligible channel and retries retain the filter.
+Base: an ordinary request mentioning `/goal` keeps ordinary routing.
+Bad: applying a connection's goal header to every later WebSocket turn.
+
+### 6. Tests Required
+
+Cover precedence and wrong types in `service/channel_goal_test.go`; cache on/off,
+pins, all-denied and retry eligibility in `controller/channel_pin_retry_test.go`;
+and five successive WebSocket turns in `controller/responses_websocket_test.go`.
+Assert rejected turns make zero upstream calls and only accepted turns settle.
+Run controller cases on SQLite, MySQL and PostgreSQL in CI.
+
+### 7. Wrong versus Correct
+
+Wrong: independently load the locked channel to validate and load it again to use.
+Correct: validate filters against the same successful channel snapshot restored
+by `restoreConnectionContext`, preserving lookup failures as failures.
+
 ## Error Types
 
 <!-- Custom error classes/types -->

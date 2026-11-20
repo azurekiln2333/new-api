@@ -286,6 +286,34 @@ func TestRestoreConnectionContextRejectsChangedAdvancedCustomRoute(t *testing.T)
 	assert.ErrorContains(t, apiErr, "upstream route changed")
 }
 
+func TestRestoreConnectionContextChecksCurrentTurnPolicy(t *testing.T) {
+	database := setupRelayChannelDB(t)
+	baseURL := "https://upstream.example"
+	channel := &model.Channel{Name: "goal-policy", Key: "test-only-key", Status: common.ChannelStatusEnabled, Type: constant.ChannelTypeOpenAI, BaseURL: &baseURL}
+	channel.SetSetting(dto.ChannelSettings{ResponsesWebSocketEnabled: true, DenyGoal: true})
+	require.NoError(t, database.Create(channel).Error)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	service.GetChannelConstraints(c).AddPin(appdto.ChannelPin{ChannelId: channel.Id, Source: appdto.PinSourceToken, Rank: appdto.PinRankToken, RetryMode: appdto.PinRetrySingleAttempt})
+	session := &responsesWSSession{lockedChannelID: channel.Id, lockedModel: "ws-model", lockedKey: channel.Key,
+		lockedContext: map[constant.ContextKey]any{constant.ContextKeyChannelBaseUrl: channel.GetBaseURL(), constant.ContextKeyChannelHeaderOverride: channel.GetHeaderOverride()}}
+
+	require.Nil(t, session.restoreConnectionContext(c, "ws-model"), "ordinary turns remain eligible")
+	service.ApplyGoalTurnConstraint(c, service.GoalTurnSignal{Triggered: true})
+	apiErr := session.restoreConnectionContext(c, "ws-model")
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.ErrorContains(t, apiErr, "goal_turn")
+	assert.ErrorContains(t, apiErr, "reconnect")
+
+	service.ApplyGoalTurnConstraint(c, service.GoalTurnSignal{})
+	require.Nil(t, session.restoreConnectionContext(c, "ws-model"), "a later ordinary turn does not inherit the filter")
+	require.NoError(t, database.Delete(channel).Error)
+	apiErr = session.restoreConnectionContext(c, "ws-model")
+	require.NotNil(t, apiErr, "a channel lookup failure cannot skip validation")
+	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
+}
+
 func TestResponsesWSChannelRoutingRequiresExplicitOptIn(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	database := setupRelayChannelDB(t)

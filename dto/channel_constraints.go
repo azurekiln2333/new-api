@@ -42,6 +42,9 @@ const (
 	FilterTaskPluginEndpoint ChannelFilterKind = "task_plugin_endpoint"
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
+	// FilterGoalTurn excludes channels that refuse recognized goal-triggered
+	// turns, such as Codex automatic goal continuations.
+	FilterGoalTurn ChannelFilterKind = "goal_turn"
 )
 
 type ChannelFilter struct {

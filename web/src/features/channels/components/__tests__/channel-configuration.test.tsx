@@ -56,6 +56,8 @@ import {
   buildSettingJSON,
   channelFormSchema,
   transformChannelToFormDefaults,
+  transformFormDataToCreatePayload,
+  transformFormDataToUpdatePayload,
 } from '../../lib/channel-form'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
@@ -63,6 +65,34 @@ import { ChannelsProvider } from '../channels-provider'
 import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
 const originalAuth = useAuthStore.getState().auth
+
+test.each([undefined, false, true])(
+  'goal restriction %s survives channel create, update, reload and toggle',
+  (denyGoal) => {
+    const channel = {
+      ...editingChannel,
+      setting: JSON.stringify({ deny_goal: denyGoal }),
+    }
+    const loaded = transformChannelToFormDefaults(channel)
+    expect(loaded.deny_goal).toBe(denyGoal === true)
+    for (const enabled of [denyGoal === true, denyGoal !== true]) {
+      const values = channelFormSchema.parse({ ...loaded, deny_goal: enabled })
+      const payloads = [
+        transformFormDataToCreatePayload(values).channel,
+        transformFormDataToUpdatePayload(values, channel.id),
+      ]
+      for (const payload of payloads) {
+        expect(JSON.parse(payload.setting ?? '{}').deny_goal).toBe(enabled)
+        expect(
+          transformChannelToFormDefaults({
+            ...channel,
+            setting: payload.setting,
+          }).deny_goal
+        ).toBe(enabled)
+      }
+    }
+  }
+)
 
 test.each([
   { endpoints: undefined, expected: [] },

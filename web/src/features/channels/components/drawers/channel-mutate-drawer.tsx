@@ -2281,6 +2281,32 @@ export function ChannelMutateDrawer({
     />
   )
 
+  const denyGoalFields = (
+    <FormField
+      control={form.control}
+      name='deny_goal'
+      render={({ field }) => (
+        <FormItem className='flex items-center justify-between px-4 py-3'>
+          <div className='space-y-0.5'>
+            <FormLabel>{t('Reject goal-triggered turns')}</FormLabel>
+            <FormDescription>
+              {t(
+                'Skip this channel for turns a client reports as triggered by a persisted goal, such as Codex automatic goal continuations. Only turns that carry that structured signal are recognized, so older clients, manual steering, subagents and stripped metadata are not detected.'
+              )}
+            </FormDescription>
+          </div>
+          <FormControl>
+            <Switch
+              disabled={sensitiveLocked}
+              checked={field.value === true}
+              onCheckedChange={field.onChange}
+            />
+          </FormControl>
+        </FormItem>
+      )}
+    />
+  )
+
   const formatFields = currentType === 1 && (
     <FormField
       control={form.control}
@@ -5339,6 +5365,7 @@ export function ChannelMutateDrawer({
                   supported={responsesWebsocketSupported}
                   disabled={sensitiveLocked || isSubmitting}
                 />
+                {denyGoalFields}
                 {formatFields}
                 {ollamaOpenAIChatFields}
                 {thinkingFields}

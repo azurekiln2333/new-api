@@ -684,3 +684,139 @@ func TestAffinityFailoverDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+// TestGoalTurnPolicyRouting proves the channel goal policy on the real routing
+// path: the constraint is derived from the request, applied by the ordinary
+// selection (with the channel memory cache off and on), and every refused
+// request is rejected locally without an upstream call. Only the recognized
+// structured turn signal may exclude a channel, and a retry after an upstream
+// failure must keep respecting that eligibility.
+func TestGoalTurnPolicyRouting(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	_, token := setupResponsesWSRequestTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.UserSubscription{}))
+	previousRetries, previousLogs, previousErrors := common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled
+	previousCount, previousBatch := constant.CountToken, common.BatchUpdateEnabled
+	previousRatios, previousGroups := ratio_setting.ModelRatio2JSONString(), ratio_setting.GroupRatio2JSONString()
+	previousRetryCodes := operation_setting.AutomaticRetryStatusCodesToString()
+	affinity := operation_setting.GetChannelAffinitySetting()
+	previousAffinity := *affinity
+	previousCached := common.MemoryCacheEnabled
+	common.LogConsumeEnabled, constant.ErrorLogEnabled, constant.CountToken, common.BatchUpdateEnabled = false, false, false, false
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"goal-policy-routing-test":0}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	require.NoError(t, operation_setting.AutomaticRetryStatusCodesFromString("401-407,500-599"))
+	t.Cleanup(func() {
+		common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled = previousRetries, previousLogs, previousErrors
+		constant.CountToken, common.BatchUpdateEnabled = previousCount, previousBatch
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups))
+		require.NoError(t, operation_setting.AutomaticRetryStatusCodesFromString(previousRetryCodes))
+		*affinity = previousAffinity
+		common.MemoryCacheEnabled = previousCached
+		model.InitChannelCache()
+	})
+	service.InitHttpClient()
+
+	const goalMetadata = `"{\"turn_trigger\":\"goal\"}"`
+	goalBody := `{"model":"goal-policy-routing-test","input":"hello","client_metadata":{"x-codex-turn-metadata":` + goalMetadata + `}}`
+	// Goal tools and prose appear in ordinary traffic, so they must not trigger
+	// the policy on their own.
+	ordinaryBody := `{"model":"goal-policy-routing-test","input":[{"type":"message","role":"user","content":"/goal ship it"}],"tools":[{"type":"function","name":"create_goal","parameters":{}}]}`
+
+	cases := []struct {
+		name         string
+		body         string
+		pinned       bool
+		firstDenies  bool
+		secondDenies bool
+		secondFails  bool
+		retries      int
+		wantStatus   int
+		wantACalls   int32
+		wantBCalls   int32
+	}{
+		{name: "pinned channel that refuses goal turns is rejected locally", body: goalBody, pinned: true, firstDenies: true, wantStatus: http.StatusBadRequest},
+		{name: "every candidate refusing goal turns is rejected locally", body: goalBody, firstDenies: true, secondDenies: true, wantStatus: http.StatusServiceUnavailable},
+		{name: "a refusing candidate falls back to an eligible channel", body: goalBody, firstDenies: true, wantStatus: http.StatusOK, wantBCalls: 1},
+		{name: "an ordinary turn still uses the channel that refuses goal turns", body: ordinaryBody, firstDenies: true, wantStatus: http.StatusOK, wantACalls: 1},
+		// The eligible channel B is tried first and fails upstream; the retry may
+		// only consider channels that still satisfy the goal filter, so the
+		// channel A that refuses goal turns never receives the alternate attempt.
+		{name: "a failed attempt is not retried on a channel that refuses goal turns", body: goalBody, firstDenies: true, secondFails: true, retries: 2, wantStatus: http.StatusInternalServerError, wantBCalls: 1},
+	}
+
+	for _, cached := range []bool{false, true} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("cache=%t/%s", cached, tc.name), func(t *testing.T) {
+				common.MemoryCacheEnabled = cached
+				common.RetryTimes = tc.retries
+				// Retries must search an untried channel, which is where the goal
+				// filter has to hold as well.
+				*affinity = operation_setting.ChannelAffinitySetting{RetryAvoidFailedChannels: true}
+				var firstCalls, secondCalls atomic.Int32
+				first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					firstCalls.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"id":"response-from-A","object":"response","status":"completed","model":"goal-policy-routing-test","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+				}))
+				t.Cleanup(first.Close)
+				second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					secondCalls.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					if tc.secondFails {
+						w.WriteHeader(http.StatusInternalServerError)
+						_, _ = io.WriteString(w, `{"error":{"message":"upstream exploded","type":"server_error"}}`)
+						return
+					}
+					_, _ = io.WriteString(w, `{"id":"response-from-B","object":"response","status":"completed","model":"goal-policy-routing-test","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+				}))
+				t.Cleanup(second.Close)
+				channels := []model.Channel{
+					{Name: "A", Type: constant.ChannelTypeOpenAI, Key: "test-only-A", BaseURL: &first.URL, Status: common.ChannelStatusEnabled, Group: "default", Models: "goal-policy-routing-test", Priority: common.GetPointer(int64(10)), AutoBan: common.GetPointer(0)},
+					{Name: "B", Type: constant.ChannelTypeOpenAI, Key: "test-only-B", BaseURL: &second.URL, Status: common.ChannelStatusEnabled, Group: "default", Models: "goal-policy-routing-test", Priority: common.GetPointer(int64(5)), AutoBan: common.GetPointer(0)},
+				}
+				if tc.firstDenies {
+					channels[0].SetSetting(kitdto.ChannelSettings{DenyGoal: true})
+				}
+				if tc.secondDenies {
+					channels[1].SetSetting(kitdto.ChannelSettings{DenyGoal: true})
+				}
+				for i := range channels {
+					require.NoError(t, channels[i].Insert())
+					t.Cleanup(func() {
+						require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.Ability{}).Error)
+						require.NoError(t, model.DB.Delete(&channels[i]).Error)
+					})
+				}
+				model.InitChannelCache()
+
+				engine := gin.New()
+				engine.POST("/v1/responses", middleware.TokenAuth(), func(c *gin.Context) {
+					if tc.pinned {
+						service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: channels[0].Id, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})
+					}
+				}, middleware.Distribute(), func(c *gin.Context) {
+					defer common.CleanupBodyStorage(c)
+					defer service.ClearCurrentChannelAffinityCache(c)
+					Relay(c, types.RelayFormatOpenAIResponses)
+				})
+				request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(tc.body))
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Authorization", "Bearer sk-"+token.Key)
+				recorder := httptest.NewRecorder()
+				engine.ServeHTTP(recorder, request)
+
+				assert.Equal(t, tc.wantStatus, recorder.Code, recorder.Body.String())
+				assert.Equal(t, tc.wantACalls, firstCalls.Load(), "refused or ineligible attempts never reach the upstream")
+				assert.Equal(t, tc.wantBCalls, secondCalls.Load())
+				if tc.wantBCalls > 0 && !tc.secondFails {
+					assert.Contains(t, recorder.Body.String(), "response-from-B")
+				}
+				if tc.wantACalls > 0 {
+					assert.Contains(t, recorder.Body.String(), "response-from-A")
+				}
+			})
+		}
+	}
+}

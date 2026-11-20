@@ -15,6 +15,7 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterTaskPluginEndpoint,
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
+	dto.FilterGoalTurn,
 }
 
 // GetUntriedSatisfiedChannel applies the ordinary request filters before
@@ -212,6 +213,8 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		default:
 			return false
 		}
+	case dto.FilterGoalTurn:
+		return !ch.GetSetting().DenyGoal
 	default:
 		return true
 	}

@@ -330,6 +330,11 @@ func waitPerfCounters(t *testing.T, wantRequests int64) (requests, successes int
 
 func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*websocket.Conn, *http.Request), httpEvents ...string) *responsesWSBillingTest {
 	t.Helper()
+	return newResponsesWSBillingTestWithHeaders(t, expression, handle, nil, httpEvents...)
+}
+
+func newResponsesWSBillingTestWithHeaders(t *testing.T, expression string, handle func(*websocket.Conn, *http.Request), headers http.Header, httpEvents ...string) *responsesWSBillingTest {
+	t.Helper()
 	user, token := setupResponsesWSRequestTest(t)
 	previousTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
@@ -418,7 +423,12 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 	gateway := httptest.NewServer(engine)
 	fixture.gatewayURL = gateway.URL
 	t.Cleanup(gateway.Close)
-	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(gateway.URL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer sk-" + token.Key}})
+	handshakeHeaders := headers.Clone()
+	if handshakeHeaders == nil {
+		handshakeHeaders = make(http.Header)
+	}
+	handshakeHeaders.Set("Authorization", "Bearer sk-"+token.Key)
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(gateway.URL, "http")+"/v1/responses", handshakeHeaders)
 	require.NoError(t, err)
 	fixture.client = client
 	t.Cleanup(func() { fixture.closeAndWait(t) })
@@ -654,6 +664,60 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 	replacement, capacityErr := service.AcquireChannelCapacity(context.Background(), fixture.channel.Id, capacitySettings)
 	require.Nil(t, capacityErr, "closing the reusable connection releases its slot")
 	replacement.Release()
+}
+
+func TestResponsesWebSocketGoalPolicyIsPerTurn(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	var upstreamCalls atomic.Int32
+	headers := http.Header{"X-Codex-Turn-Metadata": []string{`{"turn_trigger":"goal"}`}}
+	fixture := newResponsesWSBillingTestWithHeaders(t, `tier("request", fixed(0.001))`, func(ws *websocket.Conn, _ *http.Request) {
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				return
+			}
+			index := upstreamCalls.Add(1)
+			terminal := fmt.Sprintf(`{"type":"response.completed","response":{"id":"goal-policy-%d","status":"completed","model":"ws-billing","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`, index)
+			if err := ws.WriteMessage(websocket.TextMessage, []byte(terminal)); err != nil {
+				return
+			}
+		}
+	}, headers)
+	channelSettings := fixture.channel.GetSetting()
+	channelSettings.DenyGoal = true
+	fixture.channel.SetSetting(channelSettings)
+	require.NoError(t, model.DB.Model(fixture.channel).Update("setting", fixture.channel.Setting).Error)
+
+	for _, turn := range []struct {
+		name       string
+		metadata   string
+		wantStatus int
+		wantCalls  int32
+	}{
+		{name: "first turn honors header", wantStatus: http.StatusServiceUnavailable},
+		{name: "ordinary message overrides header", metadata: `,"client_metadata":{"x-codex-turn-metadata":"{\"turn_trigger\":\"user\"}"}`, wantCalls: 1},
+		{name: "later missing metadata does not inherit header", wantCalls: 2},
+		{name: "later goal cannot reuse refusing channel", metadata: `,"client_metadata":{"x-codex-turn-metadata":"{\"turn_trigger\":\"goal\"}"}`, wantStatus: http.StatusBadRequest, wantCalls: 2},
+		{name: "ordinary message after refusal can continue", wantCalls: 3},
+	} {
+		payload := `{"type":"response.create","model":"ws-billing","input":"hello"` + turn.metadata + `}`
+		require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(payload)), turn.name)
+		event := readResponsesWSTestEvent(t, fixture.client)
+		if turn.wantStatus != 0 {
+			require.Equal(t, "error", event["type"], turn.name)
+			assert.EqualValues(t, turn.wantStatus, event["status"], turn.name)
+			if turn.wantStatus == http.StatusBadRequest {
+				detail, ok := event["error"].(map[string]any)
+				require.True(t, ok)
+				assert.Contains(t, detail["message"], "reconnect")
+			}
+		} else {
+			require.Equal(t, "response.completed", event["type"], turn.name)
+		}
+		assert.Equal(t, turn.wantCalls, upstreamCalls.Load(), turn.name)
+	}
+	fixture.closeAndWait(t)
+	assert.Equal(t, int32(1), fixture.connections.Load(), "the same connection is retained across accepted turns")
+	assertResponsesWSAccounting(t, fixture, []int{500, 500, 500})
 }
 
 // Both transports must reach the same upstream target with the same

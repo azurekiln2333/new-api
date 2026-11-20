@@ -126,6 +126,12 @@ export interface ChannelSettings {
   proxy?: string
   pass_through_body_enabled?: boolean
   responses_websocket_enabled?: boolean
+  /**
+   * Refuses recognized goal-triggered turns, such as Codex automatic goal
+   * continuations. Only turns carrying the canonical turn_trigger signal are
+   * recognized, so this is not complete coverage of goal-associated traffic.
+   */
+  deny_goal?: boolean
   system_prompt?: string
   system_prompt_override?: boolean
   http_protocol?: 'auto' | 'http1' | string

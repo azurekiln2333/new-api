@@ -47,6 +47,12 @@ type ChannelSettings struct {
 	// RequestPlugins lists the request plugin instances the channel binds,
 	// by instance id, in run order.
 	RequestPlugins []string `json:"request_plugins,omitempty"`
+	// DenyGoal refuses recognized goal-triggered turns, such as Codex automatic
+	// goal continuations. Only a turn that carries the canonical turn_trigger
+	// signal is recognized; older clients, manual steering, subagents and
+	// stripped metadata stay unattributed, so this is not complete coverage of
+	// all goal-associated traffic.
+	DenyGoal bool `json:"deny_goal,omitempty"`
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,

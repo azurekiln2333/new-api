@@ -128,6 +128,7 @@ type responsesWSSession struct {
 	lockedKeyIndex  int
 	lockedContext   map[appconstant.ContextKey]any
 	lockedRoute     dto.AdvancedCustomRoute
+	goalHeaderUsed  bool
 }
 
 func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner ResponsesWSRequestRunner) *types.NewAPIError {
@@ -247,6 +248,11 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 
 func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState, create responsesWSCreateRequest) (apiErr *types.NewAPIError) {
 	policy := service.RequestPolicy(c)
+	goalHeader := c.Request.Header
+	if s.goalHeaderUsed {
+		goalHeader = nil
+	}
+	s.goalHeaderUsed = true
 	originalCallRequest := c.Request
 	defer func() { c.Request = originalCallRequest }()
 	modelName := create.Request.Model
@@ -323,6 +329,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		return apiErr
 	}
 	service.GetChannelConstraints(c).AddFilter(appdto.ChannelFilter{Kind: appdto.FilterRequestPath, RequestPath: c.Request.URL.Path})
+	// Each message carries its own turn descriptor, so the goal classification
+	// is recomputed per message. The handshake header may describe the first
+	// turn only; it must not become a fallback for later turns on this socket.
+	goalTurn := service.ClassifyGoalTurnMessage(create.Request.ClientMetadata, goalHeader)
+	service.ApplyGoalTurnConstraint(c, goalTurn)
 
 	if s.lockedChannelID != 0 {
 		s.connectionMu.Lock()
@@ -714,6 +725,12 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	channel, err := appmodel.CacheGetChannel(s.lockedChannelID)
 	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled || !channel.GetSetting().ResponsesWebSocketEnabled {
 		return types.NewErrorWithStatusCode(errors.New("Responses WebSocket is disabled for this channel"), types.ErrorCode(appdto.FilterResponsesWebSocket), http.StatusForbidden, types.ErrOptionWithSkipRetry())
+	}
+	// Validate this turn against the same channel snapshot used for connection
+	// restoration. Lookup failure must never skip policy evaluation and then
+	// succeed on a second lookup. A locked socket needs a reconnect to reroute.
+	if ok, kind := appmodel.ChannelSatisfiesFilters(channel, model, service.GetChannelConstraints(c).Filters); !ok {
+		return newResponsesWSInvalidRequestError(fmt.Errorf("channel %d does not accept this request (%s); reconnect to route it to another channel", s.lockedChannelID, kind))
 	}
 	keyEnabled := channel.Key == s.lockedKey
 	if channel.ChannelInfo.IsMultiKey {

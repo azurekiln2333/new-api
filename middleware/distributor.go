@@ -54,6 +54,10 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		// A recognized goal-triggered turn becomes a channel constraint, so the
+		// same eligibility rule applies to the initial selection and to every
+		// retry, and a pinned channel that refuses it is rejected locally.
+		service.ApplyGoalTurnConstraintFromRequest(c)
 		if c.Request.URL.Path == "/pg/chat/completions" {
 			var request struct {
 				Group     string `json:"group"`
