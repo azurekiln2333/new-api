@@ -33,7 +33,7 @@ import dayjs from '@/lib/dayjs'
 import {
   formatLogQuota,
   formatTimestampToDate,
-  formatTokens,
+  formatNumber,
 } from '@/lib/format'
 
 import type { UsageLog } from '../data/schema'
@@ -299,23 +299,23 @@ export function CommonLogMobileCard<TData>(props: {
           <span>
             {t('Input')}{' '}
             <span className='text-foreground tabular-nums'>
-              {formatTokens(log.prompt_tokens, locale)}
+              {formatNumber(log.prompt_tokens, locale)}
             </span>
           </span>
           <span>
             {t('Output')}{' '}
             <span className='text-foreground tabular-nums'>
-              {formatTokens(log.completion_tokens, locale)}
+              {formatNumber(log.completion_tokens, locale)}
             </span>
           </span>
           {cacheRead > 0 && (
             <span>
-              {t('Cache')} ↓ {formatTokens(cacheRead, locale)}
+              {t('Cache')} ↓ {formatNumber(cacheRead, locale)}
             </span>
           )}
           {cacheWrite > 0 && (
             <span>
-              {t('Cache')} ↑ {formatTokens(cacheWrite, locale)}
+              {t('Cache')} ↑ {formatNumber(cacheWrite, locale)}
             </span>
           )}
         </div>

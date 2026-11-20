@@ -70,7 +70,7 @@ import { PolicyDecisionRecord } from '@/features/system-settings/request-policie
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
+import { formatLogQuota, formatNumber, formatUseTime } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -430,24 +430,24 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
 
   rows.push({
     label: t('Input Tokens'),
-    value: formatTokens(promptTokens, locale),
+    value: formatNumber(promptTokens, locale),
   })
   rows.push({
     label: t('Output Tokens'),
-    value: formatTokens(completionTokens, locale),
+    value: formatNumber(completionTokens, locale),
   })
 
   if (cacheRead > 0) {
     rows.push({
       label: t('Cache Read'),
-      value: formatTokens(cacheRead, locale),
+      value: formatNumber(cacheRead, locale),
     })
   }
 
   if (other.image_cache_tokens !== undefined) {
     rows.push({
       label: t('Image Cache'),
-      value: formatTokens(other.image_cache_tokens, locale),
+      value: formatNumber(other.image_cache_tokens, locale),
     })
   }
 
@@ -459,42 +459,42 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   ) {
     rows.push({
       label: t('Cache Write'),
-      value: formatTokens(cacheWrite, locale),
+      value: formatNumber(cacheWrite, locale),
     })
   }
 
   if (cacheWrite5m > 0) {
     rows.push({
       label: t('Cache Write (5m)'),
-      value: formatTokens(cacheWrite5m, locale),
+      value: formatNumber(cacheWrite5m, locale),
     })
   }
 
   if (cacheWrite1h > 0) {
     rows.push({
       label: t('Cache Write (1h)'),
-      value: formatTokens(cacheWrite1h, locale),
+      value: formatNumber(cacheWrite1h, locale),
     })
   }
 
   if (cacheWrite30m > 0) {
     rows.push({
       label: t('Cache Write (30m)'),
-      value: formatTokens(cacheWrite30m, locale),
+      value: formatNumber(cacheWrite30m, locale),
     })
   }
 
   if (cacheWrite12h > 0) {
     rows.push({
       label: t('Cache Write (12h)'),
-      value: formatTokens(cacheWrite12h, locale),
+      value: formatNumber(cacheWrite12h, locale),
     })
   }
 
   if (other.image && other.image_output) {
     rows.push({
       label: t('Image Tokens'),
-      value: formatTokens(other.image_output, locale),
+      value: formatNumber(other.image_output, locale),
     })
   }
 
@@ -1154,28 +1154,28 @@ export function DetailsDialog(props: DetailsDialogProps) {
             {other.audio_input != null && other.audio_input > 0 && (
               <DetailRow
                 label={t('Audio Input')}
-                value={formatTokens(other.audio_input, locale)}
+                value={formatNumber(other.audio_input, locale)}
                 mono
               />
             )}
             {other.audio_output != null && other.audio_output > 0 && (
               <DetailRow
                 label={t('Audio Output')}
-                value={formatTokens(other.audio_output, locale)}
+                value={formatNumber(other.audio_output, locale)}
                 mono
               />
             )}
             {other.text_input != null && other.text_input > 0 && (
               <DetailRow
                 label={t('Text Input')}
-                value={formatTokens(other.text_input, locale)}
+                value={formatNumber(other.text_input, locale)}
                 mono
               />
             )}
             {other.text_output != null && other.text_output > 0 && (
               <DetailRow
                 label={t('Text Output')}
-                value={formatTokens(other.text_output, locale)}
+                value={formatNumber(other.text_output, locale)}
                 mono
               />
             )}

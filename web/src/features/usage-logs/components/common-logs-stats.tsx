@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatLogQuota, formatTokens } from '@/lib/format'
+import { formatLogQuota, formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -40,7 +40,7 @@ function StatBadge(props: {
   accent: string
 }) {
   return (
-    <span className='border-border/60 bg-muted/25 inline-flex min-h-7 max-w-full flex-wrap items-center gap-2 rounded-md border px-2.5 py-1 text-xs shadow-xs'>
+    <span className='border-border/60 bg-muted/25 inline-flex h-7 items-center gap-2 rounded-md border px-2.5 text-xs shadow-xs'>
       <span className={cn('h-3.5 w-0.5 rounded-full', props.accent)} />
       <span className='text-muted-foreground'>{props.label}</span>
       <span className='text-foreground/85 font-mono font-semibold tabular-nums'>
@@ -104,7 +104,7 @@ export function CommonLogsStats() {
       />
       <StatBadge
         label={t('TPM')}
-        value={formatTokens(stats?.tpm, locale)}
+        value={formatNumber(stats?.tpm ?? 0, locale)}
         accent='bg-slate-400/70'
       />
       <StatBadge

@@ -36,6 +36,14 @@ import { buildQuotaAuditOperation } from './quota-audit-operation'
 
 export { normalizeTierLabel }
 
+/** Legacy compact token summary for the collapsed mobile log row. */
+export function formatLogTokenSummary(tokens: number): string {
+  if (tokens === 0) return '-'
+  if (tokens < 1000) return tokens.toString()
+  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`
+  return `${(tokens / 1000000).toFixed(2)}M`
+}
+
 const PARAM_OVERRIDE_ACTION_MAP: Record<string, string> = {
   set: 'Set',
   delete: 'Delete',

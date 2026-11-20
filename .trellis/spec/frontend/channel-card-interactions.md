@@ -30,3 +30,11 @@ concurrency contexts, including privacy masking and aggregate rows.
 Extend the existing card-entry and channel-usage tests when changing this
 contract: exact/compact values for card versus table, full timestamp text,
 privacy placeholders and nested control activation remain observable behavior.
+
+This formatting contract is scoped to channel metrics. Usage-log table cells
+use `formatNumber` with the normalized locale: `41,258 / 115` and
+`Cache↓ 41,088`, without parenthesized abbreviations. Keep the token cell
+`whitespace-nowrap` and its cache line unwrapped so counts do not inflate row
+height. Expanded log cards and token breakdowns also show plain exact counts;
+the existing collapsed mobile rows retain their compact summaries. Cover the
+desktop example in the existing usage-log mobile-card/table-cell fixture.

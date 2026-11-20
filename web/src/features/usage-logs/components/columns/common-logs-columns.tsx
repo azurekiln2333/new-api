@@ -53,7 +53,7 @@ import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import {
   formatLogQuota,
   formatTimestampToDate,
-  formatTokens,
+  formatNumber,
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -746,6 +746,9 @@ export function useCommonLogsColumns(
 
           const promptTokens = log.prompt_tokens || 0
           const completionTokens = log.completion_tokens || 0
+          if (promptTokens === 0 && completionTokens === 0) {
+            return <span className='text-muted-foreground text-xs'>-</span>
+          }
 
           const cacheReadTokens = other?.cache_tokens || 0
           const cacheWrite5m = other?.cache_creation_tokens_5m || 0
@@ -756,21 +759,21 @@ export function useCommonLogsColumns(
             : other?.cache_creation_tokens || 0
 
           return (
-            <div className='flex flex-col gap-0.5 whitespace-normal'>
+            <div className='flex flex-col gap-0.5 whitespace-nowrap'>
               <span className='font-mono text-xs font-medium tabular-nums'>
-                {formatTokens(promptTokens, locale)} /{' '}
-                {formatTokens(completionTokens, locale)}
+                {formatNumber(promptTokens, locale)} /{' '}
+                {formatNumber(completionTokens, locale)}
               </span>
               {(cacheReadTokens > 0 || cacheWriteTokens > 0) && (
-                <div className='flex flex-wrap items-center gap-1 text-[11px]'>
+                <div className='flex items-center gap-1 text-[11px]'>
                   {cacheReadTokens > 0 && (
                     <span className='text-muted-foreground/60'>
-                      {t('Cache')}↓ {formatTokens(cacheReadTokens, locale)}
+                      {t('Cache')}↓ {formatNumber(cacheReadTokens, locale)}
                     </span>
                   )}
                   {cacheWriteTokens > 0 && (
                     <span className='text-muted-foreground/60'>
-                      ↑ {formatTokens(cacheWriteTokens, locale)}
+                      ↑ {formatNumber(cacheWriteTokens, locale)}
                     </span>
                   )}
                 </div>

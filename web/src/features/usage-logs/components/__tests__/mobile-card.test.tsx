@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  flexRender,
   getCoreRowModel,
   useReactTable,
   type VisibilityState,
@@ -66,6 +67,7 @@ function Fixture(props: {
   visibility?: VisibilityState
   logs?: UsageLog[]
   loading?: boolean
+  tokenCell?: boolean
 }) {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
@@ -75,6 +77,14 @@ function Fixture(props: {
     getCoreRowModel: getCoreRowModel(),
     state: { columnVisibility: props.visibility ?? {} },
   })
+  if (props.tokenCell) {
+    const cell = table
+      .getRowModel()
+      .rows[0].getAllCells()
+      .find((item) => item.column.id === 'prompt_tokens')
+    if (!cell) throw new Error('The log must have a tokens column')
+    return flexRender(cell.column.columnDef.cell, cell.getContext())
+  }
   return (
     <>
       <button type='button' onClick={() => context.setSensitiveVisible(false)}>
@@ -370,7 +380,7 @@ it('summarises each log in a collapsed compact row by default', () => {
 
   const row = screen.getByRole('button', { expanded: false })
   expect(row).toHaveTextContent(longName)
-  expect(row).toHaveTextContent('↑1,200 (1.2K) ↓800 · 1.5s')
+  expect(row).toHaveTextContent('↑1.2K ↓800 · 1.5s')
   expect(row).toHaveTextContent('backend-production-token')
   expect(row).toHaveTextContent('production-admin')
 
@@ -394,15 +404,15 @@ it('expands a compact row into the full card', async () => {
   expect(screen.getByText('Input')).toBeVisible()
 })
 
-it('wraps a large exact token summary and keeps zero output visible in compact view', () => {
+it('keeps large token summaries truncated in compact view', () => {
   renderCompactLogs({
     logs: [{ ...log, prompt_tokens: 318574217, completion_tokens: 0 }],
   })
   const row = screen.getByRole('button', { expanded: false })
-  const summary = within(row).getByText(/↑318,574,217 \(318.6M\) ↓0/)
+  const summary = within(row).getByText(/↑318\.57M ↓-/)
   expect(summary).toBeVisible()
-  expect(summary).toHaveClass('break-words')
-  expect(summary).not.toHaveClass('truncate')
+  expect(summary).toHaveClass('truncate')
+  expect(summary).not.toHaveClass('break-words')
 })
 
 it('switches to card view from the toggle and remembers the choice', async () => {
@@ -469,4 +479,23 @@ it('reads the stored mobile list preference and ignores unknown values', () => {
   expect(() =>
     writeMobileLogViewMode(MOBILE_LOG_VIEW_MODES.CARD, throwingStorage)
   ).not.toThrow()
+})
+
+it('keeps desktop input, output and cache counts plain without widening the token cell', () => {
+  renderLogs({
+    tokenCell: true,
+    logs: [
+      {
+        ...log,
+        prompt_tokens: 41258,
+        completion_tokens: 115,
+        other: JSON.stringify({ cache_tokens: 41088 }),
+      },
+    ],
+  })
+  const tokens = screen.getByText('41,258 / 115')
+  expect(tokens).toBeVisible()
+  expect(tokens.parentElement).toHaveClass('whitespace-nowrap')
+  expect(screen.getByText('Cache↓ 41,088')).toBeVisible()
+  expect(screen.queryByText(/41\.3K|41\.1K|万/)).not.toBeInTheDocument()
 })

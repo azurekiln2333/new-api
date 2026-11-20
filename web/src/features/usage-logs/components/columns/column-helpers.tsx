@@ -31,7 +31,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatTimestampToDate, formatTokens } from '@/lib/format'
+import { formatNumber, formatTimestampToDate } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -62,7 +62,7 @@ export function CacheTooltip({
         />
         <TooltipContent side='top'>
           <p className='text-xs'>
-            {label}: {formatTokens(tokens, locale)}
+            {label}: {formatNumber(tokens, locale)}
           </p>
         </TooltipContent>
       </Tooltip>

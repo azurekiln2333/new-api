@@ -220,6 +220,16 @@ jobs:
           src/features/playground/lib/options/playground-option-utils.ts
           src/features/playground/hooks/__tests__/use-playground-options.test.tsx
           src/features/playground/hooks/__tests__/use-playground-state.test.ts
+          src/features/usage-logs/components/columns/column-helpers.tsx
+          src/features/usage-logs/components/columns/common-logs-columns.tsx
+          src/features/usage-logs/components/common-log-mobile-card.tsx
+          src/features/usage-logs/components/common-log-mobile-row.tsx
+          src/features/usage-logs/components/common-logs-stats.tsx
+          src/features/usage-logs/components/dialogs/details-dialog.tsx
+          src/features/usage-logs/components/__tests__/common-logs-stats.test.tsx
+          src/features/usage-logs/components/__tests__/mobile-card.test.tsx
+          src/features/usage-logs/components/__tests__/usage-facts.test.tsx
+          src/features/usage-logs/lib/format.ts
 
       - name: Test
         run: bun run test

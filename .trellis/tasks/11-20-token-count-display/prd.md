@@ -17,3 +17,8 @@ Preserve all parent compatibility/security/billing/i18n rules, existing uncommit
 ## Status
 
 Planning; no product edits/tests. Final consolidated review and task activation precede implementation. R25 publication is authorized; target-server details remain a delivery prerequisite.
+
+
+## User correction — November 20, 2026
+
+The new exact-plus-abbreviation formatting applies only to channel cards. Log lists must retain the original plain input/output/cache counts and dense row height. Mobile compact rows retain K/M summaries and truncation; expanded cards and detail breakdowns retain exact plain counts. No duplicate international/localized abbreviations in log token cells. This instruction supersedes the earlier audit-all-surfaces scope. Verification stays in GitHub CI; no local tests, lint, builds or browser checks.
