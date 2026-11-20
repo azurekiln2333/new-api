@@ -16,10 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from '@tanstack/react-query'
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   within,
@@ -27,8 +32,14 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  buildPriceSyncChanges,
+  getModelPricing,
+  type ModelPricingConfig,
+} from '@/features/model-pricing/api'
 import {
   pricingOptions,
   applyPriceSyncSelections,
@@ -492,6 +503,79 @@ describe('pricing synchronization', () => {
   })
 })
 
+it('applies a multi-model sync batch once, preserving zeros, modes, providers and untouched models', () => {
+  const pluginKey = 'billing_setting.plugin_billing_expr'
+  const options = pricingOptions({
+    ModelPrice: '{"fixed":1,"unrelated":5}',
+    ModelRatio: '{"tokens":1,"unrelated":2}',
+    CompletionRatio: '{"tokens":2,"unrelated":3}',
+    CacheRatio: '{"tokens":0.5}',
+    CreateCacheRatio: '{"expr":1.5,"unrelated":1.5}',
+    BillingMode:
+      '{"tokens":"ratio","expr":"tiered_expr","fixed":"ratio","unrelated":"ratio"}',
+    BillingExpr:
+      '{"expr":"tier(\\"old\\", p * 9)","unrelated":"tier(\\"keep\\", p * 2)"}',
+    [pluginKey]: JSON.stringify({ 'alpha::expr': 'u("seconds") * 2' }),
+  })
+  const snapshot = structuredClone(options)
+  const after = applyPriceSyncSelections(options, {
+    fixed: { model_price: 0 },
+    tokens: {
+      model_ratio: 3,
+      completion_ratio: 4,
+      cache_ratio: 0,
+      create_cache_ratio: 0,
+    },
+    expr: { billing_expr: expression },
+  })
+  const values = pricingValuesByModel(after)
+  // Explicit zero prices survive the batch and the other mode fields are cleared.
+  expect(values.get('fixed')).toEqual({
+    'billing_setting.billing_mode': 'ratio',
+    ModelPrice: 0,
+  })
+  expect(values.get('tokens')).toEqual({
+    'billing_setting.billing_mode': 'ratio',
+    ModelRatio: 3,
+    CompletionRatio: 4,
+    CacheRatio: 0,
+    CreateCacheRatio: 0,
+  })
+  // Upstream expression text is imported literally, not re-normalized, and the
+  // legacy mode fields of that model are cleaned up.
+  expect(values.get('expr')).toEqual({
+    'billing_setting.billing_mode': 'tiered_expr',
+    'billing_setting.billing_expr': expression,
+    [pluginKey]: { alpha: 'u("seconds") * 2' },
+  })
+  expect(values.get('unrelated')).toEqual({
+    'billing_setting.billing_mode': 'ratio',
+    ModelPrice: 5,
+    ModelRatio: 2,
+    CompletionRatio: 3,
+    CreateCacheRatio: 1.5,
+    'billing_setting.billing_expr': 'tier("keep", p * 2)',
+  })
+  // The caller's catalog is never mutated by a batch.
+  expect(options).toEqual(snapshot)
+  // Every other catalog map survives unaffected keys.
+  expect(JSON.parse(after.ModelRatio)).toEqual({ tokens: 3, unrelated: 2 })
+  expect(JSON.parse(after[pluginKey])).toEqual({
+    'alpha::expr': 'u("seconds") * 2',
+  })
+})
+
+it('rejects the whole sync batch when one selected value is invalid', () => {
+  const options = pricingOptions({ ModelRatio: '{"kept":1}' })
+  expect(() =>
+    applyPriceSyncSelections(options, {
+      bad: { model_price: -1 },
+      kept: { model_ratio: 2 },
+    })
+  ).toThrow()
+  expect(options.ModelRatio).toBe('{"kept":1}')
+})
+
 it('shows a source failure instead of a no-differences result and retries the selected source', async () => {
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/ratio_sync/channels') {
@@ -671,7 +755,7 @@ async function renderAdjustmentSync(
       usdExchangeRate: 7,
     },
   })
-  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => ({
     data: {
       success: true,
       data:
@@ -724,8 +808,116 @@ async function renderAdjustmentSync(
       screen.queryByText('Fetching upstream prices...')
     ).not.toBeInTheDocument()
   )
-  return { user, patch }
+  return { user, patch, get, client }
 }
+
+it('refreshes an active pricing baseline once without waiting for unrelated cached views', async () => {
+  const { user, get, client } = await renderAdjustmentSync()
+  const pricing = new QueryObserver(client, {
+    queryKey: ['model-pricing-config'],
+    queryFn: () => getModelPricing(),
+    staleTime: Infinity,
+  })
+  const unsubscribePricing = pricing.subscribe(() => {})
+  client.setQueryData(['models'], [])
+  let finishModels!: (value: never[]) => void
+  const modelsPending = new Promise<never[]>((resolve) => {
+    finishModels = resolve
+  })
+  const models = new QueryObserver(client, {
+    queryKey: ['models'],
+    queryFn: () => modelsPending,
+    staleTime: Infinity,
+  })
+  const unsubscribeModels = models.subscribe(() => {})
+  try {
+    await user.click(
+      await screen.findByRole('checkbox', {
+        name: 'Select price for a from Upstream(7)',
+      })
+    )
+    await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm Changes' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    )
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: 'Select price for c from Upstream(7)',
+      })
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Apply Sync' })).toBeEnabled()
+    )
+    expect(models.getCurrentResult().fetchStatus).toBe('fetching')
+    expect(
+      get.mock.calls.filter(([url]) => url === '/api/option/model_pricing')
+    ).toHaveLength(2)
+  } finally {
+    await act(async () => {
+      finishModels([])
+      await modelsPending
+    })
+    unsubscribePricing()
+    unsubscribeModels()
+    client.clear()
+  }
+})
+
+it('keeps a committed save successful and blocks another save when the baseline refresh fails', async () => {
+  const { user, patch, get } = await renderAdjustmentSync()
+  const success = vi.spyOn(toast, 'success')
+  const error = vi.spyOn(toast, 'error')
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select price for a from Upstream(7)',
+    })
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+  get.mockRejectedValueOnce(new Error('Pricing reload unavailable'))
+  await user.click(screen.getByRole('button', { name: 'Confirm Changes' }))
+  await waitFor(() =>
+    expect(error).toHaveBeenCalledWith('Pricing reload unavailable')
+  )
+  expect(success).toHaveBeenCalledWith('Prices synced successfully')
+  expect(patch).toHaveBeenCalledOnce()
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  await user.click(
+    screen.getByRole('checkbox', {
+      name: 'Select price for c from Upstream(7)',
+    })
+  )
+  expect(screen.getByRole('button', { name: 'Apply Sync' })).toBeDisabled()
+})
+
+it('freezes provider overrides in a prepared batch independently from the cached baseline', () => {
+  const plugin = 'billing_setting.plugin_billing_expr'
+  const baseline: ModelPricingConfig = {
+    entries: [
+      {
+        model_name: 'm',
+        version: 'v1',
+        configured: { ModelPrice: 1, [plugin]: { provider: 'fixed(0.5)' } },
+        effective: { ModelPrice: 1 },
+      },
+    ],
+    options: pricingOptions({
+      ModelPrice: '{"m":1}',
+      [plugin]: '{"provider::m":"fixed(0.5)"}',
+    }),
+    empty_version: 'empty',
+  }
+  const changes = buildPriceSyncChanges(
+    baseline,
+    baseline.options,
+    new Map([['m', { ModelPrice: 2 }]])
+  )
+  const providers = baseline.entries[0].configured[plugin]
+  if (!providers) throw new Error('Missing provider fixture')
+  providers.provider = 'fixed(9)'
+  expect(changes[0].pricing[plugin]).toEqual({ provider: 'fixed(0.5)' })
+  expect(changes[0].expected_version).toBe('v1')
+})
 
 it('applies bulk changes only to existing selections, allows row overrides and saves the frozen preview', async () => {
   const { user, patch } = await renderAdjustmentSync()
@@ -895,6 +1087,241 @@ it('does not compound repeated bulk conversion and resets adjustments when switc
       name: 'Price adjustment for a from alternative',
     })
   ).toHaveAttribute('title', 'Keep source price')
+})
+
+it('saves every selected model even when the preview shows a single page', async () => {
+  const candidates: PricingSyncModels = {}
+  for (let index = 0; index < 24; index++) {
+    candidates[`model-${String(index).padStart(2, '0')}`] = {
+      current: {},
+      upstreams: { 'Upstream(7)': { model_price: index + 1 } },
+    }
+  }
+  const { user, patch } = await renderAdjustmentSync(candidates)
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select price for model-00 from Upstream(7)',
+    })
+  )
+  await user.click(
+    screen.getByRole('checkbox', { name: 'Select all prices from Upstream(7)' })
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+  const dialog = screen.getByRole('alertdialog', {
+    name: 'Preview price changes',
+  })
+  // Only the visible page is rendered, but the full selection is confirmed.
+  expect(within(dialog).getByText('24 selected models')).toBeVisible()
+  expect(within(dialog).getByText('model-09')).toBeVisible()
+  expect(within(dialog).queryByText('model-10')).not.toBeInTheDocument()
+  await user.click(within(dialog).getByRole('button', { name: /Go to page 3/ }))
+  expect(within(dialog).getByText('model-23')).toBeVisible()
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm Changes' })
+  )
+  await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+  const changes = (
+    patch.mock.calls[0][1] as {
+      changes: Array<{
+        model_name: string
+        expected_version: string
+        pricing: Record<string, unknown>
+      }>
+    }
+  ).changes
+  expect(changes).toHaveLength(24)
+  expect(changes.map((change) => change.model_name).sort()).toEqual(
+    Object.keys(candidates).sort()
+  )
+  expect(changes[23].pricing).toEqual({
+    'billing_setting.billing_mode': 'ratio',
+    ModelPrice: 24,
+  })
+})
+
+it('filters the preview by model name without dropping hidden rows from the save', async () => {
+  const { user, patch } = await renderAdjustmentSync()
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select all prices from Upstream(7)',
+    })
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+  const dialog = screen.getByRole('alertdialog', {
+    name: 'Preview price changes',
+  })
+  await user.type(
+    within(dialog).getByRole('textbox', { name: 'Search models' }),
+    'c'
+  )
+  expect(within(dialog).getByText('3 selected models')).toBeVisible()
+  expect(within(dialog).queryByText('a')).not.toBeInTheDocument()
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm Changes' })
+  )
+  await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+  expect(patch.mock.calls[0][1]).toHaveProperty('changes.length', 3)
+})
+
+it('resets the preview page and search when a new selection is confirmed', async () => {
+  const candidates: PricingSyncModels = {}
+  for (let index = 0; index < 24; index++) {
+    candidates[`model-${String(index).padStart(2, '0')}`] = {
+      current: {},
+      upstreams: { 'Upstream(7)': { model_price: index + 1 } },
+    }
+  }
+  const { user, patch } = await renderAdjustmentSync(candidates)
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select all prices from Upstream(7)',
+    })
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+  let dialog = screen.getByRole('alertdialog', {
+    name: 'Preview price changes',
+  })
+  await user.click(within(dialog).getByRole('button', { name: /Go to page 2/ }))
+  await user.type(
+    within(dialog).getByRole('textbox', { name: 'Search models' }),
+    'model-23'
+  )
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Clear selection' }))
+  await user.click(
+    screen.getByRole('checkbox', { name: 'Select all prices from Upstream(7)' })
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+  dialog = screen.getByRole('alertdialog', { name: 'Preview price changes' })
+  // A new preview starts on page one with an empty search, so rows of the new
+  // selection are visible instead of inheriting the previous filter.
+  expect(
+    within(dialog).getByRole('textbox', { name: 'Search models' })
+  ).toHaveValue('')
+  expect(within(dialog).getByText('model-00')).toBeVisible()
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm Changes' })
+  )
+  await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+  expect(patch.mock.calls[0][1]).toHaveProperty('changes.length', 24)
+})
+
+it('saves models named __proto__ and constructor instead of dropping them', async () => {
+  // JSON.parse creates own `__proto__` keys, exactly like the sync response.
+  const candidates = JSON.parse(
+    '{"__proto__":{"current":{},"upstreams":{"Upstream(7)":{"model_price":7}}},' +
+      '"constructor":{"current":{},"upstreams":{"Upstream(7)":{"model_price":14}}}}'
+  ) as PricingSyncModels
+  const { user, patch } = await renderAdjustmentSync(candidates)
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select price for __proto__ from Upstream(7)',
+    })
+  )
+  await user.click(
+    screen.getByRole('checkbox', {
+      name: 'Select price for constructor from Upstream(7)',
+    })
+  )
+  expect(screen.getByText('2 selected models')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'Preview price changes',
+  })
+  expect(within(dialog).getByText('__proto__')).toBeVisible()
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm Changes' })
+  )
+  await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+  const changes = (patch.mock.calls[0][1] as { changes: unknown[] }).changes
+  expect(changes).toHaveLength(2)
+  expect(changes).toEqual(
+    expect.arrayContaining([
+      {
+        model_name: '__proto__',
+        expected_version: 'empty',
+        pricing: { 'billing_setting.billing_mode': 'ratio', ModelPrice: 7 },
+      },
+      {
+        model_name: 'constructor',
+        expected_version: 'empty',
+        pricing: { 'billing_setting.billing_mode': 'ratio', ModelPrice: 14 },
+      },
+    ])
+  )
+})
+
+it('keeps the preview open when a source has no usable exchange rate', async () => {
+  const { user } = await renderAdjustmentSync()
+  await act(async () =>
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 0,
+      },
+    })
+  )
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select all prices from Upstream(7)',
+    })
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply Sync' }))
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'Preview price changes',
+  })
+  const rowA = within(dialog).getByText('a').closest('tr')
+  expect(rowA).not.toBeNull()
+  // Source price only: no converted price is shown when the configured rate
+  // is unusable.
+  expect(rowA).toHaveTextContent(/Per-request: \$7/)
+  expect(rowA).not.toHaveTextContent('¥')
+})
+
+it('opens one preview and sends one save for a repeated apply click', async () => {
+  const { user, patch } = await renderAdjustmentSync()
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select all prices from Upstream(7)',
+    })
+  )
+  const apply = screen.getByRole('button', { name: 'Apply Sync' })
+  await user.click(apply)
+  await user.click(apply)
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'Preview price changes',
+  })
+  expect(within(dialog).getByText('3 selected models')).toBeVisible()
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Confirm Changes' })
+  )
+  await waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+  expect(patch.mock.calls[0][1]).toHaveProperty('changes.length', 3)
+})
+
+it('does not open a preview when the selection changes while preparing', async () => {
+  const { user } = await renderAdjustmentSync()
+  await user.click(
+    await screen.findByRole('checkbox', {
+      name: 'Select all prices from Upstream(7)',
+    })
+  )
+  // Freeze time so the preparation cannot finish before the selection changes.
+  vi.useFakeTimers({ shouldAdvanceTime: false })
+  try {
+    // fireEvent avoids userEvent's own timer handling once time is frozen.
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Sync' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    await act(async () => {
+      vi.runAllTimers()
+    })
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Preview price changes' })
+    ).not.toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('allows matching prices to be selected and adjusted in the mobile list', async () => {
@@ -1180,15 +1607,13 @@ it('disables both batch shortcuts when the configured exchange rate becomes inva
     })
   )
   await act(async () =>
-    useSystemConfigStore
-      .getState()
-      .setConfig({
-        currency: {
-          ...DEFAULT_CURRENCY_CONFIG,
-          quotaDisplayType: 'CNY',
-          usdExchangeRate: 0,
-        },
-      })
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 0,
+      },
+    })
   )
   expect(
     screen.getByRole('button', { name: /Multiply by exchange rate/ })

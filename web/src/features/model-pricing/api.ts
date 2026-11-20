@@ -37,6 +37,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import {
   PRICING_KEYS,
   pricingValuesByModel,
+  pricingValuesSubset,
   type PricingOptions,
   type PricingValues,
   type CacheWriteMode,
@@ -158,12 +159,16 @@ export async function invalidateModelPricing(client: QueryClient) {
   ])
 }
 
-export async function saveModelPricing(changes: ModelPricingChange[]) {
-  if (!changes.length) return
+export async function saveModelPricing(
+  changes: ModelPricingChange[]
+): Promise<string[]> {
+  if (!changes.length) return []
   const res = await api.patch('/api/option/model_pricing', { changes })
   if (!res.data.success) {
     throw createServerError(res.data, t('Failed to save model pricing'))
   }
+  const updated = res.data.data?.updated_models
+  return Array.isArray(updated) ? updated : []
 }
 
 export function useSaveModelPricing() {
@@ -176,39 +181,61 @@ export function useSaveModelPricing() {
 
 // Only dirty model fields are applied to stored configuration. Display-only
 // built-in expressions for other models never become administrator overrides.
+function dirtyPricing(
+  configured: PricingValues | undefined,
+  previous: PricingValues,
+  next: PricingValues
+): PricingValues | undefined {
+  const dirty = PRICING_KEYS.filter((key) =>
+    key === 'billing_setting.plugin_billing_expr'
+      ? !pluginExpressionsEqual(previous[key], next[key])
+      : previous[key] !== next[key]
+  )
+  if (!dirty.length) return undefined
+  const pricing = structuredClone(configured ?? {})
+  for (const key of dirty) {
+    delete pricing[key]
+    if (next[key] !== undefined) {
+      Object.assign(pricing, { [key]: structuredClone(next[key]) })
+    }
+  }
+  if (next['billing_setting.billing_mode'] === 'tiered_expr') {
+    pricing['billing_setting.billing_mode'] = 'tiered_expr'
+    pricing['billing_setting.billing_expr'] =
+      next['billing_setting.billing_expr']
+  }
+  return pricing
+}
+
 export function buildPricingChanges(
   snapshot: ModelPricingConfig,
   before: PricingOptions,
   after: PricingOptions
 ): ModelPricingChange[] {
-  const previous = pricingValuesByModel(before)
-  const next = pricingValuesByModel(after)
+  return buildChangesFromValues(
+    snapshot,
+    pricingValuesByModel(before),
+    pricingValuesByModel(after)
+  )
+}
+
+function buildChangesFromValues(
+  snapshot: ModelPricingConfig,
+  previous: Map<string, PricingValues>,
+  next: Map<string, PricingValues>
+): ModelPricingChange[] {
   const entries = new Map(
     snapshot.entries.map((entry) => [entry.model_name, entry])
   )
   const changes: ModelPricingChange[] = []
   for (const name of new Set([...previous.keys(), ...next.keys()])) {
-    const oldValues = previous.get(name) ?? {}
-    const newValues = next.get(name) ?? {}
-    const dirty = PRICING_KEYS.filter((key) =>
-      key === 'billing_setting.plugin_billing_expr'
-        ? !pluginExpressionsEqual(oldValues[key], newValues[key])
-        : oldValues[key] !== newValues[key]
-    )
-    if (!dirty.length) continue
     const entry = entries.get(name)
-    const pricing = { ...entry?.configured }
-    for (const key of dirty) {
-      delete pricing[key]
-      if (newValues[key] !== undefined) {
-        Object.assign(pricing, { [key]: newValues[key] })
-      }
-    }
-    if (newValues['billing_setting.billing_mode'] === 'tiered_expr') {
-      pricing['billing_setting.billing_mode'] = 'tiered_expr'
-      pricing['billing_setting.billing_expr'] =
-        newValues['billing_setting.billing_expr']
-    }
+    const pricing = dirtyPricing(
+      entry?.configured,
+      previous.get(name) ?? {},
+      next.get(name) ?? {}
+    )
+    if (!pricing) continue
     changes.push({
       model_name: name,
       expected_version: entry?.version ?? snapshot.empty_version,
@@ -216,4 +243,27 @@ export function buildPricingChanges(
     })
   }
   return changes
+}
+
+/**
+ * Sync payload for already-validated selections. It reads only the selected
+ * models from the saved catalog, so preparing a large batch never serializes
+ * the whole catalog, and no model is written twice.
+ */
+export function buildPriceSyncChanges(
+  snapshot: ModelPricingConfig,
+  before: PricingOptions,
+  resolutions: Map<string, PricingValues>
+): ModelPricingChange[] {
+  const previous = pricingValuesSubset(before, resolutions.keys())
+  const next = new Map(resolutions)
+  const pluginKey = 'billing_setting.plugin_billing_expr'
+  for (const [name, values] of resolutions) {
+    const overrides = previous.get(name)?.[pluginKey]
+    if (values[pluginKey] === undefined && overrides !== undefined) {
+      // Upstream model prices do not replace provider-specific overrides.
+      next.set(name, { ...values, [pluginKey]: overrides })
+    }
+  }
+  return buildChangesFromValues(snapshot, previous, next)
 }

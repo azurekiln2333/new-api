@@ -230,18 +230,22 @@ export const buildModelSnapshots = ({
   ])
 
   return [...modelNames].map((name) => {
-    const price = priceMap[name]?.toString() || ''
-    const ratio = ratioMap[name]?.toString() || ''
-    const cache = cacheMap[name]?.toString() || ''
-    const createCache = createCacheMap[name]?.toString() || ''
-    const completion = completionMap[name]?.toString() || ''
-    const image = imageMap[name]?.toString() || ''
-    const audio = audioMap[name]?.toString() || ''
-    const audioCompletion = audioCompletionMap[name]?.toString() || ''
+    // Model names may be `__proto__` or `constructor`; reading them from a
+    // plain object returns Object.prototype members instead of stored prices.
+    const pick = <T>(map: Record<string, T>): T | undefined =>
+      Object.hasOwn(map, name) ? map[name] : undefined
+    const price = pick(priceMap)?.toString() || ''
+    const ratio = pick(ratioMap)?.toString() || ''
+    const cache = pick(cacheMap)?.toString() || ''
+    const createCache = pick(createCacheMap)?.toString() || ''
+    const completion = pick(completionMap)?.toString() || ''
+    const image = pick(imageMap)?.toString() || ''
+    const audio = pick(audioMap)?.toString() || ''
+    const audioCompletion = pick(audioCompletionMap)?.toString() || ''
 
-    const modeForModel = billingModeMap[name]
+    const modeForModel = pick(billingModeMap)
     if (modeForModel === 'tiered_expr') {
-      const fullExpr = billingExprMap[name] || ''
+      const fullExpr = pick(billingExprMap) || ''
       const { billingExpr: pureExpr, requestRuleExpr } =
         splitBillingExprAndRequestRules(fullExpr)
       return {

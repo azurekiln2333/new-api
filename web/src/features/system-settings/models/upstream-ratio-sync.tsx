@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckSquare, RefreshCcw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -26,7 +26,7 @@ import { ErrorState } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import {
-  buildPricingChanges,
+  buildPriceSyncChanges,
   getModelPricing,
   saveModelPricing,
   invalidateModelPricing,
@@ -36,8 +36,12 @@ import {
 import {
   getSitePricingCurrency,
   isValidPricingCurrency,
+  type PricingCurrency,
 } from '@/features/model-pricing/currency'
-import { applyPriceSyncSelections } from '@/features/model-pricing/pricing'
+import {
+  syncSelectionPricing,
+  type PricingValues,
+} from '@/features/model-pricing/pricing'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
   requireServerSuccess,
@@ -73,8 +77,6 @@ import {
   type PriceAdjustment,
 } from './upstream-price-adjustment'
 import {
-  describeSyncPrice,
-  getSyncExpressionPricing,
   getUpstreamDisplayName,
   type PricingSourceSelection,
 } from './upstream-ratio-sync-helpers'
@@ -88,10 +90,63 @@ function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
 }
 
 type SyncPreview = {
+  /** Confirmation rows frozen from the selection at apply time. */
   conflicts: ConflictItem[]
   changes: ModelPricingChange[]
-  resolutions: Record<string, PricingSyncValues>
+  /** Raw upstream values, used to show and optimistically update the rows. */
+  resolutions: Map<string, PricingSyncValues>
   exchangeRateSummary?: string
+  /** Model names of the batch, used to refresh the touched rows. */
+  models: string[]
+}
+
+const SYNC_PREPARE_CHUNK = 200
+
+/** Model names may be `__proto__`, so lookups need own properties only. */
+function ownGet<T>(record: Record<string, T>, name: string): T | undefined {
+  return Object.hasOwn(record, name) ? record[name] : undefined
+}
+
+/** Model names may be `__proto__`, so selections need own-property maps. */
+function ownKeys<T>(source: Record<string, T>): Record<string, T> {
+  return Object.assign(Object.create(null), source) as Record<string, T>
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0)
+  })
+}
+
+/**
+ * Confirmation rows freeze the raw selected and current values together with
+ * the adjustment mode and the exchange rate that produced them, so a later
+ * rate change cannot alter what the preview shows or what the save writes.
+ */
+function buildConflictItems(
+  resolutions: Map<string, PricingSyncValues>,
+  sources: Record<string, string>,
+  adjustments: Record<string, PriceAdjustment>,
+  currentPrices: PricingSyncModels,
+  rate: number | null,
+  currency: PricingCurrency | null
+): ConflictItem[] {
+  const validCurrency = isValidPricingCurrency(currency)
+  const items: ConflictItem[] = []
+  for (const [model, next] of resolutions) {
+    items.push({
+      model,
+      source: ownGet(sources, model) ?? '',
+      current: { ...ownGet(currentPrices, model)?.current },
+      next,
+      adjustment: adjustments[model] ?? 'keep',
+      rate,
+      // A site without a usable exchange rate shows source prices only, instead
+      // of converting with a rate that the checkout would reject.
+      siteCurrency: validCurrency ? { ...currency } : undefined,
+    })
+  }
+  return items
 }
 
 export function UpstreamRatioSync() {
@@ -138,6 +193,33 @@ export function UpstreamRatioSync() {
   )
   const [preview, setPreview] = useState<SyncPreview | null>(null)
   const [loadingBaseline, setLoadingBaseline] = useState(false)
+  const [preparing, setPreparing] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  // The preparing state is not visible to a second click in the same tick.
+  const preparingRef = useRef(false)
+  // Every preparation job owns a number. A job whose number is stale (the
+  // selection changed, the source reloaded, or the page unmounted) may finish
+  // computing but never replaces the preview the user is looking at.
+  const prepareJob = useRef(0)
+  useEffect(
+    () => () => {
+      prepareJob.current += 1
+    },
+    []
+  )
+  useEffect(() => {
+    prepareJob.current += 1
+  }, [selections, prices, pricingBaseline])
+  // The pricing config is one shared React Query entry, so a refresh after a
+  // save reads it once instead of racing a second full GET from the editor.
+  const refreshPricingBaseline = useCallback(async () => {
+    const refreshed = await queryClient.fetchQuery({
+      queryKey: ['model-pricing-config'],
+      queryFn: () => getModelPricing(),
+      staleTime: 0,
+    })
+    setPricingBaseline(refreshed)
+  }, [queryClient])
   const { data: channelsData } = useQuery({
     queryKey: ['upstream-channels'],
     queryFn: async () => requireServerSuccess(await getUpstreamChannels()),
@@ -160,7 +242,7 @@ export function UpstreamRatioSync() {
         Object.entries(selections).map(([model, entry]) => [
           model,
           adjustSyncPrice(
-            prices[model]?.upstreams[entry.source] ?? {},
+            ownGet(ownGet(prices, model)?.upstreams ?? {}, entry.source) ?? {},
             entry.adjustment,
             rate
           ),
@@ -228,15 +310,25 @@ export function UpstreamRatioSync() {
   })
   const syncMutation = useMutation({
     mutationFn: async (confirmed: SyncPreview) => {
-      await saveModelPricing(confirmed.changes)
-      return confirmed.resolutions
+      const saved = await saveModelPricing(confirmed.changes)
+      // The save is one atomic batch: when a deployment omits updated_models,
+      // every requested model was accepted, so its frozen price is current.
+      return {
+        saved: saved.length ? saved : confirmed.models,
+        resolutions: confirmed.resolutions,
+      }
     },
-    onSuccess: async (saved) => {
+    onSuccess: async ({ saved, resolutions }) => {
+      // The save is committed here. A later baseline refresh failure must not
+      // be reported as a failed save.
+      const savedNames = new Set(saved)
       setPrices((previous) =>
         Object.fromEntries(
           Object.entries(previous).map(([name, row]) => [
             name,
-            { ...row, current: saved[name] ?? row.current },
+            savedNames.has(name) && resolutions.get(name)
+              ? { ...row, current: resolutions.get(name) ?? row.current }
+              : row,
           ])
         )
       )
@@ -244,11 +336,18 @@ export function UpstreamRatioSync() {
       setConflictDialogOpen(false)
       setPricingBaseline(null)
       toast.success(t('Prices synced successfully'))
-      await invalidateModelPricing(queryClient)
+      setRefreshing(true)
       try {
-        setPricingBaseline(await getModelPricing())
+        // Start all dependent refreshes, then join the same in-flight baseline
+        // request. Unrelated views must not hold this save in the pending state.
+        void invalidateModelPricing(queryClient).catch((error) =>
+          handleServerError(error, t('Reload pricing'))
+        )
+        await refreshPricingBaseline()
       } catch (error) {
         handleServerError(error, t('Reload pricing'))
+      } finally {
+        setRefreshing(false)
       }
     },
     onError: (error: Error) =>
@@ -277,7 +376,7 @@ export function UpstreamRatioSync() {
     setSelections({})
     syncMutation.reset()
     try {
-      setPricingBaseline(await getModelPricing())
+      await refreshPricingBaseline()
       fetchMutation.mutate({ upstreams, timeout: 10, include_unchanged: true })
     } catch (error) {
       handleServerError(error, t('Failed to load model pricing'))
@@ -288,11 +387,21 @@ export function UpstreamRatioSync() {
   const handleSelectPrices = useCallback(
     (selected: PricingSourceSelection[]) => {
       setSelections((previous) => {
-        const next = { ...previous }
+        const next = ownKeys(previous)
         for (const entry of selected) {
-          if (!prices[entry.model]?.upstreams[entry.source]) continue
-          if (next[entry.model]?.source === entry.source) continue
-          next[entry.model] = { source: entry.source, adjustment: 'keep' }
+          if (
+            !ownGet(ownGet(prices, entry.model)?.upstreams ?? {}, entry.source)
+          ) {
+            continue
+          }
+          if (ownGet(next, entry.model)?.source === entry.source) continue
+          // defineProperty keeps a model literally named `__proto__`.
+          Object.defineProperty(next, entry.model, {
+            value: { source: entry.source, adjustment: 'keep' },
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          })
         }
         return next
       })
@@ -301,7 +410,7 @@ export function UpstreamRatioSync() {
   )
   const handleUnselectPrices = useCallback((models: string[]) => {
     setSelections((previous) => {
-      const next = { ...previous }
+      const next = ownKeys(previous)
       for (const model of models) delete next[model]
       return next
     })
@@ -309,68 +418,78 @@ export function UpstreamRatioSync() {
   const handleAdjustPrices = useCallback(
     (models: string[], adjustment: PriceAdjustment) => {
       setSelections((previous) => {
-        const next = { ...previous }
+        const next = ownKeys(previous)
         for (const model of models) {
-          if (next[model]) next[model] = { ...next[model], adjustment }
+          const entry = ownGet(next, model)
+          if (!entry) continue
+          Object.defineProperty(next, model, {
+            value: { ...entry, adjustment },
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          })
         }
         return next
       })
     },
     []
   )
-  const handleApplySync = () => {
-    if (!pricingBaseline || hasAdjustmentErrors) return
-    const resolutions: Record<string, PricingSyncValues> = {}
-    const conflicts: ConflictItem[] = []
-    for (const [model, entry] of Object.entries(selections)) {
-      const selected = adjustedPrices[model]?.values
-      const row = prices[model]
-      if (!row || !selected) return
-      resolutions[model] = selected
-      let adjustment = t('Keep source price')
-      if (entry.adjustment === 'divide') {
-        adjustment = t('Divide by exchange rate (÷ {{rate}})', {
-          rate: String(rate),
-        })
-      }
-      if (entry.adjustment === 'multiply') {
-        adjustment = t('Multiply by exchange rate (× {{rate}})', {
-          rate: String(rate),
-        })
-      }
-      conflicts.push({
-        model,
-        channel: getUpstreamDisplayName(entry.source, t),
-        current: describeSyncPrice(row.current, t),
-        newVal: describeSyncPrice(selected, t),
-        adjustment,
-        siteVal:
-          isValidPricingCurrency(currency) &&
-          (selected.billing_mode !== 'tiered_expr' ||
-            getSyncExpressionPricing(String(selected.billing_expr), t))
-            ? describeSyncPrice(selected, t, currency)
-            : undefined,
-      })
-    }
+  const handleApplySync = async () => {
+    if (!pricingBaseline || hasAdjustmentErrors || preparingRef.current) return
+    // Freeze every input before yielding, so the preview and the payload come
+    // from one consistent snapshot even if the user keeps editing.
+    const baseline = pricingBaseline
+    const frozenAdjusted = adjustedPrices
+    const frozenPrices = prices
+    const frozenSources = selectedSources
+    const frozenAdjustments = adjustments
+    const frozenRate = rate
+    const frozenCurrency = currency
+    const models = Object.keys(selections)
+    const job = prepareJob.current + 1
+    prepareJob.current = job
+    preparingRef.current = true
+    setPreparing(true)
     try {
-      const after = applyPriceSyncSelections(
-        pricingBaseline.options,
-        resolutions
-      )
-      // Freeze the exact save payload and its preview together. Changes to the
-      // site exchange rate while this dialog is open cannot change the charge.
+      // Let the preparing state paint before the catalog work starts.
+      await yieldToBrowser()
+      const resolutions = new Map<string, PricingSyncValues>()
+      const validated = new Map<string, PricingValues>()
+      for (const [index, model] of models.entries()) {
+        if (job !== prepareJob.current) return
+        const selected = ownGet(frozenAdjusted, model)?.values
+        // A selected model that lost its upstream row must abort the whole
+        // preview: silently dropping it would save a partial selection.
+        if (!ownGet(frozenPrices, model) || !selected) {
+          handleServerError(
+            new Error(t('This provider is unavailable for this model.')),
+            t('Failed to sync prices')
+          )
+          return
+        }
+        resolutions.set(model, { ...selected })
+        validated.set(model, syncSelectionPricing(model, selected))
+        if (index % SYNC_PREPARE_CHUNK === SYNC_PREPARE_CHUNK - 1) {
+          await yieldToBrowser()
+        }
+      }
+      if (job !== prepareJob.current) return
       setPreview({
-        conflicts,
-        resolutions,
-        changes: buildPricingChanges(
-          pricingBaseline,
-          pricingBaseline.options,
-          after
+        conflicts: buildConflictItems(
+          resolutions,
+          frozenSources,
+          frozenAdjustments,
+          frozenPrices,
+          frozenRate,
+          frozenCurrency
         ),
-        exchangeRateSummary: isValidPricingCurrency(currency)
+        resolutions,
+        models,
+        changes: buildPriceSyncChanges(baseline, baseline.options, validated),
+        exchangeRateSummary: isValidPricingCurrency(frozenCurrency)
           ? t('Current exchange rate: 1 USD = {{rate}} {{currency}}', {
-              rate: String(rate),
-              currency: currency.label,
+              rate: String(frozenRate),
+              currency: frozenCurrency.label,
             })
           : undefined,
       })
@@ -378,13 +497,19 @@ export function UpstreamRatioSync() {
       setConflictDialogOpen(true)
     } catch (error) {
       handleServerError(error, t('Failed to sync prices'))
+    } finally {
+      // A newer job cannot start while this flag is set, so clearing it here
+      // cannot release the guard of a still-running job.
+      preparingRef.current = false
+      setPreparing(false)
     }
   }
-  const isLoading =
-    loadingBaseline || fetchMutation.isPending || syncMutation.isPending
+  // Page-wide work: the catalog is being loaded or upstream prices are being
+  // fetched. Preparing the preview and saving are scoped to their buttons.
+  const isLoading = loadingBaseline || fetchMutation.isPending
   const selectedModels = Object.keys(selections)
   const batchAdjustmentDisabled =
-    isLoading || selectedModels.length === 0 || rate === null
+    isLoading || preparing || selectedModels.length === 0 || rate === null
   return (
     <div className='flex h-full min-h-0 flex-col gap-3'>
       <div className='flex shrink-0 flex-wrap items-center gap-2'>
@@ -505,16 +630,21 @@ export function UpstreamRatioSync() {
           )}
         </div>
         <Button
-          onClick={handleApplySync}
+          onClick={() => {
+            void handleApplySync()
+          }}
           disabled={
             !pricingBaseline ||
             !Object.keys(selectedSources).length ||
             hasAdjustmentErrors ||
-            isLoading
+            isLoading ||
+            preparing ||
+            refreshing ||
+            syncMutation.isPending
           }
         >
           <CheckSquare className='size-4' aria-hidden />
-          {t('Apply Sync')}
+          {preparing ? t('Preparing conversion...') : t('Apply Sync')}
         </Button>
       </div>
       <ChannelSelectorDialog

@@ -287,46 +287,70 @@ export function applyPricingDraft(
     : next
 }
 
+type ParsedPricingMaps = Map<PricingKey, Record<string, number | string>>
+
+// One catalog parse and one catalog serialize per batch. Editing paths call
+// this with a single model, so the map work stays proportional to the number
+// of changed models rather than to selected models times catalog size.
+function parsePricingOptions(options: PricingOptions): ParsedPricingMaps {
+  const maps: ParsedPricingMaps = new Map()
+  for (const key of PRICING_KEYS) {
+    maps.set(key, JSON.parse(options[key] ?? '{}'))
+  }
+  return maps
+}
+
+function serializePricingOptions(maps: ParsedPricingMaps): PricingOptions {
+  return Object.fromEntries(
+    PRICING_KEYS.map((key) => [key, JSON.stringify(maps.get(key) ?? {})])
+  ) as PricingOptions
+}
+
+function applyValuesToMaps(
+  maps: ParsedPricingMaps,
+  values: PricingValues,
+  names: string[]
+) {
+  for (const key of PRICING_KEYS) {
+    const map = maps.get(key)
+    if (!map) continue
+    if (key === 'billing_setting.plugin_billing_expr') {
+      // Model-only imports and batch copies retain each target's provider prices.
+      if (values[key] === undefined) continue
+      for (const name of names) {
+        for (const variant of Object.keys(map)) {
+          if (splitPluginBillingExprKey(variant)?.[1] === name) {
+            delete map[variant]
+          }
+        }
+        for (const [plugin, expression] of Object.entries(values[key])) {
+          map[`${plugin}::${name}`] = expression
+        }
+      }
+      continue
+    }
+    for (const name of names) {
+      delete map[name]
+      if (values[key] !== undefined) {
+        Object.defineProperty(map, name, {
+          value: values[key],
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+      }
+    }
+  }
+}
+
 function applyPricingValues(
   options: PricingOptions,
   values: PricingValues,
   names: string[]
 ): PricingOptions {
-  return Object.fromEntries(
-    PRICING_KEYS.map((key) => {
-      const map = JSON.parse(options[key] ?? '{}') as Record<
-        string,
-        number | string
-      >
-      if (key === 'billing_setting.plugin_billing_expr') {
-        // Model-only imports and batch copies retain each target's provider prices.
-        if (values[key] === undefined) return [key, JSON.stringify(map)]
-        for (const name of names) {
-          for (const variant of Object.keys(map)) {
-            if (splitPluginBillingExprKey(variant)?.[1] === name) {
-              delete map[variant]
-            }
-          }
-          for (const [plugin, expression] of Object.entries(values[key])) {
-            map[`${plugin}::${name}`] = expression
-          }
-        }
-        return [key, JSON.stringify(map)]
-      }
-      for (const name of names) {
-        delete map[name]
-        if (values[key] !== undefined) {
-          Object.defineProperty(map, name, {
-            value: values[key],
-            enumerable: true,
-            writable: true,
-            configurable: true,
-          })
-        }
-      }
-      return [key, JSON.stringify(map)]
-    })
-  ) as PricingOptions
+  const maps = parsePricingOptions(options)
+  applyValuesToMaps(maps, values, names)
+  return serializePricingOptions(maps)
 }
 
 export function pricingValuesByModel(
@@ -361,44 +385,105 @@ export function pricingValuesByModel(
   return models
 }
 
+/**
+ * Stored values of only the named models. Sync preparation reads a subset, so
+ * a large catalog is parsed once per map instead of twice in full.
+ */
+export function pricingValuesSubset(
+  options: PricingOptions,
+  names: Iterable<string>
+): Map<string, PricingValues> {
+  const wanted = new Set(names)
+  const values = new Map<string, PricingValues>()
+  for (const name of wanted) values.set(name, {})
+  for (const key of PRICING_KEYS) {
+    const map: unknown = JSON.parse(options[key] ?? '{}')
+    if (map === null || typeof map !== 'object' || Array.isArray(map)) {
+      throw new Error(t('Pricing must be a JSON object'))
+    }
+    if (key === 'billing_setting.plugin_billing_expr') {
+      for (const [variant, expression] of Object.entries(map)) {
+        const parts = splitPluginBillingExprKey(variant)
+        if (!parts || typeof expression !== 'string') {
+          throw new Error(t('Invalid pricing value'))
+        }
+        const [plugin, name] = parts
+        const model = wanted.has(name) ? values.get(name) : undefined
+        if (!model) continue
+        model[key] = { ...model[key], [plugin]: expression }
+      }
+      continue
+    }
+    for (const [name, value] of Object.entries(map)) {
+      if (typeof value !== 'number' && typeof value !== 'string') {
+        throw new Error(t('Invalid pricing value'))
+      }
+      const model = wanted.has(name) ? values.get(name) : undefined
+      if (model) model[key] = value
+    }
+  }
+  return values
+}
+
+/** Values one upstream selection writes for its model, before validation. */
+function syncSelectionValues(fields: Record<string, number | string>): {
+  values: PricingValues
+  expression?: string
+} {
+  const values: PricingValues = {}
+  const expression =
+    typeof fields.billing_expr === 'string' && fields.billing_expr.trim() !== ''
+  if (expression) {
+    values['billing_setting.billing_mode'] = 'tiered_expr'
+    values['billing_setting.billing_expr'] = String(fields.billing_expr)
+    return { values, expression: String(fields.billing_expr) }
+  }
+  values['billing_setting.billing_mode'] = 'ratio'
+  const fixed = fields.model_price !== undefined
+  for (const [field, value] of Object.entries(fields)) {
+    if (field === 'billing_mode' || field === 'billing_expr') continue
+    if (fixed && field !== 'model_price') continue
+    const key = field
+      .split('_')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('') as PricingKey
+    if (
+      PRICING_KEYS.includes(key) &&
+      key !== 'billing_setting.plugin_billing_expr'
+    ) {
+      values[key] = value
+    }
+  }
+  return { values }
+}
+
+/** Validates one upstream selection into stored pricing values. */
+export function syncSelectionPricing(
+  name: string,
+  fields: Record<string, number | string>
+): PricingValues {
+  const { values, expression } = syncSelectionValues(fields)
+  const draft = pricingFromDraft(pricingRow(name, values))
+  if (expression !== undefined) {
+    // Sync is a literal import. The editor may normalize request-rule
+    // parentheses, which would otherwise produce another upstream diff.
+    draft['billing_setting.billing_expr'] = expression
+  }
+  return draft
+}
+
+/** Validates the whole batch, then applies every selection in one pass. */
 export function applyPriceSyncSelections(
   options: PricingOptions,
   selections: Record<string, Record<string, number | string>>
 ): PricingOptions {
-  let result = options
+  const validated: Array<[string, PricingValues]> = []
   for (const [name, fields] of Object.entries(selections)) {
-    const next: PricingValues = {}
-    const expression =
-      typeof fields.billing_expr === 'string' &&
-      fields.billing_expr.trim() !== ''
-    if (expression) {
-      next['billing_setting.billing_mode'] = 'tiered_expr'
-      next['billing_setting.billing_expr'] = fields.billing_expr
-    } else {
-      next['billing_setting.billing_mode'] = 'ratio'
-      const fixed = fields.model_price !== undefined
-      for (const [field, value] of Object.entries(fields)) {
-        if (field === 'billing_mode' || field === 'billing_expr') continue
-        if (fixed && field !== 'model_price') continue
-        const key = field
-          .split('_')
-          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-          .join('') as PricingKey
-        if (
-          PRICING_KEYS.includes(key) &&
-          key !== 'billing_setting.plugin_billing_expr'
-        ) {
-          next[key] = value
-        }
-      }
-    }
-    const validated = pricingFromDraft(pricingRow(name, next))
-    if (expression) {
-      // Sync is a literal import. The editor may normalize request-rule
-      // parentheses, which would otherwise produce another upstream diff.
-      validated['billing_setting.billing_expr'] = fields.billing_expr
-    }
-    result = applyPricingValues(result, validated, [name])
+    validated.push([name, syncSelectionPricing(name, fields)])
   }
-  return result
+  const maps = parsePricingOptions(options)
+  for (const [name, values] of validated) {
+    applyValuesToMaps(maps, values, [name])
+  }
+  return serializePricingOptions(maps)
 }
