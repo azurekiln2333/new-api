@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -28,15 +29,35 @@ func shouldCloseActiveWebSocketsAfterDisable(channelId int) (bool, *model.Channe
 
 // disable & notify
 func DisableChannel(channelError types.ChannelError, reason string) {
+	disableChannel(context.Background(), channelError, reason, nil)
+}
+
+// DisableChannelChecked preserves automatic-disable side effects, but checks
+// the current AutoBan and result source atomically with the status update.
+func DisableChannelChecked(ctx context.Context, channelError types.ChannelError, reason string, check func(*model.Channel) bool) {
+	if check == nil {
+		return
+	}
+	disableChannel(ctx, channelError, reason, check)
+}
+
+func disableChannel(ctx context.Context, channelError types.ChannelError, reason string, check func(*model.Channel) bool) {
 	common.SysLog(common.LogText("channel %q (#%d) failed, disabling it, reason: %s", channelError.ChannelName, channelError.ChannelId, common.LocalLogPreview(reason)))
 
 	// 检查是否启用自动禁用功能
-	if !channelError.AutoBan {
+	if check == nil && !channelError.AutoBan {
 		common.SysLog(common.LogText("channel %q (#%d) has automatic disabling turned off, skipping", channelError.ChannelName, channelError.ChannelId))
 		return
 	}
 
-	success := model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
+	var success bool
+	if check == nil {
+		success = model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
+	} else {
+		success = model.UpdateChannelStatusChecked(ctx, channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason, func(current *model.Channel) bool {
+			return current.GetAutoBan() && check(current)
+		})
+	}
 	if success {
 		closeWebSockets, channel := shouldCloseActiveWebSocketsAfterDisable(channelError.ChannelId)
 		if closeWebSockets {
