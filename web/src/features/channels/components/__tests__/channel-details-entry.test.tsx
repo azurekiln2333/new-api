@@ -31,7 +31,11 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
-import { formatCompactNumber, formatTokens } from '@/lib/format'
+import {
+  formatCompactNumber,
+  formatTimestampToDate,
+  formatTokens,
+} from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CHANNEL_STATUS } from '../../constants'
@@ -48,6 +52,7 @@ await i18n.init({
 const clients: QueryClient[] = []
 
 const CONSUMED_TOKENS = 1234567
+const TEST_TIME = 1_700_000_000
 const VIEW_MODE_STORAGE_KEY = 'channels:view-mode'
 const CARD_SELECTOR = '[data-slot=data-table-card]'
 
@@ -58,7 +63,7 @@ const channel: Channel = {
   status: CHANNEL_STATUS.ENABLED,
   name: 'prod',
   created_time: 0,
-  test_time: 0,
+  test_time: TEST_TIME,
   response_time: 0,
   other: '',
   balance: 0,
@@ -360,66 +365,87 @@ it('opens the channel details from the focused card body with Space', async () =
   ).toHaveTextContent('channel-details:3')
 })
 
-it('pairs the card metrics into usage, priority/weight, response and concurrency rows', async () => {
+it('lays the card metrics out in two columns above a separate priority/weight row', async () => {
   const card = await renderCardView()
-  const rows = [
-    ...card.querySelectorAll<HTMLElement>('[data-card-metric-row]'),
+  const layout = card.querySelector<HTMLElement>(
+    '[data-card-metric-layout="main"]'
+  )
+  expect(layout).not.toBeNull()
+
+  const columns = [
+    ...(layout?.querySelectorAll<HTMLElement>('[data-card-metric-column]') ??
+      []),
   ]
-  expect(rows.map((row) => row.dataset.cardMetricRow)).toEqual([
+  expect(columns.map((column) => column.dataset.cardMetricColumn)).toEqual([
     'usage',
-    'priority',
-    'response',
-    'concurrency',
+    'state',
   ])
 
-  // Each row is a description list whose terms and values stay direct
+  // Each column is a description list whose terms and values stay direct
   // siblings, so the label/value pairing survives assistive technology.
-  for (const row of rows) {
-    expect(row.tagName).toBe('DL')
-    for (const term of row.querySelectorAll('dt')) {
+  for (const column of columns) {
+    expect(column.tagName).toBe('DL')
+    for (const term of column.querySelectorAll('dt')) {
       expect(term.parentElement?.querySelector(':scope > dd')).not.toBeNull()
     }
   }
 
-  // Used amount and used tokens share one row, in that order.
-  const usageLabels = [...rows[0].querySelectorAll('dt')].map(
-    (label) => label.textContent
-  )
-  expect(usageLabels).toEqual(['Used / Remaining', 'Used tokens'])
-
-  // Priority and weight are side by side in the same row.
-  const priorityLabels = [...rows[1].querySelectorAll('dt')].map(
-    (label) => label.textContent
-  )
-  expect(priorityLabels).toEqual(['Priority', 'Weight'])
+  // Left column: used amount above used tokens.
   expect(
-    rows[1].querySelectorAll('[data-slot="numeric-spinner-value"]')
+    [...columns[0].querySelectorAll('dt')].map((label) => label.textContent)
+  ).toEqual(['Used / Remaining', 'Used tokens'])
+
+  // Right column: response, last tested and live concurrency.
+  expect(
+    [...columns[1].querySelectorAll('dt')].map((label) => label.textContent)
+  ).toEqual(['Response', 'Last Tested', 'Concurrency'])
+
+  // Priority and weight own a separate row below, side by side.
+  const priorityRow = card.querySelector<HTMLElement>(
+    '[data-card-metric-row="priority"]'
+  )
+  expect(priorityRow?.tagName).toBe('DL')
+  expect(
+    [...(priorityRow?.querySelectorAll('dt') ?? [])].map(
+      (label) => label.textContent
+    )
+  ).toEqual(['Priority', 'Weight'])
+  expect(
+    priorityRow?.querySelectorAll('[data-slot="numeric-spinner-value"]')
   ).toHaveLength(2)
-  expect(rows[1].querySelector('[data-column-id="priority"]')).not.toBeNull()
-
-  // Response metrics stay in their own compact row.
-  const responseLabels = [...rows[2].querySelectorAll('dt')].map(
-    (label) => label.textContent
-  )
-  expect(responseLabels).toEqual(['Response', 'Last Tested'])
-
-  // The live sample keeps its own single-metric row.
-  const concurrencyLabels = [...rows[3].querySelectorAll('dt')].map(
-    (label) => label.textContent
-  )
-  expect(concurrencyLabels).toEqual(['Concurrency'])
+  expect(
+    priorityRow?.querySelector('[data-column-id="priority"]')
+  ).not.toBeNull()
 })
 
-it('lets each card metric row wrap instead of overflowing a narrow card', async () => {
+it('lets the metric columns wrap instead of overflowing a narrow card', async () => {
   const card = await renderCardView()
-  const rows = card.querySelectorAll<HTMLElement>('[data-card-metric-row]')
-  expect(rows).toHaveLength(4)
-  for (const row of rows) {
-    // Wrapping is the narrow-width fallback: pair members stack instead of
-    // pushing past the card edge.
-    expect(row.className).toContain('flex-wrap')
-    expect(row.className).toContain('min-w-0')
+  const layout = card.querySelector<HTMLElement>(
+    '[data-card-metric-layout="main"]'
+  )
+  expect(layout?.className).toContain('flex-wrap')
+  expect(layout?.className).toContain('min-w-0')
+
+  for (const column of layout?.querySelectorAll<HTMLElement>(
+    '[data-card-metric-column]'
+  ) ?? []) {
+    expect(column.className).toContain('min-w-0')
   }
+
+  // The priority/weight row also wraps rather than pushing past the edge.
+  const priorityRow = card.querySelector<HTMLElement>(
+    '[data-card-metric-row="priority"]'
+  )
+  expect(priorityRow?.className).toContain('flex-wrap')
+  expect(priorityRow?.className).toContain('min-w-0')
+})
+
+it('shows the complete last-tested date and time without truncation', async () => {
+  const card = await renderCardView()
+  const [date, time] = formatTimestampToDate(TEST_TIME).split(' ')
+
+  expect(await within(card).findByText(date)).toBeVisible()
+  expect(within(card).getByText(time)).toBeVisible()
 })
 
 it('keeps the channel group out of the card and leaves it to the details', async () => {

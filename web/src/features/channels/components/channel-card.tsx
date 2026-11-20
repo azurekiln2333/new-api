@@ -21,6 +21,7 @@ import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadgeTypeContext } from '@/components/status-badge'
+import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { CHANNEL_STATUS } from '../constants'
@@ -81,9 +82,22 @@ function ChannelCardComponent({
   const balanceCell = renderCell('balance')
   const usedTokensCell = renderCell('used_tokens')
   const responseCell = renderCell('response_time')
-  const testCell = renderCell('test_time')
 
   const labelClass = 'text-muted-foreground text-[11px] font-medium select-none'
+  const valueClass = 'min-w-0 text-sm tabular-nums'
+  // Inline cell badges already sit in a labelled slot, so drop their leading
+  // margin and let them wrap inside a narrow card.
+  const statusValueClass = cn(
+    valueClass,
+    '[&_[data-slot=status-badge]]:!ml-0'
+  )
+
+  // The card shows the complete test timestamp: the table's relative badge
+  // hides the date behind a tooltip, which is not readable at a glance.
+  const testTime = row.original.test_time
+  const testTimeParts = testTime
+    ? formatTimestampToDate(testTime).split(' ')
+    : []
 
   // In card view the enable/disable state is already conveyed by the inline
   // power toggle, so the plain "Enabled"/"Disabled" badge is redundant. Keep
@@ -134,27 +148,36 @@ function ChannelCardComponent({
           </div>
         </div>
 
-        {/* Metrics: the usage pair, then the priority/weight pair, then a
-          compact response row. Each pair is its own list, so it stays on a
-          single line at normal card widths and degrades to stacked metrics in
-          a narrow card instead of overflowing it. */}
+        {/* Metrics: two columns of label/value lists. The left column holds
+          the usage pair, the right column the live response, test and
+          concurrency readings. The columns wrap below their own narrow
+          threshold, so a narrow card stacks metrics instead of overflowing. */}
         <StatusBadgeTypeContext.Provider value='text'>
-          <div className='flex min-w-0 flex-col gap-2'>
+          <div
+            data-card-metric-layout='main'
+            className='flex min-w-0 flex-wrap gap-x-6 gap-y-2'
+          >
             <dl
-              data-card-metric-row='usage'
-              className='flex min-w-0 flex-wrap gap-x-6 gap-y-1.5'
+              data-card-metric-column='usage'
+              className='flex min-w-0 flex-[1_1_8rem] flex-col gap-1.5'
             >
-              <div className='flex min-w-0 flex-[1_1_7rem] flex-col gap-0.5'>
+              <div className='flex min-w-0 flex-col gap-0.5'>
                 <dt className={labelClass}>{t('Used / Remaining')}</dt>
-                <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0 [&>div]:ml-0 [&>div]:flex-wrap [&>div]:gap-x-3'>
+                <dd
+                  className={cn(
+                    valueClass,
+                    '[&_[data-slot=status-badge]]:!ml-0 [&>div]:ml-0',
+                    '[&>div]:flex-wrap [&>div]:gap-x-3'
+                  )}
+                >
                   {balanceCell ?? (
                     <span className='text-muted-foreground'>-</span>
                   )}
                 </dd>
               </div>
-              <div className='flex min-w-0 flex-[1_1_7rem] flex-col gap-0.5'>
+              <div className='flex min-w-0 flex-col gap-0.5'>
                 <dt className={labelClass}>{t('Used tokens')}</dt>
-                <dd className='min-w-0 text-sm tabular-nums'>
+                <dd className={valueClass}>
                   {usedTokensCell ?? (
                     <span className='text-muted-foreground'>-</span>
                   )}
@@ -163,48 +186,30 @@ function ChannelCardComponent({
             </dl>
 
             <dl
-              data-card-metric-row='priority'
-              className='flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1'
+              data-card-metric-column='state'
+              className='flex min-w-0 flex-[1_1_8rem] flex-col gap-1.5'
             >
-              <div className='flex min-w-0 items-center gap-1.5'>
-                <dt className={labelClass}>{t('Priority')}</dt>
-                <dd data-column-id='priority'>{priorityCell}</dd>
-              </div>
-              <div className='flex min-w-0 items-center gap-1.5'>
-                <dt className={labelClass}>{t('Weight')}</dt>
-                <dd>{weightCell}</dd>
-              </div>
-            </dl>
-
-            <dl
-              data-card-metric-row='response'
-              className='flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1'
-            >
-              <div className='flex min-w-0 items-center gap-1.5'>
+              <div className='flex min-w-0 items-baseline gap-1.5'>
                 <dt className={labelClass}>{t('Response')}</dt>
-                <dd className='min-w-0 text-sm tabular-nums [&_[data-slot=status-badge]]:!ml-0'>
+                <dd className={statusValueClass}>
                   {responseCell ?? (
                     <span className='text-muted-foreground'>-</span>
                   )}
                 </dd>
               </div>
-              <div className='flex min-w-0 items-center gap-1.5'>
+              <div className='flex min-w-0 items-baseline gap-1.5'>
                 <dt className={labelClass}>{t('Last Tested')}</dt>
-                <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
-                  {testCell ?? <span className='text-muted-foreground'>-</span>}
+                <dd className={cn(valueClass, 'flex flex-wrap gap-x-1.5')}>
+                  {testTimeParts.length > 0 ? (
+                    testTimeParts.map((part) => <span key={part}>{part}</span>)
+                  ) : (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
                 </dd>
               </div>
-            </dl>
-
-            {/* Live concurrency is sampled once for the whole visible set;
-              the card only reads the shared sample. */}
-            <dl
-              data-card-metric-row='concurrency'
-              className='flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1'
-            >
-              <div className='flex min-w-0 items-center gap-1.5'>
+              <div className='flex min-w-0 items-baseline gap-1.5'>
                 <dt className={labelClass}>{t('Concurrency')}</dt>
-                <dd className='min-w-0 text-sm [&_[data-slot=status-badge]]:!ml-0'>
+                <dd className={statusValueClass}>
                   <ChannelConcurrencyCell
                     channelId={row.original.id}
                     aggregate={isTagRow}
@@ -213,6 +218,21 @@ function ChannelCardComponent({
               </div>
             </dl>
           </div>
+
+          {/* Priority and weight keep their own bottom row, side by side. */}
+          <dl
+            data-card-metric-row='priority'
+            className='flex min-w-0 flex-wrap items-center justify-between gap-x-5 gap-y-1'
+          >
+            <div className='flex min-w-0 items-center gap-1.5'>
+              <dt className={labelClass}>{t('Priority')}</dt>
+              <dd data-column-id='priority'>{priorityCell}</dd>
+            </div>
+            <div className='flex min-w-0 items-center gap-1.5'>
+              <dt className={labelClass}>{t('Weight')}</dt>
+              <dd>{weightCell}</dd>
+            </div>
+          </dl>
         </StatusBadgeTypeContext.Provider>
       </div>
     </ChannelRowActionsLayoutContext.Provider>

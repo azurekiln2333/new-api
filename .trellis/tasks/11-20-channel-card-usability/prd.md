@@ -1,5 +1,16 @@
 # channel card usability
 
+## Approved layout correction: 2026-11-20
+
+Use two metric columns: left contains Used / Remaining and Used tokens; right
+contains Response, Last tested and Concurrency. A separate row below contains
+Priority and Weight side by side. Remove the purple token badge/frame. Card token
+values stay on one line and use compact localized units (万/亿 for Chinese), while
+hover and channel details show the exact value with the full parenthesized compact
+explanation. The last-tested date/time must be fully readable without truncation.
+Preserve privacy masking, tag aggregate behavior and shared visible-set polling.
+Verification is cloud-only under the user's current instruction.
+
 ## Goal and acceptance
 
 Own R9,R10,R11 of ../11-19-playground-capabilities/prd.md, whose user requirements and observable acceptance are authoritative. Every requirement receives a separate product commit.
