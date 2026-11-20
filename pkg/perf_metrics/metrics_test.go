@@ -3,6 +3,7 @@ package perfmetrics
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/go-redis/redis/v8"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,6 +116,58 @@ func TestHourlySuccessSeriesWeightsSmallerBuckets(t *testing.T) {
 func TestRecentHistoryRejectsOversizedModelLists(t *testing.T) {
 	_, err := QuerySummaryAll(24, nil, make([]string, 51)...)
 	require.EqualError(t, err, "Invalid parameters")
+}
+
+func TestRecordRedisUsesBackendSnapshotBeforeScheduling(t *testing.T) {
+	previousEnabled, previousClient := common.RedisEnabled, common.RDB
+	previousSchedule := scheduleRedisRecord
+	hotBuckets.Clear()
+	t.Cleanup(func() {
+		common.RedisEnabled, common.RDB = previousEnabled, previousClient
+		scheduleRedisRecord = previousSchedule
+		hotBuckets.Clear()
+	})
+	// Hold submitted work until after Record returns and the backend globals
+	// change. No sleeps, pool saturation or network service are needed.
+	var pending []func()
+	scheduleRedisRecord = func(work func()) { pending = append(pending, work) }
+	capturedCalls, replacementCalls := 0, 0
+	captured := redis.NewClient(&redis.Options{
+		MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			capturedCalls++
+			return nil, errors.New("test Redis connection is unavailable")
+		},
+	})
+	t.Cleanup(func() { require.NoError(t, captured.Close()) })
+	replacement := redis.NewClient(&redis.Options{
+		MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			replacementCalls++
+			return nil, errors.New("replacement Redis must not receive the old sample")
+		},
+	})
+	t.Cleanup(func() { require.NoError(t, replacement.Close()) })
+
+	common.RedisEnabled, common.RDB = false, captured
+	Record(Sample{Model: "redis-disabled", Success: true})
+	assert.Empty(t, pending, "disabled Redis must not schedule background work")
+	common.RedisEnabled, common.RDB = true, nil
+	Record(Sample{Model: "redis-unconfigured", Success: true})
+	assert.Empty(t, pending, "a missing client must not schedule background work")
+
+	common.RedisEnabled, common.RDB = true, captured
+	Record(Sample{Model: "redis-snapshot", Success: true})
+	require.Len(t, pending, 1)
+	common.RedisEnabled, common.RDB = false, replacement
+	pending[0]()
+	assert.Equal(t, 1, capturedCalls, "queued work must retain its original client even after Redis is disabled")
+	assert.Zero(t, replacementCalls)
+	assert.Equal(t, map[bucketKey]counters{
+		{model: "redis-disabled", group: "default"}:     {requestCount: 1, successCount: 1},
+		{model: "redis-unconfigured", group: "default"}: {requestCount: 1, successCount: 1},
+		{model: "redis-snapshot", group: "default"}:     {requestCount: 1, successCount: 1},
+	}, mergedHotBuckets(), "Redis configuration does not change local sampling")
 }
 
 // Terminal task sampling: success/failure counts, end-to-end latency, and
