@@ -88,6 +88,8 @@ channel.notify_enabled_subject: "Channel \"{{.Name}}\" (#{{.Id}}) has been enabl
 channel.notify_enabled_content: "Channel \"{{.Name}}\" (#{{.Id}}) has been enabled"
 channel.test_completed_subject: "Channel test completed"
 channel.capacity_saturated: "All eligible channels are at their concurrent request limit. Please retry later."
+channel.capacity_queue_full: "The channel waiting queue is full. Please retry later."
+channel.capacity_wait_timeout: "The channel waiting time limit was reached. Please retry later."
 channel.capacity_unavailable: "Channel concurrency coordination is unavailable. Please retry later."
 relay.upstream_first_byte_timeout: "Timed out waiting for the first upstream response body byte."
 relay.channel_endpoint_invalid: "The channel upstream endpoint configuration is invalid"

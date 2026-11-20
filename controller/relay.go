@@ -29,6 +29,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -96,7 +97,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		requestplugin.Report(c, relayFormat, relayInfo, ingressRecord, newAPIError)
 	}()
-
 	var streamEnvelope *helper.StreamCommentEnvelope
 	// Keep the sink open through final error rendering, including a report
 	// capture installed outside it by the selected channel's Reply plugins.
@@ -198,12 +198,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		newAPIError = relay.RefundFailedRequestBilling(c, relayInfo, newAPIError)
 	}()
-
 	// The request-wide sink serializes comments and output below attempt/plugin
 	// wrappers. Comment-only writes keep an idle connection alive and retryable.
 	if relayInfo.IsStream && relayFormat != types.RelayFormatOpenAIRealtime {
 		streamEnvelope = helper.InstallStreamCommentEnvelope(c)
 	}
+	defer func() {
+		if waiter := channelWaiterFrom(c); waiter != nil {
+			waiter.Close()
+		}
+	}()
 
 	retryParam := &service.RetryParam{
 		Ctx:         c,
@@ -223,7 +227,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		channel, lease, channelErr := getChannelWithCapacity(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
-			if newAPIError == nil {
+			if newAPIError == nil || service.IsChannelCapacityError(channelErr) || c.Request.Context().Err() != nil {
 				newAPIError = channelErr
 			}
 			break
@@ -237,16 +241,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			c.Request = originalRequest.WithContext(lease.Context())
 			defer func() {
 				completed := attemptErr == nil && (relayInfo.StreamStatus == nil || relayInfo.StreamStatus.IsNormalEnd() && !relayInfo.StreamStatus.HasErrors())
+				// A nil handler error may carry settled partial usage. A lease
+				// failure must not turn that result into a refundable retry.
 				if coordinationErr := lease.Err(); coordinationErr != nil && !completed && attemptErr != nil {
 					attemptErr = coordinationErr
 				}
-				// Report a recognized upstream refusal before releasing the slot so
-				// the next attempt does not pick the same busy channel.
+				// Report the upstream state before releasing the slot: a release
+				// wakes the next queued probe, so a late backoff would let that
+				// probe race ahead of the recorded busy state.
 				if attemptErr != nil && service.ClassifyUpstreamRejection(attemptErr) == service.UpstreamRejectionConcurrency {
-					state := service.RequestPolicy(c)
-					if !slices.Contains(state.UpstreamBusyChannelIDs, channel.Id) {
-						state.UpstreamBusyChannelIDs = append(state.UpstreamBusyChannelIDs, channel.Id)
+					retryAfter := service.ParseChannelRetryAfter(helper.UpstreamRetryAfter(c), time.Now())
+					if coordinationErr := service.ReportChannelUpstreamBusy(lease.Context(), channel.Id, retryAfter); coordinationErr != nil {
+						attemptErr = coordinationErr
 					}
+				} else if completed {
+					lease.MarkUpstreamAvailable()
 				}
 				lease.Release()
 				c.Request = originalRequest
@@ -321,14 +330,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 		if relayFormat != types.RelayFormatOpenAIRealtime && !c.Writer.Written() && c.Request.Context().Err() == nil &&
 			service.ClassifyUpstreamRejection(newAPIError) == service.UpstreamRejectionConcurrency {
-			// A recognized refusal did no billable work. Exclude the channel and
-			// try the remaining candidates without spending the ordinary
-			// upstream-error retry budget.
 			state := service.RequestPolicy(c)
 			if !slices.Contains(state.UpstreamBusyChannelIDs, channel.Id) {
 				state.UpstreamBusyChannelIDs = append(state.UpstreamBusyChannelIDs, channel.Id)
 			}
+			rememberChannelWaitCandidate(c, channel.Id, relayInfo.UsingGroup)
 			service.RecordPolicyFailure(c, channel.Id, newAPIError, service.PolicyDecision{Action: "wait", Reason: "upstream_concurrency", Source: "capacity"})
+			// A recognized refusal did no billable work. Try the remaining
+			// candidates, then park under the same fixed request deadline.
+			// This does not consume the ordinary upstream-error retry budget.
 			continue
 		}
 
@@ -347,16 +357,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryLogStr := common.LogText("retry: %s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
-}
-
-// streamCommitHoldBudget bounds how long a streaming Responses attempt may keep
-// its first bytes retryable. A configured upstream first-byte timeout is the
-// natural bound; otherwise the helper's default applies.
-func streamCommitHoldBudget(settings dto.ChannelSettings) time.Duration {
-	if seconds := service.EffectiveUpstreamFirstByteTimeoutSeconds(settings); seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
-	return helper.DefaultStreamCommitHoldBudget
 }
 
 func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *types.NewAPIError) {
@@ -427,7 +427,7 @@ var upgrader = websocket.Upgrader{
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	if info.ChannelMeta == nil && len(service.RequestPolicy(c).SaturatedChannelIDs) == 0 {
+	if info.ChannelMeta == nil && len(service.RequestPolicy(c).SaturatedChannelIDs) == 0 && len(service.RequestPolicy(c).UpstreamBusyChannelIDs) == 0 {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -439,6 +439,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			Name:    c.GetString("channel_name"),
 			AutoBan: &autoBanInt,
 		}
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 		service.RequestPolicy(c).BeginAttempt(channel, info.UsingGroup)
 		return channel, nil
 	}
@@ -468,23 +469,228 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 // yet. Busy channels remain excluded even when failed-channel avoidance is off.
 func getChannelWithCapacity(c *gin.Context, info *relaycommon.RelayInfo, retry *service.RetryParam) (*model.Channel, *service.ChannelCapacityLease, *types.NewAPIError) {
 	var lastBusy *types.NewAPIError
+	state := service.RequestPolicy(c)
 	for {
+		_, pinned, _ := service.GetChannelConstraints(c).ResolvedPin()
+		if len(state.UpstreamBusyChannelIDs) > 0 && (pinned || state.SessionMode == "strict" || service.ShouldSkipRetryAfterChannelAffinityFailure(c)) {
+			grant, channel, waitErr := waitForChannelGrant(c, info)
+			if grant != nil {
+				return channel, grant.Lease, nil
+			}
+			return nil, nil, waitErr
+		}
 		channel, err := getChannel(c, info, retry)
 		if err != nil {
-			if lastBusy != nil {
-				return nil, nil, lastBusy
+			if lastBusy == nil && len(state.UpstreamBusyChannelIDs) == 0 {
+				return nil, nil, err
 			}
-			return nil, nil, err
+			if grant, grantedChannel, waitErr := waitForChannelGrant(c, info); grant != nil {
+				return grantedChannel, grant.Lease, nil
+			} else {
+				return nil, nil, waitErr
+			}
 		}
 		lease, err := service.AcquireRequestChannelCapacity(c, channel.Id)
 		if err == nil {
 			return channel, lease, nil
 		}
-		if !service.RetryChannelAdmission(c, channel.Id, err, retry) {
+		if err.GetErrorCode() != types.ErrorCodeChannelCapacitySaturated {
 			return nil, nil, err
+		}
+		rememberChannelWaitCandidate(c, channel.Id, info.UsingGroup)
+		if !service.RetryChannelAdmission(c, channel.Id, err, retry) {
+			if grant, grantedChannel, waitErr := waitForChannelGrant(c, info); grant != nil {
+				return grantedChannel, grant.Lease, nil
+			} else {
+				return nil, nil, waitErr
+			}
 		}
 		lastBusy = err
 	}
+}
+
+type channelWaitSelection struct {
+	channelID int
+	group     string
+}
+
+const channelWaitCandidatesContextKey = "channel_wait_candidates"
+
+// Keep the group that authorized each busy candidate: auto-group traversal can
+// change the current group before a reservation is finally available.
+func rememberChannelWaitCandidate(c *gin.Context, channelID int, group string) {
+	value, _ := c.Get(channelWaitCandidatesContextKey)
+	selections, _ := value.([]channelWaitSelection)
+	if !slices.ContainsFunc(selections, func(candidate channelWaitSelection) bool { return candidate.channelID == channelID }) {
+		selections = append(selections, channelWaitSelection{channelID: channelID, group: group})
+		c.Set(channelWaitCandidatesContextKey, selections)
+	}
+}
+
+// waitForChannelGrant asks the capacity queue for a slot on one of the channels
+// that were busy for this request. The grant is not an authorization: the
+// channel is re-validated here, and a grant that no longer fits is released.
+func waitForChannelGrant(c *gin.Context, info *relaycommon.RelayInfo) (*service.ChannelWaitGrant, *model.Channel, *types.NewAPIError) {
+	noChannel := types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayRetryNoAvailableChannel, map[string]any{"Group": info.UsingGroup, "Model": info.OriginModelName})), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+	if c.Writer.Written() {
+		return nil, nil, noChannel
+	}
+	value, _ := c.Get(channelWaitCandidatesContextKey)
+	selections, _ := value.([]channelWaitSelection)
+	candidates := make([]service.ChannelWaitCandidate, 0, len(selections))
+	groups := make(map[int]string, len(selections))
+	for _, selection := range selections {
+		channel, err := model.GetChannelById(selection.channelID, true)
+		if err != nil || !channelWaitEligible(c, info, channel, selection.group) {
+			continue
+		}
+		candidates = append(candidates, service.ChannelWaitCandidate{ChannelID: channel.Id, Settings: channel.GetSetting()})
+		groups[channel.Id] = selection.group
+	}
+	if len(candidates) == 0 {
+		return nil, nil, noChannel
+	}
+	waiter := channelWaiterFor(c)
+	if waiter == nil {
+		return nil, nil, noChannel
+	}
+
+	var stopKeepAlive = func() {}
+	if envelope := helper.StreamCommentEnvelopeFrom(c); envelope != nil {
+		stopKeepAlive = envelope.StartKeepAlive(commentKeepAliveInterval())
+		defer stopKeepAlive()
+	}
+
+	// A grant is not an authorization. Re-validate it and, when it no longer
+	// fits the request, release it and let the queue offer another candidate
+	// instead of ending the request here.
+	for len(candidates) > 0 {
+		grant, waitErr := waiter.Wait(c.Request.Context(), candidates)
+		if waitErr != nil {
+			if waitErr.GetErrorCode() == types.ErrorCodeChannelCapacityQueueFull {
+				waitErr.SetMessage(i18n.T(c, i18n.MsgChannelCapacityQueueFull))
+			} else if waitErr.GetErrorCode() == types.ErrorCodeChannelCapacityWaitTimeout {
+				waitErr.SetMessage(i18n.T(c, i18n.MsgChannelCapacityWaitTimeout))
+			} else if waitErr.GetErrorCode() == types.ErrorCodeChannelCapacityUnavailable {
+				waitErr.SetMessage(i18n.T(c, i18n.MsgChannelCapacityUnavailable))
+			}
+			return nil, nil, waitErr
+		}
+		if grant == nil || grant.Lease == nil {
+			return nil, nil, noChannel
+		}
+		channel, err := model.GetChannelById(grant.ChannelID, true)
+		group := groups[grant.ChannelID]
+		if err == nil && channelWaitEligible(c, info, channel, group) && !sameCapacityLimit(channel.GetSetting(), channel.Id, candidates) {
+			// A changed cap requires a fresh atomic reservation under that cap.
+			grant.Lease.Release()
+			for i := range candidates {
+				if candidates[i].ChannelID == channel.Id {
+					candidates[i].Settings = channel.GetSetting()
+				}
+			}
+			continue
+		}
+		if err != nil || !channelWaitEligible(c, info, channel, group) {
+			grant.Lease.Release()
+			candidates = slices.DeleteFunc(candidates, func(candidate service.ChannelWaitCandidate) bool {
+				return candidate.ChannelID == grant.ChannelID
+			})
+			continue
+		}
+		if setupErr := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName); setupErr != nil {
+			grant.Lease.Release()
+			candidates = slices.DeleteFunc(candidates, func(candidate service.ChannelWaitCandidate) bool { return candidate.ChannelID == grant.ChannelID })
+			continue
+		}
+		info.UsingGroup = group
+		if info.TokenGroup == "auto" {
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+		}
+		info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
+		service.RequestPolicy(c).BeginAttempt(channel, group)
+		return grant, channel, nil
+	}
+	return nil, nil, noChannel
+}
+
+// channelWaitEligible rechecks current channel scope and request restrictions
+// after waiting. The reservation itself never grants permission to relay.
+func channelWaitEligible(c *gin.Context, info *relaycommon.RelayInfo, channel *model.Channel, group string) bool {
+	if channel == nil || channel.Status != common.ChannelStatusEnabled {
+		return false
+	}
+	constraints := service.GetChannelConstraints(c)
+	if pin, pinned, _ := constraints.ResolvedPin(); pinned && pin.ChannelId != channel.Id {
+		return false
+	}
+	state := service.RequestPolicy(c)
+	if (state.SessionMode == "strict" || service.ShouldSkipRetryAfterChannelAffinityFailure(c)) && state.CurrentChannelID != channel.Id {
+		return false
+	}
+	models := channel.EligibleModelsForUserGroup(group, c.GetInt("id"))
+	if !slices.Contains(models, info.OriginModelName) && !slices.Contains(models, ratio_setting.RoutingMatchModelName(info.OriginModelName)) {
+		return false
+	}
+	allowed, _ := model.ChannelSatisfiesFilters(channel, info.OriginModelName, constraints.Filters)
+	return allowed
+}
+
+// channelWaiterContextKey stores the request-scoped capacity waiter.
+const channelWaiterContextKey = "channel_waiter"
+
+// channelWaiterFrom returns the waiter already created for this request.
+func channelWaiterFrom(c *gin.Context) *service.ChannelWaiter {
+	value, ok := c.Get(channelWaiterContextKey)
+	if !ok {
+		return nil
+	}
+	waiter, _ := value.(*service.ChannelWaiter)
+	return waiter
+}
+
+// channelWaiterFor returns the request's waiter, creating it on first use so an
+// ordinary stream that never waits does not register for a queue slot.
+func channelWaiterFor(c *gin.Context) *service.ChannelWaiter {
+	if waiter := channelWaiterFrom(c); waiter != nil {
+		return waiter
+	}
+	userID := c.GetInt("id")
+	if userID <= 0 {
+		return nil
+	}
+	waiter := service.NewChannelWaiter(c.Request.Context(), userID)
+	c.Set(channelWaiterContextKey, waiter)
+	return waiter
+}
+
+// commentKeepAliveInterval is the interval for the waiting-period SSE comment
+// keepalive.
+func commentKeepAliveInterval() time.Duration {
+	generalSettings := operation_setting.GetGeneralSetting()
+	if !generalSettings.PingIntervalEnabled || generalSettings.PingIntervalSeconds <= 0 {
+		return helper.DefaultPingInterval
+	}
+	return time.Duration(generalSettings.PingIntervalSeconds) * time.Second
+}
+
+// sameCapacityLimit reports whether the granted channel still has the concurrency
+// limit that the matching candidate was queued for.
+func sameCapacityLimit(current dto.ChannelSettings, channelID int, candidates []service.ChannelWaitCandidate) bool {
+	for _, candidate := range candidates {
+		if candidate.ChannelID != channelID {
+			continue
+		}
+		return sameMaxConcurrentRequests(current.MaxConcurrentRequests, candidate.Settings.MaxConcurrentRequests)
+	}
+	return false
+}
+
+func sameMaxConcurrentRequests(left, right *int) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -1185,4 +1391,14 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		stop.Reason = "status_not_retryable"
 	}
 	return stop
+}
+
+// streamCommitHoldBudget bounds how long a streaming Responses attempt may keep
+// its first bytes retryable. A configured upstream first-byte timeout is the
+// natural bound; otherwise the helper's default applies.
+func streamCommitHoldBudget(settings dto.ChannelSettings) time.Duration {
+	if seconds := service.EffectiveUpstreamFirstByteTimeoutSeconds(settings); seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return helper.DefaultStreamCommitHoldBudget
 }

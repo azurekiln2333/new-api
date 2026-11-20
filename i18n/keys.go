@@ -114,6 +114,8 @@ const (
 	MsgChannelResponseTimeExceeded             = "channel.response_time_exceeded"
 	MsgChannelCapacitySaturated                = "channel.capacity_saturated"
 	MsgChannelCapacityUnavailable              = "channel.capacity_unavailable"
+	MsgChannelCapacityQueueFull                = "channel.capacity_queue_full"
+	MsgChannelCapacityWaitTimeout              = "channel.capacity_wait_timeout"
 	MsgRelayUpstreamFirstByteTimeout           = "relay.upstream_first_byte_timeout"
 	MsgRelayChannelEndpointInvalid             = "relay.channel_endpoint_invalid"
 	MsgRelayChannelEndpointUnsupported         = "relay.channel_endpoint_unsupported"

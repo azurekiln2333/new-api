@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -58,6 +59,15 @@ func channelCapacityMarkerKey(channelID int) string {
 var channelCapacityAcquireScript = redis.NewScript(`
 local clock = redis.call('TIME')
 local now = clock[1] * 1000 + math.floor(clock[2] / 1000)
+if #KEYS >= 3 then
+  local head = redis.call('ZRANGE',KEYS[2],0,0)[1]
+  while head do
+    local expiry = redis.call('ZSCORE',KEYS[3],head)
+    if expiry and tonumber(expiry)>now then return 0 end
+    redis.call('ZREM',KEYS[2],head)
+    head = redis.call('ZRANGE',KEYS[2],0,0)[1]
+  end
+end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
 if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[1]) then return 0 end
 redis.call('ZADD', KEYS[1], now + tonumber(ARGV[3]), ARGV[2])
@@ -180,6 +190,9 @@ type ChannelCapacityLease struct {
 	telemetryMarker     bool
 	telemetryLost       bool
 	markerKey           string
+	waitCoordinator     *channelWaitCoordinator
+	waitProbeOwner      string
+	waitProbeAvailable  atomic.Bool
 }
 
 type channelCapacityContextKey struct{}
@@ -283,6 +296,7 @@ func (l *ChannelCapacityLease) Release() {
 		return
 	}
 	l.once.Do(func() {
+		defer l.releaseWaitProbe()
 		l.cancel(context.Canceled)
 		if l.client != nil {
 			<-l.done
@@ -291,14 +305,16 @@ func (l *ChannelCapacityLease) Release() {
 			// Failure leaves only this owner's expiring lease, never a local
 			// fallback counter or a deletion of a successor's reservation.
 			_ = l.client.ZRem(ctx, l.key, l.owner).Err()
+			_ = l.client.Publish(ctx, channelWaitNotifications, "release").Err()
 			return
 		}
 		localChannelCapacity.Lock()
-		defer localChannelCapacity.Unlock()
 		localChannelCapacity.active[l.channelID]--
 		if localChannelCapacity.active[l.channelID] == 0 {
 			delete(localChannelCapacity.active, l.channelID)
 		}
+		localChannelCapacity.Unlock()
+		localChannelWait.notify()
 	})
 }
 
@@ -306,12 +322,16 @@ func channelCapacityError(code types.ErrorCode) *types.NewAPIError {
 	status, message := http.StatusTooManyRequests, i18n.MsgChannelCapacitySaturated
 	if code == types.ErrorCodeChannelCapacityUnavailable {
 		status, message = http.StatusServiceUnavailable, i18n.MsgChannelCapacityUnavailable
+	} else if code == types.ErrorCodeChannelCapacityQueueFull {
+		message = i18n.MsgChannelCapacityQueueFull
+	} else if code == types.ErrorCodeChannelCapacityWaitTimeout {
+		message = i18n.MsgChannelCapacityWaitTimeout
 	}
 	return types.NewErrorWithStatusCode(errors.New(i18n.Translate("", message)), code, status, types.ErrOptionWithSkipRetry())
 }
 
 func IsChannelCapacityError(err *types.NewAPIError) bool {
-	return err != nil && (err.GetErrorCode() == types.ErrorCodeChannelCapacitySaturated || err.GetErrorCode() == types.ErrorCodeChannelCapacityUnavailable)
+	return err != nil && (err.GetErrorCode() == types.ErrorCodeChannelCapacitySaturated || err.GetErrorCode() == types.ErrorCodeChannelCapacityUnavailable || err.GetErrorCode() == types.ErrorCodeChannelCapacityQueueFull || err.GetErrorCode() == types.ErrorCodeChannelCapacityWaitTimeout)
 }
 
 func AcquireChannelCapacity(ctx context.Context, channelID int, settings dto.ChannelSettings) (*ChannelCapacityLease, *types.NewAPIError) {
@@ -326,6 +346,11 @@ func AcquireChannelCapacity(ctx context.Context, channelID int, settings dto.Cha
 		return acquireUnlimitedChannelCapacity(ctx, channelID), nil
 	}
 	if !common.RedisEnabled {
+		localChannelWait.mu.Lock()
+		defer localChannelWait.mu.Unlock()
+		if localChannelHasWaiters(channelID) {
+			return nil, channelCapacityError(types.ErrorCodeChannelCapacitySaturated)
+		}
 		localChannelCapacity.Lock()
 		defer localChannelCapacity.Unlock()
 		if localChannelCapacity.active[channelID] >= limit {
@@ -568,7 +593,7 @@ func acquireRedisChannelCapacity(ctx context.Context, client *redis.Client, chan
 	key := channelCapacityKey(channelID)
 	owner := uuid.NewString()
 	commandCtx, cancel := context.WithTimeout(ctx, channelCapacityRedisTimeout)
-	admitted, err := channelCapacityAcquireScript.Run(commandCtx, client, []string{key}, limit, owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+	admitted, err := channelCapacityAcquireScript.Run(commandCtx, client, []string{key, channelWaitQueueKey(channelID), channelWaitGlobalKey}, limit, owner, channelCapacityLeaseTTL.Milliseconds()).Int()
 	cancel()
 	if err != nil {
 		// The result of a timed-out write is ambiguous. Remove this token
@@ -594,6 +619,13 @@ func (l *ChannelCapacityLease) renew() bool {
 	if err != nil || renewed != 1 {
 		l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
 		return false
+	}
+	if l.waitProbeOwner != "" && !l.waitProbeAvailable.Load() {
+		renewed, err := channelWaitProbeRenewScript.Run(ctx, l.client, []string{channelWaitBusyKey(l.channelID)}, l.waitProbeOwner, channelCapacityLeaseTTL.Milliseconds()).Int()
+		if err != nil || renewed != 1 && !l.waitProbeAvailable.Load() {
+			l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
+			return false
+		}
 	}
 	return true
 }
@@ -621,6 +653,10 @@ func AcquireRequestChannelCapacity(c *gin.Context, channelID int) (*ChannelCapac
 		key := i18n.MsgChannelCapacitySaturated
 		if err.GetErrorCode() == types.ErrorCodeChannelCapacityUnavailable {
 			key = i18n.MsgChannelCapacityUnavailable
+		} else if err.GetErrorCode() == types.ErrorCodeChannelCapacityQueueFull {
+			key = i18n.MsgChannelCapacityQueueFull
+		} else if err.GetErrorCode() == types.ErrorCodeChannelCapacityWaitTimeout {
+			key = i18n.MsgChannelCapacityWaitTimeout
 		}
 		err.SetMessage(i18n.T(c, key))
 	}

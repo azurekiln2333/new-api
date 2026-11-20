@@ -76,7 +76,7 @@ polling and accepted remote jobs do not occupy generation slots.
 |---|---|
 | Cap outside0..1000000 or timeout outside0..86400 / fractional input | Save rejected |
 | Candidate busy, alternate eligible | Select alternate without consuming retry budget |
-| All candidates busy or fixed busy channel | Local429 `channel_capacity_saturated` |
+| All candidates busy or fixed busy channel | Enter bounded request-scoped queue; revalidate before admission |
 | Configured Redis unavailable or owner renewal lost | Local503 `channel_capacity_unavailable`; no process-local fallback |
 | First body byte deadline wins |504 `upstream_first_byte_timeout`, upstream canceled before handling/settlement |
 | Client canceled, output committed, strict session or explicit pin | Preserve retry stop boundary |
@@ -244,6 +244,72 @@ Wrong: use raw `Writer.Written()` after a comment as proof of a delivered answer
 or reset the entire writer chain to retry. Correct: retain the explicit
 comment/content distinction, remove only the owned attempt layer, and stop all
 of its writers before beginning another attempt.
+
+## Waiting for channel capacity
+
+### 1. Scope / Trigger
+
+After all eligible candidates are locally saturated or explicitly rejected
+upstream concurrency, retain the request until a slot is available, cancellation
+occurs, or its fixed waiting deadline expires. Pins and strict affinity can wait
+on their one authorized channel but never switch outside that scope.
+
+### 2. Signatures
+
+`NewChannelWaiter(ctx, userID)` creates a request owner. `Wait(ctx, candidates)`
+returns a `ChannelWaitGrant` carrying an already-counted lease; do not acquire a
+second slot. `Close` is idempotent. Report recognized busy state before releasing
+the attempt's lease; successful probes clear that busy gate before release.
+
+### 3. Contracts
+
+`CHANNEL_WAIT_TIMEOUT_SECONDS` defaults to 300 (1..3600),
+`CHANNEL_WAIT_MAX_REQUESTS` to 1000 (1..10000), and
+`CHANNEL_WAIT_MAX_PER_USER` to 20 (1..1000). At most 256 distinct eligible
+candidates enter one wait. Repeated busy cycles never reset the deadline.
+
+Admission preserves FIFO among overlapping candidate sets. Redis uses atomic
+ticket/capacity operations, expiring owner records, a shared notification
+listener and bounded recovery polling. Never trim live tickets or fall back to
+independent local admission on coordinator failure. Every expiring lease/probe
+record survives until at least its first renewal.
+
+A grant is not authorization: reload current channel/group/model/key/goal/pin
+rules and capacity before use. Release invalid or abandoned grants. SSE waiting
+uses only serialized comments; nonstream requests never receive SSE. Initial
+waiting precedes billing preparation; later busy waits reuse the same reservation.
+Generic 429, quota, transport failure and billable partial output never queue.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Slot freed and policy still permits | Admit one waiter and resume request |
+| User/global queue cap reached | `channel_capacity_queue_full` |
+| Fixed wait deadline elapsed | `channel_capacity_wait_timeout` |
+| Redis unavailable or owner lost | `channel_capacity_unavailable` |
+| Client cancellation or changed policy | Remove ticket, release raced grant |
+| Upstream concurrency without configured local cap | One queued probe with bounded backoff |
+
+### 5. Good / Base / Bad Cases
+
+Good: a fixed-channel request keeps receiving comments until the slot is free,
+then settles once. Base: ordinary traffic incurs no ticket until it must wait.
+Bad: restarting the deadline on every refusal or reserving quota a second time.
+
+### 6. Tests Required
+
+`TestChannelWaitRouting` covers actual HTTP waiting, pins, cancellation, changed
+eligibility, unlimited upstream busy, generic/quota errors and exact accounting
+on SQLite/MySQL/PostgreSQL. Service tests cover FIFO, cancellation/grant races,
+limits, deadline persistence, real Redis expiry/renewal/notification recovery
+and two-client probe exclusion. Run these with Linux race detection in CI.
+
+### 7. Wrong versus Correct
+
+Wrong: dequeue every waiter when one slot releases, then let ordinary admission
+race. Correct: reserve capacity atomically for the eligible queue owner and
+return the owned lease for final live-policy validation.
 
 ## Error Types
 

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -31,6 +32,231 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// TestChannelWaitRouting uses actual HTTP streams: receiving the first comment
+// is the barrier proving the request is parked, before releasing a held slot or
+// changing channel policy. No recorder is read concurrently with a writer.
+func TestChannelWaitRouting(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		local      bool
+		pinned     bool
+		strict     bool
+		cancel     bool
+		revoke     string
+		upstream   string
+		two        bool
+		wantA      int32
+		wantB      int32
+		wantCharge int
+	}{
+		{name: "pinned local capacity waits before billing", local: true, pinned: true, wantA: 1, wantCharge: 1},
+		{name: "cancel removes local waiter without billing", local: true, pinned: true, cancel: true},
+		{name: "changed group model scope selects next grant", local: true, two: true, revoke: "group", wantB: 1, wantCharge: 1},
+		{name: "changed goal policy selects next grant", local: true, two: true, revoke: "goal", wantB: 1, wantCharge: 1},
+		{name: "disabled keys select next grant", local: true, two: true, revoke: "key", wantB: 1, wantCharge: 1},
+		{name: "unlimited upstream busy waits with zero retry budget", upstream: "busy", wantA: 2, wantCharge: 1},
+		{name: "all upstream candidates busy wait with zero retry budget", upstream: "busy", two: true, wantA: -1, wantB: -1, wantCharge: 1},
+		{name: "pinned upstream busy stays pinned", upstream: "busy", pinned: true, two: true, wantA: 2, wantCharge: 1},
+		{name: "strict upstream busy stays bound", upstream: "busy", strict: true, two: true, wantA: 2, wantCharge: 1},
+		{name: "generic 429 does not queue", upstream: "rate_limit", wantA: 1},
+		{name: "quota 429 does not queue", upstream: "quota", wantA: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, i18n.Init())
+			user, token := setupResponsesWSRequestTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
+			require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+			require.NoError(t, model.DB.Model(user).Update("setting", `{"billing_preference":"wallet_only"}`).Error)
+			previousRetries, previousLogs, previousErrors := common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled
+			previousCount, previousBatch, previousTimeout := constant.CountToken, common.BatchUpdateEnabled, constant.StreamingTimeout
+			previousPrices, previousGroups := ratio_setting.ModelPrice2JSONString(), ratio_setting.GroupRatio2JSONString()
+			previousUnits := common.QuotaPerUnit
+			quotaSettings := operation_setting.GetQuotaSetting()
+			previousTrust := quotaSettings.TrustQuotaUSD
+			general := operation_setting.GetGeneralSetting()
+			previousPing, previousInterval := general.PingIntervalEnabled, general.PingIntervalSeconds
+			affinity := operation_setting.GetChannelAffinitySetting()
+			previousAffinity := *affinity
+			common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled = 0, true, false
+			constant.CountToken, common.BatchUpdateEnabled, constant.StreamingTimeout = false, false, 30
+			common.QuotaPerUnit, quotaSettings.TrustQuotaUSD = 500000, 0
+			general.PingIntervalEnabled, general.PingIntervalSeconds = true, 1
+			*affinity = operation_setting.ChannelAffinitySetting{RetryAvoidFailedChannels: true}
+			if tc.strict {
+				*affinity = operation_setting.ChannelAffinitySetting{Enabled: true, RetryAvoidFailedChannels: true, DefaultTTLSeconds: 60,
+					Rules: []operation_setting.ChannelAffinityRule{{Name: t.Name(), ModelRegex: []string{".*"}, SessionMode: "strict", KeySources: []operation_setting.ChannelAffinityKeySource{{Type: "request_header", Key: "X-Session"}}}}}
+			}
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"channel-wait-routing-test":0.000002}`))
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+			t.Setenv("CHANNEL_WAIT_TIMEOUT_SECONDS", "5")
+			t.Cleanup(func() {
+				common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled = previousRetries, previousLogs, previousErrors
+				constant.CountToken, common.BatchUpdateEnabled, constant.StreamingTimeout = previousCount, previousBatch, previousTimeout
+				common.QuotaPerUnit, quotaSettings.TrustQuotaUSD = previousUnits, previousTrust
+				general.PingIntervalEnabled, general.PingIntervalSeconds = previousPing, previousInterval
+				*affinity = previousAffinity
+				require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(previousPrices))
+				require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups))
+				require.NoError(t, model.LOG_DB.Where("token_id = ?", token.Id).Delete(&model.Log{}).Error)
+			})
+			service.InitHttpClient()
+			var calls [2]atomic.Int32
+			reserved := make(chan int, 8)
+			channels := make([]model.Channel, 1)
+			if tc.two {
+				channels = make([]model.Channel, 2)
+			}
+			for i := range channels {
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					attempt := calls[i].Add(1)
+					quota, err := model.GetUserQuota(user.Id, false)
+					assert.NoError(t, err)
+					reserved <- quota
+					if attempt == 1 && tc.upstream != "" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusTooManyRequests)
+						switch tc.upstream {
+						case "busy":
+							_, _ = io.WriteString(w, `{"error":{"code":"concurrency_limit_exceeded","message":"concurrency limit exceeded for user","type":"rate_limit_error"}}`)
+						case "quota":
+							_, _ = io.WriteString(w, `{"error":{"code":"insufficient_quota","message":"quota exhausted","type":"insufficient_quota"}}`)
+						default:
+							_, _ = io.WriteString(w, `{"error":{"code":"rate_limit_exceeded","message":"rate limit exceeded","type":"rate_limit_error"}}`)
+						}
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer-%d\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"wait-success\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n", i)
+				}))
+				t.Cleanup(upstream.Close)
+				channels[i] = model.Channel{Id: user.Id*10 + i, Name: fmt.Sprintf("wait-%d", i), Type: constant.ChannelTypeOpenAI, Key: "test-only-channel-wait", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Group: "default", Models: "channel-wait-routing-test", Priority: common.GetPointer(int64(10 - i)), AutoBan: common.GetPointer(0)}
+				if tc.local {
+					channels[i].SetSetting(kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+				}
+				if tc.revoke == "key" && i == 0 {
+					channels[i].ChannelInfo = model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1, MultiKeyStatusList: map[int]int{0: common.ChannelStatusEnabled}}
+				}
+				require.NoError(t, channels[i].Insert())
+				t.Cleanup(func() {
+					require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.Ability{}).Error)
+					require.NoError(t, model.DB.Delete(&channels[i]).Error)
+				})
+			}
+			var held []*service.ChannelCapacityLease
+			if tc.local {
+				for i := range channels {
+					lease, apiErr := service.AcquireChannelCapacity(context.Background(), channels[i].Id, channels[i].GetSetting())
+					require.Nil(t, apiErr)
+					held = append(held, lease)
+					t.Cleanup(lease.Release)
+				}
+			}
+			finished := make(chan struct{})
+			engine := gin.New()
+			engine.Use(func(c *gin.Context) { defer close(finished); c.Next() })
+			engine.POST("/v1/responses", middleware.TokenAuth(), func(c *gin.Context) {
+				if tc.pinned {
+					service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: channels[0].Id, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})
+				}
+			}, middleware.Distribute(), func(c *gin.Context) {
+				defer common.CleanupBodyStorage(c)
+				defer service.ClearCurrentChannelAffinityCache(c)
+				Relay(c, types.RelayFormatOpenAIResponses)
+			})
+			gateway := httptest.NewServer(engine)
+			t.Cleanup(gateway.Close)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			body := `{"model":"channel-wait-routing-test","input":"hello","stream":true}`
+			if tc.revoke == "goal" {
+				body = `{"model":"channel-wait-routing-test","input":"hello","stream":true,"client_metadata":{"x-codex-turn-metadata":"{\"turn_trigger\":\"goal\"}"}}`
+			}
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, gateway.URL+"/v1/responses", strings.NewReader(body))
+			require.NoError(t, err)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer sk-"+token.Key)
+			request.Header.Set("X-Session", t.Name())
+			response, err := gateway.Client().Do(request)
+			require.NoError(t, err)
+			defer response.Body.Close()
+			reader := bufio.NewReader(response.Body)
+			if tc.local {
+				line, err := reader.ReadString('\n')
+				require.NoError(t, err)
+				require.Equal(t, ": keepalive\n", line)
+				assert.Zero(t, calls[0].Load(), "waiting must not contact the upstream")
+				quota, err := model.GetUserQuota(user.Id, false)
+				require.NoError(t, err)
+				assert.Equal(t, user.Quota, quota, "initial admission waiting must not reserve quota")
+				switch tc.revoke {
+				case "group":
+					channels[0].SetOtherSettings(kitdto.ChannelOtherSettings{GroupModels: map[string][]string{"default": {"another-model"}}})
+					require.NoError(t, model.DB.Model(&channels[0]).Update("settings", channels[0].OtherSettings).Error)
+				case "goal":
+					settings := channels[0].GetSetting()
+					settings.DenyGoal = true
+					channels[0].SetSetting(settings)
+					require.NoError(t, model.DB.Model(&channels[0]).Update("setting", channels[0].Setting).Error)
+				case "key":
+					channels[0].ChannelInfo.MultiKeyStatusList[0] = common.ChannelStatusManuallyDisabled
+					require.NoError(t, model.DB.Model(&channels[0]).Update("channel_info", channels[0].ChannelInfo).Error)
+				}
+				if tc.cancel {
+					cancel()
+				} else {
+					for _, lease := range held {
+						lease.Release()
+					}
+				}
+			}
+			result, readErr := io.ReadAll(reader)
+			if !tc.cancel {
+				require.NoError(t, readErr)
+			}
+			select {
+			case <-finished:
+			case <-time.After(3 * time.Second):
+				t.Fatal("relay did not finish after response or cancellation")
+			}
+			if tc.wantA < 0 {
+				assert.GreaterOrEqual(t, calls[0].Load(), int32(1))
+				assert.GreaterOrEqual(t, calls[1].Load(), int32(1))
+				assert.Equal(t, int32(3), calls[0].Load()+calls[1].Load(), "two refusals precede one successful probe")
+			} else {
+				assert.Equal(t, tc.wantA, calls[0].Load())
+				assert.Equal(t, tc.wantB, calls[1].Load())
+			}
+			if tc.wantCharge > 0 {
+				assert.Equal(t, http.StatusOK, response.StatusCode, string(result))
+				assert.Equal(t, 1, strings.Count(string(result), "wait-success"), "only one completed response may be delivered")
+				assert.NotContains(t, string(result), "concurrency_limit_exceeded")
+			} else if !tc.cancel {
+				assert.Equal(t, http.StatusTooManyRequests, response.StatusCode, string(result))
+				assert.NotContains(t, string(result), ": keepalive")
+			}
+			close(reserved)
+			for quota := range reserved {
+				assert.Equal(t, user.Quota-1, quota, "every upstream attempt must share one reservation")
+			}
+			quota, err := model.GetUserQuota(user.Id, false)
+			require.NoError(t, err)
+			assert.Equal(t, user.Quota-tc.wantCharge, quota)
+			var tokenQuota int
+			require.NoError(t, model.DB.Model(token).Select("remain_quota").Scan(&tokenQuota).Error)
+			assert.Equal(t, token.RemainQuota-tc.wantCharge, tokenQuota)
+			var logs []model.Log
+			require.NoError(t, model.LOG_DB.Where("token_id = ? AND type = ?", token.Id, model.LogTypeConsume).Find(&logs).Error)
+			assert.Len(t, logs, tc.wantCharge, "busy attempts and canceled waits must never settle")
+			for i, lease := range held {
+				lease.Release()
+				probe, apiErr := service.AcquireChannelCapacity(context.Background(), channels[i].Id, channels[i].GetSetting())
+				require.Nil(t, apiErr, "completed or canceled wait must release its slot")
+				probe.Release()
+			}
+		})
+	}
+}
 
 func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 	require.NoError(t, i18n.Init())

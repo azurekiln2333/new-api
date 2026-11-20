@@ -63,6 +63,8 @@ const (
 	ErrorCodeChannelKeyScopeUnsatisfied   ErrorCode = "channel_key_scope_unsatisfied"
 	ErrorCodeChannelCapacitySaturated     ErrorCode = "channel_capacity_saturated"
 	ErrorCodeChannelCapacityUnavailable   ErrorCode = "channel_capacity_unavailable"
+	ErrorCodeChannelCapacityQueueFull     ErrorCode = "channel_capacity_queue_full"
+	ErrorCodeChannelCapacityWaitTimeout   ErrorCode = "channel_capacity_wait_timeout"
 	ErrorCodeUpstreamFirstByteTimeout     ErrorCode = "upstream_first_byte_timeout"
 	ErrorCodeChannelParamOverrideInvalid  ErrorCode = "channel:param_override_invalid"
 	ErrorCodeChannelHeaderOverrideInvalid ErrorCode = "channel:header_override_invalid"
