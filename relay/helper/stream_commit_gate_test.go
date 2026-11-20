@@ -98,6 +98,38 @@ func TestStreamCommitGateCommitsOnHoldBudget(t *testing.T) {
 	assert.Equal(t, "data: held\n\n", recorder.Body.String())
 }
 
+func TestStreamCommitGateRetryAfterStoppedKeepAlive(t *testing.T) {
+	c, recorder := newStreamTestContext(t)
+	envelope := InstallStreamCommentEnvelope(c)
+	t.Cleanup(func() { envelope.Finish(c) })
+	for attempt := range 2 {
+		gate := InstallStreamCommitGate(c, time.Minute)
+		t.Cleanup(func() { gate.Finish(c) })
+		gate.Hold()
+		stop := StartStreamKeepAlive(c, time.Minute)
+		reused := StartStreamKeepAlive(c, time.Minute)
+		reused() // Nested callers do not own the live keepalive or its writer.
+		_, err := c.Writer.Write([]byte("data: response.created\n\n"))
+		require.NoError(t, err)
+		stop()
+		stop()
+		if attempt == 0 {
+			gate.Discard()
+		} else {
+			require.NoError(t, gate.Commit())
+			_, err = c.Writer.Write([]byte("data: successful-response\n\n"))
+			require.NoError(t, err)
+		}
+		gate.Finish(c)
+		assert.Same(t, envelope, c.Writer, "the finished attempt must not remain in the writer chain")
+		if attempt == 0 {
+			assert.Empty(t, recorder.Body.String())
+			assert.False(t, c.Writer.Written())
+		}
+	}
+	assert.Equal(t, "data: response.created\n\ndata: successful-response\n\n", recorder.Body.String())
+}
+
 func TestStreamCommitGateWithoutProtocolHoldWritesThrough(t *testing.T) {
 	c, recorder := newStreamTestContext(t)
 	gate := InstallStreamCommitGate(c, time.Minute)

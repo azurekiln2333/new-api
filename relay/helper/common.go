@@ -112,7 +112,16 @@ func StartStreamKeepAlive(c *gin.Context, interval time.Duration) func() {
 	writer := &streamKeepAliveWriter{ResponseWriter: c.Writer, cancel: cancel, done: make(chan struct{}), pingContext: pingContext}
 	c.Writer = writer
 	go writer.keepAlive(ctx, interval)
-	return writer.stop
+	return func() {
+		writer.stop()
+		// This keepalive can wrap an attempt's commit gate. Restore its input
+		// before that gate finishes, or a retry would write through a closed
+		// gate left in the chain and silently discard the successful response.
+		// A nested caller that reused a live keepalive never owns this cleanup.
+		if c.Writer == gin.ResponseWriter(writer) {
+			c.Writer = writer.ResponseWriter
+		}
+	}
 }
 
 // keepAliveWriter 返回 c.Writer 链上的请求保活，包括被其他 writer（如请求插件的回复检查）包裹的情况。

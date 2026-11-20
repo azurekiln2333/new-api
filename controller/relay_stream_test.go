@@ -100,6 +100,10 @@ func TestChannelCapacityStreamsRouteAroundFullChannelAndRelease(t *testing.T) {
 	previousRetries := common.RetryTimes
 	common.RetryTimes = 0
 	t.Cleanup(func() { common.RetryTimes = previousRetries })
+	general := operation_setting.GetGeneralSetting()
+	previousPing, previousInterval := general.PingIntervalEnabled, general.PingIntervalSeconds
+	general.PingIntervalEnabled, general.PingIntervalSeconds = true, 1
+	t.Cleanup(func() { general.PingIntervalEnabled, general.PingIntervalSeconds = previousPing, previousInterval })
 	settings := fixture.channel.GetSetting()
 	settings.MaxConcurrentRequests = common.GetPointer(2)
 	fixture.channel.SetSetting(settings)
@@ -116,6 +120,7 @@ func TestChannelCapacityStreamsRouteAroundFullChannelAndRelease(t *testing.T) {
 		assert.LessOrEqual(t, current, int32(2))
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"holding\",\"status\":\"in_progress\"}}\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
 		w.(http.Flusher).Flush()
 		select {
 		case <-r.Context().Done():
@@ -168,13 +173,20 @@ func TestChannelCapacityStreamsRouteAroundFullChannelAndRelease(t *testing.T) {
 	require.Nil(t, apiErr)
 	defer busyB.Release()
 	full := post(context.Background())
-	body, err = io.ReadAll(full.Body)
-	full.Body.Close()
+	reader := bufio.NewReader(full.Body)
+	line, err := reader.ReadString('\n')
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusTooManyRequests, full.StatusCode, string(body))
-	assert.Contains(t, string(body), string(types.ErrorCodeChannelCapacitySaturated))
+	assert.Equal(t, ": keepalive\n", line, "all full channels park the request before dispatch")
 	assert.Equal(t, int32(2), calls.Load())
 	assert.Equal(t, int32(1), fallbackCalls.Load())
+	busyB.Release()
+	body, err = io.ReadAll(reader)
+	full.Body.Close()
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, full.StatusCode, string(body))
+	assert.Contains(t, string(body), "fallback-B", "the queued request resumes when capacity becomes available")
+	assert.Equal(t, int32(2), calls.Load())
+	assert.Equal(t, int32(2), fallbackCalls.Load())
 	waitDone()
 	cancelFirst()
 	select {

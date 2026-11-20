@@ -955,21 +955,23 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 			name, expression, terminal string
 			// sseTerminal is the flat error envelope used by the Responses SSE
 			// protocol; the WebSocket protocol nests the error instead.
-			sseTerminal string
-			delta       bool
-			failed      bool
-			ignored     bool
+			sseTerminal      string
+			delta            bool
+			failed           bool
+			ignored          bool
+			preOutputFailure bool
 		}{
-			{name: "failed-null-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"sensitive upstream detail"}}}`, failed: true},
-			{name: "failed-missing-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed"}}`, failed: true},
+			{name: "failed-null-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null,"error":{"code":"server_error","message":"sensitive upstream detail"}}}`, failed: true, preOutputFailure: true},
+			{name: "failed-missing-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed"}}`, failed: true, preOutputFailure: true},
 			{name: "failed-actual-usage", expression: `tier("input", p * 2)`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":{"input_tokens":1000,"output_tokens":10,"total_tokens":1010}}}`, failed: true},
 			{name: "failed-estimated-output", expression: `tier("output", c * 2000)`, terminal: `{"type":"response.failed","response":{"id":"first","status":"failed","usage":null}}`, delta: true, failed: true},
-			{name: "error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`, sseTerminal: `{"type":"error","code":"server_error","message":"Internal server error","param":null,"sequence_number":2}`, failed: true},
-			{name: "business-error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Input too long"}}`, sseTerminal: `{"type":"error","code":"context_length_exceeded","message":"Input too long","param":null,"sequence_number":2}`, failed: true, ignored: true},
+			{name: "error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`, sseTerminal: `{"type":"error","code":"server_error","message":"Internal server error","param":null,"sequence_number":2}`, failed: true, preOutputFailure: true},
+			{name: "business-error-after-created", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"error","status":400,"error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Input too long"}}`, sseTerminal: `{"type":"error","code":"context_length_exceeded","message":"Input too long","param":null,"sequence_number":2}`, failed: true, ignored: true, preOutputFailure: true},
 			{name: "completed-at-output-limit", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.incomplete","response":{"id":"first","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1000,"output_tokens":1,"total_tokens":1001}}}`},
 			{name: "completed-zero-fixed", expression: `tier("request", fixed(0.002))`, terminal: `{"type":"response.completed","response":{"id":"first","status":"completed","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`},
 		} {
 			t.Run(transport+"/"+tc.name, func(t *testing.T) {
+				httpRejected := transport == "http-sse" && tc.preOutputFailure
 				events := []string{`{"type":"response.created","response":{"id":"first","status":"in_progress"}}`}
 				if tc.delta {
 					events = append(events, `{"type":"response.output_text.delta","delta":"hello"}`)
@@ -1016,8 +1018,29 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					body, err := io.ReadAll(response.Body)
 					require.NoError(t, err)
 					require.NoError(t, response.Body.Close())
-					assert.Equal(t, http.StatusOK, response.StatusCode)
-					assert.Contains(t, string(body), terminal)
+					if httpRejected {
+						assert.Equal(t, http.StatusBadGateway, response.StatusCode)
+						assert.NotContains(t, string(body), "response.created", "discarded framing must never reach the client")
+						var rejected struct {
+							Error *types.OpenAIError `json:"error"`
+						}
+						require.NoError(t, common.Unmarshal(body, &rejected))
+						require.NotNil(t, rejected.Error)
+						assert.NotEmpty(t, rejected.Error.Message)
+						// Refund runs asynchronously; wait for the persisted balances
+						// before admitting the next paid request in this fixture.
+						require.Eventually(t, func() bool {
+							var currentUser model.User
+							var currentToken model.Token
+							return model.DB.First(&currentUser, fixture.user.Id).Error == nil &&
+								model.DB.First(&currentToken, fixture.token.Id).Error == nil &&
+								currentUser.Quota == 100000 && currentToken.RemainQuota == 3000
+						}, 3*time.Second, 10*time.Millisecond)
+						assertResponsesWSAccounting(t, fixture, nil)
+					} else {
+						assert.Equal(t, http.StatusOK, response.StatusCode)
+						assert.Contains(t, string(body), terminal)
+					}
 				} else {
 					require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","stream_id":"planner","model":"ws-billing","input":"hi","max_output_tokens":1}`)))
 					for _, expected := range events {
@@ -1027,6 +1050,9 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					}
 				}
 				quotas := []int{1000}
+				if httpRejected {
+					quotas = nil
+				}
 				if tc.failed {
 					// The first terminal must complete settlement and middleware before
 					// admitting this immediately following request.
@@ -1047,7 +1073,7 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 				var other map[string]any
 				require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
 				stream := other["stream_status"].(map[string]any)
-				if tc.failed {
+				if tc.failed && !httpRejected {
 					assert.Equal(t, "error", stream["status"])
 					assert.Equal(t, "failed", stream["response_status"])
 				} else {
@@ -1060,6 +1086,9 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 				}
 				assert.NotContains(t, logs[0].Other, "sensitive upstream detail")
 				expectedRequests := int64(len(quotas))
+				if httpRejected {
+					expectedRequests++ // The refunded failure still contributes a health outcome.
+				}
 				if tc.ignored {
 					expectedRequests--
 				}
