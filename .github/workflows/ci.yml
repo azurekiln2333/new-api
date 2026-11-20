@@ -182,7 +182,7 @@ jobs:
       - name: Check admission, waiting, streaming and timeout races
         env:
           CGO_ENABLED: '1'
-        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai -run 'ChannelCapacity|ChannelWait|StreamCommit|StreamComment|OaiResponsesStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint'
+        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai -run 'ChannelCapacity|ChannelWait|ChannelDiagnostic|ChannelManagement|StreamCommit|StreamComment|OaiResponsesStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint'
 
   frontend:
     name: Frontend typecheck, test, and build
@@ -217,6 +217,8 @@ jobs:
           src/features/keys/components/api-key-rotate-dialog.tsx
           src/features/keys/components/__tests__/api-key-rotate-dialog.test.tsx
           src/features/channels/components/channel-card.tsx
+          src/features/channels/components/dialogs/channel-test-dialog.tsx
+          src/features/channels/components/__tests__/channel-test-dialog-endpoints.test.tsx
           src/features/channels/components/channel-usage-context.tsx
           src/features/channels/components/__tests__/channel-details-entry.test.tsx
           src/features/channels/hooks/__tests__/use-channel-usage.test.tsx
@@ -252,6 +254,7 @@ jobs:
           src/features/rankings/lib/format.ts
           src/features/rankings/__tests__/cache-tokens.test.tsx
           src/features/service-status/fingerprint.tsx
+          src/features/service-status/__tests__/fingerprint.test.tsx
           src/features/users/components/user-quota-cell.tsx
           src/features/users/components/users-columns.tsx
           src/features/users/components/__tests__/quota-display.test.tsx
