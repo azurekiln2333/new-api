@@ -523,7 +523,7 @@ func readResponsesWSTestEvent(t *testing.T, client *websocket.Conn) map[string]a
 func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, expectedQuotas []int) {
 	t.Helper()
 	var logs []model.Log
-	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).Order("id").Find(&logs).Error)
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND token_id = ? AND type = ?", fixture.user.Id, fixture.token.Id, model.LogTypeConsume).Order("id").Find(&logs).Error)
 	require.Len(t, logs, len(expectedQuotas))
 	var charged int
 	for index, quota := range expectedQuotas {
@@ -624,7 +624,7 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 	assert.Equal(t, int32(1), fixture.connections.Load())
 	assert.Empty(t, received, "exhausted token must be rejected before contacting upstream")
 	var logs []model.Log
-	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).Order("id").Find(&logs).Error)
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND token_id = ? AND type = ?", fixture.user.Id, fixture.token.Id, model.LogTypeConsume).Order("id").Find(&logs).Error)
 	require.Len(t, logs, 2)
 	for index, expectedQuota := range []int{1000, 2000} {
 		assert.Equal(t, expectedQuota, logs[index].Quota)
@@ -1457,7 +1457,7 @@ func TestResponsesWebSocketForwardsErrorForOtherResponseWithoutEndingRequest(t *
 	fixture.closeAndWait(t)
 	assertResponsesWSAccounting(t, fixture, []int{1000})
 	var logs []model.Log
-	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeConsume).Find(&logs).Error)
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND token_id = ? AND type = ?", fixture.user.Id, fixture.token.Id, model.LogTypeConsume).Find(&logs).Error)
 	require.Len(t, logs, 1)
 	var other map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
