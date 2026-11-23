@@ -671,6 +671,7 @@ func DropPluginCredentials(channel *model.Channel) {
 		kept := make([]string, 0, len(keys))
 		statusList, reasons, times := map[int]int{}, map[int]string{}, map[int]int64{}
 		models, users := map[int][]string{}, map[int]int{}
+		modes := map[int]string{}
 		for index, key := range keys {
 			if _, ok := jsplugin.ParseCredential(key); ok {
 				continue
@@ -684,6 +685,12 @@ func DropPluginCredentials(channel *model.Channel) {
 			}
 			if at, ok := info.MultiKeyDisabledTime[index]; ok {
 				times[next] = at
+			}
+			// The scope mode decides whether an empty model list is an
+			// unrestricted key or an allowlist that serves nothing, so it is
+			// remapped with the same position as the scope it qualifies.
+			if mode, ok := info.MultiKeyScopeModes[index]; ok {
+				modes[next] = mode
 			}
 			if scope, ok := info.MultiKeyModels[index]; ok {
 				models[next] = slices.Clone(scope)
@@ -701,6 +708,10 @@ func DropPluginCredentials(channel *model.Channel) {
 		info.MultiKeySize = len(kept)
 		info.MultiKeyStatusList, info.MultiKeyDisabledReason, info.MultiKeyDisabledTime = statusList, reasons, times
 		info.MultiKeyModels, info.MultiKeyUsers = models, users
+		// The remapped map replaces the original unconditionally, like the scopes
+		// above: a stale entry for a dropped index would otherwise qualify the
+		// key that moved into that position.
+		info.MultiKeyScopeModes = modes
 		info.MultiKeyPollingIndex = 0
 		channel.ChannelInfo = info
 	}

@@ -206,6 +206,45 @@ export type RequestPluginAdminStep = {
   findings?: { rule: string; category?: string; count: number }[]
 }
 
+/**
+ * Capture state of the original prompt/messages of one request. `status`
+ * describes what was stored, not whether the request succeeded.
+ */
+export type RequestContentStatus =
+  | 'recorded'
+  | 'truncated'
+  | 'no_content'
+  | 'unsupported'
+  | 'invalid'
+  | 'unavailable'
+  | 'disabled'
+  | 'storage_failed'
+
+/**
+ * Lightweight request-content reference kept on a log. The text itself is only
+ * fetched from the detail endpoint while an authorized dialog is open.
+ */
+export interface RequestContentMetadata {
+  ref?: string
+  status?: RequestContentStatus | string
+  captured_bytes?: number
+  truncated?: boolean
+}
+
+/**
+ * `GET /api/log/request/:ref`. The server omits the payload when nothing was
+ * stored, and only returns content for an existing associated log.
+ */
+export interface LogRequestContent {
+  ref: string
+  request_id: string
+  submit_node_name?: string
+  status?: RequestContentStatus | string
+  captured_bytes?: number
+  truncated?: boolean
+  payload?: unknown
+}
+
 export interface LogOtherData {
   admin_info?: {
     request_policy?: PolicyEvent[]
@@ -222,7 +261,12 @@ export interface LogOtherData {
     caller_ip?: string
     server_ip?: string
     version?: string
+    /** The instance that processed this log event; never backfilled from a task. */
     node_name?: string
+    /** The instance that originally submitted an asynchronous request. */
+    submit_node_name?: string
+    /** A reference plus capture metadata; never the prompt text itself. */
+    request_content?: RequestContentMetadata
     // Operator identity for audit logs (type=3, admin only)
     admin_username?: string
     admin_id?: number | string

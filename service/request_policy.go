@@ -41,31 +41,33 @@ type PolicyEvent struct {
 // read the decision flow in the log details. Channel selection and the retry
 // decision stay in the relay flows; this state only records them.
 type RequestPolicyState struct {
-	FinalLogged            bool
-	StartedAt              time.Time
-	Attempts               int
-	SelectedGroup          string
-	SessionMode            string
-	SessionModeSource      string
-	RuleName               string
-	Successful             bool
-	OutcomeRecorded        bool
-	FailureRecorded        bool
-	CurrentChannelID       int
-	FailedChannelIDs       []int
-	SaturatedChannelIDs    []int
-	UpstreamBusyChannelIDs []int
-	AffinityReleased       bool
-	selectedAutoGroupRetry *autoGroupAdmissionRetry
-	mu                     sync.Mutex
-	events                 []PolicyEvent
+	FinalLogged              bool
+	StartedAt                time.Time
+	Attempts                 int
+	SelectedGroup            string
+	SessionMode              string
+	SessionModeSource        string
+	RuleName                 string
+	Successful               bool
+	OutcomeRecorded          bool
+	FailureRecorded          bool
+	CurrentChannelID         int
+	FailedChannelIDs         []int
+	SaturatedChannelIDs      []int
+	UpstreamBusyChannelIDs   []int
+	BudgetRejectedChannelIDs []int
+	AffinityReleased         bool
+	selectedAutoGroupRetry   *autoGroupAdmissionRetry
+	mu                       sync.Mutex
+	events                   []PolicyEvent
 }
 
-// ChannelSelectionExclusions keeps known local/upstream capacity rejections
-// excluded even when ordinary upstream failures may be retried on the same channel.
+// ChannelSelectionExclusions keeps local admission refusals and known upstream
+// congestion excluded even when ordinary upstream failures may reuse a channel.
 func (s *RequestPolicyState) ChannelSelectionExclusions() []int {
 	excluded := slices.Clone(s.SaturatedChannelIDs)
 	excluded = append(excluded, s.UpstreamBusyChannelIDs...)
+	excluded = append(excluded, s.BudgetRejectedChannelIDs...)
 	if operation_setting.GetChannelAffinitySetting().RetryAvoidFailedChannels {
 		excluded = append(excluded, s.FailedChannelIDs...)
 	}

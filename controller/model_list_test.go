@@ -49,7 +49,7 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -84,6 +84,13 @@ func initModelListColumnNames(t *testing.T) {
 	common.SQLitePath = fmt.Sprintf("file:%s_init?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	require.NoError(t, os.Setenv("SQL_DSN", "local"))
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
+	bootstrap, err := gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{})
+	require.NoError(t, err)
+	bootstrapSQL, err := bootstrap.DB()
+	require.NoError(t, err)
+	defer bootstrapSQL.Close()
+	require.NoError(t, bootstrap.AutoMigrate(&model.Option{}))
 
 	require.NoError(t, model.InitDB())
 	if model.DB != nil {

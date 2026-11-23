@@ -267,6 +267,14 @@ func ListModels(c *gin.Context, modelType int) {
 	// A key bound to the user serves its models even when the user's group does
 	// not include the channel, so those models belong in the list too.
 	models = append(models, model.GetUserBoundModels(userId)...)
+	if model.ChannelBudgetsEnabled() {
+		eligible, err := model.ModelsAvailableToUserGroups(c.Request.Context(), ownerGroups, userId)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		models = slices.DeleteFunc(models, func(name string) bool { return !eligible[name] })
+	}
 	seenModels := make(map[string]struct{}, len(models))
 	for _, modelName := range models {
 		if _, duplicate := seenModels[modelName]; duplicate {

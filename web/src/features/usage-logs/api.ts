@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api, getFreshAuthHeaders, type ApiRequestConfig } from '@/lib/api'
-import { createServerError } from '@/lib/server-error-message'
+import {
+  createServerError,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
 import type { UsageLog } from './data/schema'
 import { buildQueryParams } from './lib/query-params'
@@ -29,6 +32,7 @@ import type {
   GetLogStatsResponse,
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
+  LogRequestContent,
   TaskArtifactsResponse,
   UserInfo,
 } from './types'
@@ -147,6 +151,41 @@ export async function getUserInfo(
 ): Promise<{ success: boolean; message?: string; data?: UserInfo }> {
   const res = await api.get(`/api/user/${userId}`)
   return res.data
+}
+
+// ============================================================================
+// Original request content API (administrator only)
+// ============================================================================
+
+const logRequestContentRequestConfig = {
+  skipBusinessError: true,
+  skipErrorHandler: true,
+  disableDuplicate: true,
+} satisfies ApiRequestConfig
+
+/**
+ * Read the original prompt/messages behind one log reference. The server
+ * returns nothing for a reference without a surviving associated log, so a
+ * guessed ref never exposes content. Call only while an authorized detail
+ * dialog is open; the list never preloads content.
+ */
+export async function getLogRequestContent(
+  ref: string,
+  signal?: AbortSignal
+): Promise<LogRequestContent> {
+  const response = await api.get<{
+    success: boolean
+    message?: string
+    data?: LogRequestContent
+  }>(`/api/log/request/${encodeURIComponent(ref)}`, {
+    ...logRequestContentRequestConfig,
+    signal,
+  })
+  const detail = requireServerSuccess(response.data).data
+  if (!detail || detail.ref !== ref || detail.payload == null) {
+    throw new Error('Original request content is no longer available')
+  }
+  return detail
 }
 
 // ============================================================================

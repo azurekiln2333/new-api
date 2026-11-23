@@ -2857,7 +2857,7 @@ export function parseTaskResult(){return {status:"SUCCESS"}}
 		model.DB = previousDB
 		model.InitChannelCache()
 	})
-	require.NoError(t, database.AutoMigrate(&model.Channel{}))
+	require.NoError(t, database.AutoMigrate(&model.Option{}, &model.Channel{}))
 	require.NoError(t, database.Create(&model.Channel{Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Key: "key",
 		Models: "claimed-alias", ModelMapping: common.GetPointer(`{"claimed-alias":"claimed-model"}`)}).Error)
 	model.InitChannelCache()

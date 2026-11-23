@@ -70,6 +70,10 @@ export function CommonLogMobileRow<TData>(props: {
   const showTokenName =
     displayable && props.cells.has('token_name') && !!log.token_name
   const showUser = props.cells.has('user') && !!log.username
+  const nodeName = props.cells.has('node_name')
+    ? other?.admin_info?.node_name || t('Not recorded')
+    : ''
+  const visibleNodeName = sensitiveVisible ? nodeName : '••••'
 
   const useTimeLabel =
     log.use_time < 60
@@ -100,7 +104,6 @@ export function CommonLogMobileRow<TData>(props: {
   if (showUser) {
     summaryParts.push(sensitiveVisible ? log.username : '••••')
   }
-
   return (
     <div className='min-w-0'>
       <button
@@ -141,9 +144,21 @@ export function CommonLogMobileRow<TData>(props: {
             )}
           />
         </div>
-        {summaryParts.length > 0 && (
-          <div className='text-muted-foreground min-w-0 truncate text-[11px] leading-4'>
-            {summaryParts.join(' · ')}
+        {(summaryParts.length > 0 || nodeName) && (
+          <div className='text-muted-foreground flex w-full min-w-0 items-center gap-2 text-[11px] leading-4'>
+            {summaryParts.length > 0 && (
+              <span className='min-w-0 flex-1 truncate'>
+                {summaryParts.join(' · ')}
+              </span>
+            )}
+            {nodeName && (
+              <span
+                className='max-w-[45%] truncate font-mono'
+                title={`${t('Processing Node')}: ${visibleNodeName}`}
+              >
+                {visibleNodeName}
+              </span>
+            )}
           </div>
         )}
       </button>

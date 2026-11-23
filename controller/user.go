@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -686,6 +687,14 @@ func GetUserModels(c *gin.Context) {
 		}
 		seen[modelName] = struct{}{}
 		models = append(models, modelName)
+	}
+	if model.ChannelBudgetsEnabled() {
+		eligible, err := model.ModelsAvailableToUserGroups(c.Request.Context(), groupsToQuery, id)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		models = slices.DeleteFunc(models, func(name string) bool { return !eligible[name] })
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

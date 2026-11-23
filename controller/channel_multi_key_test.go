@@ -2,11 +2,12 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,37 +29,15 @@ import (
 )
 
 func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
-	previousDB, previousLogDB := model.DB, model.LOG_DB
-	previousType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
-	previousMaster, previousCache, previousRedis, previousSQLite := common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled, common.SQLitePath
-	t.Cleanup(func() {
-		model.DB, model.LOG_DB = previousDB, previousLogDB
-		common.SetDatabaseTypes(previousType, previousLogType)
-		common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled, common.SQLitePath = previousMaster, previousCache, previousRedis, previousSQLite
-	})
-	t.Setenv("SQL_DSN", os.Getenv("TEST_CHANNEL_SQL_DSN"))
-	t.Setenv("LOG_SQL_DSN", "")
-	common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled = false, false, false
-	common.SQLitePath = filepath.Join(t.TempDir(), "channel.db")
-	require.NoError(t, model.InitDB())
+	rootID := setupChannelCreateTest(t)
 	database := model.DB
-	sqlDB, err := database.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	model.LOG_DB = database
-	common.SetLogDatabaseType(common.MainDatabaseType())
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.AuditLog{}))
-	root := &model.User{Username: "multi-key-review-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
-	require.NoError(t, database.Create(root).Error)
-	t.Cleanup(func() { require.NoError(t, database.Unscoped().Delete(root).Error) })
-	versionQuery := "SELECT VERSION()"
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		versionQuery = "SELECT sqlite_version()"
-	}
-	var version string
-	require.NoError(t, database.Raw(versionQuery).Scan(&version).Error)
-	t.Logf("database=%s version=%s", common.MainDatabaseType(), version)
+	// Allocation rows own the status list, so this fixture keeps the legacy
+	// projection the test drives through the management actions.
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
+	tag := ""
 
+	// The follower-style fixture above proves the activation marker prerequisite
+	// without enabling enforcement, so the status transitions stay the same.
 	for _, cacheEnabled := range []bool{false, true} {
 		for _, action := range []string{"enable_key", "enable_all_keys"} {
 			for _, tc := range []struct {
@@ -78,7 +58,7 @@ func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
 			} {
 				t.Run(fmt.Sprintf("cache=%t/%s/%s", cacheEnabled, action, tc.name), func(t *testing.T) {
 					common.MemoryCacheEnabled = cacheEnabled
-					tag := t.Name()
+					tag = t.Name()
 					channel := &model.Channel{Name: t.Name(), Type: 1, Key: "key-one\nkey-two", Status: tc.initialStatus, Models: "test-model", Group: "default", Tag: &tag,
 						ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled}},
 					}
@@ -106,11 +86,14 @@ func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
 								require.NoError(t, model.DisableChannelByTag(tag))
 							}
 						}
-						payload, err := common.Marshal(MultiKeyManageRequest{ChannelId: channel.Id, Action: operation, KeyIndex: common.GetPointer(0)})
+						current, err := model.GetChannelById(channel.Id, true)
+						require.NoError(t, err)
+						revision := current.ChannelInfo.KeyEntryRevision
+						payload, err := common.Marshal(MultiKeyManageRequest{ChannelId: channel.Id, Action: operation, KeyIndex: common.GetPointer(0), ExpectedRevision: &revision})
 						require.NoError(t, err)
 						recorder := httptest.NewRecorder()
 						c, _ := gin.CreateTestContext(recorder)
-						c.Set("id", root.Id)
+						c.Set("id", rootID)
 						c.Set("role", common.RoleRootUser)
 						c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/multi_key", bytes.NewReader(payload))
 						c.Request.Header.Set("Content-Type", "application/json")
@@ -143,6 +126,10 @@ func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
 // model scope and a user-bound key decide which key serves it, and a request
 // that no enabled key can serve stays retryable instead of disabling the channel.
 func TestMultiKeyKeyScopeSelection(t *testing.T) {
+	setupChannelCreateTest(t)
+	// Pure selection: no allocation row, so the feature stays off for the
+	// in-memory channels below.
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	previousAutoDisable := common.AutomaticDisableChannelEnabled
 	t.Cleanup(func() { common.AutomaticDisableChannelEnabled = previousAutoDisable })
 	common.AutomaticDisableChannelEnabled = true
@@ -321,6 +308,428 @@ func TestMultiKeyManageKeepsKeyScopesOnTheirKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[int][]string{0: {"model-a"}}, loaded.ChannelInfo.MultiKeyModels)
 	assert.Equal(t, map[int]int{0: rootID}, loaded.ChannelInfo.MultiKeyUsers)
+}
+
+// TestChannelAllocationsIdentityAndBudgetRouting exercises the authoritative
+// allocation API with three equal credentials and distinct permissions.
+func TestChannelAllocationsIdentityAndBudgetRouting(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	require.NoError(t, model.InitializeChannelBudgets())
+	bob := &model.User{Username: "allocation-bob", Group: "other", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: "allocbob"}
+	require.NoError(t, model.DB.Create(bob).Error)
+	t.Cleanup(func() { require.NoError(t, model.DB.Unscoped().Delete(bob).Error) })
+	selected := &model.Channel{Name: "allocation-equal-keys", Type: constant.ChannelTypeOpenAI, Key: "allocation-secret-shared\nallocation-secret-shared\nallocation-secret-shared", Models: "public-model,alice-model,bob-model", Group: "public", Status: common.ChannelStatusEnabled, AutoBan: common.GetPointer(1), ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModeRandom, MultiKeyUsers: map[int]int{1: rootID, 2: bob.Id}, MultiKeyModels: map[int][]string{0: {"public-model"}, 1: {"alice-model"}, 2: {"bob-model"}}}}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	readStatus := func() MultiKeyStatusResponse {
+		response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status"})
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var decoded struct {
+			Success bool                   `json:"success"`
+			Data    MultiKeyStatusResponse `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &decoded))
+		require.True(t, decoded.Success, response.Body.String())
+		assert.NotContains(t, response.Body.String(), "allocation-secret-shared")
+		return decoded.Data
+	}
+	list := readStatus()
+	require.Len(t, list.Keys, 3)
+	ids := []string{list.Keys[0].Id, list.Keys[1].Id, list.Keys[2].Id}
+	assert.NotEqual(t, ids[0], ids[1])
+	assert.NotEqual(t, ids[1], ids[2])
+	for _, id := range ids {
+		parsed, err := strconv.ParseInt(id, 10, 64)
+		require.NoError(t, err)
+		assert.Positive(t, parsed)
+	}
+	model.InitChannelCache()
+	assert.Contains(t, model.GetUserBoundModels(rootID), "alice-model")
+	assert.NotContains(t, model.GetUserBoundModels(bob.Id), "alice-model")
+	_, index, apiErr := selected.GetNextEnabledKeyFor("alice-model", rootID)
+	require.Nil(t, apiErr)
+	assert.Equal(t, 1, index)
+	_, _, apiErr = selected.GetNextEnabledKeyFor("alice-model", bob.Id)
+	require.NotNil(t, apiErr)
+	// Index-only and stale revisions cannot modify one of the equal rows.
+	rejected := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "delete_key", KeyIndex: common.GetPointer(0)})
+	require.Equal(t, http.StatusConflict, rejected.Code)
+	order := []string{ids[2], ids[0], ids[1]}
+	response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "reorder_keys", KeyEntryIDs: order, ExpectedRevision: &list.Revision})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	list = readStatus()
+	require.Equal(t, order, []string{list.Keys[0].Id, list.Keys[1].Id, list.Keys[2].Id})
+	assert.Equal(t, bob.Id, list.Keys[0].UserId)
+	assert.Equal(t, rootID, list.Keys[2].UserId)
+	loaded, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	aliceAllocation, ok := loaded.ChannelAllocationByPosition(2)
+	require.True(t, ok)
+	// A delayed observation follows the chosen stable ID, not the first equal key.
+	require.True(t, model.UpdateChannelAllocationStatus(t.Context(), aliceAllocation, common.ChannelStatusAutoDisabled, "provider rejection"))
+	list = readStatus()
+	assert.Equal(t, common.ChannelStatusEnabled, list.Keys[0].Status)
+	assert.Equal(t, common.ChannelStatusEnabled, list.Keys[1].Status)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, list.Keys[2].Status)
+	stale := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_user", KeyEntryID: ids[1], ExpectedRev: &aliceAllocation.Revision, UserId: common.GetPointer(0)})
+	require.Equal(t, http.StatusConflict, stale.Code)
+	assert.False(t, model.UpdateChannelAllocationStatus(t.Context(), aliceAllocation, common.ChannelStatusEnabled, ""), "an old callback cannot undo newer state")
+	// Recovery uses a current row revision and does not change sibling rows.
+	response = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "enable_key", KeyEntryID: ids[1], ExpectedRev: &list.Keys[2].Rev})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	list = readStatus()
+	alice := list.Keys[2]
+	response = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_quota", KeyEntryID: alice.Id, ExpectedRev: &alice.Rev, ExpectedConfigVersion: common.GetPointer(int64(0)), Enabled: common.GetPointer(true), LimitQuota: common.GetPointer(int64(10))})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	loaded, err = model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	allocation, ok := loaded.ChannelAllocationByPosition(2)
+	require.True(t, ok)
+	hold, err := model.ReserveChannelBudgets(t.Context(), model.BudgetReserveRequest{AttemptKey: "allocation-identity-charge", Selection: model.BudgetSelection{ChannelID: selected.Id, AllocationID: allocation.EntryID, AllocationRevision: allocation.Revision, UserID: rootID, Group: "other", ModelName: "alice-model"}, ReserveQuota: 6})
+	require.NoError(t, err)
+	require.NoError(t, model.SettleChannelBudgets(t.Context(), model.BudgetSettleRequest{ReservationID: hold.Id, Revision: 1, TotalActualQuota: 12, Final: true}))
+	model.InitChannelCache()
+	assert.NotContains(t, model.GetUserBoundModels(rootID), "alice-model")
+	visible, err := model.ModelsAvailableToUserGroups(t.Context(), []string{"other"}, rootID)
+	require.NoError(t, err)
+	assert.False(t, visible["alice-model"])
+	loaded, err = model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	_, _, apiErr = loaded.GetNextEnabledKeyFor("alice-model", rootID)
+	require.NotNil(t, apiErr)
+	// Reset only this entry. Used is zero, lifetime remains, old refunds cannot
+	// make this new period negative and do not touch a sibling allocation.
+	list = readStatus()
+	alice = list.Keys[2]
+	require.NotNil(t, alice.Quota)
+	assert.EqualValues(t, 12, alice.Quota.PeriodUsedQuota)
+	response = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "reset_key_quota", KeyEntryID: alice.Id, ExpectedRev: &alice.Rev, ExpectedConfigVersion: &alice.Quota.ConfigVersion, OperationID: "allocation-test-reset"})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	list = readStatus()
+	assert.Zero(t, list.Keys[2].Quota.PeriodUsedQuota)
+	assert.EqualValues(t, 12, list.Keys[2].Quota.LifetimeUsedQuota)
+	model.InitChannelCache()
+	assert.Contains(t, model.GetUserBoundModels(rootID), "alice-model")
+	response = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "delete_key", KeyEntryID: ids[0], ExpectedRev: &list.Keys[1].Rev})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	list = readStatus()
+	require.Len(t, list.Keys, 2)
+	assert.Equal(t, ids[2], list.Keys[0].Id)
+	assert.Equal(t, ids[1], list.Keys[1].Id)
+	var retired model.ChannelKeyEntry
+	id, _ := strconv.ParseInt(ids[0], 10, 64)
+	require.NoError(t, model.DB.First(&retired, id).Error)
+	assert.Positive(t, retired.RetiredAt)
+}
+
+func TestChannelAllocationsDedupConservesUsageAndConflicts(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	require.NoError(t, model.InitializeChannelBudgets())
+	selected := &model.Channel{Name: "allocation-dedup", Type: 1, Key: "shared-allocation\nshared-allocation\nshared-allocation", Models: "m", Group: "default", Status: common.ChannelStatusEnabled, ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeyMode: constant.MultiKeyModeRandom, MultiKeyUsers: map[int]int{2: rootID}}}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	for i, id := range selected.KeyEntryIDs {
+		if i == 2 {
+			continue
+		}
+		_, err := model.SetChannelBudgetLimit(t.Context(), model.BudgetScopeKey, id, 0, true, 100)
+		require.NoError(t, err)
+		r, err := model.ReserveChannelBudgets(t.Context(), model.BudgetReserveRequest{AttemptKey: fmt.Sprintf("dedup-charge-%d", id), Selection: model.BudgetSelection{ChannelID: selected.Id, AllocationID: id, AllocationRevision: selected.KeyEntryRevisions[i], UserID: rootID, Group: "default", ModelName: "m"}, ReserveQuota: 10})
+		require.NoError(t, err)
+		require.NoError(t, model.SettleChannelBudgets(t.Context(), model.BudgetSettleRequest{ReservationID: r.Id, Revision: 1, TotalActualQuota: int64(10 + i), Final: true}))
+	}
+	previewResponse := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys"})
+	var decoded struct {
+		Success bool                `json:"success"`
+		Data    channelKeyDedupPlan `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(previewResponse.Body.Bytes(), &decoded))
+	require.True(t, decoded.Success, previewResponse.Body.String())
+	require.Len(t, decoded.Data.Groups, 1)
+	plan := decoded.Data
+	assert.EqualValues(t, 21, plan.Groups[0].MergedPeriodUsed)
+	require.Len(t, plan.Groups[0].EntryIDs, 2)
+	stale := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys", Apply: true, ExpectedRevision: &plan.Revision, PreviewToken: "wrong"})
+	assert.Equal(t, http.StatusConflict, stale.Code)
+	applied := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys", Apply: true, ExpectedRevision: &plan.Revision, PreviewToken: plan.PreviewToken})
+	require.Equal(t, http.StatusOK, applied.Code, applied.Body.String())
+	require.Contains(t, applied.Body.String(), `"retired_entries":1`)
+	loaded, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	require.Len(t, loaded.KeyEntryIDs, 2)
+	assert.Equal(t, selected.KeyEntryIDs[0], loaded.KeyEntryIDs[0])
+	assert.Equal(t, rootID, loaded.ChannelInfo.MultiKeyUsers[1])
+	view, err := model.ReadChannelBudget(context.Background(), model.BudgetScopeKey, loaded.KeyEntryIDs[0])
+	require.NoError(t, err)
+	assert.EqualValues(t, 100, view.LimitQuota)
+	assert.EqualValues(t, 21, view.PeriodUsedQuota)
+	assert.EqualValues(t, 21, view.LifetimeUsedQuota)
+	// Generic duplicate replacement must conflict instead of guessing survivor identity.
+	_, err = model.UpdateChannelLocked(selected.Id, func(current *model.Channel) error { current.Key = "shared-allocation"; return nil })
+	require.ErrorIs(t, err, model.ErrChannelKeyEntriesAmbiguous)
+}
+
+// A legacy task that persisted only credential text cannot prove which of two
+// identical allocations it used, so every live allocation storing that text is
+// skipped by deduplication until the task is terminal. A task holding a stable
+// allocation id keeps its own allocation busy even though the ledger settled
+// the reservation at submission.
+func TestChannelAllocationsDedupSkipsRunningTasksWithoutAllocationId(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	require.NoError(t, model.InitializeChannelBudgets())
+	const credential = "dedup-running-task-credential"
+	selected := &model.Channel{Name: "allocation-dedup-tasks", Type: constant.ChannelTypeOpenAI, Key: credential + "\n" + credential, Models: "m", Group: "default", Status: common.ChannelStatusEnabled, Setting: common.GetPointer(`{"allow_duplicate_keys":true}`), ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom, MultiKeyUsers: map[int]int{0: rootID, 1: rootID}}}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	require.Len(t, selected.KeyEntryIDs, 2)
+	first, second := selected.KeyEntryIDs[0], selected.KeyEntryIDs[1]
+	// The task is persisted while its reservation is still pending, exactly as
+	// the async submit path does, and only then does the ledger finalize the
+	// charge; the task outlives both stages.
+	reservation, err := model.ReserveChannelBudgets(t.Context(), model.BudgetReserveRequest{
+		AttemptKey: fmt.Sprintf("dedup-running-task-%d", second), ReserveQuota: 4,
+		Selection: model.BudgetSelection{ChannelID: selected.Id, AllocationID: second, AllocationRevision: selected.KeyEntryRevisions[1], UserID: rootID, Group: "default", ModelName: "m"},
+	})
+	require.NoError(t, err)
+	stored, err := model.ReadChannelBudgetReservation(t.Context(), reservation.Id)
+	require.NoError(t, err)
+	require.Equal(t, model.BudgetReservationPhasePending, stored.Phase)
+	task := model.Task{TaskID: "dedup-running-task", ChannelId: selected.Id, UserId: rootID, Quota: 4, Status: model.TaskStatusInProgress,
+		PrivateData: model.TaskPrivateData{Key: credential, BudgetReservationId: reservation.Id, AllocationId: second}}
+	require.NoError(t, task.InsertWithContext(t.Context()))
+	t.Cleanup(func() { require.NoError(t, model.DB.Unscoped().Delete(&task).Error) })
+	require.NoError(t, model.SettleChannelBudgets(t.Context(), model.BudgetSettleRequest{ReservationID: reservation.Id, Revision: 1, TotalActualQuota: 4, Final: true, TaskID: task.TaskID}))
+	stored, err = model.ReadChannelBudgetReservation(t.Context(), reservation.Id)
+	require.NoError(t, err)
+	require.Equal(t, model.BudgetReservationPhaseSettled, stored.Phase)
+	require.Equal(t, task.TaskID, stored.TaskId)
+	var budget model.ChannelBudgetAccount
+	require.NoError(t, model.DB.Where("scope_type = ? AND scope_id = ?", model.BudgetScopeKey, second).First(&budget).Error)
+	assert.EqualValues(t, 4, budget.PeriodUsedQuota)
+	assert.Zero(t, budget.ReservedQuota)
+
+	readStatus := func() MultiKeyStatusResponse {
+		response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status"})
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var decoded struct {
+			Success bool                   `json:"success"`
+			Data    MultiKeyStatusResponse `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &decoded))
+		require.True(t, decoded.Success, response.Body.String())
+		return decoded.Data
+	}
+	// assertSkipped proves through the management API that live allocations stay
+	// protected while a legacy task could still be running on them, and that
+	// applying a preview never retires a protected row.
+	assertSkipped := func(t *testing.T, ambiguousAllocationIDs ...int64) channelKeyDedupPlan {
+		t.Helper()
+		response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys"})
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var decoded struct {
+			Success bool                `json:"success"`
+			Data    channelKeyDedupPlan `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &decoded))
+		require.True(t, decoded.Success, response.Body.String())
+		assert.NotContains(t, response.Body.String(), credential)
+		require.Len(t, decoded.Data.Groups, 1, "equal credentials still compare as one dedup group")
+		skipped := map[string]bool{}
+		for _, entry := range decoded.Data.Groups[0].Skipped {
+			skipped[entry.ID] = true
+		}
+		for _, id := range ambiguousAllocationIDs {
+			assert.True(t, skipped[strconv.FormatInt(id, 10)], "allocation %d may still hold a running task; got %+v", id, decoded.Data.Groups[0].Skipped)
+		}
+		before := readStatus()
+		applied := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys", Apply: true, ExpectedRevision: &decoded.Data.Revision, PreviewToken: decoded.Data.PreviewToken})
+		require.Equal(t, http.StatusOK, applied.Code, applied.Body.String())
+		loaded, err := model.GetChannelById(selected.Id, true)
+		require.NoError(t, err)
+		after := readStatus()
+		assert.Len(t, after.Keys, len(before.Keys), "apply never shrinks the list below the protected rows")
+		for _, id := range ambiguousAllocationIDs {
+			assert.Contains(t, loaded.KeyEntryIDs, id, "protected allocation %d survives", id)
+		}
+		return decoded.Data
+	}
+
+	// The stable allocation id keeps only its own allocation busy; the settled
+	// reservation no longer holds quota but the running task still protects it.
+	assertSkipped(t, second)
+
+	// A legacy task without an allocation id cannot be attributed: every live
+	// allocation with the identical credential stays protected.
+	task.PrivateData.AllocationId = 0
+	require.NoError(t, model.DB.Model(&task).Update("private_data", task.PrivateData).Error)
+	assertSkipped(t, first, second)
+
+	// Reordering does not let the ambiguity resolve itself; the apply above
+	// advanced the channel revision, so the next actions read a fresh one.
+	list := readStatus()
+	require.Len(t, list.Keys, 2)
+	assertSkipped(t, first, second)
+
+	// Appending a third identical credential must not transfer attribution to
+	// the newest row. The append is proven by the third row itself: the
+	// management actions above leave `key` unchanged, so a lost or duplicated
+	// append can never be mistaken for the expected three rows.
+	list = readStatus()
+	appended := putUpdateChannel(t, rootID, common.RoleRootUser, fmt.Sprintf(`{"id":%d,"type":%d,"name":%q,"key":%q,"models":"m","group":"default","key_mode":"append","multi_key_mode":"random"}`, selected.Id, selected.Type, selected.Name, credential))
+	require.Equal(t, http.StatusOK, appended.Code, appended.Body.String())
+	var appendedResult struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(appended.Body.Bytes(), &appendedResult))
+	require.True(t, appendedResult.Success, appended.Body.String())
+	afterAppend := readStatus()
+	require.Len(t, afterAppend.Keys, 3, "the append adds exactly one allocation")
+	newest, err := strconv.ParseInt(afterAppend.Keys[2].Id, 10, 64)
+	require.NoError(t, err, "rows: %+v", afterAppend.Keys)
+	assert.NotContains(t, []int64{first, second}, newest)
+	// Deduplication compares the owner too: an appended row is public, so bind it
+	// to the same user as its identical siblings with a fresh row revision before
+	// the group can be expected to hold three entries.
+	assert.Zero(t, afterAppend.Keys[2].UserId)
+	bind := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_user", KeyEntryID: afterAppend.Keys[2].Id, ExpectedRev: &afterAppend.Keys[2].Rev, UserId: common.GetPointer(rootID)})
+	require.Equal(t, http.StatusOK, bind.Code, bind.Body.String())
+	afterAppend = readStatus()
+	require.Len(t, afterAppend.Keys, 3)
+	assert.Equal(t, rootID, afterAppend.Keys[2].UserId)
+	assertSkipped(t, first, second, newest)
+
+	// Only a terminal task releases the ambiguity.
+	require.NoError(t, model.DB.Model(&task).Update("status", model.TaskStatusSuccess).Error)
+	response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys"})
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var resolved struct {
+		Success bool                `json:"success"`
+		Data    channelKeyDedupPlan `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &resolved))
+	require.True(t, resolved.Success, response.Body.String())
+	require.Len(t, resolved.Data.Groups, 1)
+	assert.Empty(t, resolved.Data.Groups[0].Skipped)
+	require.Len(t, resolved.Data.Groups[0].EntryIDs, 3)
+	applied := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys", Apply: true, ExpectedRevision: &resolved.Data.Revision, PreviewToken: resolved.Data.PreviewToken})
+	require.Equal(t, http.StatusOK, applied.Code, applied.Body.String())
+	loaded, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	require.Len(t, loaded.KeyEntryIDs, 1, "only the survivor keeps the credential")
+	assert.Equal(t, first, loaded.KeyEntryIDs[0], "the smallest id survives across reorders and appends")
+	view, err := model.ReadChannelBudget(context.Background(), model.BudgetScopeKey, first)
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, view.PeriodUsedQuota, "the settled usage is conserved on the survivor")
+}
+
+// Routing eligibility accepts the routing alias of a requested model in the
+// channel list, a key allowlist and a group whitelist, while an unrestricted
+// key keeps serving every channel model. The alias resolution itself is proven
+// against ratio_setting.RoutingMatchModelName, never assumed.
+func TestChannelAllocationsRoutingAliasScope(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	require.NoError(t, model.InitializeChannelBudgets())
+	const aliased = "qwen3-max@thinking:on@temperature:0.2"
+	const normalized = "qwen3-max"
+	require.Equal(t, normalized, ratio_setting.RoutingMatchModelName(aliased))
+	// The group whitelist holds both the normalized name and the plain model, so
+	// neither case below can pass merely because the group filter was skipped.
+	const plainModel = "plain-model"
+	otherSettings, err := common.Marshal(&dto.ChannelOtherSettings{GroupModels: map[string][]string{"default": {normalized, plainModel}}})
+	require.NoError(t, err)
+	// Both storage styles must admit the request alias: a channel that lists the
+	// normalized name and a channel that lists the alias itself. The Key
+	// allowlist stores the normalized name in both cases, and the group whitelist
+	// holds the normalized name as well.
+	for _, listedModels := range []string{normalized + ",plain-model", aliased + ",plain-model"} {
+		t.Run(listedModels, func(t *testing.T) {
+			selected := &model.Channel{Name: "allocation-routing-alias " + listedModels, Type: constant.ChannelTypeOpenAI, Key: "alias-one\nalias-two", Models: listedModels, Group: "default", Status: common.ChannelStatusEnabled, OtherSettings: string(otherSettings),
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom, MultiKeyModels: map[int][]string{0: {normalized}}}}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			require.Len(t, selected.KeyEntryIDs, 2)
+			reserve := func(name string, position int, modelName string) error {
+				_, err := model.ReserveChannelBudgets(t.Context(), model.BudgetReserveRequest{
+					AttemptKey: fmt.Sprintf("alias-%s-%d-%d", name, selected.Id, position), ReserveQuota: 1,
+					Selection: model.BudgetSelection{ChannelID: selected.Id, AllocationID: selected.KeyEntryIDs[position], AllocationRevision: selected.KeyEntryRevisions[position], UserID: rootID, Group: "default", ModelName: modelName},
+				})
+				return err
+			}
+			assert.Equal(t, strings.Contains(listedModels, aliased), slices.Contains(selected.GetModels(), aliased))
+			// The aliased request is admitted in both storage styles: a channel that
+			// lists the normalized name resolves it through RoutingMatchModelName, and
+			// a channel that lists the alias matches it exactly. The same request is
+			// then admitted by the unrestricted Key, by the Key allowlist that stores
+			// the normalized name, and by the group whitelist holding that name.
+			require.NoError(t, reserve("channel-scope-alias", 1, aliased), "channel models %q", listedModels)
+			require.NoError(t, reserve("allowlist-alias", 0, aliased))
+			// Outside every scope: a model the channel does not list is refused.
+			require.ErrorIs(t, reserve("unknown-model", 1, "unlisted-model"), model.ErrBudgetAllocationInvalid)
+			// A channel model outside the Key allowlist is refused for that Key.
+			require.ErrorIs(t, reserve("allowlist-plain", 0, plainModel), model.ErrBudgetAllocationInvalid)
+			// An unrestricted Key serves every channel model the group also allows.
+			require.NoError(t, reserve("all-plain", 1, plainModel))
+		})
+	}
+}
+
+func TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	selected := &model.Channel{Name: "multi-key-three-row-scope", Type: constant.ChannelTypeOpenAI, Key: "scope-one\nscope-two\nscope-three", Models: "model-a,model-b,model-c", Group: "default", Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModeRandom}}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	require.Len(t, selected.KeyEntryIDs, 3)
+
+	// Every row keeps revision 1 after creation, so an edit of the third row with
+	// the revision the list reported must succeed and move only that row.
+	list := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status"})
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	var decoded struct {
+		Success bool                   `json:"success"`
+		Data    MultiKeyStatusResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(list.Body.Bytes(), &decoded))
+	require.True(t, decoded.Success, list.Body.String())
+	require.Len(t, decoded.Data.Keys, 3)
+	third := decoded.Data.Keys[2]
+	assert.EqualValues(t, 1, third.Rev)
+
+	allow := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: third.Id, ExpectedRev: &third.Rev, Models: []string{"model-c"}, ScopeMode: common.GetPointer("allowlist")})
+	require.Equal(t, http.StatusOK, allow.Code, allow.Body.String())
+	loaded, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, map[int][]string{2: {"model-c"}}, loaded.ChannelInfo.MultiKeyModels, "only the third row gains a scope")
+	assert.Equal(t, "allowlist", loaded.ChannelInfo.MultiKeyScopeModes[2])
+
+	// The list now reports a newer revision for that row; a replay with the stale
+	// revision conflicts and writes nothing.
+	list = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status"})
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	require.NoError(t, common.Unmarshal(list.Body.Bytes(), &decoded))
+	require.True(t, decoded.Success, list.Body.String())
+	fresh := decoded.Data.Keys[2]
+	assert.Greater(t, fresh.Rev, third.Rev)
+	stale := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: third.Id, ExpectedRev: &third.Rev, Models: []string{}, ScopeMode: common.GetPointer("allowlist")})
+	require.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
+	loaded, err = model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, map[int][]string{2: {"model-c"}}, loaded.ChannelInfo.MultiKeyModels)
+
+	// The fresh revision applies the empty explicit allowlist, which admits no
+	// model for that row while its siblings stay unrestricted.
+	deny := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: fresh.Id, ExpectedRev: &fresh.Rev, Models: []string{}, ScopeMode: common.GetPointer("allowlist")})
+	require.Equal(t, http.StatusOK, deny.Code, deny.Body.String())
+	loaded, err = model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "allowlist", loaded.ChannelInfo.MultiKeyScopeModes[2])
+	assert.Empty(t, loaded.ChannelInfo.MultiKeyModels[2])
+	assert.True(t, loaded.KeyServesModel(0, "model-a"))
+	assert.False(t, loaded.KeyServesModel(2, "model-a"))
 }
 
 func TestUpdateChannelKeepsCurrentKeyState(t *testing.T) {
@@ -507,26 +916,10 @@ func TestUpdateChannelConvertsSingleKeyChannel(t *testing.T) {
 // forwarding it without a key (AC8).
 func TestDistributeRoutesBoundKeyAndFallsBackWhenNoKeyServes(t *testing.T) {
 	require.NoError(t, i18n.Init())
-	previousDB, previousLogDB := model.DB, model.LOG_DB
-	previousType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
-	previousMaster, previousCache, previousRedis, previousSQLite := common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled, common.SQLitePath
-	t.Cleanup(func() {
-		model.DB, model.LOG_DB = previousDB, previousLogDB
-		common.SetDatabaseTypes(previousType, previousLogType)
-		common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled, common.SQLitePath = previousMaster, previousCache, previousRedis, previousSQLite
-	})
-	t.Setenv("SQL_DSN", "")
-	t.Setenv("LOG_SQL_DSN", "")
-	common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled = false, true, false
-	common.SQLitePath = filepath.Join(t.TempDir(), "distribute.db")
-	require.NoError(t, model.InitDB())
+	setupChannelCreateTest(t)
 	database := model.DB
-	sqlDB, err := database.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	model.LOG_DB = database
-	common.SetLogDatabaseType(common.MainDatabaseType())
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	// Distribution reads the channel cache, so the fixture keeps it enabled.
+	common.MemoryCacheEnabled = true
 
 	const boundUserId, otherUserId = 9301, 9302
 	highPriority, lowPriority := int64(50), int64(1)
@@ -544,9 +937,13 @@ func TestDistributeRoutesBoundKeyAndFallsBackWhenNoKeyServes(t *testing.T) {
 		{Id: 9403, Name: "fallback", Type: constant.ChannelTypeOpenAI, Key: "sk-fallback", Status: common.ChannelStatusEnabled,
 			Models: "flaky-model", Group: "default", Priority: &lowPriority},
 	}
+	// The shared fixture reuses one database, so a row left by an earlier
+	// interrupted run must not decide this test's channel ids.
 	for _, channel := range channels {
+		require.NoError(t, channel.Delete())
 		require.NoError(t, database.Create(channel).Error)
 		require.NoError(t, channel.AddAbilities(database))
+		t.Cleanup(func() { require.NoError(t, channel.Delete()) })
 	}
 	model.InitChannelCache()
 
@@ -1015,7 +1412,19 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 					info.MultiKeyDisabledTime = map[int]int64{1: 123456}
 					column, value = "channel_info", info
 				}
-				if err := model.DB.Model(&model.Channel{}).Where("id = ?", source.Id).Update(column, value).Error; !assert.NoError(t, err) {
+				var updateErr error
+				if schedulingEdit {
+					_, updateErr = model.UpdateScheduledChannelLocked(r.Context(), source.Id, func(current *model.Channel) error {
+						current.ChannelInfo.MultiKeyMode = constant.MultiKeyModePolling
+						current.ChannelInfo.MultiKeyPollingIndex = 1
+						current.ChannelInfo.MultiKeyDisabledReason = map[int]string{1: "current reason"}
+						current.ChannelInfo.MultiKeyDisabledTime = map[int]int64{1: 123456}
+						return nil
+					})
+				} else {
+					updateErr = model.DB.Model(&model.Channel{}).Where("id = ?", source.Id).Update(column, value).Error
+				}
+				if !assert.NoError(t, updateErr) {
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}

@@ -408,7 +408,13 @@ func TestChannelManagementModelDiscoveryPersistence(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if mode == "replaced source" {
-				require.NoError(t, model.DB.Model(channel).Update("key", "replacement-key").Error)
+				// The credential changes through the authoritative path, so the
+				// allocation rows move with it and only the stale snapshot remains.
+				_, err := model.UpdateChannelLocked(channel.Id, func(stored *model.Channel) error {
+					stored.Key = "replacement-key"
+					return nil
+				})
+				require.NoError(t, err)
 			}
 			if mode == "routing edited" {
 				require.NoError(t, model.DB.Model(channel).Updates(map[string]any{

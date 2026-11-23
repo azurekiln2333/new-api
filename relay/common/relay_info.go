@@ -154,6 +154,14 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// ChannelBudget is the local channel/allocation budget hold of the current
+	// upstream attempt. It is additional to the wallet, subscription and token
+	// charging above: a budget rejection only means "try another candidate".
+	ChannelBudget BudgetAttempt
+	// ChannelBudgetSettlementOpen marks a submission whose durable asynchronous
+	// task may still revise the recorded amount, so the reservation stays open
+	// instead of becoming terminal.
+	ChannelBudgetSettlementOpen bool
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64

@@ -134,6 +134,38 @@ beforeEach(() => {
   window.localStorage.clear()
 })
 
+it('shows the processing node in compact and expanded cards without showing the submit node', async () => {
+  const user = userEvent.setup()
+  renderCompactLogs({
+    logs: [
+      {
+        ...log,
+        other: JSON.stringify({
+          admin_info: {
+            node_name: 'processor-us',
+            submit_node_name: 'submit-hk',
+          },
+          root_info: { node_name: 'historical-node' },
+        }),
+      },
+    ],
+  })
+  const compact = screen.getByRole('button', {
+    expanded: false,
+    name: /processor-us/,
+  })
+  expect(within(compact).getByText('processor-us')).toBeVisible()
+  await user.click(compact)
+  expect(
+    screen.getByRole('button', { name: 'Processing Node: processor-us' })
+  ).toBeVisible()
+  expect(
+    screen.queryByText(/submit-hk|historical-node/)
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Hide sensitive data' }))
+  expect(screen.queryByText('processor-us')).not.toBeInTheDocument()
+})
+
 it('shows model mismatch evidence when tapping the mobile model badge', async () => {
   const user = userEvent.setup()
   renderLogs({

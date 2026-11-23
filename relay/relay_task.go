@@ -378,7 +378,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, requestplugin.TaskError(apiErr)
 	}
 
-	// 9. 发送请求
+	// 9. The specialized task estimate is now final. Hold both local budgets
+	// before any adaptor can submit paid work, including custom SDK paths.
+	if apiErr := service.PrepareAttemptChannelBudget(c, info); apiErr != nil {
+		return nil, service.TaskErrorFromAPIError(apiErr)
+	}
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError, common.UpstreamAddresses(c)...)

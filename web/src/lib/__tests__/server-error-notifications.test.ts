@@ -235,6 +235,30 @@ it.each([
   [{ error: 'String error' }, 'String error'],
   [{ title: 'Response title' }, 'Response title'],
   [{ response: { status: 304, data: {} } }, 'Content not modified!'],
+  [
+    {
+      response: { status: 429, data: '' },
+      message: 'Request failed with status code 429',
+    },
+    'Too many requests',
+  ],
+  [
+    {
+      response: { status: 429, data: '<html>proxy error</html>' },
+      message: 'Request failed with status code 429',
+    },
+    'Too many requests',
+  ],
+  [
+    {
+      response: {
+        status: 429,
+        data: { message: 'Registration limit reached' },
+      },
+      message: 'Request failed with status code 429',
+    },
+    'Registration limit reached',
+  ],
   [{ message: ' ' }, 'Operation failed'],
   [null, 'Operation failed'],
   [{ response: { data: '<html>proxy error</html>' } }, 'Operation failed'],
@@ -242,30 +266,38 @@ it.each([
   expect(getServerErrorMessage(error, 'Operation failed')).toBe(expected)
 })
 
-it('preserves safe authentication messages and recognizes their original failure without exposing its payload', () => {
-  const notify = vi.spyOn(toast, 'error').mockReturnValue('error')
-  const original = new AxiosError(
-    'HTTP 500',
-    'ERR_BAD_RESPONSE',
-    undefined,
-    undefined,
-    {
-      data: { message: 'private server detail' },
-      status: 500,
-      statusText: 'Error',
-      headers: {},
-      config: { headers: new AxiosHeaders() },
-    }
-  )
-  const safe = AuthOperationError.from(original)
-  const wrapper = new Error('Operation failed', { cause: safe })
-  expect(getServerErrorMessage(wrapper)).toBe('Please try again later.')
-  handleServerError(wrapper)
-  handleServerError(original)
-  expect(notify.mock.calls.map(([message]) => message)).toEqual([
-    'Please try again later.',
-  ])
-})
+it.each([429, 500])(
+  'preserves safe authentication messages for HTTP %i without exposing the original payload',
+  (status) => {
+    const notify = vi.spyOn(toast, 'error').mockReturnValue('error')
+    const original = new AxiosError(
+      'HTTP 500',
+      'ERR_BAD_RESPONSE',
+      undefined,
+      undefined,
+      {
+        data: { message: 'private server detail' },
+        status,
+        statusText: 'Error',
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+      }
+    )
+    const safe =
+      status === 500
+        ? AuthOperationError.from(original)
+        : new AuthOperationError('Please try again later.', undefined, {
+            cause: original,
+          })
+    const wrapper = new Error('Operation failed', { cause: safe })
+    expect(getServerErrorMessage(wrapper)).toBe('Please try again later.')
+    handleServerError(wrapper)
+    handleServerError(original)
+    expect(notify.mock.calls.map(([message]) => message)).toEqual([
+      'Please try again later.',
+    ])
+  }
+)
 
 it('handles circular error causes and prioritizes translated stable error codes', () => {
   const error = new Error('Raw error')
@@ -304,23 +336,23 @@ it.each([200, 401])(
       access_expires_at: 2_000_000_000,
     }
     const open = vi.spyOn(XMLHttpRequest.prototype, 'open')
-    vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(
-      function (this: XMLHttpRequest) {
-        Object.defineProperties(this, {
-          status: { value: refreshStatus, configurable: true },
-          statusText: { value: 'Refresh response', configurable: true },
-          responseText: {
-            value: JSON.stringify({
-              success: refreshStatus === 200,
-              data: fresh,
-            }),
-            configurable: true,
-          },
-          readyState: { value: 4, configurable: true },
-        })
-        this.onloadend?.(new ProgressEvent('loadend'))
-      }
-    )
+    vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(function (
+      this: XMLHttpRequest
+    ) {
+      Object.defineProperties(this, {
+        status: { value: refreshStatus, configurable: true },
+        statusText: { value: 'Refresh response', configurable: true },
+        responseText: {
+          value: JSON.stringify({
+            success: refreshStatus === 200,
+            data: fresh,
+          }),
+          configurable: true,
+        },
+        readyState: { value: 4, configurable: true },
+      })
+      this.onloadend?.(new ProgressEvent('loadend'))
+    })
     let requests = 0
     api.defaults.adapter = async (config) => {
       requests++

@@ -141,7 +141,7 @@ func writeRateLimited(c *gin.Context, retryAfterSeconds int64) {
 	if retryAfterSeconds > 0 {
 		c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
 	}
-	c.Status(http.StatusTooManyRequests)
+	common.ApiErrorStatus(c, http.StatusTooManyRequests, common.NewMessage("Too many requests"), gin.H{"code": "RATE_LIMIT_EXCEEDED"})
 	c.Abort()
 }
 
@@ -187,9 +187,46 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
-func CriticalRateLimit() func(c *gin.Context) {
+// CriticalRateLimitScope is a closed set of server-selected business scopes.
+// Never derive it from a URL, username, cookie, or other client input.
+type CriticalRateLimitScope uint8
+
+const (
+	CriticalScopeLogin CriticalRateLimitScope = iota
+	CriticalScopeRegistration
+	CriticalScopeRefresh
+	CriticalScopeLogout
+	CriticalScopePanel
+)
+
+// CriticalRateLimit keeps existing panel actions together without spending the
+// anonymous login, registration or session-maintenance allowances.
+func CriticalRateLimit() gin.HandlerFunc {
+	return CriticalRateLimitFor(CriticalScopePanel)
+}
+
+// CriticalRateLimitFor retains IP protection and the configured maximum/window
+// for each business scope. All login alternatives must share CriticalScopeLogin.
+func CriticalRateLimitFor(scope CriticalRateLimitScope) gin.HandlerFunc {
+	var mark string
+	switch scope {
+	case CriticalScopeLogin:
+		// Preserve live login counters during rollout rather than resetting
+		// brute-force protection when the unrelated scopes are separated.
+		mark = "CT"
+	case CriticalScopeRegistration:
+		mark = "CT:registration"
+	case CriticalScopeRefresh:
+		mark = "CT:session-refresh"
+	case CriticalScopeLogout:
+		mark = "CT:session-logout"
+	case CriticalScopePanel:
+		mark = "CT:panel"
+	default:
+		panic("invalid critical rate limit scope")
+	}
 	if common.CriticalRateLimitEnable {
-		return rateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, "CT")
+		return rateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark)
 	}
 	return defNext
 }

@@ -314,6 +314,23 @@ func enforceAccessTokenRoute(c *gin.Context, lookup *accessTokenLookup, abort bo
 	return false
 }
 
+// RequireAccessTokenScope checks an additional permission for an action whose
+// route already requires a base scope. Sessions and legacy tokens keep their
+// existing account permission checks.
+func RequireAccessTokenScope(c *gin.Context, permission authz.Permission) bool {
+	if c.GetInt("access_token_id") == 0 {
+		return true
+	}
+	scope := service.AccessTokenScopeOf(permission)
+	if service.AccessTokenScopeGranted(c.GetStringSlice("access_token_scopes"), scope) {
+		return true
+	}
+	setAccessTokenAuditParam(c, "required_scope", scope)
+	setAccessTokenAuditParam(c, "failure_reason", "scope_denied")
+	abortWithWebMessage(c, http.StatusForbidden, "ACCESS_TOKEN_SCOPE_DENIED", common.NewMessage("The access token lacks the required permission: {{scope}}", map[string]any{"scope": scope}))
+	return false
+}
+
 // setAccessTokenContext exposes the token grant to handlers. Scoped tokens
 // also get a step-up identity bound to the token instead of a browser session.
 func setAccessTokenContext(c *gin.Context, lookup *accessTokenLookup) {
@@ -642,7 +659,11 @@ func TokenAuth() func(c *gin.Context) {
 		if err != nil {
 			return
 		}
-		c.Next()
+		if c.GetString(RouteTagKey) == "relay" {
+			RequestLogDiagnostics()(c)
+		} else {
+			c.Next()
+		}
 	}
 }
 

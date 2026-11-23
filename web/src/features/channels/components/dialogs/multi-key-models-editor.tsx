@@ -22,24 +22,36 @@ import { useTranslation } from 'react-i18next'
 
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { fetchMultiKeyModels } from '../../api'
+import { isQuotaConflict } from '../../lib/quota-operation'
 
 type MultiKeyModelsEditorProps = {
   channelId: number
   keyIndex: number
+  keyEntryId?: string
+  expectedRev?: number
+  initialScopeMode?: 'all' | 'allowlist'
   channelModels: string[]
-  /** Current scope of the key; an empty list means every channel model. */
+  /** The initial allowlist, if any; scope mode is tracked independently. */
   initialModels: string[]
   isSaving: boolean
   onCancel: () => void
-  onSave: (models: string[]) => void
+  onConflict: () => void
+  onSave: (models: string[], scopeMode: 'all' | 'allowlist') => void
 }
 
 /** Per-key model scope editor, with discovery of the models one key serves. */
 export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
   const { t } = useTranslation()
+  const [allModels, setAllModels] = useState(
+    props.initialScopeMode
+      ? props.initialScopeMode === 'all'
+      : props.initialModels.length === 0
+  )
   const [models, setModels] = useState<string[]>(props.initialModels)
   const [upstreamModels, setUpstreamModels] = useState<string[] | null>(null)
   const [isFetching, setIsFetching] = useState(false)
@@ -57,21 +69,25 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
     try {
       const response = await fetchMultiKeyModels(
         props.channelId,
-        props.keyIndex
+        props.keyIndex,
+        props.keyEntryId,
+        props.expectedRev
       )
       if (!response.success) {
-        handleServerError(response, t('Failed to fetch models'))
+        if (isQuotaConflict(response)) props.onConflict()
+        else handleServerError(response, t('Failed to fetch models'))
         return
       }
       setUpstreamModels(response.data?.models ?? [])
     } catch (error: unknown) {
-      handleServerError(error, t('Failed to fetch models'))
+      if (isQuotaConflict(error)) props.onConflict()
+      else handleServerError(error, t('Failed to fetch models'))
     } finally {
       setIsFetching(false)
     }
   }
 
-  const options = [...props.channelModels, ...servedByChannel].map((model) => ({
+  const options = props.channelModels.map((model) => ({
     value: model,
     label: model,
   }))
@@ -80,7 +96,7 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
     <div className='flex min-h-0 flex-col gap-2 rounded-md border p-3'>
       <div className='flex items-center justify-between gap-2'>
         <p className='text-sm font-medium'>
-          {t('Allowed Models')} #{props.keyIndex + 1}
+          {t('Allowed Models')} #{props.keyEntryId ?? props.keyIndex + 1}
         </p>
         <div className='flex items-center gap-2'>
           <Button
@@ -109,8 +125,13 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
           <Button
             type='button'
             size='sm'
-            disabled={props.isSaving || props.channelModels.length === 0}
-            onClick={() => props.onSave(models)}
+            disabled={props.isSaving || isFetching}
+            onClick={() =>
+              props.onSave(
+                allModels ? [] : models,
+                allModels ? 'all' : 'allowlist'
+              )
+            }
           >
             {props.isSaving && (
               <Loader2 className='mr-2 h-4 w-4 animate-spin' aria-hidden />
@@ -120,11 +141,23 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
         </div>
       </div>
 
+      <div className='flex items-center gap-2'>
+        <Switch
+          id='allocation-all-models'
+          checked={allModels}
+          onCheckedChange={setAllModels}
+          disabled={props.isSaving}
+        />
+        <Label htmlFor='allocation-all-models'>{t('All models')}</Label>
+      </div>
       <MultiSelect
         options={options}
         selected={models}
-        onChange={setModels}
-        placeholder={t('All models')}
+        onChange={(next) => {
+          setAllModels(false)
+          setModels(next)
+        }}
+        placeholder={allModels ? t('All models') : t('Select models')}
         emptyText={t('No channel models yet')}
         disabled={props.isSaving}
       />
@@ -144,11 +177,13 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
                     variant='outline'
                     size='sm'
                     className='h-6'
-                    onClick={() =>
+                    disabled={props.isSaving}
+                    onClick={() => {
+                      setAllModels(false)
                       setModels((current) =>
                         current.includes(model) ? current : [...current, model]
                       )
-                    }
+                    }}
                   >
                     {model}
                   </Button>
@@ -180,7 +215,11 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
       )}
 
       <p className='text-muted-foreground text-xs'>
-        {t('Leave empty to let this key serve every channel model.')}
+        {allModels
+          ? t('This allocation can use every channel model.')
+          : t(
+              'Only selected models are allowed. An empty selection blocks all models.'
+            )}
       </p>
     </div>
   )

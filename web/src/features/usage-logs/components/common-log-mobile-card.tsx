@@ -54,6 +54,7 @@ type FieldName =
   | 'channel'
   | 'token'
   | 'group'
+  | 'node'
   | 'time'
 type LogField = {
   label: string
@@ -122,13 +123,19 @@ export function CommonLogMobileCard<TData>(props: {
       visible: displayable && props.cells.has('token_name') && !!group,
       sensitive: true,
     },
+    node: {
+      label: t('Processing Node'),
+      value: other?.admin_info?.node_name || t('Not recorded'),
+      visible: props.cells.has('node_name'),
+      sensitive: true,
+    },
   }
   const selected = selectedField ? fields[selectedField] : undefined
   const activeField =
     selected?.visible && (!selected.sensitive || context.sensitiveVisible)
       ? selected
       : undefined
-  const metadata: FieldName[] = ['user', 'channel', 'token', 'group']
+  const metadata: FieldName[] = ['user', 'channel', 'token', 'group', 'node']
   const visibleMetadata = metadata.filter((id) => fields[id].visible)
   const costCell = props.cells.get('quota')
   const contentCell = props.cells.get('content')

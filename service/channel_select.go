@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -89,6 +90,46 @@ func (p *RetryParam) IncreaseRetry() {
 
 func (p *RetryParam) ResetRetryNextTry() {
 	p.resetNextTry = true
+}
+
+// restoreUnusedAutoGroupAttempt reverses the next-group preparation when a
+// selected candidate was rejected before consuming an upstream attempt.
+func (p *RetryParam) restoreUnusedAutoGroupAttempt(c *gin.Context, channelID int, snapshot *autoGroupAdmissionRetry) {
+	if p == nil || p.TokenGroup != "auto" || snapshot == nil || snapshot.channelID != channelID {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, snapshot.groupIndex)
+	p.SetRetry(snapshot.retry)
+	p.resetNextTry = snapshot.resetNextTry
+	c.Set(ginKeyChannelAffinityRetryOffset, snapshot.affinityRetryOffset)
+}
+
+// IsChannelBudgetCandidateRejection identifies a local budget refusal, not an
+// upstream status or a credential failure. The existing ledger sets this marker
+// when it translates its exhaustion sentinel into a safe public error.
+func IsChannelBudgetCandidateRejection(c *gin.Context, err *types.NewAPIError) bool {
+	return err != nil && (errors.Is(err, model.ErrBudgetExhausted) ||
+		(err.GetErrorCode() == types.ErrorCodeChannelKeyScopeUnsatisfied && c.GetBool("channel_budget_candidate_rejected")))
+}
+
+// RetryChannelBudgetAdmission excludes this channel for the current request
+// only. In particular, exhausting a budget is not a health failure or a reason
+// to park in the upstream capacity queue.
+func RetryChannelBudgetAdmission(c *gin.Context, channelID int, err *types.NewAPIError, retry *RetryParam) bool {
+	if !IsChannelBudgetCandidateRejection(c, err) || channelID <= 0 || c.Request.Context().Err() != nil || c.Writer.Written() {
+		return false
+	}
+	state := RequestPolicy(c)
+	_, pinned, _ := GetChannelConstraints(c).ResolvedPin()
+	if pinned || state.SessionMode == "strict" || ShouldSkipRetryAfterChannelAffinityFailure(c) || slices.Contains(state.BudgetRejectedChannelIDs, channelID) {
+		return false
+	}
+	state.BudgetRejectedChannelIDs = append(state.BudgetRejectedChannelIDs, channelID)
+	retry.restoreUnusedAutoGroupAttempt(c, channelID, state.selectedAutoGroupRetry)
+	state.AddEvent(PolicyEvent{ChannelID: channelID, Status: err.StatusCode,
+		ErrorCode: string(err.GetErrorCode()), ErrorSource: "local", Health: "unchanged",
+		Decision: PolicyDecision{Action: "select", Reason: "channel_budget_exhausted", Source: "routing"}})
+	return true
 }
 
 // CacheGetRandomSatisfiedChannel tries to get a random channel that satisfies the requirements.
@@ -391,7 +432,8 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	usingGroup := retry.TokenGroup
 	var channel *model.Channel
 	var selectGroup string
-	if retry.GetRetry() == 0 && len(RequestPolicy(c).FailedChannelIDs) == 0 && len(RequestPolicy(c).SaturatedChannelIDs) == 0 {
+	state := RequestPolicy(c)
+	if retry.GetRetry() == 0 && len(state.FailedChannelIDs) == 0 && len(state.SaturatedChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
 		// A key bound to the requesting user routes the first attempt to the
 		// channel carrying it, before session affinity. Retries keep the
 		// ordinary group routing so a failing bound channel can fail over.

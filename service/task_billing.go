@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -127,6 +128,112 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 	return model.IncreaseUserQuota(task.UserId, -delta, false)
 }
 
+// settleTaskFunding preserves the existing path for pre-ledger tasks. For a
+// tracked task the desired ledger adjustment commits with funding and quota.
+func settleTaskFunding(ctx context.Context, task *model.Task, total int, refund bool) (int, error) {
+	if task.PrivateData.BudgetReservationId <= 0 {
+		delta := total - task.Quota
+		if delta == 0 {
+			return 0, nil
+		}
+		return delta, taskAdjustFunding(task, delta)
+	}
+	subscriptionID := 0
+	if taskIsSubscription(task) {
+		subscriptionID = task.PrivateData.SubscriptionId
+	}
+	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+	delta, err := model.QueueTaskBudgetSettlement(persist, task, total, subscriptionID, refund)
+	if err != nil {
+		return 0, err
+	}
+	task.Quota = total
+	if err := model.ApplyQueuedChannelBudgetSettlement(persist, task.PrivateData.BudgetReservationId); err != nil {
+		logger.LogWarn(ctx, common.LogText("queued channel budget settlement for task %s: %s", task.TaskID, err.Error()))
+	}
+	return delta, nil
+}
+
+// FinalizeTaskBudgetSubmission moves the submission charge the task transaction
+// already recorded into ledger usage. The transaction charged the wallet or
+// subscription and the token before this ran, so its caches were published from
+// the committed state by the caller; this is ledger work only. It is therefore
+// replayable: the desired revision and the pending flag make a second pass a
+// no-op, and no cache delta is applied twice.
+func FinalizeTaskBudgetSubmission(c *gin.Context, relayInfo *relaycommon.RelayInfo, task *model.Task, committed model.TaskBudgetInsertResult, total int) {
+	if task == nil {
+		return
+	}
+	_ = relayInfo
+	task.Quota = total
+	if committed.ReservationID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := model.ApplySubmissionChannelBudgetSettlement(ctx, committed.ReservationID, committed.DesiredRevision); err != nil {
+		logger.LogWarn(c, common.LogText("queued channel budget settlement for task %s: %s", task.TaskID, err.Error()))
+	}
+}
+
+// ResolveLedgerSubmissionOutcome reports the durable state of a task whose insert
+// failed. It reads the ledger reservation that this attempt reserved and the
+// persisted task row under a bounded context, and accepts committed=true only
+// when the expected attempt (this request's channel, user, allocation identity
+// and reservation) and the stored pair agree. The expectation comes from the
+// caller, never from the rows, so a matching pair belonging to another attempt
+// cannot be mistaken for this one.
+//
+// committed=false with no error is a proven absence and stays refundable: the
+// task row is missing and the reservation never linked a task or a durable
+// charge intent. A non-nil error means the outcome could not be proven either
+// way: the charge may exist, so the caller keeps the hold and both caches
+// untouched for reconciliation.
+func ResolveLedgerSubmissionOutcome(c *gin.Context, relayInfo *relaycommon.RelayInfo, task *model.Task) (bool, error) {
+	if relayInfo == nil || task == nil || !relayInfo.ChannelBudget.HasBudgetReservation() {
+		return false, nil
+	}
+	expected := model.SubmissionOutcomeExpectation{
+		TaskID:             task.TaskID,
+		ChannelID:          relayInfo.ChannelId,
+		UserID:             relayInfo.UserId,
+		AllocationID:       relayInfo.ChannelBudget.AllocationID,
+		AllocationRevision: relayInfo.ChannelBudget.AllocationRevision,
+		ReservationID:      relayInfo.ChannelBudget.ReservationID,
+	}
+	// Bounded reads: this runs on the failure path and must not stall a request.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	reservation, err := model.ReadChannelBudgetReservation(ctx, expected.ReservationID)
+	if err != nil {
+		return false, err
+	}
+	if !model.SubmissionOutcomeReservationMatches(reservation, expected) {
+		return false, fmt.Errorf("%w: reservation %d does not belong to task %s", model.ErrBudgetAttemptConflict, expected.ReservationID, expected.TaskID)
+	}
+	stored, exists, err := model.GetTaskForSubmissionOutcome(ctx, expected)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		// A reservation that still holds this attempt but never linked the task
+		// is the ordinary rolled-back insert: nothing was charged, so the caller
+		// may refund and release. Only a linked task or a durable charge intent
+		// makes the outcome uncertain.
+		if reservation.TaskId != "" || reservation.ReconcilePending {
+			return false, fmt.Errorf("%w: reservation %d holds a charge for missing task %s",
+				model.ErrBudgetAttemptConflict, expected.ReservationID, expected.TaskID)
+		}
+		return false, nil
+	}
+	if !model.SubmissionOutcomeIdentityMatches(task, reservation, expected) ||
+		!model.SubmissionOutcomeIdentityMatches(stored, reservation, expected) {
+		return false, fmt.Errorf("%w: task %s does not match its reservation", model.ErrBudgetAttemptConflict, stored.TaskID)
+	}
+	return true, nil
+}
+
 // taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。
 // 需要通过 resolveTokenKey 运行时获取 key（不从 PrivateData 中读取）。
 func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
@@ -231,6 +338,15 @@ func appendTaskLogInfo(task *model.Task, other *model.LogOther) {
 	if task.PrivateData.Execution != nil {
 		AppendTaskPluginAuditInfo(other, task.PrivateData.Execution.TaskPlugin)
 	}
+	if provenance := task.PrivateData.RequestContent; provenance != nil {
+		other.SetAdmin("submit_node_name", provenance.SubmitNodeName)
+		other.SetAdmin("request_content", common.RequestContentMetadata{
+			Ref: provenance.Ref, Status: provenance.Status,
+			CapturedBytes: provenance.CapturedBytes, Truncated: provenance.Truncated,
+		})
+	} else if task.PrivateData.NodeName != "" {
+		other.SetAdmin("submit_node_name", task.PrivateData.NodeName)
+	}
 	if task.PrivateData.UpstreamTaskID == "" && task.PrivateData.NodeName == "" {
 		return
 	}
@@ -265,20 +381,20 @@ func taskModelName(task *model.Task) string {
 // 当异步任务失败时，退还资金与令牌额度，并回减用户和渠道用量。
 // 返回资金来源是否已成功退还；失败时保留 quota，供显式重试或人工对账。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
-	quota := task.Quota
-	if quota == 0 {
-		return true
-	}
-
-	// 1. 退还资金来源（钱包或订阅）
-	if err := taskAdjustFunding(task, -quota); err != nil {
+	delta, err := settleTaskFunding(ctx, task, 0, true)
+	if err != nil {
 		logger.LogWarn(ctx, common.LogText("failed to refund the funding source, task %s: %s", task.TaskID, err.Error()))
 		return false
 	}
+	if delta == 0 {
+		return true
+	}
+	taskAdjustTokenQuota(ctx, task, delta)
+	recordTaskQuotaRefund(ctx, task, -delta, reason)
+	return true
+}
 
-	// 2. 退还令牌额度
-	taskAdjustTokenQuota(ctx, task, -quota)
-
+func recordTaskQuotaRefund(ctx context.Context, task *model.Task, quota int, reason string) {
 	// 3. 回减预扣时累计的用户和渠道用量，请求次数保持不变
 	model.UpdateUserUsedQuota(task.UserId, -quota)
 	model.UpdateChannelUsedQuota(task.ChannelId, -quota)
@@ -287,24 +403,34 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	other := taskBillingOther(task)
 	other.SetPublic("task_id", task.TaskID)
 	other.SetPublic("reason", reason)
+	requestID := ""
+	if task.PrivateData.RequestContent != nil {
+		requestID = task.PrivateData.RequestContent.RequestID
+	} else if task.PrivateData.Execution != nil {
+		requestID = task.PrivateData.Execution.RequestID
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   model.LogTypeRefund,
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     quota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
+		UserId:         task.UserId,
+		LogType:        model.LogTypeRefund,
+		ChannelId:      task.ChannelId,
+		ModelName:      taskModelName(task),
+		Quota:          quota,
+		TokenId:        task.PrivateData.TokenId,
+		Group:          task.Group,
+		Other:          other,
+		RequestID:      requestID,
+		RequestContent: task.PrivateData.RequestContent,
+		NodeName:       task.PrivateData.NodeName,
 	})
 
 	// 5. 资金退款完成后再清除持久化标记。
 	// 回写失败必须显式告警，避免漏掉潜在的重复退款风险。
 	task.Quota = 0
-	if err := task.UpdateQuota(); err != nil {
-		logger.LogError(ctx, common.LogText("refund succeeded but clearing the task quota failed, task %s: %s", task.TaskID, err.Error()))
+	if task.PrivateData.BudgetReservationId == 0 {
+		if err := task.UpdateQuota(); err != nil {
+			logger.LogError(ctx, common.LogText("refund succeeded but clearing the task quota failed, task %s: %s", task.TaskID, err.Error()))
+		}
 	}
-	return true
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。
@@ -316,8 +442,16 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		return
 	}
 	preConsumedQuota := task.Quota
-	quotaDelta := actualQuota - preConsumedQuota
+	quotaDelta, err := settleTaskFunding(ctx, task, actualQuota, false)
+	if err != nil {
+		logger.LogError(ctx, common.LogText("failed to adjust funding for the difference, task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	taskAdjustTokenQuota(ctx, task, quotaDelta)
+	recordTaskQuotaAdjustment(ctx, task, preConsumedQuota, actualQuota, quotaDelta, reason, clamps...)
+}
 
+func recordTaskQuotaAdjustment(ctx context.Context, task *model.Task, preConsumedQuota, actualQuota, quotaDelta int, reason *common.Message, clamps ...*common.QuotaClamp) {
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, common.LogText("task %s pre-consumed quota matches the actual quota (%s, %s)",
 			task.TaskID, logger.LogQuota(actualQuota), reason.Error()))
@@ -332,18 +466,11 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		reason.Error(),
 	))
 
-	// 调整资金来源
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
-		logger.LogError(ctx, common.LogText("failed to adjust funding for the difference, task %s: %s", task.TaskID, err.Error()))
-		return
-	}
-
-	// 调整令牌额度
-	taskAdjustTokenQuota(ctx, task, quotaDelta)
-
 	task.Quota = actualQuota
-	if err := task.UpdateQuota(); err != nil {
-		logger.LogError(ctx, common.LogText("failed to write back the settled task quota, task %s: %s", task.TaskID, err.Error()))
+	if task.PrivateData.BudgetReservationId == 0 {
+		if err := task.UpdateQuota(); err != nil {
+			logger.LogError(ctx, common.LogText("failed to write back the settled task quota, task %s: %s", task.TaskID, err.Error()))
+		}
 	}
 
 	// 提交阶段已经累计过一次请求；结算阶段只调整最终用量。
@@ -366,17 +493,25 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	for _, clamp := range clamps {
 		attachQuotaSaturationToOther(other, clamp)
 	}
+	requestID := ""
+	if task.PrivateData.RequestContent != nil {
+		requestID = task.PrivateData.RequestContent.RequestID
+	} else if task.PrivateData.Execution != nil {
+		requestID = task.PrivateData.Execution.RequestID
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   logType,
-		Content:   []*common.Message{reason},
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     logQuota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
-		NodeName:  task.PrivateData.NodeName,
+		UserId:         task.UserId,
+		LogType:        logType,
+		Content:        []*common.Message{reason},
+		ChannelId:      task.ChannelId,
+		ModelName:      taskModelName(task),
+		Quota:          logQuota,
+		TokenId:        task.PrivateData.TokenId,
+		Group:          task.Group,
+		Other:          other,
+		NodeName:       task.PrivateData.NodeName,
+		RequestID:      requestID,
+		RequestContent: task.PrivateData.RequestContent,
 	})
 }
 
@@ -384,8 +519,17 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
 func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
-	if totalTokens <= 0 {
+	quota, reason, clamp := taskQuotaFromTokens(task, totalTokens)
+	if reason == nil {
 		return false
+	}
+	RecalculateTaskQuota(ctx, task, quota, reason, clamp)
+	return true
+}
+
+func taskQuotaFromTokens(task *model.Task, totalTokens int) (int, *common.Message, *common.QuotaClamp) {
+	if totalTokens <= 0 {
+		return 0, nil, nil
 	}
 
 	modelName := taskModelName(task)
@@ -394,7 +538,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return false
+		return 0, nil, nil
 	}
 
 	// 获取用户和组的倍率信息
@@ -406,7 +550,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 	if group == "" {
-		return false
+		return 0, nil, nil
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
@@ -434,8 +578,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		"group_ratio":      fmt.Sprintf("%.2f", finalGroupRatio),
 		"other_multiplier": fmt.Sprintf("%.4f", otherMultiplier),
 	})
-	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
-	return true
+	return actualQuota, reason, clamp
 }
 
 // EvaluateTaskCompletionUsage evaluates actual facts against the frozen task

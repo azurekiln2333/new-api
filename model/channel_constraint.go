@@ -94,6 +94,9 @@ func ChannelSatisfiesFilters(ch *Channel, modelName string, filters []dto.Channe
 	if ch == nil {
 		return false, ""
 	}
+	if !ch.HasAvailableAllocationBudget(userIDs...) {
+		return false, ""
+	}
 	if ch.ModelUnavailableForServingKeys(modelName, userIDs...) {
 		return false, ""
 	}
@@ -141,7 +144,7 @@ func filterCandidateIDs(ids []int, modelName string, filters []dto.ChannelFilter
 	// The input slice belongs to the channel cache and is never mutated.
 	filtered := make([]int, 0, len(kept))
 	for _, id := range kept {
-		if channel := channelsIDM[id]; channel != nil && channel.ModelUnavailableForServingKeys(modelName, 0) {
+		if channel := channelsIDM[id]; channel != nil && (!channel.HasAvailableAllocationBudget(0) || channel.ModelUnavailableForServingKeys(modelName, 0)) {
 			continue
 		}
 		filtered = append(filtered, id)

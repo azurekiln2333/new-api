@@ -80,6 +80,7 @@ function ChannelCardComponent({
   const priorityCell = renderCell('priority')
   const weightCell = renderCell('weight')
   const balanceCell = renderCell('balance')
+  const budgetCell = renderCell('local_budget')
   const usedTokensCell = renderCell('used_tokens')
   const responseCell = renderCell('response_time')
 
@@ -87,10 +88,7 @@ function ChannelCardComponent({
   const valueClass = 'min-w-0 text-sm tabular-nums'
   // Inline cell badges already sit in a labelled slot, so drop their leading
   // margin and let them wrap inside a narrow card.
-  const statusValueClass = cn(
-    valueClass,
-    '[&_[data-slot=status-badge]]:!ml-0'
-  )
+  const statusValueClass = cn(valueClass, '[&_[data-slot=status-badge]]:!ml-0')
 
   // The card shows the complete test timestamp: the table's relative badge
   // hides the date behind a tooltip, which is not readable at a glance.
@@ -174,6 +172,10 @@ function ChannelCardComponent({
                     <span className='text-muted-foreground'>-</span>
                   )}
                 </dd>
+              </div>
+              <div className='flex min-w-0 flex-col gap-0.5'>
+                <dt className={labelClass}>{t('Local Budget')}</dt>
+                <dd className={valueClass}>{budgetCell}</dd>
               </div>
               <div className='flex min-w-0 flex-col gap-0.5'>
                 <dt className={labelClass}>{t('Used tokens')}</dt>

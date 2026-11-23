@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/11-21-request-log-body-node/prd.md","reason":"R6/R7 capture, visibility, node and lifecycle acceptance contract"}
+{"file":".trellis/tasks/11-21-request-log-body-node/design.md","reason":"Original-body boundary, log-store/API contracts, role visibility and orphan cleanup invariants"}
+{"file":".trellis/tasks/11-21-request-log-body-node/research/log-lifecycle-and-ui.md","reason":"Verified storage ownership, request ID, migration, retention and existing UI reuse evidence"}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/research/architecture-findings.md","reason":"Shared relay/log lifecycle and multi-node integration boundaries"}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/research/security-and-validation.md","reason":"Applicable authorization/logging controls and mandatory real-database validation baseline"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace stable snapshot identity and typed metadata through capture, storage, API and detail UI"}
+{"file": ".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/dispatch.md", "reason": "Approved four-Pi ownership and integration contract"}

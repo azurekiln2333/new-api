@@ -34,6 +34,7 @@ import {
   RefreshCw,
   Loader2,
   ExternalLink,
+  Wallet,
 } from 'lucide-react'
 import { useContext, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -65,6 +66,7 @@ import {
   useChannelModelFetchable,
 } from '../hooks/use-task-plugin-option'
 import {
+  canAppendStaticAllocation,
   channelsQueryKeys,
   handleDeleteChannel,
   handleTestChannel,
@@ -103,6 +105,21 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
 
+  const canOperate = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  const canAddAllocation =
+    canEditSensitive &&
+    canOperate &&
+    hasPermission(
+      currentUser,
+      ADMIN_PERMISSION_RESOURCES.CHANNEL,
+      ADMIN_PERMISSION_ACTIONS.WRITE
+    ) &&
+    canAppendStaticAllocation(channel)
+
   const handleEdit = () => {
     setCurrentRow(channel)
     setOpen('update-channel')
@@ -128,6 +145,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const handleQueryBalance = () => {
     setCurrentRow(channel)
     setOpen('balance-query')
+  }
+
+  const handleLocalBudget = () => {
+    setCurrentRow(channel)
+    setOpen('channel-quota')
   }
 
   const handleFetchModels = () => {
@@ -325,6 +347,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
+          {/* Local billed budget: always offered, whether or not the upstream
+              reports a balance, and never mixed with that balance. */}
+          <DropdownMenuItem onClick={handleLocalBudget}>
+            {t('Local Budget')}
+            <DropdownMenuShortcut>
+              <Wallet size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+
           {/* Fetch Models */}
           <DropdownMenuItem onClick={handleFetchModels}>
             {t('Fetch Models')}
@@ -373,10 +404,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          {/* Manage Keys (only for multi-key channels) */}
-          {isMultiKey && (
+          {/* Managed plugin accounts keep their login workflow. Static single
+              channels may create another independent allocation. */}
+          {((isMultiKey && canOperate) ||
+            (!isMultiKey && canAddAllocation)) && (
             <DropdownMenuItem onClick={handleManageKeys}>
-              {t('Manage Keys')}
+              {isMultiKey ? t('Manage Keys') : t('Add allocation')}
               <DropdownMenuShortcut>
                 <Key size={16} />
               </DropdownMenuShortcut>

@@ -831,3 +831,80 @@ identity, reload current policy, then merge narrowly under the source guard.
 <!-- Error handling mistakes your team has made -->
 
 (To be filled by the team)
+
+## Panel critical rate-limit isolation
+
+### 1. Scope / Trigger
+
+Apply when adding console authentication, invitation registration, session
+maintenance or other critical `/api` routes, or changing their 429 rendering.
+
+### 2. Signatures
+
+`middleware.CriticalRateLimitFor(CriticalRateLimitScope)` selects a closed
+server-defined scope. `CriticalRateLimit()` is the panel compatibility wrapper.
+`writeRateLimited` returns the standard `common.ApiErrorStatus` envelope.
+The frontend shared `getServerErrorMessage` mapper translates generic HTTP 429.
+
+### 3. Contracts
+
+All critical counters remain keyed by trusted `ClientIP`, with the configured
+critical maximum and window. Password, MFA, both passkey route families, OAuth
+state/callbacks and password recovery share the existing `CT` login bucket.
+Registration (including invitations), refresh, logout and panel operations use
+four separate static scopes. Never select a scope from submitted usernames,
+invitation codes, cookies, tokens, provider names or raw URL strings.
+
+The outer global API `GA` counter is unchanged. Email-verification and verified
+user limits remain additional controls; business-scope isolation does not make
+the limits per session. A rolling deployment retains old shared limits on old
+nodes until they are upgraded. Proxy configuration must preserve actual client
+addresses without trusting arbitrary forwarded headers.
+
+Generic rejection keeps HTTP 429 and `Retry-After`, with
+`success: false`, `code: "RATE_LIMIT_EXCEEDED"`, English `message` and
+`message_key: "Too many requests"`. Do not expose the IP, cache key or credentials.
+The frontend retains specific server messages and authentication-safe wrappers;
+only otherwise generic empty/HTML 429 falls back to the existing seven-locale
+`Too many requests` key. Do not change authentication status codes to 200.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Registration scope exhausted | Registration returns 429; login/refresh/logout retain their own allowances |
+| Login allowance exhausted | Every password/MFA/passkey/OAuth/recovery alias remains throttled |
+| Same IP changes unverified cookies or tokens | No fresh allowance |
+| Different trusted client IP | Independent allowance |
+| Scope changes after GA is exhausted | Still 429 from the aggregate limit |
+| Pre-upgrade Redis CT login key exists | Retain its count and remaining TTL |
+| Backend sends a specific session-limit message | Preserve that message instead of the generic fallback |
+
+### 5. Good / Base / Bad Cases
+
+Good: invitation registration cannot consume session refresh's critical quota.
+Base: each anonymous login alternative retains the existing IP protection.
+Bad: using one key per endpoint, cookie or submitted account allows clients to
+multiply an anonymous allowance; sharing registration with refresh causes
+unrelated panel failures.
+
+### 6. Tests Required
+
+Extend `middleware/rate_limit_test.go` for memory and Redis scope separation,
+shared stores, spoofed-claim resistance, GA ceiling and preserved login TTL.
+Use actual `SetApiRouter` in `router/access_token_scope_test.go` to cover login
+aliases, invitation registration and session isolation. Run these with the race
+detector. Shared frontend mapper/notification tests cover empty/HTML 429,
+specific backend errors, Chinese translation and safe authentication wrappers.
+
+The R8 research note records OWASP Authentication/Session Management guidance
+and ASVS 5.0.0 controls. This bounded fix does not claim complete ASVS compliance;
+the pre-existing lack of a primary-password per-account failed-attempt counter
+remains a separate security gap.
+
+### 7. Wrong vs Correct
+
+Wrong: every critical panel action spends `CT + ClientIP`, or a caller-provided
+session identifier chooses a new anonymous bucket. Correct: server-defined
+business scopes retain IP enforcement, all login aliases share CT, and GA
+continues to bound aggregate panel traffic.

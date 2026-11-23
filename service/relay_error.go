@@ -137,7 +137,17 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	logger.LogError(c, common.LogText("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode(upstreamURLs...))))
 	if ShouldDisableChannel(err) && channelError.AutoBan {
 		reason := err.MaskSensitiveErrorWithStatusCode(upstreamURLs...)
+		// A retry can change the selected allocation and Gin recycles its
+		// context. Capture the attempt's identity before queuing the write.
+		var allocation model.ChannelAllocation
+		if c != nil {
+			allocation, _ = common.GetContextKeyType[model.ChannelAllocation](c, constant.ContextKeyChannelAllocation)
+		}
 		gopool.Go(func() {
+			if allocation.EntryID > 0 {
+				DisableChannelAllocation(channelError, reason, allocation)
+				return
+			}
 			DisableChannel(channelError, reason)
 		})
 	}
@@ -186,8 +196,15 @@ func RecordUpstreamModelUnavailability(c *gin.Context, channelError types.Channe
 // error logs are on. channelId is 0 for a request that reached no channel.
 func RecordRelayErrorLog(c *gin.Context, channelId int, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
 	if !constant.ErrorLogEnabled || !types.IsRecordErrorLog(err) {
+		if c != nil {
+			c.Set("request_error_log_excluded", true)
+		}
 		return
 	}
+	if c == nil {
+		return
+	}
+	c.Set("request_error_log_written", true)
 	userId := c.GetInt("id")
 	tokenName := c.GetString("token_name")
 	modelName := c.GetString("original_model")

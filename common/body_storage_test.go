@@ -279,3 +279,165 @@ func BenchmarkMultipartBodyStorage(b *testing.B) {
 		})
 	}
 }
+
+// requestContentTestContext builds an authenticated relay context whose body is
+// stored exactly like the real ingress path.
+func requestContentTestContext(t *testing.T, contentType string, payload []byte) *gin.Context {
+	t.Helper()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(payload))
+	c.Request.Header.Set("Content-Type", contentType)
+	c.Set("id", 7)
+	storage, err := CreateBodyStorage(payload)
+	require.NoError(t, err)
+	c.Set(KeyBodyStorage, storage)
+	t.Cleanup(func() { CleanupBodyStorage(c) })
+	BeginRequestContentCapture(c)
+	return c
+}
+
+func TestRequestContentCaptureKeepsOriginalPromptBeforeRewrite(t *testing.T) {
+	previous := GetDiskCacheConfig()
+	t.Cleanup(func() { SetDiskCacheConfig(previous) })
+
+	payload := []byte(`{"model":"gpt-4o","messages":[{"role":"system","content":"be brief"},{"role":"user","content":[{"type":"text","text":"original prompt"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}],"api_key":"must-not-appear","prompt":"legacy prompt"}`)
+	SetDiskCacheConfig(DiskCacheConfig{Enabled: false})
+	for _, disk := range []bool{false, true} {
+		t.Run(map[bool]string{false: "memory", true: "file"}[disk], func(t *testing.T) {
+			SetDiskCacheConfig(DiskCacheConfig{Enabled: disk, ThresholdMB: 0, MaxSizeMB: 16, Path: t.TempDir()})
+			c := requestContentTestContext(t, "application/json", payload)
+			// The protocol/plugin layer reads the body first; capture happens there.
+			_, err := GetRequestBody(c)
+			require.NoError(t, err)
+
+			snapshot := RequestContent(c)
+			require.NotNil(t, snapshot)
+			assert.Equal(t, RequestContentStatusRecorded, snapshot.Status)
+			assert.Equal(t, NodeName, snapshot.SubmitNodeName)
+			assert.NotEmpty(t, snapshot.Ref)
+			assert.NotContains(t, string(snapshot.Payload), "must-not-appear")
+			assert.Contains(t, string(snapshot.Payload), "original prompt")
+			assert.Contains(t, string(snapshot.Payload), "[inline media omitted]")
+			assert.NotContains(t, string(snapshot.Payload), "data:image/png;base64")
+			assert.Contains(t, string(snapshot.Payload), "legacy prompt")
+			serialized, err := Marshal(snapshot)
+			require.NoError(t, err)
+			assert.NotContains(t, string(serialized), "original prompt", "snapshots must not serialize prompt text into diagnostic parameters")
+
+			// A later rewrite of the storage must not retroactively change the
+			// original snapshot, and closing the storage keeps it readable.
+			replacement, err := CreateBodyStorage([]byte(`{"messages":[{"role":"user","content":"rewritten"}]}`))
+			require.NoError(t, err)
+			CleanupBodyStorage(c)
+			c.Set(KeyBodyStorage, replacement)
+			_, err = GetRequestBody(c)
+			require.NoError(t, err, "captured snapshot must not depend on the closed storage")
+			again := RequestContent(c)
+			require.NotNil(t, again)
+			assert.Equal(t, string(snapshot.Payload), string(again.Payload))
+		})
+	}
+}
+
+func TestRequestContentCaptureStatusesAndBudget(t *testing.T) {
+	previous := GetDiskCacheConfig()
+	t.Cleanup(func() { SetDiskCacheConfig(previous) })
+	SetDiskCacheConfig(DiskCacheConfig{Enabled: false})
+
+	t.Run("no_content", func(t *testing.T) {
+		c := requestContentTestContext(t, "application/json", []byte(`{"model":"gpt-4o","stream":true}`))
+		_, err := GetRequestBody(c)
+		require.NoError(t, err)
+		snapshot := RequestContent(c)
+		require.NotNil(t, snapshot)
+		assert.Equal(t, RequestContentStatusNoContent, snapshot.Status)
+		assert.Empty(t, snapshot.Payload)
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		c := requestContentTestContext(t, "application/json", []byte(`{"messages":[`))
+		_, err := GetRequestBody(c)
+		require.NoError(t, err)
+		snapshot := RequestContent(c)
+		require.NotNil(t, snapshot)
+		assert.Equal(t, RequestContentStatusInvalid, snapshot.Status)
+		assert.Empty(t, snapshot.Payload)
+	})
+
+	t.Run("unsupported", func(t *testing.T) {
+		c := requestContentTestContext(t, "application/octet-stream", []byte{0x00, 0x01})
+		_, err := GetRequestBody(c)
+		require.NoError(t, err)
+		snapshot := RequestContent(c)
+		require.NotNil(t, snapshot)
+		assert.Equal(t, RequestContentStatusUnsupported, snapshot.Status)
+	})
+
+	t.Run("bounded_valid_json", func(t *testing.T) {
+		t.Setenv(requestContentMaxBytesEnv, "2048")
+		long := strings.Repeat("😀\"\\\n", 4000)
+		body, err := Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": long}}})
+		require.NoError(t, err)
+		c := requestContentTestContext(t, "application/json", body)
+		_, err = GetRequestBody(c)
+		require.NoError(t, err)
+		snapshot := RequestContent(c)
+		require.NotNil(t, snapshot)
+		assert.Equal(t, RequestContentStatusTruncated, snapshot.Status)
+		assert.True(t, snapshot.Truncated)
+		assert.LessOrEqual(t, len(snapshot.Payload), 2048)
+		assert.Equal(t, "object", GetJsonType(snapshot.Payload), "captured payload must stay valid JSON")
+		var decoded map[string]any
+		require.NoError(t, Unmarshal(snapshot.Payload, &decoded))
+		assert.Equal(t, len(snapshot.Payload), snapshot.CapturedBytes)
+	})
+
+	t.Run("structured_media_and_credentials", func(t *testing.T) {
+		c := requestContentTestContext(t, "application/json", []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"keep https://example.test/reference"},{"type":"image_url","image_url":{"url":"https://cdn.test/image?token=signed-secret"}},{"type":"input_audio","input_audio":{"data":"encoded-secret","format":"wav"}}],"api_key":"nested-secret","metadata":{"access_token":"metadata-secret"}}]}`))
+		_, err := GetRequestBody(c)
+		require.NoError(t, err)
+		snapshot := RequestContent(c)
+		require.NotNil(t, snapshot)
+		assert.Equal(t, RequestContentStatusRecorded, snapshot.Status)
+		assert.Contains(t, string(snapshot.Payload), "keep https://example.test/reference")
+		assert.Contains(t, string(snapshot.Payload), `"role":"user"`)
+		assert.Contains(t, string(snapshot.Payload), "[media omitted]")
+		for _, secret := range []string{"signed-secret", "encoded-secret", "nested-secret", "metadata-secret"} {
+			assert.NotContains(t, string(snapshot.Payload), secret)
+		}
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		t.Setenv(requestContentEnabledEnv, "false")
+		c := requestContentTestContext(t, "application/json", []byte(`{"messages":[{"role":"user","content":"secret"}]}`))
+		_, err := GetRequestBody(c)
+		require.NoError(t, err)
+		snapshot := RequestContent(c)
+		require.NotNil(t, snapshot)
+		assert.Equal(t, RequestContentStatusDisabled, snapshot.Status)
+		assert.Empty(t, snapshot.Payload)
+	})
+}
+
+func TestRequestContentCaptureMultipartTextFieldsOnly(t *testing.T) {
+	previous := GetDiskCacheConfig()
+	t.Cleanup(func() { SetDiskCacheConfig(previous) })
+	SetDiskCacheConfig(DiskCacheConfig{Enabled: false})
+	var payload bytes.Buffer
+	writer := multipart.NewWriter(&payload)
+	require.NoError(t, writer.WriteField("prompt", "draw a lighthouse"))
+	require.NoError(t, writer.WriteField("authorization", "Bearer secret"))
+	part, err := writer.CreateFormFile("image", "secret.png")
+	require.NoError(t, err)
+	_, err = part.Write(bytes.Repeat([]byte("binary"), 1000))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	c := requestContentTestContext(t, writer.FormDataContentType(), payload.Bytes())
+	_, err = GetRequestBody(c)
+	require.NoError(t, err)
+	snapshot := RequestContent(c)
+	require.NotNil(t, snapshot)
+	assert.Equal(t, RequestContentStatusRecorded, snapshot.Status)
+	assert.JSONEq(t, `{"prompt":"draw a lighthouse"}`, string(snapshot.Payload))
+}

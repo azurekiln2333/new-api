@@ -30,6 +30,41 @@ import {
 } from './server-error-message'
 
 describe('server error message mapping', () => {
+  test('translates empty HTTP 429 responses and preserves specific session limits', async () => {
+    i18next.addResourceBundle('zhCN', 'translation', {
+      'Too many requests': zh.translation['Too many requests'],
+    })
+    await i18next.changeLanguage('zhCN')
+    try {
+      const error = {
+        isAxiosError: true,
+        message: 'Request failed with status code 429',
+        response: { status: 429, data: '' },
+      }
+      expect(
+        getServerErrorMessage(
+          new Error('Registration failed', { cause: error })
+        )
+      ).toBe(zh.translation['Too many requests'])
+      expect(
+        getServerErrorMessage({
+          ...error,
+          response: {
+            status: 429,
+            data: { code: 'AUTH_SESSION_ISSUANCE_LIMIT' },
+          },
+        })
+      ).toBe(
+        i18next.t(
+          getServerErrorMessageKey({ code: 'AUTH_SESSION_ISSUANCE_LIMIT' }) ??
+            ''
+        )
+      )
+    } finally {
+      await i18next.changeLanguage('en')
+    }
+  })
+
   test('maps the active-session limit to recovery instructions', () => {
     const message = getServerErrorMessageKey({ code: 'AUTH_SESSION_LIMIT' })
 
@@ -218,10 +253,7 @@ describe('channel management error translation', () => {
         '所选模型在该渠道不可用',
       ],
       ['unsupported endpoint type', '无效的参数'],
-      [
-        'upstream stream did not complete successfully',
-        '流式输出未成功完成',
-      ],
+      ['upstream stream did not complete successfully', '流式输出未成功完成'],
       ['invalid Gemini models response', '响应无效'],
       ['invalid Gemini model name', '响应无效'],
       ['repeated Gemini model page token', '响应无效'],

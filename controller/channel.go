@@ -1122,9 +1122,7 @@ func EditTagChannels(c *gin.Context) {
 		common.ApiErrorT(c, "Tag cannot be empty")
 		return
 	}
-	if (channelTag.ParamOverride != nil || channelTag.HeaderOverride != nil) &&
-		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {
-		common.ApiErrorT(c, "Unauthorized, insufficient privileges")
+	if (channelTag.ParamOverride != nil || channelTag.HeaderOverride != nil) && !requireChannelSensitiveWrite(c) {
 		return
 	}
 	if channelTag.ParamOverride != nil {
@@ -1200,9 +1198,10 @@ func DeleteChannelBatch(c *gin.Context) {
 
 type PatchChannel struct {
 	model.Channel
-	MultiKeyMode *string `json:"multi_key_mode"`
-	KeyMode      *string `json:"key_mode"`     // 多key模式下密钥覆盖或者追加
-	ToMultiKey   *bool   `json:"to_multi_key"` // 单key渠道转多key渠道
+	MultiKeyMode     *string `json:"multi_key_mode"`
+	KeyMode          *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	ExpectedRevision *int64  `json:"expected_revision,omitempty"`
+	ToMultiKey       *bool   `json:"to_multi_key"` // 单key渠道转多key渠道
 }
 
 type ChannelStatusRequest struct {
@@ -1292,9 +1291,7 @@ func UpdateChannel(c *gin.Context) {
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
 
-	if channelHasSensitiveChanges(&channel, originChannel, requestData) &&
-		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {
-		common.ApiErrorT(c, "Unauthorized, insufficient privileges")
+	if channelHasSensitiveChanges(&channel, originChannel, requestData) && !requireChannelSensitiveWrite(c) {
 		return
 	}
 
@@ -1308,8 +1305,16 @@ func UpdateChannel(c *gin.Context) {
 	// into several keys, and neither can Vertex AI channels holding simple API
 	// keys; the create path only offers multi-key mode for the same set.
 	if channel.ToMultiKey != nil && *channel.ToMultiKey && !channel.ChannelInfo.IsMultiKey {
-		if channel.Type == constant.ChannelTypeCodex ||
-			(channel.Type == constant.ChannelTypeVertexAi && channel.GetOtherSettings().VertexKeyType == dto.VertexKeyTypeAPIKey) {
+		effectiveType := channel.Type
+		if effectiveType == 0 {
+			effectiveType = originChannel.Type
+		}
+		effectiveOther := originChannel.GetOtherSettings()
+		if _, provided := requestData["settings"]; provided {
+			effectiveOther = channel.GetOtherSettings()
+		}
+		if effectiveType == constant.ChannelTypeCodex ||
+			(effectiveType == constant.ChannelTypeVertexAi && effectiveOther.VertexKeyType == dto.VertexKeyTypeAPIKey) {
 			common.ApiErrorT(c, "This channel type does not support multiple keys")
 			return
 		}
@@ -1378,28 +1383,17 @@ func UpdateChannel(c *gin.Context) {
 				}
 			}
 
-			seen := make(map[string]struct{}, len(existingKeys)+len(newKeys))
+			seen := make(map[string]bool, len(existingKeys)+len(newKeys))
 			for _, key := range existingKeys {
-				normalized := strings.TrimSpace(key)
-				if normalized == "" {
-					continue
-				}
-				seen[normalized] = struct{}{}
+				seen[key] = true
 			}
-			dedupedNewKeys := make([]string, 0, len(newKeys))
 			for _, key := range newKeys {
-				normalized := strings.TrimSpace(key)
-				if normalized == "" {
-					continue
+				if seen[key] && !model.ChannelBudgetsEnabled() {
+					return "", model.ErrChannelAllocationsInactive
 				}
-				if _, ok := seen[normalized]; ok {
-					continue
-				}
-				seen[normalized] = struct{}{}
-				dedupedNewKeys = append(dedupedNewKeys, normalized)
+				seen[key] = true
 			}
-
-			allKeys := append(existingKeys, dedupedNewKeys...)
+			allKeys := append(existingKeys, newKeys...)
 			return strings.Join(allKeys, "\n"), nil
 		}
 	}
@@ -1460,6 +1454,12 @@ func UpdateChannel(c *gin.Context) {
 		pollingLock := model.GetChannelPollingLock(channel.Id)
 		pollingLock.Lock()
 		stored, err := model.UpdateChannelLocked(channel.Id, func(stored *model.Channel) error {
+			if channel.ExpectedRevision != nil && *channel.ExpectedRevision != stored.ChannelInfo.KeyEntryRevision {
+				return model.ErrChannelKeyEntryRevisionStale
+			}
+			if keyChanged && (channel.KeyMode == nil || *channel.KeyMode != "append") && model.ChannelHasDuplicateCredentials(stored) {
+				return model.ErrChannelKeyEntriesAmbiguous
+			}
 			if toMultiKey && !stored.ChannelInfo.IsMultiKey {
 				stored.ChannelInfo.IsMultiKey = true
 				stored.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
@@ -1490,7 +1490,7 @@ func UpdateChannel(c *gin.Context) {
 		})
 		pollingLock.Unlock()
 		if err != nil {
-			common.ApiError(c, err)
+			channelKeyManageError(c, err)
 			return
 		}
 		keyAfter = stored.Key
@@ -1976,6 +1976,7 @@ func CopyChannel(c *gin.Context) {
 	clone.ChannelInfo.MultiKeyDisabledTime = maps.Clone(origin.ChannelInfo.MultiKeyDisabledTime)
 	clone.ChannelInfo.MultiKeyModels = maps.Clone(origin.ChannelInfo.MultiKeyModels)
 	clone.ChannelInfo.MultiKeyUsers = maps.Clone(origin.ChannelInfo.MultiKeyUsers)
+	clone.ChannelInfo.MultiKeyScopeModes = maps.Clone(origin.ChannelInfo.MultiKeyScopeModes)
 	service.DropPluginCredentials(&clone)
 
 	if err := clone.ValidateSettings(); err != nil {
@@ -2002,24 +2003,36 @@ func CopyChannel(c *gin.Context) {
 
 // MultiKeyManageRequest represents the request for multi-key management operations
 type MultiKeyManageRequest struct {
-	ChannelId int      `json:"channel_id"`
-	Action    string   `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status", "set_key_models", "set_key_user", "fetch_key_models", "sync_key_models"
-	KeyIndex  *int     `json:"key_index,omitempty"` // for disable_key, enable_key, delete_key, fetch_key_models, set_key_models and set_key_user actions
-	Models    []string `json:"models,omitempty"`    // for set_key_models: the models this key may serve, empty clears the limit
-	UserId    *int     `json:"user_id,omitempty"`   // for set_key_user: the user this key is bound to, 0 unbinds
-	Apply     bool     `json:"apply,omitempty"`     // for sync_key_models: persist the discovered models and key scopes instead of previewing them
-	Page      int      `json:"page,omitempty"`      // for get_key_status pagination
-	PageSize  int      `json:"page_size,omitempty"` // for get_key_status pagination
-	Status    *int     `json:"status,omitempty"`    // for get_key_status filtering: 1=enabled, 2=manual_disabled, 3=auto_disabled, nil=all
+	ChannelId             int      `json:"channel_id"`
+	Action                string   `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status", "set_key_models", "set_key_user", "fetch_key_models", "sync_key_models"
+	KeyIndex              *int     `json:"key_index,omitempty"` // for disable_key, enable_key, delete_key, fetch_key_models, set_key_models and set_key_user actions
+	Models                []string `json:"models,omitempty"`    // for set_key_models: the models this key may serve, empty clears the limit
+	UserId                *int     `json:"user_id,omitempty"`   // for set_key_user: the user this key is bound to, 0 unbinds
+	Apply                 bool     `json:"apply,omitempty"`     // for sync_key_models: persist the discovered models and key scopes instead of previewing them
+	Page                  int      `json:"page,omitempty"`      // for get_key_status pagination
+	PageSize              int      `json:"page_size,omitempty"` // for get_key_status pagination
+	Status                *int     `json:"status,omitempty"`    // for get_key_status filtering: 1=enabled, 2=manual_disabled, 3=auto_disabled, nil=all
+	KeyEntryID            string   `json:"key_entry_id,omitempty"`
+	ExpectedRev           *int64   `json:"expected_rev,omitempty"`
+	ExpectedRevision      *int64   `json:"expected_revision,omitempty"`
+	KeyEntryIDs           []string `json:"key_entry_ids,omitempty"`
+	ScopeMode             *string  `json:"scope_mode,omitempty"`
+	ExpectedConfigVersion *int64   `json:"expected_config_version,omitempty"`
+	Enabled               *bool    `json:"enabled,omitempty"`
+	LimitQuota            *int64   `json:"limit_quota,omitempty"`
+	OperationID           string   `json:"operation_id,omitempty"`
+	PreviewToken          string   `json:"preview_token,omitempty"`
 }
 
 // MultiKeyModelsResult reports the upstream models discovered with one key of a
 // multi-key channel. Skipped marks a key that was not contacted at all.
 type MultiKeyModelsResult struct {
-	KeyIndex int      `json:"key_index"`
-	Models   []string `json:"models,omitempty"`
-	Error    string   `json:"error,omitempty"`
-	Skipped  bool     `json:"skipped,omitempty"`
+	KeyIndex   int      `json:"key_index"`
+	Models     []string `json:"models,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	Skipped    bool     `json:"skipped,omitempty"`
+	KeyEntryID string   `json:"key_entry_id,omitempty"`
+	Rev        int64    `json:"rev,omitempty"`
 }
 
 // multiKeyModelSyncConcurrency bounds how many keys of one channel are queried
@@ -2044,11 +2057,13 @@ func newSingleKeyChannel(channel *model.Channel, key string) *model.Channel {
 
 // MultiKeyStatusResponse represents the response for key status query
 type MultiKeyStatusResponse struct {
-	Keys       []KeyStatus `json:"keys"`
-	Total      int         `json:"total"`
-	Page       int         `json:"page"`
-	PageSize   int         `json:"page_size"`
-	TotalPages int         `json:"total_pages"`
+	Revision       int64       `json:"revision"`
+	QuotaSupported bool        `json:"quota_supported"`
+	Keys           []KeyStatus `json:"keys"`
+	Total          int         `json:"total"`
+	Page           int         `json:"page"`
+	PageSize       int         `json:"page_size"`
+	TotalPages     int         `json:"total_pages"`
 	// Statistics
 	EnabledCount        int `json:"enabled_count"`
 	ManualDisabledCount int `json:"manual_disabled_count"`
@@ -2056,14 +2071,18 @@ type MultiKeyStatusResponse struct {
 }
 
 type KeyStatus struct {
-	Index        int      `json:"index"`
-	Status       int      `json:"status"` // 1: enabled, 2: disabled
-	DisabledTime int64    `json:"disabled_time,omitempty"`
-	Reason       string   `json:"reason,omitempty"`
-	KeyPreview   string   `json:"key_preview"`        // masked key for identification; never the full key
-	Models       []string `json:"models,omitempty"`   // models this key may serve; empty means every channel model
-	UserId       int      `json:"user_id,omitempty"`  // user this key is bound to; 0 means a public key
-	Username     string   `json:"username,omitempty"` // display name of the bound user
+	Id           string                   `json:"id"`
+	Rev          int64                    `json:"rev"`
+	ScopeMode    string                   `json:"scope_mode"`
+	Quota        *model.ChannelBudgetView `json:"quota,omitempty"`
+	Index        int                      `json:"index"`
+	Status       int                      `json:"status"` // 1: enabled, 2: disabled
+	DisabledTime int64                    `json:"disabled_time,omitempty"`
+	Reason       string                   `json:"reason,omitempty"`
+	KeyPreview   string                   `json:"key_preview"`        // masked key for identification; never the full key
+	Models       []string                 `json:"models,omitempty"`   // models this key may serve; empty means every channel model
+	UserId       int                      `json:"user_id,omitempty"`  // user this key is bound to; 0 means a public key
+	Username     string                   `json:"username,omitempty"` // display name of the bound user
 }
 
 // maskKeyPreview renders just enough of a key to tell it apart from the other
@@ -2111,12 +2130,20 @@ func ManageMultiKeys(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if multiKeyActionRequiresSensitiveWrite(request.Action) && !requireChannelSensitiveWrite(c) {
+		return
+	}
 
 	// Key status shares channel_info with the polling cursor and
 	// UpdateChannelStatus; read and write it under the same lock.
 	lock := model.GetChannelPollingLock(request.ChannelId)
 	lock.Lock()
-	defer lock.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			lock.Unlock()
+		}
+	}()
 
 	channel, err := model.GetChannelById(request.ChannelId, true)
 	if err != nil {
@@ -2128,12 +2155,13 @@ func ManageMultiKeys(c *gin.Context) {
 		common.ApiErrorT(c, "This channel is not in multi-key mode")
 		return
 	}
-	if multiKeyActionRequiresSensitiveWrite(request.Action) &&
-		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {
-		common.ApiErrorT(c, "Unauthorized, insufficient privileges")
+	if err := model.EnsureChannelKeyEntries(channel); err != nil {
+		channelKeyManageError(c, err)
 		return
 	}
-
+	if handleChannelKeyAllocationAction(c, channel, request) {
+		return
+	}
 	// get_key_status 为只读查询，不记录审计；其余为修改操作，记录审计并跳过中间件兜底。
 	if request.Action == "get_key_status" {
 		markAuditLogged(c)
@@ -2147,6 +2175,11 @@ func ManageMultiKeys(c *gin.Context) {
 	switch request.Action {
 	case "get_key_status":
 		keys := channel.GetKeys()
+		quotaViews, err := model.ReadChannelBudgetViews(c.Request.Context(), model.BudgetScopeKey, channel.KeyEntryIDs)
+		if err != nil {
+			channelKeyManageError(c, err)
+			return
+		}
 
 		// Default pagination parameters
 		page := request.Page
@@ -2193,7 +2226,15 @@ func ManageMultiKeys(c *gin.Context) {
 				}
 			}
 
+			scopeMode := "all"
+			if channel.ChannelInfo.MultiKeyScopeModes[i] == "allowlist" {
+				scopeMode = "allowlist"
+			}
 			allKeyStatusList = append(allKeyStatusList, KeyStatus{
+				Id:           strconv.FormatInt(channel.ChannelKeyEntryID(i), 10),
+				Rev:          channel.KeyEntryRevisions[i],
+				ScopeMode:    scopeMode,
+				Quota:        quotaViews[channel.ChannelKeyEntryID(i)],
 				Index:        i,
 				Status:       status,
 				DisabledTime: disabledTime,
@@ -2249,6 +2290,8 @@ func ManageMultiKeys(c *gin.Context) {
 			"success": true,
 			"message": "",
 			"data": MultiKeyStatusResponse{
+				Revision:            channel.ChannelInfo.KeyEntryRevision,
+				QuotaSupported:      model.ChannelBudgetsEnabled(),
 				Keys:                pageKeyStatusList,
 				Total:               filteredTotal, // Total of filtered results
 				Page:                page,
@@ -2628,6 +2671,23 @@ func ManageMultiKeys(c *gin.Context) {
 		return
 
 	case "fetch_key_models":
+		lock.Unlock()
+		locked = false
+		if request.KeyEntryID != "" {
+			entries := make([]model.ChannelKeyEntry, len(channel.KeyEntryIDs))
+			for i, id := range channel.KeyEntryIDs {
+				entries[i] = model.ChannelKeyEntry{Id: id, Key: channel.GetKeys()[i], ConfigRevision: channel.KeyEntryRevisions[i]}
+			}
+			index, err := channelKeyRequestIndex(request, entries)
+			if err != nil {
+				channelKeyManageError(c, err)
+				return
+			}
+			request.KeyIndex = &index
+		} else if model.ChannelHasDuplicateCredentials(channel) {
+			channelKeyManageError(c, model.ErrChannelKeyEntriesAmbiguous)
+			return
+		}
 		if request.KeyIndex == nil {
 			common.ApiErrorT(c, "No key index specified to fetch models")
 			return
@@ -2651,12 +2711,18 @@ func ManageMultiKeys(c *gin.Context) {
 		return
 
 	case "sync_key_models":
+		lock.Unlock()
+		locked = false
+		if request.Apply && model.ChannelHasDuplicateCredentials(channel) && (request.ExpectedRevision == nil || *request.ExpectedRevision != channel.ChannelInfo.KeyEntryRevision) {
+			channelKeyManageError(c, model.ErrChannelKeyEntryRevisionStale)
+			return
+		}
 		keys := channel.GetKeys()
 		results := make([]MultiKeyModelsResult, len(keys))
 		var wg sync.WaitGroup
 		capacity := make(chan struct{}, multiKeyModelSyncConcurrency)
 		for keyIndex := range keys {
-			results[keyIndex] = MultiKeyModelsResult{KeyIndex: keyIndex}
+			results[keyIndex] = MultiKeyModelsResult{KeyIndex: keyIndex, KeyEntryID: strconv.FormatInt(channel.ChannelKeyEntryID(keyIndex), 10), Rev: channel.KeyEntryRevisions[keyIndex]}
 			// A disabled key is reported without contacting the upstream: the
 			// operator sees it was left alone, and a failing credential is not
 			// exercised again.
@@ -2701,6 +2767,7 @@ func ManageMultiKeys(c *gin.Context) {
 			"added_models":   addedModels,
 			"applied":        false,
 			"channel_models": channelModels,
+			"revision":       channel.ChannelInfo.KeyEntryRevision,
 		}
 		if !request.Apply {
 			c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
@@ -2732,12 +2799,33 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 		persistCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
-		_, err = model.UpdateChannelOtherInfoLocked(persistCtx, channel.Id, func(current *model.Channel) (map[string]any, error) {
+		expected := int64(0) // unique legacy requests still validate each sampled entry
+		if request.ExpectedRevision != nil {
+			expected = *request.ExpectedRevision
+		}
+		_, err = model.MutateChannelKeyEntries(persistCtx, channel.Id, expected, func(_ *gorm.DB, current *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
 			if !sameChannelModelUpdateSource(&source, current) {
-				return nil, fmt.Errorf("channel configuration changed during model discovery")
+				return nil, nil, model.ErrChannelKeyEntryRevisionStale
 			}
-			current.ChannelInfo.MultiKeyModels = channel.ChannelInfo.MultiKeyModels
-			return map[string]any{"models": channel.Models, "channel_info": current.ChannelInfo}, nil
+			current.Models = channel.Models
+			for _, result := range results {
+				if result.Error != "" || result.Skipped || len(result.Models) == 0 {
+					continue
+				}
+				for i := range entries {
+					if strconv.FormatInt(entries[i].Id, 10) == result.KeyEntryID {
+						if entries[i].ConfigRevision != result.Rev {
+							return nil, nil, model.ErrChannelKeyEntryRevisionStale
+						}
+						if err := entries[i].SetKeyModels(intersectModelNames(result.Models, normalizeModelNames(current.GetModels()))); err != nil {
+							return nil, nil, err
+						}
+						entries[i].ScopeMode = "allowlist"
+						entries[i].ConfigRevision++
+					}
+				}
+			}
+			return entries, nil, nil
 		})
 		if err != nil {
 			common.ApiError(c, err)
@@ -2769,7 +2857,7 @@ func multiKeyActionRequiresSensitiveWrite(action string) bool {
 	// the channel, so they need the same permission as deleting a key. Applying
 	// an upstream model sync changes the channel model list the same way.
 	switch action {
-	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_user", "sync_key_models":
+	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_user", "sync_key_models", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
 		return true
 	default:
 		return false

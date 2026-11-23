@@ -72,14 +72,15 @@ jobs:
         run: make test
 
   relay_policy_integration:
-    name: Relay policy database and Redis integration
+    name: Relay policy, request logs, and database integration
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       GOWORK: 'off'
       TEST_MYSQL_DSN: 'root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local'
       TEST_POSTGRES_DSN: 'postgres://postgres:integration@127.0.0.1:5432/relay_policy?sslmode=disable'
+      TEST_CLICKHOUSE_DSN: 'clickhouse://default:integration@127.0.0.1:9000/relay_policy'
       TEST_REDIS_ADDR: '127.0.0.1:6379'
     services:
       mysql:
@@ -115,6 +116,20 @@ jobs:
           --health-interval=5s
           --health-timeout=3s
           --health-retries=12
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_DB: relay_policy
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: integration
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd="clickhouse-client --user default --password integration --query 'SELECT 1'"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -136,6 +151,7 @@ jobs:
           docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -N -e 'SELECT VERSION()'
           docker exec ${{ job.services.postgres.id }} psql -U postgres -d relay_policy -Atc 'SELECT VERSION()'
           docker exec ${{ job.services.redis.id }} redis-server --version
+          docker exec ${{ job.services.clickhouse.id }} clickhouse-client --user default --password integration --query 'SELECT version()'
 
       # These packages use process-wide fixtures. Keep them sequential against
       # the isolated service databases, and require configured external engines.
@@ -146,7 +162,7 @@ jobs:
         run: |
           for DIALECT in mysql postgres; do
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run 'TestScheduledChannel'
-            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestExecuteTaskSubmission|TestImmediateTaskSettlementDatabase'
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestExecuteTaskSubmission|TestImmediateTaskSettlementDatabase|TestTaskSubmissionCommits|TestLedgerTaskSubmission|TestLegacyTaskSubmission'
           done
 
       - name: Verify model availability observations on SQLite, MySQL and PostgreSQL
@@ -171,6 +187,22 @@ jobs:
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./service -run '^TestCodexChannelManagement'
           done
 
+      - name: Verify allocation identity and quota management on MySQL and PostgreSQL
+        run: |
+          for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^(TestChannelAllocations|TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions)'
+          done
+
+      - name: Check budget accounting and request log storage races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 ./model -run 'TestChannelBudget|TestLogRequestDetail'
+
+      - name: Check panel critical rate-limit isolation races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 ./middleware ./router -run 'TestCriticalRateLimit|TestPanelCriticalRateLimit|TestRedis.*RateLimiter|TestRedisFixedWindow|TestRedisFailurePolicies|TestGlobalWebRateLimit'
+
       - name: Verify login avatar updates on MySQL and PostgreSQL
         run: |
           for DIALECT in mysql postgres; do
@@ -186,13 +218,13 @@ jobs:
       - name: Verify per-turn goal routing and channel waiting on MySQL and PostgreSQL
         run: |
           for RESPONSES_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_RESPONSES_SQL_DSN="$RESPONSES_TEST_DSN" TEST_RESPONSES_LOG_SQL_DSN="$RESPONSES_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestResponsesWebSocketGoalPolicyIsPerTurn|TestGoalTurnPolicyRouting|TestRequestPolicyUpstreamHTTPFailover|TestChannelWaitRouting'
+            TEST_RESPONSES_SQL_DSN="$RESPONSES_TEST_DSN" TEST_RESPONSES_LOG_SQL_DSN="$RESPONSES_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestResponsesWebSocketGoalPolicyIsPerTurn|TestGoalTurnPolicyRouting|TestRequestPolicyUpstreamHTTPFailover|TestChannelWaitRouting|TestChannelBudget'
           done
 
       - name: Check admission, waiting, streaming and timeout races
         env:
           CGO_ENABLED: '1'
-        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'ChannelCapacity|ChannelWait|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|MultiKeyModel|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
+        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'ChannelCapacity|ChannelWait|ChannelBudget|LedgerTaskSubmission|LegacyTaskSubmission|TaskSubmissionCommits|RelayKeepAliveDuringImagePreparation|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|MultiKeyModel|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
 
   frontend:
     name: Frontend typecheck, test, and build
@@ -227,6 +259,27 @@ jobs:
           src/features/keys/components/api-key-rotate-dialog.tsx
           src/features/keys/components/__tests__/api-key-rotate-dialog.test.tsx
           src/features/channels/components/channel-card.tsx
+          src/features/channels/components/channel-budget-cell.tsx
+          src/features/channels/components/channel-budget-context.ts
+          src/features/channels/components/channels-columns.tsx
+          src/features/channels/components/channels-dialogs.tsx
+          src/features/channels/components/channels-provider.tsx
+          src/features/channels/components/channels-table.tsx
+          src/features/channels/components/data-table-row-actions.tsx
+          src/features/channels/components/dialogs/channel-quota-dialog.tsx
+          src/features/channels/components/dialogs/multi-key-dedup-dialog.tsx
+          src/features/channels/components/dialogs/multi-key-manage-dialog.tsx
+          src/features/channels/components/dialogs/multi-key-models-editor.tsx
+          src/features/channels/components/dialogs/multi-key-quota-editor.tsx
+          src/features/channels/components/dialogs/multi-key-sync-dialog.tsx
+          src/features/channels/components/dialogs/multi-key-table-row-actions.tsx
+          src/features/channels/components/drawers/channel-mutate-drawer.tsx
+          src/features/channels/components/__tests__/channel-quota-dialog.test.tsx
+          src/features/channels/components/__tests__/multi-key-key-scope.test.tsx
+          src/features/channels/hooks/use-channel-mutate-form.ts
+          src/features/channels/lib/channel-actions.ts
+          src/features/channels/lib/channel-utils.ts
+          src/features/channels/lib/quota-operation.ts
           src/features/channels/components/dialogs/channel-test-dialog.tsx
           src/features/channels/components/channel-balance-details.tsx
           src/features/channels/components/__tests__/channel-balance-cell.test.tsx
@@ -251,6 +304,12 @@ jobs:
           src/features/usage-logs/components/common-log-mobile-row.tsx
           src/features/usage-logs/components/common-logs-stats.tsx
           src/features/usage-logs/components/dialogs/details-dialog.tsx
+          src/features/usage-logs/components/dialogs/request-content-section.tsx
+          src/features/usage-logs/api.ts
+          src/features/usage-logs/types.ts
+          src/features/usage-logs/lib/request-content.ts
+          src/features/usage-logs/components/__tests__/reject-reason.test.tsx
+          src/i18n/static-keys.ts
           src/features/usage-logs/components/__tests__/common-logs-stats.test.tsx
           src/features/usage-logs/components/__tests__/mobile-card.test.tsx
           src/features/usage-logs/components/__tests__/usage-facts.test.tsx
@@ -271,6 +330,7 @@ jobs:
           src/features/system-settings/__tests__/pricing-sync.test.tsx
           src/lib/server-error-message.ts
           src/lib/server-error-message.test.ts
+          src/lib/__tests__/server-error-notifications.test.ts
           src/features/users/components/user-quota-cell.tsx
           src/features/users/components/users-columns.tsx
           src/features/users/components/__tests__/quota-display.test.tsx

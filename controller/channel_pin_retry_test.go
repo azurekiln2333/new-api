@@ -550,7 +550,7 @@ func channelRoutingTestDB(t *testing.T, kind, dsn string) *gorm.DB {
 			model.InitChannelCache()
 		}
 	})
-	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Channel{}, &model.Ability{}))
 	return db
 }
 

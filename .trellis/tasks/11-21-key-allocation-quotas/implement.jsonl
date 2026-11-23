@@ -1,0 +1,6 @@
+{"file":".agents/rules/billing.md","reason":"Quota math, reservation, settlement and refund requirements"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Database models, portability and locking conventions"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review identifiers and quota state across the routing and management layers"}
+{"file":".trellis/spec/frontend/index.md","reason":"Console workflow and shared component conventions"}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/research/architecture-findings.md","reason":"Existing duplicate identity, budget lifecycle and model visibility evidence"}
+{"file": ".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/dispatch.md", "reason": "Approved four-Pi ownership and integration contract"}

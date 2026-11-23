@@ -1,0 +1,6 @@
+{"file":".agents/rules/billing.md","reason":"Verify existing user billing and quota lifecycle invariants."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify database locking, safe migration, and channel scoping."}
+{"file":"web/AGENTS.md","reason":"Verify reuse, translations, accessibility, and required frontend checks."}
+{"file":".trellis/tasks/11-21-channel-manual-balance/research/current-behavior.md","reason":"Check that local quota and upstream snapshot behavior remain independently verifiable."}
+{"file":".trellis/tasks/11-21-key-allocation-quotas/design.md","reason":"Verify channel management uses the same lifecycle and reset contracts as allocation budgets."}
+{"file": ".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/dispatch.md", "reason": "Approved four-Pi ownership and integration contract"}

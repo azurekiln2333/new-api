@@ -29,12 +29,17 @@ func setupOriginTaskDB(t *testing.T) {
 	previousType := common.MainDatabaseType()
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.Channel{}))
+	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.Channel{}, &model.ChannelKeyEntry{}, &model.Option{}))
+	pool, err := database.DB()
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	model.DB = database
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	t.Cleanup(func() {
 		model.DB = previousDB
 		common.SetMainDatabaseType(previousType)
+		require.NoError(t, pool.Close())
 	})
 }
 
@@ -46,7 +51,7 @@ func insertOriginTaskChannel(t *testing.T, status int) *model.Channel {
 		Status: status,
 		Type:   constant.ChannelTypeDoubaoVideo,
 	}
-	require.NoError(t, model.DB.Create(channel).Error)
+	require.NoError(t, channel.Insert())
 	return channel
 }
 

@@ -1,0 +1,33 @@
+{
+  "id": "channel-manual-balance",
+  "name": "channel-manual-balance",
+  "title": "Manual channel balance entry",
+  "description": "Allow administrators to enter channel quota or balance without an upstream balance API",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lcy",
+  "assignee": "pi-billing",
+  "createdAt": "2026-11-21",
+  "completedAt": null,
+  "branch": "merge/upstream",
+  "base_branch": "merge/upstream",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-21-channel-key-allocation-log-diagnostics",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dispatch": {
+      "worker": "pi-billing",
+      "runtime": "pi-direct",
+      "channel": "key-quota-log-1121",
+      "approval": "user explicitly authorized implementation and four Pi workers"
+    }
+  }
+}

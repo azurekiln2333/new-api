@@ -25,13 +25,20 @@ func setupTaskPluginBindChannelTest(t *testing.T) {
 	common.IsMasterNode = true
 	previousRedisEnabled := common.RedisEnabled
 	common.RedisEnabled = false
+	// Local channel budgets stay inactive for this fixture. The activation
+	// lookup is fail-closed on storage errors, so the Option table it reads
+	// must exist and the process flag must be explicitly off.
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	originalDB, originalLogDB := model.DB, model.LOG_DB
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.Log{}, &model.AuditLog{}, &model.User{}))
+	// Option holds the durable activation marker; the allocation and budget
+	// tables keep channel insertion and key allocation on their real schema.
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.Log{}, &model.AuditLog{}, &model.User{},
+		&model.Option{}, &model.ChannelKeyEntry{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}))
 	model.DB = database
 	model.LOG_DB = database
 	require.NoError(t, authz.Init(database))

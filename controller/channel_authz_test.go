@@ -10,11 +10,68 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestScopedAccessTokenRequiresSensitiveChannelPermission(t *testing.T) {
+	user, _ := setupAccessTokenAudit(t)
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelKeyEntry{}, &model.SystemTask{}))
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "scoped channel", Key: "first\nsecond", Group: "default", Models: "gpt-4o-mini",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2},
+	}
+	require.NoError(t, channel.Insert())
+	router := gin.New()
+	router.Use(middleware.AccessTokenAudit())
+	const updatePath = "/api/channel/"
+	const managePath = "/api/channel/multi_key/manage"
+	middleware.DeclareAccessTokenPermissionRoute(http.MethodPut, updatePath, authz.ChannelWrite)
+	middleware.DeclareAccessTokenPermissionRoute(http.MethodPost, managePath, authz.ChannelOperate)
+	router.PUT(updatePath, middleware.AdminAuth(), middleware.RequirePermission(authz.ChannelWrite), UpdateChannel)
+	router.POST(managePath, middleware.AdminAuth(), middleware.RequirePermission(authz.ChannelOperate), ManageMultiKeys)
+	baseScopes := []string{service.AccessTokenScopeOf(authz.ChannelWrite), service.AccessTokenScopeOf(authz.ChannelOperate)}
+	limited, _ := createScopedAccessToken(t, user.Id, 0, baseScopes...)
+	allowed, _ := createScopedAccessToken(t, user.Id, 0, append(baseScopes, service.AccessTokenScopeOf(authz.ChannelSensitiveWrite))...)
+	allocation, ok := channel.ChannelAllocationByPosition(0)
+	require.True(t, ok)
+	baseURL := "https://example.com"
+	update := fmt.Sprintf(`{"id":%d,"base_url":%q}`, channel.Id, baseURL)
+	manage := fmt.Sprintf(`{"channel_id":%d,"action":"set_key_models","key_entry_id":"%d","expected_rev":%d,"models":["gpt-4o-mini"]}`, channel.Id, allocation.EntryID, allocation.Revision)
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPut, updatePath, update},
+		{http.MethodPost, managePath, manage},
+	} {
+		denied := accessTokenRequest(router, tc.method, tc.path, limited, "", tc.body)
+		assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+		assert.Contains(t, denied.Body.String(), "ACCESS_TOKEN_SCOPE_DENIED")
+	}
+	unchanged, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, channel.GetBaseURL(), unchanged.GetBaseURL())
+	assert.Empty(t, unchanged.ChannelInfo.MultiKeyModels)
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, managePath, manage},
+		{http.MethodPut, updatePath, update},
+	} {
+		granted := accessTokenRequest(router, tc.method, tc.path, allowed, "", tc.body)
+		require.Equal(t, http.StatusOK, granted.Code, granted.Body.String())
+		var result struct{ Success bool }
+		require.NoError(t, common.Unmarshal(granted.Body.Bytes(), &result))
+		assert.True(t, result.Success, granted.Body.String())
+	}
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, baseURL, updated.GetBaseURL())
+	assert.Equal(t, []string{"gpt-4o-mini"}, updated.ChannelInfo.MultiKeyModels[0])
+}
 
 func TestChannelHasSensitiveChanges(t *testing.T) {
 	baseURL := "https://api.example.com"

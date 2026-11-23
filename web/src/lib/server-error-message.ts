@@ -160,6 +160,26 @@ function translateFixedChannelManagementError(
   text: string
 ): string | undefined {
   switch (text) {
+    case 'channel allocation budgets are not activated':
+    case 'channel key allocation not found':
+    case 'channel key allocation revision is stale':
+    case 'channel key entries are ambiguous for this edit':
+    case 'channel key must not be empty':
+    case 'channel allocation schema is unavailable':
+    case 'invalid channel key model scope':
+    case 'managed credential allocations must be unique':
+    case 'Channel key configuration changed, reload and retry':
+    case 'Invalid channel key allocation ID':
+    case 'Deduplication preview changed, reload and retry':
+    case 'Key allocation has active requests or tasks':
+    case 'Invalid channel ID':
+    case 'Channel does not exist':
+    case 'invalid channel budget configuration':
+    case 'channel budget configuration version changed, reload and retry':
+    case 'invalid budget reset operation id':
+    case 'channel budget is not available':
+    case 'Channel budget accounting is not enabled':
+      return t(text, { skipInterpolation: true })
     case 'invalid upstream address':
       return t('invalid upstream address', { skipInterpolation: true })
     case 'channel origin changed during price sync':
@@ -358,6 +378,7 @@ export function getServerErrorMessage(
   const status = getServerErrorStatus(value)
   if (status === 304) return i18next.t('Content not modified!')
   if (status === 204) return i18next.t('Content not found.')
+  if (status === 429) return i18next.t('Too many requests')
   for (const source of sources) {
     const message = messageText(source.message)
     if (message) return message

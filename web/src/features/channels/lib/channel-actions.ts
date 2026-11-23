@@ -58,6 +58,11 @@ export const channelsQueryKeys = {
     [...channelsQueryKeys.lists(), params] as const,
   details: () => [...channelsQueryKeys.all, 'detail'] as const,
   detail: (id: number) => [...channelsQueryKeys.details(), id] as const,
+  budgets: () => [...channelsQueryKeys.all, 'budget'] as const,
+  budget: (id: number | undefined) =>
+    [...channelsQueryKeys.budgets(), 'detail', id] as const,
+  budgetSummaries: (ids: number[]) =>
+    [...channelsQueryKeys.budgets(), 'page', ids] as const,
   multiKeyStatus: (id: number) =>
     [...channelsQueryKeys.detail(id), 'multi_key_status'] as const,
   usage: () => [...channelsQueryKeys.all, 'usage'] as const,

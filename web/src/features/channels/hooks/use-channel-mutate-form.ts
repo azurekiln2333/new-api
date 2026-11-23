@@ -42,6 +42,7 @@ type UseChannelMutateFormParams = {
   currentRow?: Channel | null
   isEditing: boolean
   isMultiKeyChannel: boolean
+  allocationRevision?: number
   onSuccess: () => void
 }
 
@@ -98,6 +99,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
             : payload
 
         const response = await updateChannel(props.currentRow.id, {
+          expected_revision: managesKeys ? props.allocationRevision : undefined,
           ...payloadWithKeyMode,
           ...(managesKeys ? { multi_key_mode: data.multi_key_type } : {}),
           ...(convertsToMultiKey ? { to_multi_key: true } : {}),
@@ -124,7 +126,14 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
       props.onSuccess()
     },
     onError: (error: unknown) => {
-      handleServerError(error, t(ERROR_MESSAGES.CREATE_FAILED))
+      handleServerError(
+        error,
+        t(
+          props.isEditing
+            ? ERROR_MESSAGES.UPDATE_FAILED
+            : ERROR_MESSAGES.CREATE_FAILED
+        )
+      )
     },
   })
 }

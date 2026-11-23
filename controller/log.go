@@ -13,6 +13,29 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetLogRequestContent is an administrator-only, uncached lookup. A reference
+// must still belong to an existing usage log; a random ref is not
+// authorization, and neither the list display id nor a query node is trusted.
+func GetLogRequestContent(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if c.GetInt("role") < common.RoleAdminUser {
+		c.Status(http.StatusForbidden)
+		return
+	}
+	ref := c.Param("ref")
+	if !model.ValidLogRequestContentRef(ref) {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	detail, err := model.GetLogRequestDetail(c.Request.Context(), ref)
+	if err != nil {
+		// Unknown, malformed and cleaned-up refs produce the same empty 404.
+		c.Status(http.StatusNotFound)
+		return
+	}
+	common.ApiSuccess(c, detail)
+}
+
 // logMatchMode reads the text-match mode shared by the log list, the log
 // export and the log statistics. Fuzzy (contains) is the default.
 func logMatchMode(c *gin.Context) model.LogMatchMode {

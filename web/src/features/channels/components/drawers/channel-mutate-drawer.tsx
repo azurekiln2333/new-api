@@ -177,6 +177,7 @@ import {
   getAdvancedCustomStats,
   transformChannelToFormDefaults,
   supportsChannelEndpointSelection,
+  supportsMultipleChannelKeys,
   type ChannelFormValues,
   deduplicateKeys,
   getKeyPromptForType,
@@ -589,9 +590,11 @@ export function ChannelMutateDrawer({
     }
     previousProviderPicker.current = showProviderPicker
   }, [open, showProviderPicker])
-  const loadedForm = useRef<{ channelId: number; snapshot: string } | null>(
-    null
-  )
+  const loadedForm = useRef<{
+    channelId: number
+    snapshot: string
+    allocationRevision?: number
+  } | null>(null)
 
   const { data: defaultBaseURLs } = useQuery({
     queryKey: channelsQueryKeys.defaultBaseURLs(),
@@ -776,8 +779,10 @@ export function ChannelMutateDrawer({
   const isBatchMode =
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isChannelDetailLoading = isEditing && isChannelLoading
-  const supportsMultiKeyAddMode =
-    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+  const supportsMultiKeyAddMode = supportsMultipleChannelKeys(
+    currentType,
+    vertexKeyType
+  )
   const addModeOptions = useMemo(
     () =>
       supportsMultiKeyAddMode
@@ -1192,6 +1197,7 @@ export function ChannelMutateDrawer({
       loadedForm.current = {
         channelId: channelData.data.id,
         snapshot: JSON.stringify(form.getValues()),
+        allocationRevision: channelData.data.channel_info?.key_entry_revision,
       }
       setProviderTarget(
         defaults.type === CHANNEL_TYPE_TASK_PLUGIN
@@ -1811,6 +1817,7 @@ export function ChannelMutateDrawer({
     currentRow,
     isEditing,
     isMultiKeyChannel,
+    allocationRevision: loadedForm.current?.allocationRevision,
     onSuccess: handleSuccess,
   })
 

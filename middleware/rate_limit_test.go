@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -225,6 +226,124 @@ func TestRedisFailurePolicies(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, userResponse.Code)
 	assert.Empty(t, userResponse.Body.String())
 	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/email", "192.0.2.62:12345").Code)
+}
+
+var criticalRateLimitTestIPs atomic.Uint32
+
+func TestCriticalRateLimitScopesIsolateBusinessFlows(t *testing.T) {
+	previousEnabled, previousNum, previousDuration, previousRedis := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration, common.RedisEnabled
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 2, 47
+	t.Cleanup(func() {
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration, common.RedisEnabled = previousEnabled, previousNum, previousDuration, previousRedis
+	})
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			common.RedisEnabled = redisEnabled
+			if redisEnabled {
+				useRateLimitMiniRedis(t)
+			}
+			ip := fmt.Sprintf("198.18.0.%d", criticalRateLimitTestIPs.Add(1))
+			otherAddr := fmt.Sprintf("198.18.1.%d:12345", criticalRateLimitTestIPs.Add(1))
+			scopes := []struct {
+				path  string
+				scope CriticalRateLimitScope
+			}{
+				{"/register", CriticalScopeRegistration}, {"/refresh", CriticalScopeRefresh},
+				{"/logout", CriticalScopeLogout}, {"/login", CriticalScopeLogin}, {"/panel", CriticalScopePanel},
+			}
+			// Separate engines share the same store, as nodes using one Redis
+			// database do. Neither route instances nor client claims reset it.
+			engines := []*gin.Engine{gin.New(), gin.New()}
+			for _, engine := range engines {
+				require.NoError(t, engine.SetTrustedProxies(nil))
+				for _, scope := range scopes {
+					handler := CriticalRateLimitFor(scope.scope)
+					if scope.scope == CriticalScopePanel {
+						handler = CriticalRateLimit()
+					}
+					engine.GET(scope.path, handler, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+				}
+			}
+			for _, scope := range scopes {
+				for attempt := range 3 {
+					recorder := httptest.NewRecorder()
+					request := httptest.NewRequest(http.MethodGet, scope.path, nil)
+					request.RemoteAddr = ip + ":12345"
+					request.Header.Set("Cookie", fmt.Sprintf("session=unverified-session-%d", attempt))
+					request.Header.Set("X-Auth-Session", fmt.Sprintf("unverified-session-%d", attempt))
+					request.Header.Set("Authorization", fmt.Sprintf("Bearer unverified-token-%d", attempt))
+					request.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", attempt+1))
+					engines[attempt%len(engines)].ServeHTTP(recorder, request)
+					if attempt < 2 {
+						assert.Equal(t, http.StatusNoContent, recorder.Code, scope.path)
+						continue
+					}
+					assert.Equal(t, http.StatusTooManyRequests, recorder.Code, scope.path)
+					assert.Equal(t, "47", recorder.Header().Get("Retry-After"))
+					assert.JSONEq(t, `{"success":false,"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests","message_key":"Too many requests"}`, recorder.Body.String())
+				}
+				assert.Equal(t, http.StatusNoContent, performRateLimitRequest(engines[0], scope.path, otherAddr).Code,
+					"a different client IP has an independent allowance")
+			}
+		})
+	}
+}
+
+func TestCriticalRateLimitScopesRetainGlobalAPICeiling(t *testing.T) {
+	previousEnabled, previousNum, previousDuration, previousRedis := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration, common.RedisEnabled
+	previousAPIEnabled, previousAPINum, previousAPIDuration := common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 1, 43
+	common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = true, 3, 53
+	t.Cleanup(func() {
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration, common.RedisEnabled = previousEnabled, previousNum, previousDuration, previousRedis
+		common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = previousAPIEnabled, previousAPINum, previousAPIDuration
+	})
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			common.RedisEnabled = redisEnabled
+			if redisEnabled {
+				useRateLimitMiniRedis(t)
+			}
+			ip := fmt.Sprintf("198.18.0.%d", criticalRateLimitTestIPs.Add(1))
+			engine := gin.New()
+			require.NoError(t, engine.SetTrustedProxies(nil))
+			engine.Use(GlobalAPIRateLimit())
+			for _, scope := range []struct {
+				path  string
+				scope CriticalRateLimitScope
+			}{
+				{"/register", CriticalScopeRegistration}, {"/login", CriticalScopeLogin},
+				{"/refresh", CriticalScopeRefresh}, {"/logout", CriticalScopeLogout},
+			} {
+				engine.GET(scope.path, CriticalRateLimitFor(scope.scope), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			}
+			for _, path := range []string{"/register", "/login", "/refresh"} {
+				assert.Equal(t, http.StatusNoContent, performRateLimitRequest(engine, path, ip+":12345").Code)
+			}
+			response := performRateLimitRequest(engine, "/logout", ip+":12345")
+			assert.Equal(t, http.StatusTooManyRequests, response.Code, "the aggregate GA cap still covers every scope")
+			assert.Equal(t, "53", response.Header().Get("Retry-After"))
+		})
+	}
+}
+
+func TestCriticalRateLimitLoginPreservesExistingRedisCounter(t *testing.T) {
+	server, _ := useRateLimitMiniRedis(t)
+	previousEnabled, previousNum, previousDuration := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 2, 59
+	t.Cleanup(func() {
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = previousEnabled, previousNum, previousDuration
+	})
+	server.Set(redisIPRateLimitKey("CT", "192.0.2.80"), "2")
+	server.SetTTL(redisIPRateLimitKey("CT", "192.0.2.80"), 19*time.Second)
+	engine := gin.New()
+	require.NoError(t, engine.SetTrustedProxies(nil))
+	engine.GET("/login", CriticalRateLimitFor(CriticalScopeLogin), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	engine.GET("/register", CriticalRateLimitFor(CriticalScopeRegistration), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	response := performRateLimitRequest(engine, "/login", "192.0.2.80:12345")
+	assert.Equal(t, http.StatusTooManyRequests, response.Code)
+	assert.Equal(t, "19", response.Header().Get("Retry-After"), "keep the live login window, not a fresh allowance")
+	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(engine, "/register", "192.0.2.80:12345").Code)
 }
 
 func TestGlobalWebRateLimitCountsFrontendFilesInStaticBucket(t *testing.T) {

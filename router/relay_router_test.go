@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -14,8 +13,10 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/plugins"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestListModelsSupportsOpenAIAndGeminiAuthentication(t *testing.T) {
@@ -155,29 +156,34 @@ func setupRelayRouterTestDB(t *testing.T) {
 	originalSQLitePath := common.SQLitePath
 	originalMainDatabaseType := common.MainDatabaseType()
 	originalLogDatabaseType := common.LogDatabaseType()
-	originalSQLDSN, hadSQLDSN := os.LookupEnv("SQL_DSN")
+	originalDB, originalLogDB := model.DB, model.LOG_DB
 
 	common.IsMasterNode = false
 	common.RedisEnabled = false
 	common.SQLitePath = fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
-	require.NoError(t, os.Setenv("SQL_DSN", "local"))
-	require.NoError(t, model.InitDB())
-	model.LOG_DB = model.DB
-	require.NoError(t, model.DB.AutoMigrate(&model.User{}, &model.Token{}, &model.Ability{}))
-
+	t.Setenv("SQL_DSN", "local")
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
+	seed, err := gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{})
+	require.NoError(t, err)
+	seedSQL, err := seed.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, seedSQL.Close()) })
+	require.NoError(t, seed.AutoMigrate(&model.Option{}))
+	// Register before startup so failures also close the fixture's new handle.
 	t.Cleanup(func() {
-		if sqlDB, err := model.DB.DB(); err == nil {
-			_ = sqlDB.Close()
+		if model.DB != nil && model.DB != originalDB {
+			if sqlDB, err := model.DB.DB(); err == nil {
+				require.NoError(t, sqlDB.Close())
+			}
 		}
+		model.DB, model.LOG_DB = originalDB, originalLogDB
 		common.IsMasterNode = originalIsMasterNode
 		common.RedisEnabled = originalRedisEnabled
 		common.SQLitePath = originalSQLitePath
 		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
-		if hadSQLDSN {
-			require.NoError(t, os.Setenv("SQL_DSN", originalSQLDSN))
-		} else {
-			require.NoError(t, os.Unsetenv("SQL_DSN"))
-		}
 	})
+	require.NoError(t, model.InitDB())
+	model.LOG_DB = model.DB
+	require.NoError(t, model.DB.AutoMigrate(&model.User{}, &model.Token{}, &model.Ability{}, &model.Channel{}, &model.ChannelKeyEntry{}, &model.Task{}))
 }

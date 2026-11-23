@@ -843,6 +843,11 @@ func acquireMultiKeyDiscoverySnapshot(ctx context.Context, channel *model.Channe
 		return nil, nil, fmt.Errorf("channel key index is out of range")
 	}
 	expectedKey := strings.TrimSpace(keys[keyIndex])
+	expectedID := channel.ChannelKeyEntryID(keyIndex)
+	expectedRev := int64(0)
+	if keyIndex < len(channel.KeyEntryRevisions) {
+		expectedRev = channel.KeyEntryRevisions[keyIndex]
+	}
 	if channel.Id <= 0 || admission == nil {
 		return channel, nil, nil
 	}
@@ -862,7 +867,7 @@ func acquireMultiKeyDiscoverySnapshot(ctx context.Context, channel *model.Channe
 		if options.Preview != nil && options.SourceType > 0 {
 			expectedType = options.SourceType
 		}
-		if err != nil || fresh == nil || fresh.Type != expectedType || !fresh.ChannelInfo.IsMultiKey || keyIndex >= len(freshKeys) || strings.TrimSpace(freshKeys[keyIndex]) != expectedKey {
+		if err != nil || fresh == nil || fresh.Type != expectedType || !fresh.ChannelInfo.IsMultiKey || keyIndex >= len(freshKeys) || strings.TrimSpace(freshKeys[keyIndex]) != expectedKey || expectedID > 0 && (fresh.ChannelKeyEntryID(keyIndex) != expectedID || keyIndex >= len(fresh.KeyEntryRevisions) || fresh.KeyEntryRevisions[keyIndex] != expectedRev) {
 			lease.Release()
 			return nil, nil, fmt.Errorf("channel configuration changed during model discovery")
 		}
@@ -994,6 +999,8 @@ func sameChannelModelUpdateSource(expected, current *model.Channel) bool {
 		!equalStringPointers(expected.HeaderOverride, current.HeaderOverride) || !equalStringPointers(expected.ParamOverride, current.ParamOverride) ||
 		!equalStringPointers(expected.Setting, current.Setting) || expected.OtherSettings != current.OtherSettings ||
 		expected.ChannelInfo.IsMultiKey != current.ChannelInfo.IsMultiKey || expected.ChannelInfo.MultiKeySize != current.ChannelInfo.MultiKeySize ||
+		!slices.Equal(expected.KeyEntryIDs, current.KeyEntryIDs) ||
+		!reflect.DeepEqual(expected.ChannelInfo.MultiKeyScopeModes, current.ChannelInfo.MultiKeyScopeModes) ||
 		!reflect.DeepEqual(expected.ChannelInfo.MultiKeyStatusList, current.ChannelInfo.MultiKeyStatusList) ||
 		!reflect.DeepEqual(expected.ChannelInfo.MultiKeyModels, current.ChannelInfo.MultiKeyModels) ||
 		!reflect.DeepEqual(expected.ChannelInfo.MultiKeyUsers, current.ChannelInfo.MultiKeyUsers) {

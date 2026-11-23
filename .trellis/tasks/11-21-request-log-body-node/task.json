@@ -1,0 +1,33 @@
+{
+  "id": "request-log-body-node",
+  "name": "request-log-body-node",
+  "title": "Request body and node log diagnostics",
+  "description": "Capture request prompt/messages and serving node for success and error logs and show authorized details and node lists",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lcy",
+  "assignee": "pi-logs",
+  "createdAt": "2026-11-21",
+  "completedAt": null,
+  "branch": "merge/upstream",
+  "base_branch": "merge/upstream",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "11-21-channel-key-allocation-log-diagnostics",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dispatch": {
+      "worker": "pi-logs",
+      "runtime": "pi-direct",
+      "channel": "key-quota-log-1121",
+      "approval": "user explicitly authorized implementation and four Pi workers"
+    }
+  }
+}

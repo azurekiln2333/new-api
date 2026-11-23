@@ -28,8 +28,8 @@ import React, {
   useEffect,
 } from 'react'
 
-import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
 import { useChannelConcurrency } from '../hooks/use-channel-concurrency'
+import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
 import { channelsQueryKeys } from '../lib'
 import type { Channel } from '../types'
 import { ChannelConcurrencyContext } from './channel-concurrency-context'
@@ -43,6 +43,7 @@ type DialogType =
   | 'update-channel'
   | 'test-channel'
   | 'balance-query'
+  | 'channel-quota'
   | 'fetch-models'
   | 'ollama-models'
   | 'inference-status'

@@ -58,7 +58,12 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getChannels, searchChannels, getGroups } from '../api'
+import {
+  getChannels,
+  searchChannels,
+  getGroups,
+  getChannelBudgets,
+} from '../api'
 import {
   DEFAULT_PAGE_SIZE,
   CHANNEL_STATUS,
@@ -75,6 +80,7 @@ import {
   getChannelTypeLabel,
 } from '../lib'
 import type { Channel, ChannelSortBy } from '../types'
+import { ChannelBudgetContext } from './channel-budget-context'
 import { ChannelCard } from './channel-card'
 import { ChannelPriorityContext } from './channel-priority-context'
 import {
@@ -358,6 +364,35 @@ export function ChannelsTable() {
   )
   const { usageByChannel, refetch: refetchUsage } =
     useChannelUsageSummaries(pageChannelIds)
+  // Only real channels have accounts. Keep the query key stable across sorts.
+  const budgetChannelIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          (pageChannels ?? [])
+            .filter((channel) => !isTagAggregateRow(channel))
+            .map((channel) => channel.id)
+        ),
+      ].sort((a, b) => a - b),
+    [pageChannels]
+  )
+  const budgetQuery = useQuery({
+    queryKey: channelsQueryKeys.budgetSummaries(budgetChannelIds),
+    queryFn: ({ signal }) => getChannelBudgets(budgetChannelIds, signal),
+    enabled: budgetChannelIds.length > 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    meta: { errorToast: false },
+  })
+  const budgetContext = useMemo(
+    () => ({
+      byChannel: Object.fromEntries(
+        (budgetQuery.data ?? []).map((view) => [view.channel_id, view])
+      ),
+      loading: budgetQuery.isLoading,
+    }),
+    [budgetQuery.data, budgetQuery.isLoading]
+  )
 
   // Publish the visible set (plus the open drawer's channel) to the provider,
   // which owns the one live-concurrency subscription shared by cards and the
@@ -599,161 +634,168 @@ export function ChannelsTable() {
 
   return (
     <ChannelPriorityContext.Provider value={dragControls}>
-      <ChannelUsageContext.Provider value={usageByChannel}>
-        {priorityActionContainer &&
-          createPortal(
-            <ChannelPriorityModeToggle
-              active={reorderActive}
-              viewMode={viewMode}
-              reason={dragReason}
-              onChange={() => setReorderEnabled((value) => !value)}
-            />,
-            priorityActionContainer
-          )}
-        <ChannelPriorityDropHint
-          container={drag.feedbackContainer}
-          order={priorityOrder}
-          channels={channels}
-        />
-        <div
-          ref={drag.root}
-          role='region'
-          aria-label={t('Channels')}
-          onClick={openChannelDetails}
-          onKeyDown={handleCardKeyDown}
-          {...drag.rootEvents}
-          className='relative h-full min-h-0 data-[priority-dragging=true]:select-none data-[priority-dragging=true]:[&_[data-sortable-id]]:pointer-events-none'
-        >
-          <DataTablePage
-            table={table}
-            columns={columns}
-            isLoading={isLoading}
-            isFetching={isFetching}
-            emptyTitle={t('No Channels Found')}
-            emptyDescription={t(
-              'No channels available. Create your first channel to get started.'
+      <ChannelBudgetContext.Provider value={budgetContext}>
+        <ChannelUsageContext.Provider value={usageByChannel}>
+          {priorityActionContainer &&
+            createPortal(
+              <ChannelPriorityModeToggle
+                active={reorderActive}
+                viewMode={viewMode}
+                reason={dragReason}
+                onChange={() => setReorderEnabled((value) => !value)}
+              />,
+              priorityActionContainer
             )}
-            skeletonKeyPrefix='channel-skeleton'
-            enableCardView
-            viewMode={viewMode}
-            onViewModeChange={setViewMode}
-            renderCard={(row, { isSelected }) => {
-              // Tag aggregate rows only expand, so they are not activation targets.
-              const isTagRow = isTagAggregateRow(row.original)
-              return (
-                <ChannelCard
-                  row={row}
-                  isSelected={isSelected}
-                  reorderEnabled={reorderActive}
-                  interactive={!isTagRow && !reorderActive}
-                />
-              )
-            }}
-            cardGridClassName='grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3'
-            applyHeaderSize
-            afterTable={<ChannelPriorityStatus order={priorityOrder} />}
-            toolbarProps={{
-              collapsibleOnMobile: true,
-              searchPlaceholder: t('Filter by name, ID, or key...'),
-              searchDebounceMs: 500,
-              onReset: () => {
-                resetModelFilterInput()
-              },
-              additionalSearch: (
-                <Input
-                  placeholder={t('Filter by model...')}
-                  value={modelFilterInput}
-                  onChange={onModelFilterInputChange}
-                  onCompositionStart={onModelFilterCompositionStart}
-                  onCompositionEnd={onModelFilterCompositionEnd}
-                  className='w-full sm:w-[150px] lg:w-[180px]'
-                />
-              ),
-              filters: [
-                {
-                  columnId: 'status',
-                  title: t('Status'),
-                  options: [...CHANNEL_STATUS_OPTIONS],
-                  singleSelect: true,
-                },
-                {
-                  columnId: 'type',
-                  title: t('Type'),
-                  options: typeFilterOptions,
-                  singleSelect: true,
-                },
-                {
-                  columnId: 'group',
-                  title: t('Group'),
-                  options: groupFilterOptions,
-                  singleSelect: true,
-                },
-              ],
-              preActions: (
-                <>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant='ghost'
-                          size='icon'
-                          onClick={() => setSensitiveVisible(!sensitiveVisible)}
-                          aria-label={sensitiveVisible ? t('Hide') : t('Show')}
-                          className='text-muted-foreground hover:text-foreground size-8'
-                        />
-                      }
-                    >
-                      {sensitiveVisible ? (
-                        <Eye aria-hidden />
-                      ) : (
-                        <EyeOff aria-hidden />
-                      )}
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {sensitiveVisible ? t('Hide') : t('Show')}
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant='ghost'
-                          size='icon'
-                          onClick={() => {
-                            void refetch()
-                            void refetchUsage()
-                          }}
-                          aria-label={t('Refresh')}
-                          aria-busy={isFetching}
-                          className='text-muted-foreground hover:text-foreground size-8'
-                        />
-                      }
-                    >
-                      <RefreshCw
-                        aria-hidden
-                        className={cn(isFetching && 'animate-spin')}
-                      />
-                    </TooltipTrigger>
-                    <TooltipContent>{t('Refresh')}</TooltipContent>
-                  </Tooltip>
-                </>
-              ),
-            }}
-            getRowClassName={(row, { isMobile }) => {
-              // Tag rows keep their own expand/collapse behaviour.
-              if (isTagAggregateRow(row.original)) return undefined
-              if (!isDisabledChannelRow(row.original)) return 'cursor-pointer'
-              if (isMobile) {
-                return cn(DISABLED_ROW_MOBILE, 'cursor-pointer')
-              }
-              return cn(DISABLED_ROW_DESKTOP, 'cursor-pointer')
-            }}
-            bulkActions={
-              batchMode ? <DataTableBulkActions table={table} /> : null
-            }
+          <ChannelPriorityDropHint
+            container={drag.feedbackContainer}
+            order={priorityOrder}
+            channels={channels}
           />
-        </div>
-      </ChannelUsageContext.Provider>
+          <div
+            ref={drag.root}
+            role='region'
+            aria-label={t('Channels')}
+            onClick={openChannelDetails}
+            onKeyDown={handleCardKeyDown}
+            {...drag.rootEvents}
+            className='relative h-full min-h-0 data-[priority-dragging=true]:select-none data-[priority-dragging=true]:[&_[data-sortable-id]]:pointer-events-none'
+          >
+            <DataTablePage
+              table={table}
+              columns={columns}
+              isLoading={isLoading}
+              isFetching={isFetching}
+              emptyTitle={t('No Channels Found')}
+              emptyDescription={t(
+                'No channels available. Create your first channel to get started.'
+              )}
+              skeletonKeyPrefix='channel-skeleton'
+              enableCardView
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              renderCard={(row, { isSelected }) => {
+                // Tag aggregate rows only expand, so they are not activation targets.
+                const isTagRow = isTagAggregateRow(row.original)
+                return (
+                  <ChannelCard
+                    row={row}
+                    isSelected={isSelected}
+                    reorderEnabled={reorderActive}
+                    interactive={!isTagRow && !reorderActive}
+                  />
+                )
+              }}
+              cardGridClassName='grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-3'
+              applyHeaderSize
+              afterTable={<ChannelPriorityStatus order={priorityOrder} />}
+              toolbarProps={{
+                collapsibleOnMobile: true,
+                searchPlaceholder: t('Filter by name, ID, or key...'),
+                searchDebounceMs: 500,
+                onReset: () => {
+                  resetModelFilterInput()
+                },
+                additionalSearch: (
+                  <Input
+                    placeholder={t('Filter by model...')}
+                    value={modelFilterInput}
+                    onChange={onModelFilterInputChange}
+                    onCompositionStart={onModelFilterCompositionStart}
+                    onCompositionEnd={onModelFilterCompositionEnd}
+                    className='w-full sm:w-[150px] lg:w-[180px]'
+                  />
+                ),
+                filters: [
+                  {
+                    columnId: 'status',
+                    title: t('Status'),
+                    options: [...CHANNEL_STATUS_OPTIONS],
+                    singleSelect: true,
+                  },
+                  {
+                    columnId: 'type',
+                    title: t('Type'),
+                    options: typeFilterOptions,
+                    singleSelect: true,
+                  },
+                  {
+                    columnId: 'group',
+                    title: t('Group'),
+                    options: groupFilterOptions,
+                    singleSelect: true,
+                  },
+                ],
+                preActions: (
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() =>
+                              setSensitiveVisible(!sensitiveVisible)
+                            }
+                            aria-label={
+                              sensitiveVisible ? t('Hide') : t('Show')
+                            }
+                            className='text-muted-foreground hover:text-foreground size-8'
+                          />
+                        }
+                      >
+                        {sensitiveVisible ? (
+                          <Eye aria-hidden />
+                        ) : (
+                          <EyeOff aria-hidden />
+                        )}
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {sensitiveVisible ? t('Hide') : t('Show')}
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            onClick={() => {
+                              void refetch()
+                              void refetchUsage()
+                              void budgetQuery.refetch()
+                            }}
+                            aria-label={t('Refresh')}
+                            aria-busy={isFetching}
+                            className='text-muted-foreground hover:text-foreground size-8'
+                          />
+                        }
+                      >
+                        <RefreshCw
+                          aria-hidden
+                          className={cn(isFetching && 'animate-spin')}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent>{t('Refresh')}</TooltipContent>
+                    </Tooltip>
+                  </>
+                ),
+              }}
+              getRowClassName={(row, { isMobile }) => {
+                // Tag rows keep their own expand/collapse behaviour.
+                if (isTagAggregateRow(row.original)) return undefined
+                if (!isDisabledChannelRow(row.original)) return 'cursor-pointer'
+                if (isMobile) {
+                  return cn(DISABLED_ROW_MOBILE, 'cursor-pointer')
+                }
+                return cn(DISABLED_ROW_DESKTOP, 'cursor-pointer')
+              }}
+              bulkActions={
+                batchMode ? <DataTableBulkActions table={table} /> : null
+              }
+            />
+          </div>
+        </ChannelUsageContext.Provider>
+      </ChannelBudgetContext.Provider>
     </ChannelPriorityContext.Provider>
   )
 }

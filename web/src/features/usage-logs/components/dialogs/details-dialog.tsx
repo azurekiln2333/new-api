@@ -105,6 +105,7 @@ import {
   RequestPluginRecord,
 } from '../request-plugin-record'
 import { DetailRow, DetailSection } from './log-detail-layout'
+import { RequestContentSection } from './request-content-section'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
 // to its i18n label key for display in the audit details.
@@ -568,6 +569,14 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  // The processing node is the instance that ran this log event. The submit
+  // node is the instance that originally accepted the request; a legacy task's
+  // root_info.node_name is historical submission provenance only, and it is
+  // present only for viewers already allowed to read root diagnostics.
+  const submitNodeName = props.isAdmin
+    ? adminInfo?.submit_node_name ||
+      (props.isRoot ? other?.root_info?.node_name : undefined)
+    : undefined
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -586,10 +595,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
           adminInfo.server_ip && {
             label: t('Server IP'),
             value: adminInfo.server_ip,
-          },
-          adminInfo.node_name && {
-            label: t('Node Name'),
-            value: adminInfo.node_name,
           },
           adminInfo.version && {
             label: t('System Version'),
@@ -787,6 +792,23 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
+          {props.isAdmin && (
+            <>
+              <DetailRow
+                label={t('Processing Node')}
+                value={adminInfo?.node_name || t('Not recorded')}
+                mono
+                muted={!adminInfo?.node_name}
+              />
+              <DetailRow
+                label={t('Submit Node')}
+                value={submitNodeName || t('Not recorded')}
+                mono
+                muted={!submitNodeName}
+              />
+            </>
+          )}
+
           {showTiming && props.log.use_time > 0 && (
             <DetailRow
               label={t('Response Time')}
@@ -863,6 +885,15 @@ export function DetailsDialog(props: DetailsDialogProps) {
             </div>
           </DetailSection>
         )}
+
+        {props.open &&
+          props.isAdmin &&
+          (showTiming || adminInfo?.request_content) && (
+            <RequestContentSection
+              key={adminInfo?.request_content?.ref ?? 'legacy'}
+              metadata={adminInfo?.request_content}
+            />
+          )}
 
         {/* Quota saturation marker (admin only) */}
         {props.isAdmin && adminInfo?.request_policy?.length ? (

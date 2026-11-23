@@ -23,7 +23,13 @@ import {
   createRouter,
   RouterContextProvider,
 } from '@tanstack/react-router'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { useEffect, useState } from 'react'
@@ -34,7 +40,7 @@ import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import type { Channel, KeyStatus } from '../../types'
+import type { Channel, ChannelBudgetView, KeyStatus } from '../../types'
 import { ChannelsProvider, useChannels } from '../channels-provider'
 import { MultiKeyManageDialog } from '../dialogs/multi-key-manage-dialog'
 
@@ -79,7 +85,7 @@ function keyStatus(overrides: Partial<KeyStatus>): KeyStatus {
   return { index: 0, status: 1, ...overrides }
 }
 
-function DialogHarness() {
+function DialogHarness(props: { channel?: Channel }) {
   const [router] = useState(() =>
     createRouter({
       routeTree: createRootRoute(),
@@ -90,18 +96,18 @@ function DialogHarness() {
     <QueryClientProvider client={client}>
       <RouterContextProvider router={router}>
         <ChannelsProvider>
-          <OpenWithRow />
+          <OpenWithRow channel={props.channel ?? channel} />
         </ChannelsProvider>
       </RouterContextProvider>
     </QueryClientProvider>
   )
 }
 
-function OpenWithRow() {
+function OpenWithRow(props: { channel: Channel }) {
   const { setCurrentRow } = useChannels()
   useEffect(() => {
-    setCurrentRow(channel)
-  }, [setCurrentRow])
+    setCurrentRow(props.channel)
+  }, [props.channel, setCurrentRow])
   return <MultiKeyManageDialog open onOpenChange={() => {}} />
 }
 
@@ -157,6 +163,270 @@ async function renderDialog(keys: KeyStatus[]) {
   await screen.findByText('Allowed Models')
   return post
 }
+
+test('stable duplicate allocations submit the selected ID and separate CAS revisions', async () => {
+  const quota: ChannelBudgetView = {
+    scope_type: 'key',
+    scope_id: '9007199254740995',
+    channel_id: 7,
+    ledger_enabled: true,
+    enabled: true,
+    limit_quota: 1000,
+    period_used_quota: 30,
+    lifetime_used_quota: 50,
+    reserved_quota: 10,
+    remaining_quota: 960,
+    config_version: 8,
+    reset_epoch: 2,
+    accounting_started_at: 1,
+  }
+  const keys = [
+    keyStatus({
+      id: '9007199254740993',
+      rev: 2,
+      index: 0,
+      key_preview: 'same…key',
+      quota,
+    }),
+    keyStatus({
+      id: '9007199254740995',
+      rev: 4,
+      index: 1,
+      key_preview: 'same…key',
+      user_id: 12,
+      quota,
+    }),
+  ]
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    const action = (body as { action: string }).action
+    if (action !== 'get_key_status') return { data: { success: true } }
+    return {
+      data: {
+        success: true,
+        data: {
+          keys,
+          revision: 10,
+          total: 2,
+          page: 1,
+          page_size: 10,
+          total_pages: 1,
+          enabled_count: 2,
+        },
+      },
+    }
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DialogHarness />
+    </I18nextProvider>
+  )
+  const user = userEvent.setup()
+  const row = (await screen.findByText('9007199254740995')).closest('tr')
+  expect(row).not.toBeNull()
+  await user.click(
+    within(row as HTMLElement).getByRole('button', { name: 'Set Quota' })
+  )
+  const input = screen.getByRole('textbox', {
+    name: 'Local limit (site quota units)',
+  })
+  await user.clear(input)
+  await user.type(input, '2000')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/channel/multi_key/manage',
+      expect.objectContaining({
+        action: 'set_key_quota',
+        key_entry_id: '9007199254740995',
+        expected_rev: 4,
+        expected_config_version: 8,
+        limit_quota: 2000,
+      }),
+      expect.objectContaining({ singleUseAuthorization: true })
+    )
+  )
+  expect(
+    post.mock.calls.some(
+      ([, body]) =>
+        (body as Record<string, unknown>).action === 'set_key_quota' &&
+        (body as Record<string, unknown>).key_index !== undefined
+    )
+  ).toBe(false)
+})
+
+test('dedup apply submits only the explicitly confirmed server preview token', async () => {
+  const preview = {
+    preview_token: 'reviewed-plan',
+    revision: 19,
+    groups: [
+      {
+        survivor_id: '101',
+        entry_ids: ['101', '102'],
+        merged_period_used: 25,
+        merged_lifetime_used: 70,
+        limit_quota: 100,
+        skipped: [
+          { id: '103', reason: 'Key allocation has active requests or tasks' },
+        ],
+      },
+    ],
+  }
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    const params = body as { action: string; apply?: boolean }
+    if (params.action === 'deduplicate_keys') {
+      return {
+        data: {
+          success: true,
+          data: params.apply
+            ? { ...preview, applied: true, merged_groups: 1 }
+            : preview,
+        },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data: {
+          keys: [
+            keyStatus({
+              id: '101',
+              rev: 2,
+              quota: { ledger_enabled: true } as ChannelBudgetView,
+            }),
+          ],
+          revision: 19,
+          total: 1,
+          page: 1,
+          page_size: 10,
+          total_pages: 1,
+          enabled_count: 1,
+        },
+      },
+    }
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DialogHarness />
+    </I18nextProvider>
+  )
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('button', { name: 'Deduplicate Keys' })
+  )
+  expect(await screen.findByText('103')).toBeVisible()
+  expect(
+    post.mock.calls.filter(
+      ([, body]) => (body as { apply?: boolean }).apply === true
+    )
+  ).toHaveLength(0)
+  await user.click(
+    screen.getByRole('button', { name: 'Merge equivalent allocations' })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/channel/multi_key/manage',
+      expect.objectContaining({
+        action: 'deduplicate_keys',
+        apply: true,
+        preview_token: 'reviewed-plan',
+        expected_revision: 19,
+      }),
+      expect.anything()
+    )
+  )
+})
+
+test('inactive allocation ledger hides budget controls rather than offering a fake unlimited account', async () => {
+  await renderDialog([
+    keyStatus({
+      id: '1001',
+      rev: 1,
+      quota: { ledger_enabled: false, enabled: true } as ChannelBudgetView,
+    }),
+  ])
+  expect(screen.getByRole('button', { name: 'Set Quota' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Add allocation' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Deduplicate Keys' })
+  ).toBeDisabled()
+  expect(screen.getByText('Not enabled')).toBeVisible()
+})
+
+test('appending the original key to a single static channel preserves both allocation IDs', async () => {
+  const single = {
+    ...channel,
+    channel_info: {
+      ...channel.channel_info,
+      is_multi_key: false,
+      key_entry_revision: 6,
+    },
+  }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: { ledger_enabled: true } },
+  })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true, data: { id: channel.id, name: '' } },
+  })
+  const post = mockKeyStatus([
+    keyStatus({ id: '9007199254740993', rev: 1, key_preview: 'tes…key' }),
+    keyStatus({
+      id: '9007199254740995',
+      index: 1,
+      rev: 1,
+      key_preview: 'tes…key',
+    }),
+  ])
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DialogHarness channel={single} />
+    </I18nextProvider>
+  )
+  const user = userEvent.setup()
+  const input = await screen.findByLabelText('Upstream Key')
+  expect(input).toHaveAttribute('type', 'password')
+  expect(post).not.toHaveBeenCalled()
+  await user.type(input, 'test-static-key')
+  await user.click(screen.getByRole('button', { name: 'Add' }))
+  const manager = await screen.findByRole('dialog', {
+    name: /Multi-Key Management.*multi/,
+  })
+  expect(await within(manager).findByText('9007199254740993')).toBeVisible()
+  expect(within(manager).getByText('9007199254740995')).toBeVisible()
+  expect(screen.queryByLabelText('Upstream Key')).not.toBeInTheDocument()
+  expect(put).toHaveBeenCalledExactlyOnceWith(
+    '/api/channel/',
+    {
+      id: 7,
+      key: 'test-static-key',
+      key_mode: 'append',
+      to_multi_key: true,
+      expected_revision: 6,
+    },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+})
+
+test('an empty explicit allowlist means no models and is submitted with the stable identity', async () => {
+  const post = await renderDialog([
+    keyStatus({ id: '1001', rev: 3, scope_mode: 'allowlist', models: [] }),
+  ])
+  expect(screen.getByText('No models allowed')).toBeVisible()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Set Models' }))
+  expect(screen.getByRole('switch', { name: 'All models' })).not.toBeChecked()
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  expect(post).toHaveBeenCalledWith(
+    '/api/channel/multi_key/manage',
+    expect.objectContaining({
+      action: 'set_key_models',
+      scope_mode: 'allowlist',
+      models: [],
+      key_entry_id: '1001',
+      expected_rev: 3,
+    }),
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+})
 
 test('each key row shows its allowed models and bound user', async () => {
   await renderDialog([

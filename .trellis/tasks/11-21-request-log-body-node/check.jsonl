@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/11-21-request-log-body-node/prd.md","reason":"Verify original success/failure request content, node diagnostics and all seven acceptance criteria"}
+{"file":".trellis/tasks/11-21-request-log-body-node/design.md","reason":"Review payload isolation, admin/PAT authorization, immutable references, cleanup races and database-specific behavior"}
+{"file":".trellis/tasks/11-21-request-log-body-node/implement.md","reason":"Require recorded focused regression checks and non-skipped real database lifecycle matrix"}
+{"file":".trellis/tasks/11-21-request-log-body-node/research/log-lifecycle-and-ui.md","reason":"Check evidence-backed capture point, request ID usage and shared UI composition instead of duplicated implementations"}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/research/security-and-validation.md","reason":"Review server-enforced scopes, body confidentiality and exact validation limits without claiming unrun checks"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify backend/frontend metadata round-trip and asynchronous provenance across layer boundaries"}
+{"file": ".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/dispatch.md", "reason": "Approved four-Pi ownership and integration contract"}

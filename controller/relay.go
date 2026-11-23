@@ -108,6 +108,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			if !types.IsRecordErrorLog(newAPIError) {
+				c.Set("request_error_log_excluded", true)
+			}
 			if service.IsUpstreamFirstByteTimeout(newAPIError) || newAPIError.GetErrorCode() == types.ErrorCodeUpstreamFirstByteTimeout {
 				newAPIError.SetMessage(i18n.T(c, i18n.MsgRelayUpstreamFirstByteTimeout))
 			}
@@ -179,7 +182,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 	relayInfo.SetRequestPluginIngress(ingressSteps, ingressRecord)
-
 	defer func() {
 		recovered := recover()
 		resultErr := newAPIError
@@ -233,7 +235,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		defer lease.Release() // protects setup panics before the attempt scope
-		service.AppendUsedChannel(c, channel.Id)
+		// Accounting from a released attempt must not follow a newly selected channel.
+		relayInfo.ChannelBudget = relaycommon.BudgetAttempt{}
 		newAPIError = func() (attemptErr *types.NewAPIError) {
 			// Retry-After belongs to this attempt, never a previous channel.
 			helper.ClearUpstreamRetryAfter(c)
@@ -260,6 +263,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				lease.Release()
 				c.Request = originalRequest
 			}()
+			// Keepalive covers request preparation (token counting can download
+			// media) and every retry. It writes only SSE comments through the
+			// request-wide envelope, so committed output stays detectable and a
+			// budget rejection can still route to another candidate.
 			settings, _ := common.GetContextKeyType[dto.ChannelSettings](c, constant.ContextKeyChannelSetting)
 			firstByteTimeout := service.EffectiveUpstreamFirstByteTimeoutSeconds(settings)
 			settings.UpstreamFirstByteTimeoutSeconds = &firstByteTimeout
@@ -278,6 +285,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 				return billingErr
 			}
+			// Hold this attempt's channel/allocation budget after the validated
+			// estimate exists and before anything is forwarded. A rejection is a
+			// candidate rejection: routing tries another eligible channel.
+			if budgetErr := reserveSelectedChannelBudget(c, relayInfo); budgetErr != nil {
+				return budgetErr
+			}
+			service.AppendUsedChannel(c, channel.Id)
 
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
@@ -328,6 +342,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		if ws == nil && service.RetryChannelBudgetAdmission(c, channel.Id, newAPIError, retryParam) {
+			// This candidate did not reach the upstream. Keep the request's funding
+			// reservation while choosing the next channel, but release its local hold.
+			service.ReleaseAttemptChannelBudget(c, relayInfo)
+			continue
+		}
 		if relayFormat != types.RelayFormatOpenAIRealtime && !c.Writer.Written() && c.Request.Context().Err() == nil &&
 			service.ClassifyUpstreamRejection(newAPIError) == service.UpstreamRejectionConcurrency {
 			state := service.RequestPolicy(c)
@@ -339,6 +359,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			// A recognized refusal did no billable work. Try the remaining
 			// candidates, then park under the same fixed request deadline.
 			// This does not consume the ordinary upstream-error retry budget.
+			service.ReleaseAttemptChannelBudget(c, relayInfo)
 			continue
 		}
 
@@ -349,6 +370,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if decision.Action != "retry" {
 			break
 		}
+		// Retain a final attempt until the final-failure policy has applied
+		// any fee. Only a confirmed retry releases its uncharged hold here.
+		service.ReleaseAttemptChannelBudget(c, relayInfo)
 		retryParam.IncreaseRetry()
 	}
 
@@ -427,7 +451,8 @@ var upgrader = websocket.Upgrader{
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	if info.ChannelMeta == nil && len(service.RequestPolicy(c).SaturatedChannelIDs) == 0 && len(service.RequestPolicy(c).UpstreamBusyChannelIDs) == 0 {
+	state := service.RequestPolicy(c)
+	if info.ChannelMeta == nil && len(state.SaturatedChannelIDs) == 0 && len(state.UpstreamBusyChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -625,6 +650,9 @@ func channelWaitEligible(c *gin.Context, info *relaycommon.RelayInfo, channel *m
 		return false
 	}
 	state := service.RequestPolicy(c)
+	if slices.Contains(state.BudgetRejectedChannelIDs, channel.Id) {
+		return false
+	}
 	if (state.SessionMode == "strict" || service.ShouldSkipRetryAfterChannelAffinityFailure(c)) && state.CurrentChannelID != channel.Id {
 		return false
 	}
@@ -940,13 +968,20 @@ func executeTaskSubmissionWith(
 	var result *relay.TaskSubmitResult
 	var taskErr *taskdto.TaskError
 	durable := false
+	// A commit whose acknowledgement was lost may already have charged the
+	// user. Neither the funding refund nor the ledger hold release may run then;
+	// both would reverse a charge that exists.
+	chargePreserved := false
 	stage := "start"
 	defer func() {
 		// The client of a relayed event stream already holds the vendor's
 		// work, so the submission is billed instead of refunded.
-		if !durable && relayInfo.Billing != nil && !c.Writer.Written() {
+		if !durable && !chargePreserved && relayInfo.Billing != nil && !c.Writer.Written() {
 			diagnostics.refund(stage)
 			relayInfo.Billing.Refund(c)
+		}
+		if !durable && !chargePreserved {
+			service.ReleaseAttemptChannelBudget(c, relayInfo)
 		}
 	}()
 	stage = "before_attempt"
@@ -1066,6 +1101,9 @@ func executeTaskSubmissionWith(
 			}()
 			return submit(c, relayInfo)
 		}()
+		if taskErr != nil {
+			service.ReleaseAttemptChannelBudget(c, relayInfo)
+		}
 		if requestErr := c.Request.Context().Err(); requestErr != nil {
 			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
 			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
@@ -1124,7 +1162,10 @@ func executeTaskSubmissionWith(
 	// after the barrier normally has a zero positive delta. A relayed event
 	// stream is billed even when this reserve fails: settlement then charges
 	// past the available quota, as it does for any usage above its reservation.
-	if relayInfo.Billing != nil {
+	// A ledger-tracked attempt charges the acceptance delta inside its task
+	// transaction instead, so it must not build up a second reservation here.
+	ledgerSubmission := relayInfo.ChannelBudget.HasBudgetReservation()
+	if relayInfo.Billing != nil && !ledgerSubmission {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
@@ -1161,6 +1202,13 @@ func executeTaskSubmissionWith(
 		TieredSnapshot:  relayInfo.TieredBillingSnapshot,
 	}
 	task.Quota = result.Quota
+	// Link the durable task to the attempt's budget reservation before the row
+	// exists, so a later poll/settle/refund resolves the same identity instead
+	// of rerouting accounting through the current key order.
+	task.PrivateData.BudgetReservationId = relayInfo.ChannelBudget.ReservationID
+	task.PrivateData.BudgetSettlementRevision = relayInfo.ChannelBudget.Revision
+	task.PrivateData.AllocationId = relayInfo.ChannelBudget.AllocationID
+	task.PrivateData.AllocationRevision = relayInfo.ChannelBudget.AllocationRevision
 	task.Data = result.TaskData
 	if len(result.PluginState) > 0 {
 		task.PrivateData.PluginState = result.PluginState
@@ -1212,20 +1260,77 @@ func executeTaskSubmissionWith(
 		}
 	}
 	diagnostics.insertStart(task)
-	if insertErr := task.InsertWithContext(c.Request.Context(), insertOmits...); insertErr != nil {
-		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
-		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
-		diagnostics.failed("insert", "database_error", taskErr, false)
-		// The client of a relayed event stream already holds the vendor's
-		// work, so it is settled and logged without a task row.
-		if c.Writer.Written() {
-			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-				common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
-				return nil, taskErr
+	var requestContent *common.RequestContentSnapshot
+	if common.LogConsumeEnabled || constant.ErrorLogEnabled {
+		requestContent = common.RequestContent(c)
+	}
+	submitCharge, insertErr := insertSubmittedTask(c, relayInfo, task, requestContent, result.Quota, immediateTerminal, insertOmits)
+	if insertErr != nil {
+		insertAPIError := service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
+		// The transaction outcome can be unknown (a lost acknowledgement after
+		// commit). Only a provably absent task is refundable; otherwise the
+		// charge and hold remain protected until the durable state is resolved.
+		committed, outcomeErr := service.ResolveLedgerSubmissionOutcome(c, relayInfo, task)
+		if outcomeErr != nil || committed && submitCharge == nil {
+			if outcomeErr == nil {
+				outcomeErr = errors.New("committed task submission has no charge result")
 			}
-			service.LogTaskConsumption(c, relayInfo, task)
+			// The charge may exist, so it is kept and released only by later
+			// reconciliation. The reservation keeps its hold and evidence.
+			chargePreserved = true
+			taskErr = insertAPIError
+			diagnostics.failed("insert", "outcome_unknown", taskErr, false)
+			common.SysError(common.LogText("task insert outcome unknown for %s: %s", task.TaskID, outcomeErr.Error()))
+			return nil, taskErr
 		}
-		return nil, taskErr
+		if !committed {
+			common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
+			taskErr = insertAPIError
+			diagnostics.failed("insert", "database_error", taskErr, false)
+			// The client of a relayed event stream already holds the vendor's
+			// work, so it is settled and logged without a task row. The legacy
+			// session path also refunds the hold it just reserved.
+			if c.Writer.Written() {
+				if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+					common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
+					return nil, taskErr
+				}
+				service.LogTaskConsumption(c, relayInfo, task)
+			}
+			return nil, taskErr
+		}
+		// The task and charge are proven durable. Complete the normal path once,
+		// including cache publication, instead of leaving a verified charge stale.
+	}
+	if submitCharge != nil {
+		// The submission charge committed with the task row. Its caches are
+		// published once here from the committed state; the ledger move is the
+		// replayable part, and settling again would collide with the revision
+		// the task already recorded.
+		if session, ok := relayInfo.Billing.(*service.BillingSession); ok {
+			session.CommitTaskSubmission(service.TaskSubmissionCharge{
+				Total: result.Quota, Delta: submitCharge.Delta, SubscriptionID: submitCharge.SubscriptionID,
+			})
+		}
+		model.PublishCommittedTaskCharge(task.UserId, task.PrivateData.SubscriptionId,
+			submitCharge.TokenID, submitCharge.TokenKey, submitCharge.Delta)
+		service.FinalizeTaskBudgetSubmission(c, relayInfo, task, *submitCharge, result.Quota)
+		durable = true
+		requestplugin.TaskCreated(c)
+		if immediateTerminal {
+			// Reported once settled, whatever the settlement did.
+			defer requestplugin.ReportTask(task)
+		}
+		diagnostics.durable(task)
+		perfmetrics.RecordImmediateTaskResult(relayInfo, result.Immediate)
+		if task.Status != model.TaskStatusFailure {
+			service.MarkRequestPolicySuccess(c, nil)
+		} else {
+			policy.AddEvent(service.PolicyEvent{Decision: service.PolicyDecision{Action: "stop", Reason: "task_failed", Source: "upstream"}})
+		}
+		service.LogTaskConsumption(c, relayInfo, task)
+		diagnostics.complete(task, result.Quota)
+		return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
 	}
 	durable = true
 	requestplugin.TaskCreated(c)
@@ -1236,6 +1341,10 @@ func executeTaskSubmissionWith(
 	stage = "settle"
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
+
+	// A task that is still running keeps its reservation open so completion can
+	// revise the recorded amount. An immediate terminal result settles final.
+	relayInfo.ChannelBudgetSettlementOpen = task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailure
 
 	if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 		common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
@@ -1253,6 +1362,39 @@ func executeTaskSubmissionWith(
 	diagnostics.complete(task, result.Quota)
 
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
+}
+
+// insertSubmittedTask persists the accepted task. A ledger-tracked task commits
+// its submission charge (the acceptance delta against what the pre-consume
+// already covered) and its durable ledger intent in the same transaction as the
+// task row and its request-content link, so no persisted task can exist without
+// its charge. The billing session records the committed charge instead of
+// adjusting it again. It returns nil when the task carried no submission charge.
+//
+// Nothing is reserved here: the upstream accepted the work already, so an
+// actual cost above the estimate is charged in full instead of rejecting an
+// accepted job, and a trusted user's pre-consume of zero still charges the real
+// cost. This is the only station charge of the submission; the ledger moves it
+// into usage in FinalizeTaskBudgetSubmission rather than in a second settle.
+func insertSubmittedTask(c *gin.Context, relayInfo *relaycommon.RelayInfo, task *model.Task,
+	requestContent *common.RequestContentSnapshot, quota int, immediateTerminal bool, omitColumns []string) (*model.TaskBudgetInsertResult, error) {
+	if task.PrivateData.BudgetReservationId <= 0 {
+		return nil, model.InsertTaskWithRequestContent(c.Request.Context(), task, requestContent, omitColumns...)
+	}
+	session, _ := relayInfo.Billing.(*service.BillingSession)
+	reserved := 0
+	if session != nil {
+		reserved = session.GetPreConsumedQuota()
+	}
+	delta := quota - reserved
+	committed, err := model.InsertTaskWithSubmissionCharge(c.Request.Context(), task, requestContent, omitColumns, &model.TaskBudgetSubmit{
+		Total:          quota,
+		Delta:          delta,
+		SubscriptionID: task.PrivateData.SubscriptionId,
+		TokenID:        task.PrivateData.TokenId,
+		Final:          immediateTerminal,
+	})
+	return committed, err
 }
 
 func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {

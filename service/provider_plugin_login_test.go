@@ -486,7 +486,11 @@ func TestPluginLoginKeepsSecretsOutOfViewsAndLogs(t *testing.T) {
 func TestPluginLoginOnExistingCredential(t *testing.T) {
 	f := newLoginFixture(t, "login-again", "redirect")
 	line := expiringLine(t, "login-again", "r", "acct-1", 1)
-	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", f.channel.Id).Update("key", line).Error)
+	_, err := model.UpdateChannelLocked(f.channel.Id, func(channel *model.Channel) error {
+		channel.Key = line
+		return nil
+	})
+	require.NoError(t, err)
 	index := 0
 
 	// The plugin reads the stored data as ctx.credential.

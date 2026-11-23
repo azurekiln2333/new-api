@@ -407,11 +407,15 @@ export function refresh(ctx) {
 									authorization := r.Header.Get("Authorization")
 									if authorization == "Bearer old-first" || authorization == "Bearer old-second" {
 										if authorization == "Bearer old-first" && changed == "stored replacement used by retry" {
-											key := replacement
-											if multiKey {
-												key += "\n" + second
-											}
-											if !assert.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Update("key", key).Error) {
+											// A stored replacement is an authoritative allocation edit, so it
+											// goes through the same locked entry as an administrator's.
+											if _, err := model.UpdateChannelLocked(channel.Id, func(current *model.Channel) error {
+												current.Key = replacement
+												if multiKey {
+													current.Key = replacement + "\n" + second
+												}
+												return nil
+											}); !assert.NoError(t, err) {
 												w.WriteHeader(http.StatusInternalServerError)
 												return
 											}
@@ -433,19 +437,25 @@ export function refresh(ctx) {
 										return
 									}
 									if authorization == "Bearer fresh-first" && changed != "own refresh" && changed != "background own refresh" {
-										current, loadErr := model.GetChannelById(channel.Id, true)
-										if !assert.NoError(t, loadErr) {
-											w.WriteHeader(http.StatusInternalServerError)
-											return
-										}
+										// Key and key-indexed ChannelInfo edits are the authoritative allocation
+										// rows, so they go through the locked entry that keeps channels.key a
+										// projection of them. A raw column update would be reverted the next
+										// time the projection is regenerated.
 										updates := map[string]any{}
+										mutate := func(*model.Channel) error { return nil }
 										switch changed {
 										case "replacement after retry":
-											updates["key"] = "administrator-replacement"
+											mutate = func(current *model.Channel) error {
+												current.Key = "administrator-replacement"
+												return nil
+											}
 										case "same-account replacement after retry":
-											updates["key"] = replacement
-											if multiKey {
-												updates["key"] = replacement + "\n" + second
+											mutate = func(current *model.Channel) error {
+												current.Key = replacement
+												if multiKey {
+													current.Key = replacement + "\n" + second
+												}
+												return nil
 											}
 										case "binding after retry":
 											updates["setting"] = `{"task_plugin_key":"replacement-plugin","max_concurrent_requests":1}`
@@ -454,22 +464,35 @@ export function refresh(ctx) {
 										case "plugin config after retry":
 											updates["settings"] = `{"plugin_config":{"tenant":"replacement"}}`
 										case "scope after retry":
-											current.ChannelInfo.MultiKeyUsers = map[int]int{0: 987}
-											updates["channel_info"] = current.ChannelInfo
+											mutate = func(current *model.Channel) error {
+												current.ChannelInfo.MultiKeyUsers = map[int]int{0: 987}
+												return nil
+											}
 										case "key reorder after retry":
-											lines := current.GetKeys()
-											updates["key"] = lines[1] + "\n" + lines[0]
+											mutate = func(current *model.Channel) error {
+												lines := current.GetKeys()
+												current.Key = lines[1] + "\n" + lines[0]
+												return nil
+											}
 										case "disabled during retry":
 											if multiKey {
-												current.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled}
-												updates["channel_info"] = current.ChannelInfo
+												mutate = func(current *model.Channel) error {
+													current.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled}
+													return nil
+												}
 											} else {
 												updates["status"] = common.ChannelStatusManuallyDisabled
 											}
 										}
-										if !assert.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error) {
+										if _, err := model.UpdateChannelLocked(channel.Id, mutate); !assert.NoError(t, err) {
 											w.WriteHeader(http.StatusInternalServerError)
 											return
+										}
+										if len(updates) > 0 {
+											if !assert.NoError(t, db.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error) {
+												w.WriteHeader(http.StatusInternalServerError)
+												return
+											}
 										}
 									}
 									_, _ = io.WriteString(w, `{"amount":0}`)

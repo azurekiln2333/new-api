@@ -24,7 +24,13 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
@@ -126,14 +132,38 @@ afterEach(() => {
  * `null` to simulate a channel without a usage record.
  */
 async function renderChannelsPage(
-  usage: { total_tokens: number } | null = { total_tokens: CONSUMED_TOKENS }
+  usage: { total_tokens: number } | null = { total_tokens: CONSUMED_TOKENS },
+  items: Channel[] = [channel]
 ) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/channel') {
       return {
         data: {
           success: true,
-          data: { items: [channel], total: 1, type_counts: {} },
+          data: { items, total: items.length, type_counts: {} },
+        },
+      }
+    }
+    if (url === '/api/channel/quota') {
+      return {
+        data: {
+          success: true,
+          data: {
+            items: items.map((item) => ({
+              scope_type: 'channel',
+              scope_id: String(item.id),
+              channel_id: item.id,
+              ledger_enabled: true,
+              enabled: false,
+              limit_quota: 0,
+              period_used_quota: 120,
+              lifetime_used_quota: 250,
+              reserved_quota: 10,
+              config_version: 1,
+              reset_epoch: 0,
+              accounting_started_at: 1,
+            })),
+          },
         },
       }
     }
@@ -219,6 +249,28 @@ async function renderCardView(usage?: { total_tokens: number } | null) {
   expect(card).not.toBeNull()
   return card as HTMLElement
 }
+
+it('loads both local budgets from one page request, separately from upstream balance', async () => {
+  localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'card')
+  const get = await renderChannelsPage(null, [
+    channel,
+    { ...channel, id: 9, name: 'stage' },
+  ])
+  const budgets = await screen.findAllByRole('button', { name: 'Local Budget' })
+  expect(budgets).toHaveLength(2)
+  expect(
+    get.mock.calls.filter(([url]) => url === '/api/channel/quota')
+  ).toEqual([
+    ['/api/channel/quota', expect.objectContaining({ params: { ids: '3,9' } })],
+  ])
+  await userEvent.setup().click(budgets[0])
+  const budget = await screen.findByRole('dialog', { name: 'Local Budget' })
+  expect(within(budget).getByText('Reserved')).toBeVisible()
+  expect(within(budget).getByText('Lifetime used')).toBeVisible()
+  expect(
+    screen.getByRole('status', { name: 'Dialog state' })
+  ).toHaveTextContent('none:')
+})
 
 it('shows the tokens consumed through a channel as a single compact line', async () => {
   const card = await renderCardView()
@@ -393,7 +445,7 @@ it('lays the card metrics out in two columns above a separate priority/weight ro
   // Left column: used amount above used tokens.
   expect(
     [...columns[0].querySelectorAll('dt')].map((label) => label.textContent)
-  ).toEqual(['Used / Remaining', 'Used tokens'])
+  ).toEqual(['Used / Remaining', 'Local Budget', 'Used tokens'])
 
   // Right column: response, last tested and live concurrency.
   expect(

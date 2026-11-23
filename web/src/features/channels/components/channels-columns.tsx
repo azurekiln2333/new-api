@@ -96,6 +96,7 @@ import {
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelBalanceDetails } from './channel-balance-details'
+import { ChannelBudgetCell } from './channel-budget-cell'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { TaskPluginChannelBadge } from './channel-type-badge'
 import { ChannelUsedTokens } from './channel-usage-context'
@@ -1232,6 +1233,20 @@ export function useChannelsColumns(
         meta: { mobileHidden: true },
         cell: ({ row }) => <WeightCell channel={row.original} />,
         size: 90,
+        enableSorting: false,
+      },
+
+      // The local billed budget is independent from upstream balance.
+      {
+        id: 'local_budget',
+        header: t('Local Budget'),
+        cell: ({ row }) => (
+          <ChannelBudgetCell
+            channelId={row.original.id}
+            aggregate={isTagAggregateRow(row.original)}
+          />
+        ),
+        size: 140,
         enableSorting: false,
       },
 

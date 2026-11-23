@@ -1,0 +1,6 @@
+{"file":".agents/rules/billing.md","reason":"Verify quota safety, settlement meaning and refund invariants"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify backend implementation and regression coverage"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify migration compatibility and lock behavior in real engines"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify stable allocation identities through API and asynchronous paths"}
+{"file":".trellis/spec/frontend/index.md","reason":"Verify component reuse and feature contracts"}
+{"file": ".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/dispatch.md", "reason": "Approved four-Pi ownership and integration contract"}

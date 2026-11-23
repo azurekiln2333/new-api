@@ -56,6 +56,7 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 // RefundFailedRequestBilling applies the common final-failure policy after all
 // eligible attempts have ended. A settled BillingSession never refunds again.
 func RefundFailedRequestBilling(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) *types.NewAPIError {
+	defer service.ReleaseAttemptChannelBudget(c, info)
 	if apiErr == nil {
 		return nil
 	}

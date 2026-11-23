@@ -140,12 +140,13 @@ func useCredentialTestDB(t *testing.T, models ...any) {
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, database.AutoMigrate(models...))
+	require.NoError(t, database.AutoMigrate(append(models, &model.Option{}, &model.ChannelKeyEntry{})...))
 	model.DB, common.MemoryCacheEnabled = database, false
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	t.Cleanup(func() {
 		model.DB, common.MemoryCacheEnabled = previousDB, previousMemoryCache
 		common.SetDatabaseTypes(previousMain, previousLog)
+		require.NoError(t, sqlDB.Close())
 	})
 }
 

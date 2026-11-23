@@ -28,12 +28,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	sqlmysql "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 // useProviderPluginDatabase installs a database for the provider plugin tests.
@@ -43,20 +43,41 @@ func useProviderPluginDatabase(t *testing.T) *gorm.DB {
 	t.Helper()
 	dialect := common.DatabaseType(os.Getenv("TEST_TASK_DB_DIALECT"))
 	var driver gorm.Dialector
+	var adminDriver gorm.Dialector
+	name := fmt.Sprintf("newapi_provider_%d", time.Now().UnixNano())
 	switch dialect {
 	case "", common.DatabaseTypeSQLite:
 		dialect = common.DatabaseTypeSQLite
 		driver = sqlite.Open(":memory:")
 	case common.DatabaseTypeMySQL:
-		require.NotEmpty(t, os.Getenv("TEST_MYSQL_DSN"))
-		driver = mysql.Open(os.Getenv("TEST_MYSQL_DSN"))
+		dsn := os.Getenv("TEST_MYSQL_DSN")
+		require.NotEmpty(t, dsn)
+		config, err := sqlmysql.ParseDSN(dsn)
+		require.NoError(t, err)
+		adminDriver = mysql.Open(dsn)
+		config.DBName = name
+		driver = mysql.Open(config.FormatDSN())
 	case common.DatabaseTypePostgreSQL:
-		require.NotEmpty(t, os.Getenv("TEST_POSTGRES_DSN"))
-		driver = postgres.New(postgres.Config{DSN: os.Getenv("TEST_POSTGRES_DSN"), PreferSimpleProtocol: true})
+		dsn := os.Getenv("TEST_POSTGRES_DSN")
+		require.NotEmpty(t, dsn)
+		config, err := url.Parse(dsn)
+		require.NoError(t, err)
+		adminDriver = postgres.Open(dsn)
+		config.Path = "/" + name
+		driver = postgres.New(postgres.Config{DSN: config.String(), PreferSimpleProtocol: true})
 	default:
 		t.Fatalf("unsupported test dialect %q", dialect)
 	}
-	database, err := gorm.Open(driver, &gorm.Config{NamingStrategy: schema.NamingStrategy{TablePrefix: fmt.Sprintf("tpp_%d_", time.Now().UnixNano())}})
+	if adminDriver != nil {
+		admin, err := gorm.Open(adminDriver, &gorm.Config{})
+		require.NoError(t, err)
+		sqlAdmin, err := admin.DB()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, sqlAdmin.Close()) })
+		require.NoError(t, admin.Exec("CREATE DATABASE "+name).Error)
+		t.Cleanup(func() { require.NoError(t, admin.Exec("DROP DATABASE "+name).Error) })
+	}
+	database, err := gorm.Open(driver, &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
@@ -65,9 +86,7 @@ func useProviderPluginDatabase(t *testing.T) *gorm.DB {
 		sqlDB.SetMaxOpenConns(1)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	tables := []any{&model.Channel{}, &model.Ability{}, &model.AuthFlow{}, &model.User{}}
-	require.NoError(t, database.AutoMigrate(tables...))
-	t.Cleanup(func() { require.NoError(t, database.Migrator().DropTable(tables...)) })
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.AuthFlow{}, &model.User{}, &model.Option{}, &model.ChannelKeyEntry{}, &model.SystemTask{}))
 	var version string
 	if dialect == common.DatabaseTypeSQLite {
 		require.NoError(t, database.Raw("SELECT sqlite_version()").Scan(&version).Error)

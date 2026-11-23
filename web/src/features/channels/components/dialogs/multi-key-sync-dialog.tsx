@@ -62,7 +62,13 @@ export function MultiKeySyncDialog(props: MultiKeySyncDialogProps) {
       <Button
         type='button'
         onClick={props.onApply}
-        disabled={!canApply || props.isApplying || props.isFetching}
+        disabled={
+          !canApply ||
+          props.preview == null ||
+          !!props.error ||
+          props.isApplying ||
+          props.isFetching
+        }
       >
         {props.isApplying && (
           <Loader2 className='mr-2 h-4 w-4 animate-spin' aria-hidden />

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -31,10 +32,12 @@ type BillingSession struct {
 	relayInfo        *relaycommon.RelayInfo
 	funding          FundingSource
 	preConsumedQuota int    // 实际预扣额度（信任用户可能为 0）
+	estimatedQuota   int    // 当前验证过的站内预估（信任旁路下仍用于本地预算预留）
 	tokenConsumed    int    // 令牌额度实际扣减量
 	extraReserved    int    // 发送前补充预扣的额度（订阅退款时需要单独回滚）
 	trusted          bool   // 是否命中信任额度旁路
 	fundingSettled   bool   // funding.Settle 已成功，资金来源已提交
+	settledQuota     int    // 已提交到资金来源的实际费用，令牌写入失败也保留
 	settled          bool   // Settle 全部完成（资金 + 令牌）
 	refunded         bool   // Refund 已调用
 	lang             string // 请求声明的语言，为空表示未声明
@@ -52,6 +55,8 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
+		s.settledQuota = actualQuota
+		s.fundingSettled = true
 		s.settled = true
 		return nil
 	}
@@ -61,6 +66,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 			return err
 		}
 		s.fundingSettled = true
+		s.settledQuota = actualQuota
 	}
 	// 2) 调整令牌额度
 	var tokenErr error
@@ -155,8 +161,67 @@ func (s *BillingSession) GetPreConsumedQuota() int {
 	return s.preConsumedQuota
 }
 
+// SettledFundingQuota distinguishes a failed funding write from a committed
+// charge followed by a failed token write. Local budgets follow the latter.
+func (s *BillingSession) SettledFundingQuota() (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settledQuota, s.fundingSettled
+}
+
+// GetEstimatedQuota returns the validated station estimate of this request.
+// A trusted user pre-consumes nothing, but the local channel/allocation budget
+// still holds this estimate, so the budget ledger cannot be bypassed by trust.
+func (s *BillingSession) GetEstimatedQuota() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.estimatedQuota > s.preConsumedQuota {
+		return s.estimatedQuota
+	}
+	return s.preConsumedQuota
+}
+
+// noteEstimate records the validated target of this request or of a later
+// increase before submission.
+func (s *BillingSession) noteEstimate(targetQuota int) {
+	if targetQuota > s.estimatedQuota {
+		s.estimatedQuota = targetQuota
+	}
+}
+
 func (s *BillingSession) Reserve(targetQuota int) error {
 	return s.reserve(targetQuota, false)
+}
+
+// TaskSubmissionCharge describes the submission half of a durable task charge.
+// Its funding and token delta is about to commit inside the caller's task
+// transaction, so the session records the committed state instead of adjusting
+// it a second time.
+type TaskSubmissionCharge struct {
+	// Total is the task quota written at submission.
+	Total int
+	// Delta is the funding/token delta the caller commits atomically.
+	Delta int
+	// SubscriptionID is the funding subscription the delta was charged to.
+	SubscriptionID int
+}
+
+// CommitTaskSubmission records a submission charge committed by the caller, so
+// a later settlement of the same request cannot charge the funding again.
+func (s *BillingSession) CommitTaskSubmission(charge TaskSubmissionCharge) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fundingSettled = true
+	s.settled = true
+	s.settledQuota = charge.Total
+	if charge.Delta == 0 {
+		return
+	}
+	s.preConsumedQuota = charge.Total
+	s.tokenConsumed = charge.Total
+	if charge.SubscriptionID > 0 {
+		s.relayInfo.SubscriptionPostDelta += int64(charge.Delta)
+	}
 }
 
 // ReserveBeforeSubmit 在发起上游请求前补扣，钱包余额必须覆盖差额。
@@ -172,12 +237,19 @@ func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) er
 		_, imageRequest := s.relayInfo.Request.(*dto.ImageRequest)
 		requireAvailableQuota = requireAvailableQuota || imageRequest || s.relayInfo.ImageRequestCount > 0
 	}
+	s.noteEstimate(targetQuota)
+	if s.relayInfo != nil && s.relayInfo.ChannelBudget.HasBudgetReservation() && !s.relayInfo.ChannelBudget.Forwarded {
+		if err := model.IncreaseChannelBudgetReservation(context.Background(), s.relayInfo.ChannelBudget.ReservationID, int64(targetQuota)); err != nil {
+			return err
+		}
+	}
 	if s.settled || s.refunded || s.trusted && !requireAvailableQuota || targetQuota <= s.preConsumedQuota {
 		return nil
 	}
 
 	delta := targetQuota - s.preConsumedQuota
 	if delta <= 0 {
+		s.noteEstimate(targetQuota)
 		return nil
 	}
 
@@ -192,6 +264,7 @@ func (s *BillingSession) reserve(targetQuota int, requireAvailableQuota bool) er
 	s.preConsumedQuota += delta
 	s.tokenConsumed += delta
 	s.extraReserved += delta
+	s.noteEstimate(targetQuota)
 	if requireAvailableQuota {
 		s.trusted = false
 	}
@@ -254,6 +327,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 	}
 
 	s.preConsumedQuota = effectiveQuota
+	s.noteEstimate(quota)
 
 	// ---- 同步 RelayInfo 兼容字段 ----
 	s.syncRelayInfo()

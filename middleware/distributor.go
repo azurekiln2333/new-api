@@ -736,12 +736,16 @@ func SetupChannelTestContext(c *gin.Context, channel *model.Channel, modelName s
 // SetupContextForSelectedChannel prepares the relay context for a channel chosen
 // by the distributor and selects the key that serves the request.
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	return SetupContextForSelectedChannelExcluding(c, channel, modelName, nil)
+}
+
+func SetupContextForSelectedChannelExcluding(c *gin.Context, channel *model.Channel, modelName string, excludedIDs []int64) *types.NewAPIError {
 	if newAPIError := applySelectedChannelContext(c, channel, modelName); newAPIError != nil {
 		return newAPIError
 	}
 	// A key bound to the requesting user belongs to that user alone, and a
 	// per-key model scope decides which key serves this model.
-	key, index, newAPIError := channel.GetNextEnabledKeyFor(modelName, c.GetInt("id"))
+	key, index, newAPIError := channel.GetNextEnabledKeyFor(modelName, c.GetInt("id"), excludedIDs...)
 	if newAPIError != nil {
 		return newAPIError
 	}
@@ -755,7 +759,13 @@ func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, i
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
 	}
-	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
+	service.ClearSelectedChannelAllocation(c)
+	if allocation, ok := channel.ChannelAllocationByPosition(index); ok && allocation.Key == key {
+		service.SetSelectedChannelAllocation(c, allocation.EntryID, allocation.Revision)
+		common.SetContextKey(c, constant.ContextKeyChannelAllocation, allocation)
+	} else {
+		common.SetContextKey(c, constant.ContextKeyChannelAllocation, model.ChannelAllocation{})
+	}
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
 }

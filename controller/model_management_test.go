@@ -61,10 +61,13 @@ func modelManagementDB(t *testing.T, kind, dsn string) *gorm.DB {
 	}
 	t.Setenv("SQL_DSN", isolatedDSN)
 	t.Setenv("LOG_SQL_DSN", "")
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
+	// Followers expect the master to have created the options table already.
+	require.NoError(t, database.AutoMigrate(&model.Option{}))
 	require.NoError(t, model.InitDB())
 	database = model.DB
 	model.LOG_DB = database
-	require.NoError(t, database.AutoMigrate(&model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.User{}, &model.AuditLog{}))
+	require.NoError(t, database.AutoMigrate(&model.Model{}, &model.Vendor{}, &model.Channel{}, &model.Ability{}, &model.User{}, &model.AuditLog{}, &model.ChannelKeyEntry{}))
 	for _, value := range restoreRatios {
 		require.NoError(t, value.restore("{}"))
 	}

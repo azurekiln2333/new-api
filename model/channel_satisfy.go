@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
@@ -18,13 +19,26 @@ func (channel *Channel) EligibleModelsForUserGroup(group string, userID int) []s
 	lock.Lock()
 	defer lock.Unlock()
 	models := channel.GetModels()
+	var allowed map[int64]bool
+	if ChannelBudgetsEnabled() {
+		var err error
+		allowed, err = ChannelBudgetAllows(context.Background(), channel.Id, channel.KeyEntryIDs)
+		if err != nil {
+			return nil
+		}
+	}
 	var public []string
 	if slices.Contains(channel.GetGroups(), group) {
 		if !channel.ChannelInfo.IsMultiKey {
-			public = models
+			if allowed == nil || allowed[channel.ChannelKeyEntryID(0)] {
+				public = models
+			}
 		} else {
 			indexes := make([]int, 0)
 			for i := range channel.GetKeys() {
+				if allowed != nil && !allowed[channel.ChannelKeyEntryID(i)] {
+					continue
+				}
 				if channel.ChannelInfo.MultiKeyUsers[i] != 0 {
 					continue
 				}

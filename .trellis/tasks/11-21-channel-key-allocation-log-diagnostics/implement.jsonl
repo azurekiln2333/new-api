@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Database migration, transactional scope and existing channel scoping constraints"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Carry allocation and request identities through storage, routing, accounting and UI"}
+{"file":".trellis/spec/frontend/index.md","reason":"Project component, model visibility and frontend verification conventions"}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/research/architecture-findings.md","reason":"Read-only code evidence on duplicate identity, quotas, model visibility and diagnostics"}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/research/security-and-validation.md","reason":"Permissions and required non-skipped real database validation"}

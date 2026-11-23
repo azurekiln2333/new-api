@@ -85,8 +85,25 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 			))
 		}
 
-		if err := relayInfo.Billing.Settle(actualQuota); err != nil {
-			return err
+		settlementErr := relayInfo.Billing.Settle(actualQuota)
+		if session, ok := relayInfo.Billing.(*BillingSession); ok {
+			chargedQuota, committed := session.SettledFundingQuota()
+			if !committed {
+				return settlementErr
+			}
+			actualQuota = chargedQuota
+		} else if settlementErr != nil {
+			return settlementErr
+		}
+
+		// The local channel/allocation budget follows the same actual station
+		// charge. It is additional to the funding settled above, never a
+		// replacement, and a task submission keeps its reservation open for a
+		// later revision.
+		relayInfo.ChannelBudget.ChargedQuota = actualQuota
+		settleAttemptChannelBudget(ctx, relayInfo, actualQuota, !relayInfo.ChannelBudgetSettlementOpen)
+		if settlementErr != nil {
+			return settlementErr
 		}
 
 		// 发送额度通知（订阅计费使用订阅剩余额度）
@@ -103,7 +120,16 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 	// 回退：无 BillingSession 时使用旧路径
 	quotaDelta := actualQuota - relayInfo.FinalPreConsumedQuota
 	if quotaDelta != 0 {
-		return PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
+		result, err := postConsumeQuotaWithResult(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
+		if err != nil {
+			if result.FundingApplied {
+				relayInfo.ChannelBudget.ChargedQuota = actualQuota
+				settleAttemptChannelBudget(ctx, relayInfo, actualQuota, !relayInfo.ChannelBudgetSettlementOpen)
+			}
+			return err
+		}
 	}
+	relayInfo.ChannelBudget.ChargedQuota = actualQuota
+	settleAttemptChannelBudget(ctx, relayInfo, actualQuota, !relayInfo.ChannelBudgetSettlementOpen)
 	return nil
 }

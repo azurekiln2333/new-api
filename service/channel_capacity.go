@@ -680,12 +680,7 @@ func RetryChannelAdmission(c *gin.Context, channelID int, err *types.NewAPIError
 			// Auto selection may have prepared the NEXT retry's group before
 			// admission (including the initial middleware selection). A busy
 			// candidate did not use that retry: exhaust its actual group first.
-			if snapshot := state.selectedAutoGroupRetry; snapshot != nil && snapshot.channelID == channelID && retry != nil && retry.TokenGroup == "auto" {
-				common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, snapshot.groupIndex)
-				retry.SetRetry(snapshot.retry)
-				retry.resetNextTry = snapshot.resetNextTry
-				c.Set(ginKeyChannelAffinityRetryOffset, snapshot.affinityRetryOffset)
-			}
+			retry.restoreUnusedAutoGroupAttempt(c, channelID, state.selectedAutoGroupRetry)
 			decision.Action = "select"
 		}
 	}

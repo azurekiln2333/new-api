@@ -218,7 +218,7 @@ func InitDB() (err error) {
 			if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
 				common.SysError(common.LogText("initialize legacy access token deadline: %s", err.Error()))
 			}
-			return nil
+			return InitializeChannelBudgets()
 		}
 		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
@@ -233,12 +233,15 @@ func InitDB() (err error) {
 }
 
 func InitLogDB() (err error) {
-	if os.Getenv("LOG_SQL_DSN") == "" {
+	dsn := os.Getenv("LOG_SQL_DSN")
+	if dsn == "" || (common.UsingMainDatabase(common.DatabaseTypeSQLite) && strings.HasPrefix(dsn, "local")) {
+		// A local DSN opens SQLitePath for both stores. Share the handle so a
+		// transaction never writes the same file through a second writer pool.
 		LOG_DB = DB
 		common.SetLogDatabaseType(common.MainDatabaseType())
 		initCol()
 		if common.IsMasterNode {
-			return MigrateAuditLogs()
+			return migrateLOGDB()
 		}
 		return
 	}
@@ -378,8 +381,19 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&ChannelKeyEntry{},
+		&ChannelBudgetAccount{},
+		&ChannelBudgetReservation{},
+		&ChannelBudgetReservationItem{},
+		&ChannelBudgetOperation{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := MigrateChannelKeyEntries(); err != nil {
+		return err
+	}
+	if err := InitializeChannelBudgets(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
@@ -405,6 +419,9 @@ func migrateDB() error {
 
 func migrateLOGDB() error {
 	if err := MigrateAuditLogs(); err != nil {
+		return err
+	}
+	if err := MigrateLogRequestDetails(); err != nil {
 		return err
 	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {

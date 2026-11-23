@@ -36,6 +36,7 @@ export type ChannelModelUnavailability = z.infer<
 
 export const channelInfoSchema = z.object({
   model_unavailable: z.array(channelModelUnavailabilitySchema).optional(),
+  key_entry_revision: z.number().optional(),
   is_multi_key: z.boolean().default(false),
   multi_key_size: z.number().default(0),
   multi_key_status_list: z.record(z.string(), z.number()).optional(),
@@ -296,17 +297,60 @@ export interface CopyChannelResponse {
 // Multi-Key Management Types
 // ============================================================================
 
+/**
+ * One channel/Key budget account, in station quota units. `remaining_quota` is
+ * absent (or null) while the scope is unlimited; `exhausted` reports that an
+ * enforced limit has no capacity left for the next request.
+ */
+export interface ChannelBudgetView {
+  scope_type: 'channel' | 'key'
+  scope_id: string
+  channel_id: number
+  ledger_enabled: boolean
+  enabled: boolean
+  limit_quota: number
+  period_used_quota: number
+  lifetime_used_quota: number
+  reserved_quota: number
+  remaining_quota?: number | null
+  reset_epoch: number
+  config_version: number
+  accounting_started_at: number
+  exhausted?: boolean
+}
+
+/** One key's budget view, nested in its stable allocation status. */
+export type KeyQuotaView = ChannelBudgetView
+
+export interface SetChannelBudgetParams {
+  enabled: boolean
+  limit_quota: number
+  expected_config_version: number
+}
+
+export interface ResetChannelBudgetParams {
+  expected_config_version: number
+  operation_id: string
+}
+
 export interface KeyStatus {
   index: number
+  /** Stable allocation ID as a decimal string; survives add, reorder, delete. */
+  id?: string
+  /** Allocation configuration revision this status was read at. */
+  rev?: number
   status: number // 1: enabled, 2: manual disabled, 3: auto disabled
   disabled_time?: number
   reason?: string
   key_preview?: string
-  // Models this key may serve; empty = every channel model.
+  // An empty allowlist denies all models; legacy rows may omit scope_mode.
   models?: string[]
   // User that exclusively owns this key; absent or 0 = public key.
   user_id?: number
   username?: string
+  scope_mode?: 'all' | 'allowlist'
+  // Absent when the budget ledger is not available; never faked as unlimited.
+  quota?: KeyQuotaView
 }
 
 export type MultiKeyConfirmAction = {
@@ -318,12 +362,20 @@ export type MultiKeyConfirmAction = {
     | 'disable-all'
     | 'delete-disabled'
   keyIndex?: number
+  /** Stable allocation ID for a single-entry action. */
+  keyEntryId?: string
+  expectedRev?: number
+  /** Channel allocation-set revision shown when a bulk action was confirmed. */
+  expectedRevision?: number
 }
 
 export interface MultiKeyStatusResponse {
   success: boolean
   message?: string
+  error_code?: string
+  code?: string
   data?: {
+    revision?: number
     keys: KeyStatus[]
     total: number
     page: number
@@ -332,7 +384,31 @@ export interface MultiKeyStatusResponse {
     enabled_count: number
     manual_disabled_count: number
     auto_disabled_count: number
+    /** Current ledger activation, independent of the filtered rows. */
+    quota_supported?: boolean
   }
+}
+
+/** One set of allocations an explicit dedup would merge. */
+export interface MultiKeyDedupGroup {
+  survivor_id: string
+  entry_ids: string[]
+  merged_period_used: number
+  merged_lifetime_used: number
+  limit_quota?: number | null
+  /** Entries left out because they are busy; they stay as they are. */
+  skipped: { id: string; reason: string }[]
+}
+
+/** Preview of a dedup, plus its apply summary when `apply` was true. */
+export interface MultiKeyDedupResult {
+  preview_token?: string
+  revision?: number
+  applied?: boolean
+  groups: MultiKeyDedupGroup[]
+  merged_groups?: number
+  retired_entries?: number
+  skipped_entries?: number
 }
 
 // ============================================================================
@@ -394,6 +470,10 @@ export type MultiKeyManageAction =
   | 'delete_disabled_keys'
   | 'set_key_models'
   | 'set_key_user'
+  | 'set_key_quota'
+  | 'reset_key_quota'
+  | 'deduplicate_keys'
+  | 'reorder_keys'
   | 'fetch_key_models'
   | 'sync_key_models'
 
@@ -401,17 +481,30 @@ export interface MultiKeyManageParams {
   channel_id: number
   action: MultiKeyManageAction
   key_index?: number
+  key_entry_id?: string
+  expected_revision?: number
+  key_entry_ids?: string[]
+  preview_token?: string
+  scope_mode?: 'all' | 'allowlist'
   page?: number
   page_size?: number
   status?: number // 1=enabled, 2=manual_disabled, 3=auto_disabled
   models?: string[] // set_key_models: empty array clears the restriction
   user_id?: number // set_key_user: 0 unbinds
-  apply?: boolean // sync_key_models: write the previewed result
+  apply?: boolean // sync_key_models / deduplicate_keys: write the previewed result
+  // set_key_quota / reset_key_quota
+  expected_rev?: number
+  expected_config_version?: number
+  enabled?: boolean
+  limit_quota?: number
+  operation_id?: string
 }
 
 /** Upstream models reported for one key by `fetch_key_models` / `sync_key_models`. */
 export interface MultiKeyModelFetchResult {
   key_index: number
+  key_entry_id?: string
+  rev?: number
   models?: string[]
   error?: string
   skipped?: boolean
@@ -419,8 +512,10 @@ export interface MultiKeyModelFetchResult {
 
 /** `sync_key_models` preview: per-key results plus the models it would add. */
 export interface MultiKeyModelSyncResult {
+  revision?: number
   results: MultiKeyModelFetchResult[]
   added_models: string[]
+  channel_models?: string[]
   applied: boolean
 }
 
@@ -482,6 +577,7 @@ export interface ChannelFormData {
 // `multi_key_mode` for the resulting key selection strategy.
 //
 export interface ChannelUpdateRequest extends Partial<Channel> {
+  expected_revision?: number
   key_mode?: 'append' | 'replace'
   to_multi_key?: boolean
   multi_key_mode?: 'random' | 'polling'

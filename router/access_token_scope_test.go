@@ -1,19 +1,26 @@
 package router
 
 import (
+	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -142,6 +149,138 @@ func TestAccessTokenRouteRulesCoverEveryDashboardRoute(t *testing.T) {
 		require.True(t, ok, key)
 		assert.Equal(t, "scope", rule.Kind(), key)
 		assert.Equal(t, service.AccessTokenScopeOf(permission), rule.Scope(), key)
+	}
+}
+
+var panelRateLimitTestIPs atomic.Uint32
+
+func newPanelRateLimitTestEngine(t *testing.T, redisEnabled bool, globalLimit int) *gin.Engine {
+	t.Helper()
+	previousRedis, previousRDB := common.RedisEnabled, common.RDB
+	previousCritical, previousCount, previousWindow := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration
+	previousGlobal, previousGlobalCount, previousGlobalWindow := common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration
+	previousTurnstile, previousSecure := common.TurnstileCheckEnabled, common.SessionCookieSecure
+	previousRegister, previousPasswordRegister := common.RegisterEnabled, common.PasswordRegisterEnabled
+	common.RedisEnabled = redisEnabled
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 1, 71
+	common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = true, globalLimit, 73
+	common.TurnstileCheckEnabled, common.SessionCookieSecure = false, true
+	common.RegisterEnabled, common.PasswordRegisterEnabled = true, true
+	t.Cleanup(func() {
+		common.RedisEnabled, common.RDB = previousRedis, previousRDB
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = previousCritical, previousCount, previousWindow
+		common.GlobalApiRateLimitEnable, common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration = previousGlobal, previousGlobalCount, previousGlobalWindow
+		common.TurnstileCheckEnabled, common.SessionCookieSecure = previousTurnstile, previousSecure
+		common.RegisterEnabled, common.PasswordRegisterEnabled = previousRegister, previousPasswordRegister
+	})
+	if redisEnabled {
+		server := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+		require.NoError(t, client.Ping(context.Background()).Err())
+		common.RDB = client
+		t.Cleanup(func() { require.NoError(t, client.Close()) })
+	}
+	engine := gin.New()
+	require.NoError(t, engine.SetTrustedProxies(nil))
+	SetApiRouter(engine)
+	return engine
+}
+
+func panelRateLimitRequest(engine http.Handler, method, path, ip, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.RemoteAddr = ip + ":12345"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://example.com")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	return response
+}
+
+func TestPanelCriticalRateLimitLoginAliasesShareAllowance(t *testing.T) {
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			engine := newPanelRateLimitTestEngine(t, redisEnabled, 100)
+			ip := fmt.Sprintf("198.19.0.%d", panelRateLimitTestIPs.Add(1))
+			// Invalid credentials reach the actual controller without database
+			// access, but still spend the anonymous login allowance.
+			first := panelRateLimitRequest(engine, http.MethodPost, "/api/user/login", ip, `{}`)
+			require.Equal(t, http.StatusOK, first.Code)
+			for _, route := range []struct{ method, path string }{
+				{http.MethodPost, "/api/user/login"},
+				{http.MethodPost, "/api/user/login/2fa"},
+				{http.MethodPost, "/api/user/login/verify"},
+				{http.MethodPost, "/api/user/login/passkey/begin"},
+				{http.MethodPost, "/api/user/login/passkey/finish"},
+				{http.MethodPost, "/api/user/passkey/login/begin"},
+				{http.MethodPost, "/api/user/passkey/login/finish"},
+				{http.MethodPost, "/api/oauth/state"},
+				{http.MethodGet, "/api/oauth/github"},
+				{http.MethodGet, "/api/oauth/oidc"},
+				{http.MethodGet, "/api/oauth/discord"},
+				{http.MethodGet, "/api/oauth/linuxdo"},
+				{http.MethodGet, "/api/oauth/telegram"},
+				{http.MethodGet, "/api/oauth/wechat"},
+				{http.MethodPost, "/api/oauth/wechat"},
+				{http.MethodGet, "/api/oauth/telegram/login"},
+				{http.MethodGet, "/api/oauth/telegram/bind/unverified-flow"},
+				{http.MethodGet, "/api/reset_password"},
+				{http.MethodPost, "/api/user/reset"},
+			} {
+				response := panelRateLimitRequest(engine, route.method, route.path, ip, `{}`)
+				assert.Equal(t, http.StatusTooManyRequests, response.Code, route.method+" "+route.path)
+				assert.Equal(t, "71", response.Header().Get("Retry-After"))
+				assert.JSONEq(t, `{"success":false,"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests","message_key":"Too many requests"}`, response.Body.String())
+			}
+			otherIP := fmt.Sprintf("198.19.0.%d", panelRateLimitTestIPs.Add(1))
+			assert.Equal(t, http.StatusOK, panelRateLimitRequest(engine, http.MethodPost, "/api/user/login/2fa", otherIP, `{}`).Code)
+		})
+	}
+}
+
+func TestPanelCriticalRateLimitRegistrationAndSessionsAreIndependent(t *testing.T) {
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			engine := newPanelRateLimitTestEngine(t, redisEnabled, 100)
+			ip := fmt.Sprintf("198.19.0.%d", panelRateLimitTestIPs.Add(1))
+			for _, route := range []struct {
+				method, path, body string
+				status             int
+			}{
+				// Truncated JSON demonstrates the invitation registration route
+				// without creating a user, consuming an invitation or querying DB.
+				{http.MethodPost, "/api/user/register", `{"invitation_code":"private-invitation"`, http.StatusOK},
+				{http.MethodPost, "/api/user/auth/refresh", `{}`, http.StatusUnauthorized},
+				{http.MethodPost, "/api/user/auth/logout", `{}`, http.StatusOK},
+				{http.MethodPost, "/api/user/login/verify", `{}`, http.StatusOK},
+			} {
+				first := panelRateLimitRequest(engine, route.method, route.path, ip, route.body)
+				assert.Equal(t, route.status, first.Code, route.path+" must not use another business scope's count")
+				second := panelRateLimitRequest(engine, route.method, route.path, ip, route.body)
+				assert.Equal(t, http.StatusTooManyRequests, second.Code, route.path)
+				assert.Equal(t, "71", second.Header().Get("Retry-After"))
+				assert.NotContains(t, second.Body.String(), "private-invitation")
+			}
+			// This public panel-critical read has no database/auth fixture. Its
+			// business switch may yield 200 or 403, but never another scope's429.
+			first := panelRateLimitRequest(engine, http.MethodGet, "/api/ratio_config", ip, "")
+			assert.Contains(t, []int{http.StatusOK, http.StatusForbidden}, first.Code)
+			assert.Equal(t, http.StatusTooManyRequests, panelRateLimitRequest(engine, http.MethodGet, "/api/ratio_config", ip, "").Code)
+		})
+	}
+}
+
+func TestPanelCriticalRateLimitScopesStillShareGlobalAPICeiling(t *testing.T) {
+	for _, redisEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redis=%t", redisEnabled), func(t *testing.T) {
+			engine := newPanelRateLimitTestEngine(t, redisEnabled, 3)
+			ip := fmt.Sprintf("198.19.0.%d", panelRateLimitTestIPs.Add(1))
+			assert.Equal(t, http.StatusOK, panelRateLimitRequest(engine, http.MethodPost, "/api/user/register", ip, `{}`).Code)
+			assert.Equal(t, http.StatusUnauthorized, panelRateLimitRequest(engine, http.MethodPost, "/api/user/auth/refresh", ip, `{}`).Code)
+			assert.Equal(t, http.StatusOK, panelRateLimitRequest(engine, http.MethodPost, "/api/user/login", ip, `{}`).Code)
+			response := panelRateLimitRequest(engine, http.MethodPost, "/api/user/auth/logout", ip, `{}`)
+			assert.Equal(t, http.StatusTooManyRequests, response.Code)
+			assert.Equal(t, "73", response.Header().Get("Retry-After"), "the outer GA cap is not bypassed by changing business scopes")
+		})
 	}
 }
 

@@ -1,0 +1,7 @@
+{"file":".agents/rules/billing.md","reason":"Required full read for quota reservation, final billing, and refund changes."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Database transaction and channel routing contracts to carry into the shared ledger integration."}
+{"file":"web/AGENTS.md","reason":"Shared component reuse, locale-aware quota formatting, API, and frontend test rules."}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/research/architecture-findings.md","reason":"Parent task routing, lifecycle, and migration evidence."}
+{"file":".trellis/tasks/11-21-channel-manual-balance/research/current-behavior.md","reason":"Existing channel balance boundaries and UI reuse candidates."}
+{"file":".trellis/tasks/11-21-key-allocation-quotas/design.md","reason":"Shared account, reservation, rollover, and rollout contracts."}
+{"file": ".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/dispatch.md", "reason": "Approved four-Pi ownership and integration contract"}

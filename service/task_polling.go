@@ -93,6 +93,41 @@ func reportFailedTasks(tasks []*model.Task, reason string) {
 	}
 }
 
+// failTasksWithoutChannel keeps the existing no-refund policy for a missing
+// channel while closing tracked budgets under the same terminal status CAS
+// used by normal polling. Legacy tasks retain the bulk update path.
+func failTasksWithoutChannel(ctx context.Context, tasks []*model.Task, reason string) error {
+	var legacy []*model.Task
+	var legacyIDs []int64
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if task.PrivateData.BudgetReservationId == 0 {
+			legacy = append(legacy, task)
+			legacyIDs = append(legacyIDs, task.ID)
+			continue
+		}
+		previous := task.Status
+		task.Status, task.Progress, task.FailReason = model.TaskStatusFailure, "100%", reason
+		task.FinishTime = time.Now().Unix()
+		won, err := commitTaskTerminal(ctx, task, previous, nil, nil, false)
+		if err != nil {
+			return err
+		}
+		if won {
+			reportFinalTask(task)
+		}
+	}
+	if err := model.TaskBulkUpdateByID(legacyIDs, map[string]any{
+		"fail_reason": reason, "status": model.TaskStatusFailure, "progress": "100%",
+	}); err != nil {
+		return err
+	}
+	reportFailedTasks(legacy, reason)
+	return nil
+}
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
@@ -127,7 +162,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 			task.FailReason = reason
 		}
 
-		won, err := task.UpdateWithStatus(oldStatus)
+		won, err := commitTaskTerminal(ctx, task, oldStatus, nil, nil, !isLegacy)
 		if err != nil {
 			logger.LogError(ctx, common.LogText("sweepTimedOutTasks CAS update error for task %s: %v", task.TaskID, err))
 			continue
@@ -137,7 +172,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 			continue
 		}
 		timedOutCount++
-		if !isLegacy && task.Quota != 0 {
+		if !isLegacy && task.PrivateData.BudgetReservationId == 0 && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, reason)
 		}
 		reportFinalTask(task)
@@ -279,22 +314,9 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	ch, err := model.CacheGetChannel(channelId)
 	if err != nil {
 		common.SysLog(common.LogText("CacheGetChannel: %v", err))
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
-		var failedIDs []int64
-		for _, upstreamID := range taskIds {
-			if t, ok := taskM[upstreamID]; ok {
-				failedIDs = append(failedIDs, t.ID)
-			}
-		}
-		err = model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": "Failed to get the channel information. Please contact the administrator",
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
+		err = failTasksWithoutChannel(ctx, bulkFailedTasks(taskIds, taskM), "Failed to get the channel information. Please contact the administrator")
 		if err != nil {
 			common.SysLog(common.LogText("UpdateSunoTask error: %v", err))
-		} else {
-			reportFailedTasks(bulkFailedTasks(taskIds, taskM), "Failed to get the channel information. Please contact the administrator")
 		}
 		return err
 	}
@@ -441,7 +463,13 @@ func pollTaskBatch(ctx context.Context, adaptor BatchTaskPollingAdaptor, channel
 
 		isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 		terminalTransition := isDone && snap.Status != task.Status
-		won, updateErr := task.UpdateWithStatus(snap.Status)
+		var won bool
+		var updateErr error
+		if terminalTransition {
+			won, updateErr = commitTaskTerminal(ctx, task, snap.Status, adaptor, &responseItem.TaskInfo, true)
+		} else {
+			won, updateErr = task.UpdateWithStatus(snap.Status)
+		}
 		if updateErr != nil {
 			common.SysLog(common.LogText("UpdateSunoTask task error: %s", updateErr.Error()))
 			continue
@@ -498,22 +526,9 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
-		var failedIDs []int64
-		for _, upstreamID := range taskIds {
-			if t, ok := taskM[upstreamID]; ok {
-				failedIDs = append(failedIDs, t.ID)
-			}
-		}
-		errUpdate := model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": "Failed to get the channel information. Please contact the administrator",
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
+		errUpdate := failTasksWithoutChannel(ctx, bulkFailedTasks(taskIds, taskM), "Failed to get the channel information. Please contact the administrator")
 		if errUpdate != nil {
 			common.SysLog(common.LogText("UpdateVideoTask error: %v", errUpdate))
-		} else {
-			reportFailedTasks(bulkFailedTasks(taskIds, taskM), "Failed to get the channel information. Please contact the administrator")
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
@@ -680,7 +695,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
-		won, err := task.UpdateWithStatus(snap.Status)
+		won, err := commitTaskTerminal(ctx, task, snap.Status, adaptor, taskResult, true)
 		if err != nil {
 			logger.LogError(ctx, common.LogText("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
 			shouldFinalizeBilling = false
@@ -707,11 +722,52 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 // finalizeTerminalTask 终态统一收尾（状态 CAS 赢家调用，恰好一次）：采样 + 结算 + 失败兜底退款。
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	perfmetrics.RecordTaskResult(task, taskResult)
-	billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
-	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
-		RefundTaskQuota(ctx, task, task.FailReason)
+	if task.PrivateData.BudgetReservationId == 0 {
+		settled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+		if !settled && task.Status == model.TaskStatusFailure && task.Quota != 0 {
+			RefundTaskQuota(ctx, task, task.FailReason)
+		}
 	}
 	reportFinalTask(task)
+}
+
+func commitTaskTerminal(ctx context.Context, task *model.Task, previous model.TaskStatus, adaptor TaskPollingAdaptor, result *relaycommon.TaskInfo, refundFailure bool) (bool, error) {
+	if task.PrivateData.BudgetReservationId == 0 {
+		return task.UpdateWithStatus(previous)
+	}
+	actual := task.Quota
+	var reason *common.Message
+	var clamp *common.QuotaClamp
+	settled := false
+	if result != nil && adaptor != nil {
+		settled = resolveTaskCompletionBilling(ctx, adaptor, task, result, func(quota int, why *common.Message, saturation *common.QuotaClamp) {
+			actual, reason, clamp = quota, why, saturation
+		})
+	}
+	refund := !settled && refundFailure && task.Status == model.TaskStatusFailure
+	if refund {
+		actual = 0
+	}
+	subscriptionID := 0
+	if taskIsSubscription(task) {
+		subscriptionID = task.PrivateData.SubscriptionId
+	}
+	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+	delta, won, err := model.CommitTaskBudgetTerminalTransition(persist, task, previous, actual, subscriptionID, refund)
+	if err != nil || !won {
+		return won, err
+	}
+	if err := model.ApplyQueuedChannelBudgetSettlement(persist, task.PrivateData.BudgetReservationId); err != nil {
+		logger.LogWarn(ctx, common.LogText("queued channel budget settlement for task %s: %s", task.TaskID, err.Error()))
+	}
+	if refund && delta != 0 {
+		recordTaskQuotaRefund(ctx, task, -delta, task.FailReason)
+	} else if reason != nil {
+		recordTaskQuotaAdjustment(ctx, task, task.Quota, actual, delta, reason, clamp)
+	}
+	task.Quota = actual
+	return true, nil
 }
 
 // bulkFailedTasks are the tasks of upstream ids a bulk update failed.
@@ -770,8 +826,14 @@ func truncateBase64(s string) string {
 // 返回 true 表示用量结算路径已接管最终计费；失败任务仅在返回 false 时补做全额退款。
 // 优先级：1. tiered snapshot → 2. adaptor 调整 → 3. token 重算。
 //
-// 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
+// 表达式求值失败时保留预扣额度，由调用方关闭该任务的渠道预算。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	return resolveTaskCompletionBilling(ctx, adaptor, task, taskResult, func(quota int, reason *common.Message, clamp *common.QuotaClamp) {
+		RecalculateTaskQuota(ctx, task, quota, reason, clamp)
+	})
+}
+
+func resolveTaskCompletionBilling(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo, apply func(int, *common.Message, *common.QuotaClamp)) bool {
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.TieredSnapshot != nil {
 		// 用量表达式结算只适用于成功任务；失败任务由调用方全额退款。
 		if task.Status == model.TaskStatusFailure {
@@ -787,7 +849,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		}
 		bc.TieredSnapshot.UsageFacts = usageFacts
 		bc.TieredSnapshot.EstimatedTier = result.MatchedTier
-		RecalculateTaskQuota(ctx, task, result.ActualQuotaAfterGroup, common.NewMessage("Settled by the task usage expression"), result.Clamp)
+		apply(result.ActualQuotaAfterGroup, common.NewMessage("Settled by the task usage expression"), result.Clamp)
 		return true
 	}
 	// 按次计费的成功任务保持预扣；失败任务由调用方全额退款。
@@ -797,7 +859,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	}
 	// 优先让 adaptor 决定最终额度。
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, common.NewMessage("Adjusted by the channel adaptor"))
+		apply(actualQuota, common.NewMessage("Adjusted by the channel adaptor"), nil)
 		return true
 	}
 	// 回退到 token 重算。
@@ -805,8 +867,9 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	if tokens == 0 && taskResult.CompletionTokens > 0 {
 		tokens = taskResult.CompletionTokens
 	}
-	if tokens > 0 {
-		return RecalculateTaskQuotaByTokens(ctx, task, tokens)
+	if quota, reason, clamp := taskQuotaFromTokens(task, tokens); reason != nil {
+		apply(quota, reason, clamp)
+		return true
 	}
 	return false
 }
@@ -903,7 +966,7 @@ func failTaskFromPoll(ctx context.Context, adaptor TaskPollingAdaptor, task *mod
 		task.FinishTime = now
 	}
 	task.FailReason = reason
-	won, err := task.UpdateWithStatus(fromStatus)
+	won, err := commitTaskTerminal(ctx, task, fromStatus, adaptor, relaycommon.FailTaskInfo(reason), true)
 	if err != nil {
 		return err
 	}

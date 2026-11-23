@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -125,9 +126,65 @@ func ensureLogRequestId(log *Log) {
 	}
 }
 
+var errRequestLogWrite = errors.New("request log write failed")
+
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
 	return LOG_DB.Create(log).Error
+}
+
+// createRequestLog keeps the body out of log parameters and lists. Diagnostic
+// failure must not prevent the ordinary consume/error log from being written.
+func createRequestLog(c *gin.Context, log *Log, other *LogOther) error {
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = context.WithoutCancel(c.Request.Context())
+	}
+	return writeRequestLog(ctx, log, other, common.RequestContent(c))
+}
+
+// writeRequestLog adds the diagnostic node/content metadata and persists the
+// log. The processing node is always the instance executing this operation; an
+// async poll/settle log must never inherit the task submission node.
+func writeRequestLog(ctx context.Context, log *Log, other *LogOther, snapshot *common.RequestContentSnapshot) error {
+	if other == nil {
+		other = NewLogOther()
+	} else {
+		// The relay also uses Other for plugin/report metadata. Do not add
+		// internal detail links to that caller-owned value.
+		copy := *other
+		copy.adminInfo = copyLogOtherMap(other.adminInfo)
+		other = &copy
+	}
+	other.SetAdmin("node_name", common.NodeName)
+	ensureLogRequestId(log)
+	if snapshot != nil && (snapshot.UserID != log.UserId || snapshot.RequestID != log.RequestId) {
+		snapshot = nil
+	}
+	return WithLogRequestDetail(ctx, snapshot, func(logDB *gorm.DB, detailErr error) error {
+		if snapshot != nil {
+			if snapshot.SubmitNodeName != "" {
+				other.SetAdmin("submit_node_name", snapshot.SubmitNodeName)
+			}
+			metadata := requestContentLogLink{RequestContentMetadata: common.RequestContentMetadata{
+				Status: snapshot.Status, CapturedBytes: snapshot.CapturedBytes, Truncated: snapshot.Truncated,
+			}}
+			switch {
+			case detailErr != nil:
+				metadata.Status = common.RequestContentStatusStorageFail
+			case requestContentShouldExist(snapshot):
+				metadata.Ref = snapshot.Ref
+				metadata.LinkID, _ = logDB.Statement.Context.Value(requestContentLinkKey{}).(string)
+			}
+			other.SetAdmin("request_content", metadata)
+		}
+		log.Other = other.JSONString()
+		// Do not echo a parameterized driver's SQL or payload in process logs.
+		if err := logDB.Create(log).Error; err != nil {
+			return errRequestLogWrite
+		}
+		return nil
+	})
 }
 
 func clickHouseLogOrder(prefix string) string {
@@ -344,7 +401,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := createLog(log)
+	err := createRequestLog(c, log, other)
 	if err != nil {
 		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
 	}
@@ -413,7 +470,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
-	err := createLog(log)
+	err := createRequestLog(c, log, other)
 	if err != nil {
 		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
 	}
@@ -450,16 +507,18 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   []*common.Message
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     *LogOther
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	UserId         int
+	LogType        int
+	Content        []*common.Message
+	ChannelId      int
+	ModelName      string
+	Quota          int
+	TokenId        int
+	Group          string
+	Other          *LogOther
+	NodeName       string // 任务发起节点；为空时回退当前节点
+	RequestID      string
+	RequestContent *TaskRequestContent
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -487,9 +546,14 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		ChannelId: params.ChannelId,
 		TokenId:   params.TokenId,
 		Group:     params.Group,
+		RequestId: params.RequestID,
 		Other:     other.JSONString(),
 	}
-	err := createLog(log)
+	snapshot := params.RequestContent.Snapshot(params.UserId)
+	if log.RequestId == "" && snapshot != nil {
+		log.RequestId = snapshot.RequestID
+	}
+	err := writeRequestLog(context.Background(), log, other, snapshot)
 	if err != nil {
 		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
 	}
@@ -910,6 +974,7 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		).Error; err != nil {
 			return 0, err
 		}
+		reclaimRequestContentAfterLogDeletion(ctx, targetTimestamp)
 		return total, nil
 	}
 
@@ -917,5 +982,18 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 	if nil != result.Error {
 		return 0, result.Error
 	}
+	if result.RowsAffected > 0 {
+		reclaimRequestContentAfterLogDeletion(ctx, targetTimestamp)
+	}
 	return result.RowsAffected, nil
+}
+
+func reclaimRequestContentAfterLogDeletion(ctx context.Context, cutoff int64) {
+	// Log deletion already committed. Budget one bounded pass for diagnostics;
+	// periodic cleanup handles remaining candidates and independent log TTLs.
+	ctx, cancel := context.WithTimeout(ctx, requestContentReadTimeout)
+	defer cancel()
+	if err := CleanupLogRequestDetails(ctx, cutoff, requestContentCleanupBatch); err != nil {
+		common.SysError(common.LogText("failed to reclaim original request content: %s", err.Error()))
+	}
 }

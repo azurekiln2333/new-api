@@ -13,10 +13,14 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func TestClassifyRelayOutcome(t *testing.T) {
@@ -253,6 +257,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 				}
 			}
 			t.Setenv("SQL_DSN", dsn)
+			t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 			oldDB, oldPath, oldMaster, oldRedis := model.DB, common.SQLitePath, common.IsMasterNode, common.RedisEnabled
 			oldType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 			common.SQLitePath, common.IsMasterNode, common.RedisEnabled = filepath.Join(t.TempDir(), "perf.db"), false, false
@@ -262,6 +267,23 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 				common.SetDatabaseTypes(oldType, oldLogType)
 				hotBuckets.Clear()
 			})
+			// Seed the schema required by follower startup before opening it.
+			var driver gorm.Dialector
+			switch dialect.name {
+			case "mysql":
+				driver = mysql.Open(dsn)
+			case "postgres":
+				driver = postgres.Open(dsn)
+			default:
+				driver = sqlite.Open(common.SQLitePath)
+			}
+			seed, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			seedSQL, err := seed.DB()
+			require.NoError(t, err)
+			seedErr := seed.AutoMigrate(&model.Option{})
+			require.NoError(t, seedSQL.Close())
+			require.NoError(t, seedErr)
 			require.NoError(t, model.InitDB())
 			db := model.DB
 			sqlDB, err := db.DB()

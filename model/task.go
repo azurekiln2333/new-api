@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -121,7 +122,18 @@ type TaskPrivateData struct {
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
+	RequestContent *TaskRequestContent `json:"request_content,omitempty"`
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	// BudgetReservationId and BudgetSettlementRevision link the durable task to
+	// its local channel/allocation budget reservation. Task settlement and
+	// refund adjust that reservation idempotently and never reroute accounting
+	// through the current key order. AllocationId/AllocationRevision keep the
+	// stable allocation identity the attempt used.
+	BudgetReservationId      int64 `json:"budget_reservation_id,omitempty"`
+	BudgetSettlementRevision int64 `json:"budget_settlement_revision,omitempty"`
+	BudgetPending            bool  `json:"budget_pending,omitempty"`
+	AllocationId             int64 `json:"allocation_id,omitempty"`
+	AllocationRevision       int64 `json:"allocation_revision,omitempty"`
 	// ResponsesBackground records that the openai_responses create request
 	// asked for background:true. Every task is durable and survives client
 	// disconnect regardless; this only echoes the protocol-level request
@@ -143,6 +155,28 @@ type TaskPrivateData struct {
 	// RequestPlugins is set when a request plugin instance may report the
 	// task: the task reports once, at its final state.
 	RequestPlugins *TaskRequestPlugins `json:"request_plugins,omitempty"`
+}
+
+// TaskRequestContent persists only submission provenance and a detail reference;
+// prompts remain solely in the configured log store.
+type TaskRequestContent struct {
+	Ref            string `json:"ref,omitempty"`
+	RequestID      string `json:"request_id"`
+	SubmitNodeName string `json:"submit_node_name"`
+	Status         string `json:"status"`
+	CapturedBytes  int    `json:"captured_bytes"`
+	Truncated      bool   `json:"truncated"`
+}
+
+func (p *TaskRequestContent) Snapshot(userID int) *common.RequestContentSnapshot {
+	if p == nil {
+		return nil
+	}
+	return &common.RequestContentSnapshot{
+		Ref: p.Ref, RequestID: p.RequestID, UserID: userID,
+		SubmitNodeName: p.SubmitNodeName, Status: p.Status,
+		CapturedBytes: p.CapturedBytes, Truncated: p.Truncated,
+	}
 }
 
 // TaskRequestPlugins is what the report of a task needs from its
@@ -240,7 +274,8 @@ func (p *TaskPrivateData) Scan(val any) error {
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if p.Key == "" && p.UpstreamTaskID == "" && p.ResultURL == "" &&
 		p.Execution == nil && p.BillingSource == "" && p.SubscriptionId == 0 &&
-		p.TokenId == 0 && p.NodeName == "" && p.BillingContext == nil &&
+		p.TokenId == 0 && p.NodeName == "" && p.RequestContent == nil && p.BillingContext == nil &&
+		p.BudgetReservationId == 0 && !p.BudgetPending && p.AllocationId == 0 &&
 		!p.ResponsesBackground && len(p.PluginState) == 0 && p.PollFailures == 0 &&
 		!p.ResultDiscarded && p.RequestPlugins == nil {
 		return nil, nil
@@ -524,6 +559,30 @@ func (Task *Task) Insert() error {
 // while the in-memory task keeps its values for presentation.
 func (Task *Task) InsertWithContext(ctx context.Context, omitColumns ...string) error {
 	tx := DB.WithContext(ctx)
+	if Task.PrivateData.BudgetReservationId > 0 {
+		return tx.Transaction(func(tx *gorm.DB) error {
+			return Task.insertTx(tx, omitColumns...)
+		})
+	}
+	return Task.insertTx(tx, omitColumns...)
+}
+
+func (Task *Task) insertTx(tx *gorm.DB, omitColumns ...string) error {
+	if id := Task.PrivateData.BudgetReservationId; id > 0 {
+		var hold ChannelBudgetReservation
+		if err := lockForUpdate(tx).First(&hold, id).Error; err != nil {
+			return err
+		}
+		if Task.TaskID == "" || hold.ChannelId != Task.ChannelId || hold.UserId != Task.UserId ||
+			hold.Phase != BudgetReservationPhasePending || (hold.TaskId != "" && hold.TaskId != Task.TaskID) {
+			return ErrBudgetAttemptConflict
+		}
+		if err := tx.Model(&hold).Updates(map[string]any{
+			"task_id": Task.TaskID, "expires_at": 0, "updated_at": common.GetTimestamp(),
+		}).Error; err != nil {
+			return err
+		}
+	}
 	if len(omitColumns) > 0 {
 		tx = tx.Omit(omitColumns...)
 	}

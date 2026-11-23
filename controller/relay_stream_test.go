@@ -40,8 +40,25 @@ func (transport relayCancellationTransport) RoundTrip(request *http.Request) (*h
 	return transport(request)
 }
 
+// useInactiveLedgerDatabase gives a stream fixture a real database whose
+// channel-budget ledger is inactive, which is what the fail-closed activation
+// lookup requires. Nothing here enables or activates the ledger.
+func useInactiveLedgerDatabase(t *testing.T) {
+	t.Helper()
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+	})
+	database, dialect := openTaskDialectDatabase(t, &model.Option{})
+	model.DB, model.LOG_DB = database, database
+	common.SetDatabaseTypes(dialect, dialect)
+}
+
 func TestProviderRequestsInheritAttemptCancellation(t *testing.T) {
 	service.InitHttpClient()
+	useInactiveLedgerDatabase(t)
 	for _, tc := range []struct {
 		name        string
 		adaptor     channel.Adaptor
@@ -285,6 +302,7 @@ func TestRelayKeepAliveAcrossUpstreamRetries(t *testing.T) {
 		settings.PingIntervalEnabled, settings.PingIntervalSeconds = previousEnabled, previousInterval
 	})
 	service.InitHttpClient()
+	useInactiveLedgerDatabase(t)
 	var attempts atomic.Int32
 	retryStarted, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
@@ -377,6 +395,7 @@ func TestStreamKeepAlivePreservesFastHTTPFailures(t *testing.T) {
 		settings.PingIntervalEnabled, settings.PingIntervalSeconds = previousEnabled, previousInterval
 	})
 	service.InitHttpClient()
+	useInactiveLedgerDatabase(t)
 	for _, status := range []int{http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusTooManyRequests} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

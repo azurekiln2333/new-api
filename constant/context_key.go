@@ -39,6 +39,13 @@ const (
 	ContextKeyChannelIsMultiKey        ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
+	// ContextKeyChannelKeyEntryID is the stable allocation ID of the key that
+	// serves this attempt (see model.ChannelKeyEntry). It is never a key-list
+	// index or credential text; accounting and asynchronous write-back use it.
+	ContextKeyChannelKeyEntryID ContextKey = "channel_key_entry_id"
+	// ContextKeyChannelAllocation carries the selected model.ChannelAllocation
+	// for the attempt, including the allocation configuration revision.
+	ContextKeyChannelAllocation ContextKey = "channel_allocation"
 	// ContextKeyProviderPlugin holds the jsplugin.PinnedPlugin whose relay
 	// routes serve this request on a task plugin channel.
 	ContextKeyProviderPlugin ContextKey = "provider_plugin"

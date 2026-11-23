@@ -70,6 +70,15 @@ type Channel struct {
 
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
+	// KeyEntryIDs holds the stable allocation ID per key position, and
+	// KeyEntryRevisions the allocation's configuration revision. The
+	// authoritative rows live in channel_key_entries; this is the loaded
+	// projection (see channel_key_entry.go). KeyEntryIDStrings is the same list
+	// as decimal strings for JSON, because a JavaScript client cannot hold a
+	// 64-bit integer exactly.
+	KeyEntryIDs       []int64  `json:"-" gorm:"-"`
+	KeyEntryRevisions []int64  `json:"-" gorm:"-"`
+	KeyEntryIDStrings []string `json:"key_entry_ids,omitempty" gorm:"-"`
 	// BalanceDetail is the last balance query in channel responses; see
 	// GetBalanceDetail.
 	BalanceDetail *ChannelBalanceDetail `json:"balance_detail,omitempty" gorm:"-"`
@@ -86,12 +95,17 @@ type ChannelInfo struct {
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
 	// 每个key可用的模型，key index -> models；缺失或空表示该key可用渠道全部模型
-	MultiKeyModels map[int][]string `json:"multi_key_models,omitempty"`
+	MultiKeyModels     map[int][]string `json:"multi_key_models,omitempty"`
+	MultiKeyScopeModes map[int]string   `json:"multi_key_scope_modes,omitempty"`
 	// 独占某个key的用户，key index -> user id；缺失或0表示公共key
 	MultiKeyUsers map[int]int `json:"multi_key_users,omitempty"`
 	// ModelUnavailable records upstream refusals that named a model as
 	// unavailable to one credential. It never changes Models or key status.
 	ModelUnavailable []ChannelModelUnavailability `json:"model_unavailable,omitempty"`
+	// KeyEntryRevision changes whenever an allocation of the channel is added,
+	// removed, reordered, replaced or rebind, so a client or an internal task
+	// holding an older snapshot can detect that its allocation IDs are stale.
+	KeyEntryRevision int64 `json:"key_entry_revision,omitempty"`
 }
 
 // ChannelModelUnavailability is one observation that a credential of the
@@ -254,12 +268,30 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 // userId > 0 is a forwarded request: keys bound to that user win, and when they
 // cannot serve the request only public keys are eligible. userId <= 0 is an
 // administrative caller (channel test), where every key stays eligible.
-func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (string, int, *types.NewAPIError) {
+func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int, excludedEntryIDs ...int64) (string, int, *types.NewAPIError) {
+	var budgetAllowed map[int64]bool
+	if ChannelBudgetsEnabled() && userId > 0 {
+		var err error
+		budgetAllowed, err = ChannelBudgetAllows(context.Background(), channel.Id, channel.KeyEntryIDs)
+		if err != nil {
+			return "", 0, types.NewError(errors.New("channel budget is unavailable, retry the request"), types.ErrorCodeUpdateDataError)
+		}
+	}
+	entryEligible := func(index int) bool {
+		id := channel.ChannelKeyEntryID(index)
+		if slices.Contains(excludedEntryIDs, id) {
+			return false
+		}
+		return budgetAllowed == nil || id > 0 && budgetAllowed[id]
+	}
 	// If not in multi-key mode, return the original key string directly. A
 	// single credential recorded as unable to serve the model is refused here
 	// too, so a pin or queued candidate recheck that skipped selection cannot
 	// forward a known-unavailable combination.
 	if !channel.ChannelInfo.IsMultiKey {
+		if !entryEligible(0) {
+			return "", 0, types.NewError(errors.New("no enabled key serves this request"), types.ErrorCodeChannelKeyScopeUnsatisfied)
+		}
 		if len(channel.ChannelInfo.ModelUnavailable) > 0 {
 			if upstreamModel, ok := channel.RoutingUpstreamModelName(modelName); ok && channel.keyModelUnavailable(0, upstreamModel) {
 				return "", 0, types.NewError(errors.New("no enabled key serves this request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable))
@@ -310,7 +342,7 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int) (stri
 			continue
 		}
 		enabledIdx = append(enabledIdx, i)
-		if !channel.KeyServesModel(i, modelName) {
+		if !entryEligible(i) || !channel.KeyServesModel(i, modelName) {
 			continue
 		}
 		if channel.keyModelUnavailable(i, upstreamModel) {
@@ -397,6 +429,12 @@ func (channel *Channel) KeyServesModel(idx int, modelName string) bool {
 		return true
 	}
 	scope := channel.ChannelInfo.MultiKeyModels[idx]
+	if mode := channel.ChannelInfo.MultiKeyScopeModes[idx]; mode != "" {
+		if mode == "allowlist" {
+			return slices.Contains(scope, modelName)
+		}
+		return mode == "all"
+	}
 	return len(scope) == 0 || slices.Contains(scope, modelName)
 }
 
@@ -671,8 +709,7 @@ func (channel *Channel) modelsServedByKeys(keyIndexes []int, models []string) []
 	served := make([]string, 0, len(models))
 	for _, model := range models {
 		for _, idx := range keyIndexes {
-			scope := channel.ChannelInfo.MultiKeyModels[idx]
-			if len(scope) == 0 || slices.Contains(scope, model) {
+			if channel.KeyServesModel(idx, model) {
 				served = append(served, model)
 				break
 			}
@@ -707,9 +744,20 @@ func (channel *Channel) UserBoundModels(userId int) []string {
 		return nil
 	}
 	keys := channel.GetKeys()
+	var allowed map[int64]bool
+	if ChannelBudgetsEnabled() {
+		var err error
+		allowed, err = ChannelBudgetAllows(context.Background(), channel.Id, channel.KeyEntryIDs)
+		if err != nil {
+			return nil
+		}
+	}
 	statusList := channel.ChannelInfo.MultiKeyStatusList
 	bound := make([]int, 0, len(keys))
 	for i := range keys {
+		if allowed != nil && !allowed[channel.ChannelKeyEntryID(i)] {
+			continue
+		}
 		if channel.ChannelInfo.MultiKeyUsers[i] != userId {
 			continue
 		}
@@ -816,6 +864,13 @@ const channelOtherInfoAttempts = 5
 // one node, the channel's key lock also keeps the locked updates of this
 // process out.
 func UpdateChannelOtherInfo(channelID int, update func(channel *Channel) (map[string]any, error)) (written bool, err error) {
+	var allocationMarker Channel
+	if err := DB.Select("id", "channel_info").First(&allocationMarker, channelID).Error; err != nil {
+		return false, err
+	}
+	if allocationMarker.ChannelInfo.KeyEntryRevision > 0 {
+		return UpdateChannelOtherInfoLocked(context.Background(), channelID, update)
+	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		lock := sqliteChannelKeyLock(channelID)
 		lock.Lock()
@@ -890,9 +945,24 @@ func UpdateChannelOtherInfoLocked(ctx context.Context, channelID int, update fun
 		if err := lockForUpdate(tx).First(&channel, "id = ?", channelID).Error; err != nil {
 			return err
 		}
+		beforeInfo, err := common.Marshal(channel.ChannelInfo)
+		if err != nil {
+			return err
+		}
 		updates, err := update(&channel)
 		if err != nil || updates == nil {
 			return err
+		}
+		if channel.ChannelInfo.KeyEntryRevision > 0 && channelInfoChanged(beforeInfo, channel.ChannelInfo) {
+			entries, err := loadActiveChannelKeyEntries(tx, channelID)
+			if err != nil {
+				return err
+			}
+			syncKeyEntryAttributesFromProjection(entries, &channel)
+			if err := persistKeyEntries(tx, &channel, entries, nil); err != nil {
+				return err
+			}
+			updates["channel_info"] = channel.ChannelInfo
 		}
 		updates["other_info"] = channel.OtherInfo
 		if err := tx.Model(&Channel{}).Where("id = ?", channelID).Updates(updates).Error; err != nil {
@@ -1004,7 +1074,17 @@ func BatchInsertChannels(channels []Channel) error {
 			tx.Rollback()
 			return err
 		}
-		for _, channel_ := range chunk {
+		for i := range chunk {
+			channel_ := &chunk[i]
+			channel_.ChannelInfo.KeyEntryRevision = 0
+			if err := CreateChannelKeyEntries(tx, channel_); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if err := tx.Model(&Channel{}).Where("id = ?", channel_.Id).UpdateColumn("channel_info", channel_.ChannelInfo).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
 			if err := channel_.AddAbilities(tx); err != nil {
 				tx.Rollback()
 				return err
@@ -1029,6 +1109,12 @@ func BatchDeleteChannels(ids []int) (int64, error) {
 	}
 	var deletedCount int64
 	for _, chunk := range lo.Chunk(ids, 200) {
+		for _, id := range chunk {
+			if err := RetireChannelKeyEntries(tx, id); err != nil {
+				tx.Rollback()
+				return 0, err
+			}
+		}
 		result := tx.Where("id in (?)", chunk).Delete(&Channel{})
 		if result.Error != nil {
 			tx.Rollback()
@@ -1087,13 +1173,25 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	var err error
-	err = DB.Create(channel).Error
-	if err != nil {
-		return err
+	if ChannelHasDuplicateCredentials(channel) && !ChannelBudgetsEnabled() {
+		return ErrChannelAllocationsInactive
 	}
-	defer BumpSyncTopic(SyncTopicChannels)
-	err = channel.AddAbilities(nil)
+	err := DB.Session(&gorm.Session{Logger: gormlogger.Discard}).Transaction(func(tx *gorm.DB) error {
+		channel.ChannelInfo.KeyEntryRevision = 0
+		if err := tx.Create(channel).Error; err != nil {
+			return err
+		}
+		if err := CreateChannelKeyEntries(tx, channel); err != nil {
+			return err
+		}
+		if err := tx.Model(&Channel{}).Where("id = ?", channel.Id).UpdateColumn("channel_info", channel.ChannelInfo).Error; err != nil {
+			return err
+		}
+		return channel.AddAbilities(tx)
+	})
+	if err == nil {
+		BumpSyncTopic(SyncTopicChannels)
+	}
 	return err
 }
 
@@ -1221,13 +1319,20 @@ func (channel *Channel) UpdateBalance(balance float64) {
 }
 
 func (channel *Channel) Delete() error {
-	var err error
-	err = DB.Delete(channel).Error
-	if err != nil {
-		return err
+	// Deletion stays idempotent when another administrator already removed
+	// the row. Retire any surviving allocations and clean abilities as before.
+	err := channelBudgetTransaction(context.Background(), channel.Id, true, func(tx *gorm.DB) error {
+		if err := RetireChannelKeyEntries(tx, channel.Id); err != nil {
+			return err
+		}
+		if err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&Channel{}, channel.Id).Error
+	})
+	if err == nil {
+		BumpSyncTopic(SyncTopicChannels)
 	}
-	defer BumpSyncTopic(SyncTopicChannels)
-	err = channel.DeleteAbilities()
 	return err
 }
 
@@ -1408,6 +1513,31 @@ func UpdateChannelStatusChecked(ctx context.Context, channelID int, usingKey str
 }
 
 func updateChannelStatus(ctx context.Context, channelId int, usingKey string, status int, reason string, check func(*Channel) bool) (changed bool) {
+	if usingKey != "" {
+		current, err := GetChannelById(channelId, true)
+		if err != nil {
+			return false
+		}
+		if current.ChannelInfo.KeyEntryRevision > 0 {
+			matches := 0
+			position := -1
+			for i, key := range allocationKeyList(current) {
+				if key == usingKey {
+					matches++
+					position = i
+				}
+			}
+			// Legacy text-only status callers cannot disambiguate duplicate allocations.
+			if matches != 1 {
+				return false
+			}
+			selected, ok := current.ChannelAllocationByPosition(position)
+			if !ok {
+				return false
+			}
+			return UpdateChannelAllocationStatusChecked(ctx, selected, status, reason, check)
+		}
+	}
 	// A status set by hand names no key and is never an automatic disable; it
 	// reaches every node within seconds. An automatic change, a disable after a
 	// failure or the re-enable after a test of the key it used, is left to the

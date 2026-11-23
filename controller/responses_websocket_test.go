@@ -30,10 +30,13 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +44,7 @@ var responsesWSTestUserSequence atomic.Int64
 
 func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	t.Helper()
+	require.NoError(t, i18n.Init())
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
 	previousType := common.MainDatabaseType()
@@ -56,10 +60,29 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	previousGroups := setting.ModelRequestRateLimitGroup
 	setting.ModelRequestRateLimitGroup = nil
 	setting.ModelRequestRateLimitMutex.Unlock()
-	t.Setenv("SQL_DSN", os.Getenv("TEST_RESPONSES_SQL_DSN"))
+	dsn := os.Getenv("TEST_RESPONSES_SQL_DSN")
+	t.Setenv("SQL_DSN", dsn)
 	t.Setenv("LOG_SQL_DSN", os.Getenv("TEST_RESPONSES_LOG_SQL_DSN"))
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled = false, false, false
 	common.SQLitePath = filepath.Join(t.TempDir(), "responses.db")
+	// A follower reads the durable activation marker from an existing schema.
+	var dialect gorm.Dialector
+	switch {
+	case dsn == "" || strings.HasPrefix(dsn, "local"):
+		dialect = sqlite.Open(common.SQLitePath)
+	case strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://"):
+		dialect = postgres.Open(dsn)
+	default:
+		dialect = mysql.Open(dsn)
+	}
+	seed, err := gorm.Open(dialect, &gorm.Config{})
+	require.NoError(t, err)
+	seedSQL, err := seed.DB()
+	require.NoError(t, err)
+	seedErr := seed.AutoMigrate(&model.Option{})
+	require.NoError(t, seedSQL.Close())
+	require.NoError(t, seedErr)
 	require.NoError(t, model.InitDB())
 	db := model.DB
 	sqlDB, err := db.DB()
@@ -290,7 +313,9 @@ type responsesWSBillingTest struct {
 
 func (fixture *responsesWSBillingTest) closeAndWait(t *testing.T) {
 	t.Helper()
-	_ = fixture.client.Close()
+	if fixture.client != nil {
+		_ = fixture.client.Close()
+	}
 	select {
 	case <-fixture.done:
 	case <-time.After(3 * time.Second):

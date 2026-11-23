@@ -32,6 +32,18 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 	disableChannel(context.Background(), channelError, reason, nil)
 }
 
+// DisableChannelAllocation preserves the selected allocation identity across
+// asynchronous failure handling, even when equal credentials are reordered.
+func DisableChannelAllocation(channelError types.ChannelError, reason string, selected model.ChannelAllocation) {
+	if selected.ChannelID != channelError.ChannelId || !channelError.AutoBan {
+		return
+	}
+	if !model.UpdateChannelAllocationStatusChecked(context.Background(), selected, common.ChannelStatusAutoDisabled, reason, func(current *model.Channel) bool { return current.GetAutoBan() }) {
+		return
+	}
+	CloseActiveWebSocketsForChannel(channelError.ChannelId, ChannelDisabledCloseReason)
+}
+
 // DisableChannelChecked preserves automatic-disable side effects, but checks
 // the current AutoBan and result source atomically with the status update.
 func DisableChannelChecked(ctx context.Context, channelError types.ChannelError, reason string, check func(*model.Channel) bool) {

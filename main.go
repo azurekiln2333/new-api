@@ -411,6 +411,8 @@ func InitResources() error {
 	}
 
 	service.StartAuthArtifactCleanup()
+	service.StartLogRequestContentCleanup()
+	go service.RunChannelBudgetReconciliation(context.Background())
 
 	return nil
 }

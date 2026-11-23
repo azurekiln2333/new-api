@@ -1,0 +1,6 @@
+{"file":"web/AGENTS.md","reason":"Mandatory frontend patterns and validation"}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend conventions"}
+{"file":".trellis/tasks/11-21-channel-key-allocation-log-diagnostics/dispatch.md","reason":"Approved four-worker scope and ownership"}
+{"file":".trellis/tasks/11-21-key-allocation-quotas/design.md","reason":"Allocation identities, limits, reset and dedup contracts"}
+{"file":".trellis/tasks/11-21-channel-manual-balance/design.md","reason":"Manual local quota semantics"}
+{"file":".trellis/tasks/11-21-request-log-body-node/design.md","reason":"Request content security, metadata, endpoint and node provenance"}

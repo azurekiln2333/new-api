@@ -112,9 +112,14 @@ func TestUpdateChannelLocked(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, failure)
 
+	// The management snapshot predates a credential change. The mutation
+	// validates it inside the transaction; callbacks never use global DB while
+	// the channel row/SQLite write connection is held.
+	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("key", "edited").Error)
 	_, err = UpdateChannelLocked(channel.Id, func(stored *Channel) error {
-		// A key write that skipped the lock lands while the plugin runs.
-		require.NoError(t, DB.Model(&Channel{}).Where("id = ?", stored.Id).Update("key", "edited").Error)
+		if stored.Key != "second" {
+			return ErrChannelKeyChanged
+		}
 		stored.Key = "third"
 		return nil
 	})
@@ -123,9 +128,9 @@ func TestUpdateChannelLocked(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "edited", current.Key, "a lost race never overwrites the newer key")
 
+	// A newer cursor must survive a status-only mutation.
+	require.NoError(t, DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("channel_info", ChannelInfo{MultiKeyPollingIndex: 3}).Error)
 	_, err = UpdateChannelLocked(channel.Id, func(stored *Channel) error {
-		// The polling cursor moves while the status changes.
-		require.NoError(t, DB.Model(&Channel{}).Where("id = ?", stored.Id).Update("channel_info", ChannelInfo{MultiKeyPollingIndex: 3}).Error)
 		stored.Status = common.ChannelStatusAutoDisabled
 		return nil
 	})
@@ -268,7 +273,7 @@ func useScheduledChannelDatabase(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, anchor.Close()) })
 	}
-	tables := []any{&Channel{}, &Ability{}, &SystemTask{}}
+	tables := []any{&Channel{}, &Ability{}, &SystemTask{}, &Option{}}
 	require.NoError(t, db.AutoMigrate(tables...))
 	previousDB, previousType, previousMemory := DB, common.MainDatabaseType(), common.MemoryCacheEnabled
 	DB = db

@@ -245,6 +245,7 @@ func TestApplyGoalTurnConstraintFromRequestReadsTheReusableBody(t *testing.T) {
 }
 
 func TestGoalTurnFilterMatchesChannelSetting(t *testing.T) {
+	setupChannelSelectAutoGroupsTest(t)
 	setting := func(value string) *string { return &value }
 	denied := &model.Channel{Setting: setting(`{"deny_goal":true}`)}
 	allowed := &model.Channel{Setting: setting(`{"deny_goal":false}`)}

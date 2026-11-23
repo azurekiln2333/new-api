@@ -890,8 +890,16 @@ func TestChannelDiagnosticReadmissionUsesCurrentCapAndPolicy(t *testing.T) {
 				done <- testChannel(ctx, selected, userID, "gpt-4.1", "", false, -1)
 			}()
 
+			// The credential must change through the authoritative write path: a raw
+			// channels.key update would leave the allocation rows (and the
+			// projection read from them) on the old credential.
+			_, err := model.UpdateChannelLocked(selected.Id, func(stored *model.Channel) error {
+				stored.Key = "new-key"
+				return nil
+			})
+			require.NoError(t, err)
 			require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", selected.Id).Updates(map[string]any{
-				"key": "new-key", "setting": `{"max_concurrent_requests":1,"supported_endpoints":["responses"]}`, "header_override": `{"X-Policy":"new:{api_key}"}`,
+				"setting": `{"max_concurrent_requests":1,"supported_endpoints":["responses"]}`, "header_override": `{"X-Policy":"new:{api_key}"}`,
 			}).Error)
 			first.Release() // one slot under the old cap, none under the new cap
 			var staleLease context.Context
@@ -967,8 +975,15 @@ func TestFingerprintDiagnosticReloadsPolicyBetweenProbes(t *testing.T) {
 	assert.Equal(t, "one:test-key-one", wire.headers.Get("X-Policy"))
 
 	stored := model.DB.Model(&model.Channel{}).Where("id = ?", selected.Id)
+	// Rotation goes through the authoritative path; the setting, header
+	// override, and model list are ordinary fields and keep the direct update.
+	_, err = model.UpdateChannelLocked(selected.Id, func(current *model.Channel) error {
+		current.Key = "test-key-two"
+		return nil
+	})
+	require.NoError(t, err)
 	require.NoError(t, stored.Updates(map[string]any{
-		"key": "test-key-two", "setting": `{"supported_endpoints":["responses"]}`, "header_override": `{"X-Policy":"two:{api_key}"}`,
+		"setting": `{"supported_endpoints":["responses"]}`, "header_override": `{"X-Policy":"two:{api_key}"}`,
 	}).Error)
 	second, err := probe()
 	require.NoError(t, err)

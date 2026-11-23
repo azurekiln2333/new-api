@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -222,6 +223,96 @@ func TestLogExportRules(t *testing.T) {
 		release()
 		assert.Len(t, callLogHandler(t, ExportUserLogs, 1, common.RoleCommonUser, recent), 3)
 	})
+}
+
+func TestLogRequestContentAuthorizationAndLinks(t *testing.T) {
+	admin, _ := setupAccessTokenAudit(t)
+	db := model.DB
+	require.NoError(t, db.AutoMigrate(&model.Token{}))
+	require.NoError(t, model.MigrateLogRequestDetails())
+	root := model.User{Username: "diagnostics-root", Password: "placeholder", Role: common.RoleRootUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "diagnostics-root"}
+	user := model.User{Username: "diagnostics-user", Password: "placeholder", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "diagnostics-user"}
+	require.NoError(t, db.Create(&root).Error)
+	require.NoError(t, db.Create(&user).Error)
+	_, adminJWT := createAccessTokenTestSession(t, admin.Id, "diagnostics-admin-session")
+	_, rootJWT := createAccessTokenTestSession(t, root.Id, "diagnostics-root-session")
+	_, userJWT := createAccessTokenTestSession(t, user.Id, "diagnostics-user-session")
+	logPAT, _ := createScopedAccessToken(t, admin.Id, time.Now().Add(time.Hour).Unix(), "log:read")
+	unscopedPAT, _ := createScopedAccessToken(t, admin.Id, time.Now().Add(time.Hour).Unix(), "usage:read")
+	modelToken := "diagnosticsmodeltoken"
+	require.NoError(t, db.Create(&model.Token{UserId: admin.Id, Key: modelToken, Status: common.TokenStatusEnabled,
+		UnlimitedQuota: true, ExpiredTime: -1}).Error)
+
+	router := gin.New()
+	router.GET("/api/log/request/:ref", middleware.DisableCache(), middleware.AdminAuth(), GetLogRequestContent)
+	snapshot := &common.RequestContentSnapshot{
+		Ref: common.GetUUID(), RequestID: common.NewRequestId(), UserID: user.Id, SubmitNodeName: "hk01",
+		CreatedAt: common.GetTimestamp(), Status: common.RequestContentStatusRecorded,
+		Payload: common.RawMessage(`{"messages":[{"role":"user","content":"private-original-prompt"}]}`),
+	}
+	snapshot.CapturedBytes = len(snapshot.Payload)
+	other := model.NewLogOther()
+	other.SetAdmin("node_name", "us01")
+	other.SetAdmin("submit_node_name", snapshot.SubmitNodeName)
+	other.SetAdmin("request_content", common.RequestContentMetadata{Ref: snapshot.Ref, Status: snapshot.Status})
+	linked := model.Log{UserId: snapshot.UserID, RequestId: snapshot.RequestID,
+		CreatedAt: snapshot.CreatedAt, Type: model.LogTypeError, Other: other.JSONString()}
+	require.NoError(t, model.WithLogRequestDetail(t.Context(), snapshot, func(db *gorm.DB, detailErr error) error {
+		if detailErr != nil {
+			return detailErr
+		}
+		return db.Create(&linked).Error
+	}))
+	path := "/api/log/request/" + snapshot.Ref
+	for _, tc := range []struct {
+		name, credential string
+		status           int
+	}{
+		{"anonymous", "", http.StatusUnauthorized},
+		{"ordinary owner", userJWT, http.StatusForbidden},
+		{"model token", "sk-" + modelToken, http.StatusUnauthorized},
+		{"PAT missing log scope", unscopedPAT, http.StatusForbidden},
+		{"scoped admin PAT", logPAT, http.StatusOK},
+		{"admin session", adminJWT, http.StatusOK},
+		{"root session", rootJWT, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := accessTokenRequest(router, http.MethodGet, path, tc.credential, "", "")
+			require.Equal(t, tc.status, resp.Code)
+			assert.Contains(t, resp.Header().Get("Cache-Control"), "no-store")
+			if tc.status != http.StatusOK {
+				assert.NotContains(t, resp.Body.String(), "private-original-prompt")
+				return
+			}
+			var body struct {
+				Success bool `json:"success"`
+				Data    struct {
+					Ref        string            `json:"ref"`
+					SubmitNode string            `json:"submit_node_name"`
+					Payload    common.RawMessage `json:"payload"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &body))
+			assert.True(t, body.Success)
+			assert.Equal(t, snapshot.Ref, body.Data.Ref)
+			assert.Equal(t, "hk01", body.Data.SubmitNode)
+			assert.JSONEq(t, string(snapshot.Payload), string(body.Data.Payload))
+		})
+	}
+
+	list, _, err := model.GetUserLogs(user.Id, model.LogFilter{}, 0, 5)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.NotContains(t, list[0].Other, snapshot.Ref)
+	assert.NotContains(t, linked.Other, "private-original-prompt")
+	require.NoError(t, db.Model(&linked).UpdateColumn("user_id", admin.Id).Error)
+	for _, ref := range []string{snapshot.Ref, strings.ToUpper(snapshot.Ref), common.GetUUID()} {
+		resp := accessTokenRequest(router, http.MethodGet, "/api/log/request/"+ref, adminJWT, "", "")
+		assert.Equal(t, http.StatusNotFound, resp.Code, "no exact live link or valid ref")
+		assert.Empty(t, resp.Body.String())
+	}
 }
 
 func TestAcquireLogExportLock(t *testing.T) {

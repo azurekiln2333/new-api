@@ -251,9 +251,22 @@ func TestCopyChannelDropsCredentials(t *testing.T) {
 	setupProviderPluginControllerTest(t, "ctl-copy")
 	single := insertPluginChannel(t, "ctl-copy", "https://vendor.example", pluginCredentialLine(t, "ctl-copy", "one"), false)
 	multi := insertPluginChannel(t, "ctl-copy", "https://vendor.example", pluginCredentialLine(t, "ctl-copy", "two")+"\nsk-static", true)
-	multi.ChannelInfo.MultiKeyModels = map[int][]string{1: {"m"}}
-	multi.ChannelInfo.MultiKeyUsers = map[int]int{1: 42}
-	require.NoError(t, model.DB.Model(multi).Update("channel_info", multi.ChannelInfo).Error)
+	// Key scopes live in the authoritative key rows, so the retained static key
+	// gets its scope through the public locked mutation rather than a stale
+	// compatibility JSON document. Its index 0 is the credential the copy drops.
+	updated, err := model.MutateChannelKeyEntries(t.Context(), multi.Id, multi.ChannelInfo.KeyEntryRevision,
+		func(_ *gorm.DB, _ *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+			require.Len(t, entries, 2, "the fixture channel holds the credential and one static key")
+			require.NoError(t, entries[1].SetKeyModels([]string{"m"}))
+			entries[1].BoundUserId = 42
+			entries[1].ScopeMode = "allowlist"
+			return entries, nil, nil
+		})
+	require.NoError(t, err)
+	require.Len(t, updated.ChannelInfo.MultiKeyModels[1], 1)
+	multi, err = model.GetChannelById(multi.Id, true)
+	require.NoError(t, err)
+	require.Equal(t, 42, multi.ChannelInfo.MultiKeyUsers[1], "the source binding must be stored before the copy")
 
 	copyOf := func(id int) *model.Channel {
 		t.Helper()
@@ -282,6 +295,7 @@ func TestCopyChannelDropsCredentials(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, multi.Key, stored.Key, "copying must leave the source credential in place")
 	assert.Equal(t, map[int]int{1: 42}, stored.ChannelInfo.MultiKeyUsers)
+	assert.Equal(t, map[int]string{1: "allowlist"}, stored.ChannelInfo.MultiKeyScopeModes, "the source keeps its allowlist")
 }
 
 func TestRemovingCredentialsRevokesThem(t *testing.T) {
@@ -650,6 +664,55 @@ func TestProviderChannelManagementDatabaseMatrix(t *testing.T) {
 			var remaining []int
 			require.NoError(t, db.Model(&model.Channel{}).Order("id").Pluck("id", &remaining).Error)
 			assert.Equal(t, batch, remaining, "the keyless channel waiting for a login was disabled, so it went too")
+
+			// Copying drops the credential but keeps the remaining static key's
+			// scope: an explicit allowlist that serves no model must not become an
+			// unrestricted key at its new position, on any engine.
+			scoped := insertPluginChannel(t, pluginKey, server.URL, pluginCredentialLine(t, pluginKey, "scoped")+"\nsk-static", true)
+			_, err = model.MutateChannelKeyEntries(t.Context(), scoped.Id, scoped.ChannelInfo.KeyEntryRevision,
+				func(_ *gorm.DB, _ *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+					require.Len(t, entries, 2, "the fixture channel holds the credential and one static key")
+					require.NoError(t, entries[1].SetKeyModels(nil))
+					entries[1].ScopeMode = "allowlist"
+					return entries, nil, nil
+				})
+			require.NoError(t, err)
+			response, raw = callChannelAPI(t, CopyChannel, http.MethodPost, "/api/channel/copy", "", idParam(scoped.Id))
+			require.True(t, response.Success, raw)
+			var copyData struct {
+				ID int `json:"id"`
+			}
+			require.NoError(t, json.Unmarshal(response.Data, &copyData))
+			copied, err := model.GetChannelById(copyData.ID, true)
+			require.NoError(t, err)
+			assert.Equal(t, "sk-static", copied.Key)
+			assert.Equal(t, map[int]string{0: "allowlist"}, copied.ChannelInfo.MultiKeyScopeModes, "the empty allowlist survives the position change")
+			assert.Empty(t, copied.ChannelInfo.MultiKeyModels[0], "the copied key still serves no model")
+			source, err := model.GetChannelById(scoped.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, "allowlist", source.ChannelInfo.MultiKeyScopeModes[1], "the source keeps its scope")
+			assert.Empty(t, source.ChannelInfo.MultiKeyModels[1])
+
+			// The opposite order: the dropped credential carried an allowlist and the
+			// retained public key is unrestricted. No stale mode may survive at its
+			// old index, or the key that moved into it would inherit the scope.
+			unscoped := insertPluginChannel(t, pluginKey, server.URL, pluginCredentialLine(t, pluginKey, "scoped-first")+"\nsk-public", true)
+			_, err = model.MutateChannelKeyEntries(t.Context(), unscoped.Id, unscoped.ChannelInfo.KeyEntryRevision,
+				func(_ *gorm.DB, _ *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+					require.Len(t, entries, 2, "the fixture channel holds the credential and one static key")
+					require.NoError(t, entries[0].SetKeyModels([]string{"relay-model"}))
+					entries[0].ScopeMode = "allowlist"
+					entries[1].ScopeMode = "all"
+					return entries, nil, nil
+				})
+			require.NoError(t, err)
+			response, raw = callChannelAPI(t, CopyChannel, http.MethodPost, "/api/channel/copy", "", idParam(unscoped.Id))
+			require.True(t, response.Success, raw)
+			require.NoError(t, json.Unmarshal(response.Data, &copyData))
+			copied, err = model.GetChannelById(copyData.ID, true)
+			require.NoError(t, err)
+			assert.Equal(t, "sk-public", copied.Key)
+			assert.Empty(t, copied.ChannelInfo.MultiKeyScopeModes, "the dropped key's allowlist must not reach the surviving key")
 
 			// Each write runs against a refresh of the channel's first
 			// credential: while the refresh waits on the vendor, after it

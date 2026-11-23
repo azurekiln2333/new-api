@@ -560,6 +560,32 @@ export function useCommonLogsColumns(
           },
         },
         {
+          id: 'node_name',
+          header: t('Processing Node'),
+          accessorFn: (row) =>
+            parseLogOther(row.other)?.admin_info?.node_name ?? '',
+          cell: function ProcessingNodeCell({ getValue }) {
+            const { sensitiveVisible } = useUsageLogsContext()
+            const nodeName = sensitiveVisible ? getValue<string>() : '••••'
+            if (!nodeName) {
+              return (
+                <span className='text-muted-foreground/60 text-xs'>
+                  {t('Not recorded')}
+                </span>
+              )
+            }
+            return (
+              <span
+                className='block max-w-[140px] truncate font-mono text-xs'
+                title={nodeName}
+              >
+                {nodeName}
+              </span>
+            )
+          },
+          size: 140,
+        },
+        {
           id: 'user',
           header: t('User'),
           accessorFn: (row) => row.username,

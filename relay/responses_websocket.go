@@ -120,15 +120,17 @@ type responsesWSSession struct {
 
 	// These fields belong to the serial request worker and describe the actual
 	// established connection. Per-request token/user data is never stored here.
-	lastResponseID  string
-	lockedModel     string
-	lockedChannelID int
-	lockedGroup     string
-	lockedKey       string
-	lockedKeyIndex  int
-	lockedContext   map[appconstant.ContextKey]any
-	lockedRoute     dto.AdvancedCustomRoute
-	goalHeaderUsed  bool
+	lastResponseID           string
+	lockedModel              string
+	lockedChannelID          int
+	lockedGroup              string
+	lockedKey                string
+	lockedKeyIndex           int
+	lockedAllocationID       int64
+	lockedAllocationRevision int64
+	lockedContext            map[appconstant.ContextKey]any
+	lockedRoute              dto.AdvancedCustomRoute
+	goalHeaderUsed           bool
 }
 
 func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner ResponsesWSRequestRunner) *types.NewAPIError {
@@ -360,13 +362,16 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			recordResponsesWSPluginError(c, info, apiErr)
 			return apiErr
 		}
+		if apiErr = service.PrepareAttemptChannelBudget(c, info); apiErr != nil {
+			return apiErr
+		}
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 			state.closeCode = websocket.CloseInternalServerErr
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 		}
 	} else {
 		retry := &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0)}
-		for ; retry.GetRetry() <= common.RetryTimes; retry.IncreaseRetry() {
+		for retry.GetRetry() <= common.RetryTimes {
 			var channel *appmodel.Channel
 			var lastBusy *types.NewAPIError
 			for {
@@ -392,7 +397,6 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				}
 				lastBusy = selectionErr
 			}
-			service.AppendUsedChannel(c, channel.Id)
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
@@ -403,6 +407,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				}
 				billingPrepared = true
 			} else {
+				info.ChannelBudget = relaycommon.BudgetAttempt{}
 				info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 				if apiErr = service.PrepareTieredBillingForSelectedGroup(c, info); apiErr != nil {
 					return apiErr
@@ -430,27 +435,42 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					return coordinationErr
 				}
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
-				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				info.LastError = apiErr
+				if service.RetryChannelBudgetAdmission(c, channel.Id, apiErr, retry) {
+					service.ReleaseAttemptChannelBudget(c, info)
+					continue
+				}
+				if service.IsChannelBudgetCandidateRejection(c, apiErr) {
+					return apiErr
+				}
+				service.AppendUsedChannel(c, channel.Id)
+				service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 				decision := service.DecideRelayRetry(c, apiErr, common.RetryTimes-retry.GetRetry())
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
 				if decision.Action == "retry" {
+					// Keep a final attempt's reservation for the deferred fee policy.
+					service.ReleaseAttemptChannelBudget(c, info)
+					retry.IncreaseRetry()
 					continue
 				}
 				return apiErr
 			}
+			service.AppendUsedChannel(c, channel.Id)
 			if !s.setTarget(target, pendingLease) {
 				return types.NewError(context.Canceled, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
 			c.Request = c.Request.WithContext(pendingLease.Context())
 			pendingLease = nil // ownership transferred to the connection
+			// DoWssRequest admitted this first turn before dialing the socket.
 			if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 				state.closeCode = websocket.CloseInternalServerErr
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
 			s.lockedModel, s.lockedChannelID, s.lockedGroup = modelName, channel.Id, info.UsingGroup
 			s.lockedKey, s.lockedKeyIndex = info.ApiKey, info.ChannelMultiKeyIndex
+			allocation, _ := common.GetContextKeyType[appmodel.ChannelAllocation](c, appconstant.ContextKeyChannelAllocation)
+			s.lockedAllocationID, s.lockedAllocationRevision = allocation.EntryID, allocation.Revision
 			s.lockedRoute, _ = connectionOtherSettings(c, channel).AdvancedCustom.MatchPathForModel(c.Request.URL.Path, modelName)
 			s.lockedContext = make(map[appconstant.ContextKey]any)
 			for _, key := range []appconstant.ContextKey{
@@ -732,14 +752,30 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	if ok, kind := appmodel.ChannelSatisfiesFilters(channel, model, service.GetChannelConstraints(c).Filters, c.GetInt("id")); !ok {
 		return newResponsesWSInvalidRequestError(fmt.Errorf("channel %d does not accept this request (%s); reconnect to route it to another channel", s.lockedChannelID, kind))
 	}
-	keyEnabled := channel.Key == s.lockedKey
-	if channel.ChannelInfo.IsMultiKey {
-		keys := channel.GetKeys()
-		status := channel.ChannelInfo.MultiKeyStatusList[s.lockedKeyIndex]
-		keyEnabled = s.lockedKeyIndex >= 0 && s.lockedKeyIndex < len(keys) && keys[s.lockedKeyIndex] == s.lockedKey && (status == 0 || status == common.ChannelStatusEnabled)
+	keyIndex := s.lockedKeyIndex
+	var allocation appmodel.ChannelAllocation
+	keyEnabled := false
+	if s.lockedAllocationID > 0 {
+		// Positions can move and two entries may have the same key text. Recover
+		// only the allocation that authorized the established upstream socket.
+		keyIndex = slices.Index(channel.KeyEntryIDs, s.lockedAllocationID)
+		allocation, keyEnabled = channel.ChannelAllocationByPosition(keyIndex)
+		keyEnabled = keyEnabled && allocation.Revision == s.lockedAllocationRevision && allocation.Key == s.lockedKey &&
+			(allocation.UserID == 0 || allocation.UserID == c.GetInt("id"))
+	} else if channel.ChannelInfo.KeyEntryRevision == 0 {
+		// Only a legacy, unmigrated channel can reuse its old credential pin
+		// without a stable allocation. Never infer an identity after migration.
+		keyEnabled = channel.Key == s.lockedKey
+		if channel.ChannelInfo.IsMultiKey {
+			keys := channel.GetKeys()
+			keyEnabled = keyIndex >= 0 && keyIndex < len(keys) && keys[keyIndex] == s.lockedKey
+		}
 	}
-	if !keyEnabled {
-		return types.NewErrorWithStatusCode(errors.New("the upstream connection credential is no longer enabled"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+	if status, set := channel.ChannelInfo.MultiKeyStatusList[keyIndex]; set && status != common.ChannelStatusEnabled {
+		keyEnabled = false
+	}
+	if !keyEnabled || !channel.KeyServesModel(keyIndex, model) {
+		return types.NewErrorWithStatusCode(errors.New("the upstream connection credential is no longer allowed; reconnect required"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 	}
 	// Changes that alter the physical upstream connection require a new
 	// handshake. Request-level settings can be refreshed without rotating keys.
@@ -768,7 +804,7 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 		if pin.ChannelId != s.lockedChannelID {
 			return types.NewErrorWithStatusCode(errors.New("channel pin changed; reconnect required"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 		}
-	} else {
+	} else if allocation.UserID == 0 {
 		group := common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup)
 		if group == "auto" {
 			if !slices.Contains(service.GetRequestAutoGroups(c, common.GetContextKeyString(c, appconstant.ContextKeyUserGroup)), s.lockedGroup) {
@@ -783,6 +819,12 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	}
 	for key, value := range s.lockedContext {
 		c.Set(string(key), value)
+	}
+	common.SetContextKey(c, appconstant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
+	common.SetContextKey(c, appconstant.ContextKeyChannelMultiKeyIndex, keyIndex)
+	if allocation.EntryID > 0 {
+		service.SetSelectedChannelAllocation(c, allocation.EntryID, allocation.Revision)
+		common.SetContextKey(c, appconstant.ContextKeyChannelAllocation, allocation)
 	}
 	common.SetContextKey(c, appconstant.ContextKeyChannelSetting, channel.GetSetting())
 	common.SetContextKey(c, appconstant.ContextKeyChannelOtherSetting, otherSettings)

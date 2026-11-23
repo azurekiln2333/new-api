@@ -11,8 +11,11 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -30,6 +33,24 @@ func setupChannelCreateTest(t *testing.T) int {
 	t.Setenv("LOG_SQL_DSN", "")
 	common.IsMasterNode, common.MemoryCacheEnabled, common.RedisEnabled = false, false, false
 	common.SQLitePath = filepath.Join(t.TempDir(), "channel.db")
+	// A follower requires the activation marker table to exist, even when
+	// enforcement is disabled. Initialize that production startup prerequisite.
+	var dialect gorm.Dialector = sqlite.Open(common.SQLitePath)
+	if dsn := os.Getenv("TEST_CHANNEL_SQL_DSN"); dsn != "" {
+		if strings.HasPrefix(dsn, "postgres") {
+			dialect = postgres.Open(dsn)
+		} else {
+			dialect = mysql.Open(dsn)
+		}
+	}
+	seed, err := gorm.Open(dialect, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, seed.AutoMigrate(&model.Option{}))
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
+	require.NoError(t, seed.Where(map[string]any{"key": "internal.channel_budget.active_v1"}).Delete(&model.Option{}).Error)
+	seedSQL, err := seed.DB()
+	require.NoError(t, err)
+	require.NoError(t, seedSQL.Close())
 	require.NoError(t, model.InitDB())
 	database := model.DB
 	sqlDB, err := database.DB()
@@ -37,7 +58,7 @@ func setupChannelCreateTest(t *testing.T) int {
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	model.LOG_DB = database
 	common.SetLogDatabaseType(common.MainDatabaseType())
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.AuditLog{}))
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.AuditLog{}, &model.ChannelKeyEntry{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}, &model.Task{}, &model.SystemTask{}, &model.SystemTaskLock{}))
 	root := &model.User{Username: "channel-create-review-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
 	require.NoError(t, database.Create(root).Error)
 	t.Cleanup(func() { require.NoError(t, database.Unscoped().Delete(root).Error) })

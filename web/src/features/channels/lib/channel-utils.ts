@@ -21,6 +21,7 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import {
   CHANNEL_STATUS_CONFIG,
+  CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPES,
   MULTI_KEY_STATUS_CONFIG,
   RESPONSE_TIME_CONFIG,
@@ -161,6 +162,25 @@ export function isChannelEnabled(channel: Channel): boolean {
  */
 export function isMultiKeyChannel(channel: Channel): boolean {
   return channel.channel_info?.is_multi_key || false
+}
+
+/** Matches the server's provider restrictions when converting to multi-key. */
+export function supportsMultipleChannelKeys(
+  type: number,
+  vertexKeyType?: ChannelOtherSettings['vertex_key_type']
+): boolean {
+  return type !== 57 && !(type === 41 && vertexKeyType === 'api_key')
+}
+
+/** The allocation shortcut takes a static key, not a managed login. */
+export function canAppendStaticAllocation(channel: Channel): boolean {
+  return (
+    channel.type !== CHANNEL_TYPE_TASK_PLUGIN &&
+    supportsMultipleChannelKeys(
+      channel.type,
+      parseChannelOtherSettings(channel.settings)?.vertex_key_type
+    )
+  )
 }
 
 /**

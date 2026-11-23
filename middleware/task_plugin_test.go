@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -27,10 +29,13 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	sqlmysql "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
+	"gorm.io/gorm/clause"
 )
 
 const genericTaskPluginSource = `
@@ -2035,12 +2040,17 @@ func setupTaskPluginRouteDB(t *testing.T) {
 	previousType := common.MainDatabaseType()
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(&model.Task{}))
+	require.NoError(t, database.AutoMigrate(&model.Task{}, &model.Channel{}, &model.ChannelKeyEntry{}, &model.Option{}))
+	pool, err := database.DB()
+	require.NoError(t, err)
+	pool.SetMaxOpenConns(1)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	model.DB = database
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	t.Cleanup(func() {
 		model.DB = previousDB
 		common.SetMainDatabaseType(previousType)
+		require.NoError(t, pool.Close())
 	})
 }
 
@@ -2109,36 +2119,82 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 					t.Skip("database test DSN not configured")
 				}
 			}
-			previousDB, previousMain, previousLog := model.DB, common.MainDatabaseType(), common.LogDatabaseType()
-			previousPath, previousMaster := common.SQLitePath, common.IsMasterNode
-			previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
-			common.SQLitePath, common.IsMasterNode = t.TempDir()+"/routing.db", false
-			common.RedisEnabled = false
-			t.Setenv("SQL_DSN", dsn)
-			require.NoError(t, model.InitDB())
-			database := model.DB
-			// Every table belongs to this run, including when a developer points
-			// a test DSN at a database shared with another test suite.
-			database.Config.NamingStrategy = schema.NamingStrategy{TablePrefix: "endpoint_route_" + common.GetUUID() + "_"}
-			require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.Task{}))
-			t.Cleanup(func() {
-				for _, table := range []any{&model.Ability{}, &model.Channel{}, &model.Task{}} {
-					require.NoError(t, database.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
+			t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
+			var driver gorm.Dialector
+			var sqlitePath string
+			if dialect == "sqlite" {
+				sqlitePath = t.TempDir() + "/routing.db"
+				driver = sqlite.Open(sqlitePath)
+			} else {
+				// ChannelKeyEntry deliberately has a fixed table name; a table
+				// prefix cannot isolate it. Use a disposable database instead.
+				name := "newapi_endpoint_route_" + common.GetUUID()
+				var source gorm.Dialector
+				if dialect == "mysql" {
+					config, err := sqlmysql.ParseDSN(dsn)
+					require.NoError(t, err)
+					host, _, err := net.SplitHostPort(config.Addr)
+					require.NoError(t, err)
+					require.True(t, net.ParseIP(host).IsLoopback())
+					source = mysql.Open(dsn)
+					config.DBName = name
+					dsn = config.FormatDSN()
+					driver = mysql.Open(dsn)
+				} else {
+					parsed, err := url.Parse(dsn)
+					require.NoError(t, err)
+					require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback())
+					source = postgres.Open(dsn)
+					parsed.Path = "/" + name
+					dsn = parsed.String()
+					driver = postgres.Open(dsn)
 				}
-				common.MemoryCacheEnabled = true
-				model.InitChannelCache()
-				require.NoError(t, database.Migrator().DropTable(&model.Ability{}, &model.Channel{}, &model.Task{}))
+				admin, err := gorm.Open(source, &gorm.Config{})
+				require.NoError(t, err)
+				adminSQL, err := admin.DB()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, adminSQL.Close()) })
+				require.NoError(t, admin.Exec("CREATE DATABASE ?", clause.Table{Name: name}).Error)
+				t.Cleanup(func() { require.NoError(t, admin.Exec("DROP DATABASE ?", clause.Table{Name: name}).Error) })
+			}
+			seed, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			seedSQL, err := seed.DB()
+			require.NoError(t, err)
+			seedErr := seed.AutoMigrate(&model.Option{})
+			require.NoError(t, seedSQL.Close())
+			require.NoError(t, seedErr)
+			previousDB, previousType, previousLogType := model.DB, common.MainDatabaseType(), common.LogDatabaseType()
+			previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
+			previousPath, previousMaster := common.SQLitePath, common.IsMasterNode
+			common.RedisEnabled, common.IsMasterNode = false, false
+			if dialect == "sqlite" {
+				common.SQLitePath = sqlitePath
+			}
+			t.Setenv("SQL_DSN", dsn)
+			t.Cleanup(func() {
+				if model.DB != nil && model.DB != previousDB {
+					pool, err := model.DB.DB()
+					if assert.NoError(t, err) {
+						assert.NoError(t, pool.Close())
+					}
+				}
 				model.DB = previousDB
-				common.SetDatabaseTypes(previousMain, previousLog)
+				common.SetDatabaseTypes(previousType, previousLogType)
 				common.SQLitePath, common.IsMasterNode = previousPath, previousMaster
 				common.MemoryCacheEnabled, common.RedisEnabled = previousCache, previousRedis
 				if previousDB != nil {
 					model.InitChannelCache()
 				}
-				sqlDB, err := database.DB()
-				require.NoError(t, err)
-				require.NoError(t, sqlDB.Close())
 			})
+			// InitDB initializes the dialect's reserved-column quoting as well
+			// as the follower's activation check; a direct handle misses both.
+			require.NoError(t, model.InitDB())
+			database := model.DB
+			pool, err := database.DB()
+			require.NoError(t, err)
+			pool.SetMaxOpenConns(1)
+			require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.ChannelKeyEntry{}, &model.Ability{}, &model.Task{}))
 			query := "SELECT version()"
 			if dialect == "sqlite" {
 				query = "SELECT sqlite_version()"
@@ -2198,7 +2254,7 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 						{name: "rejected shared candidate still allows another plugin", pluginOnly: true, shared: true, decoderRejects: true, pluginPriority: 20, wantPlugin: true},
 					} {
 						t.Run(tc.name, func(t *testing.T) {
-							for _, table := range []any{&model.Ability{}, &model.Channel{}, &model.Task{}} {
+							for _, table := range []any{&model.ChannelKeyEntry{}, &model.Ability{}, &model.Channel{}, &model.Task{}} {
 								require.NoError(t, database.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
 							}
 							key := "channel-route-test"
