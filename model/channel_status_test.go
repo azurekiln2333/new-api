@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -184,6 +185,9 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 		{name: "replaced cache provider config stays enabled and routable", replaceCache: "settings", preserveCacheStatus: true},
 		{name: "replaced cache key models stay enabled and routable", multiKey: true, replaceCache: "models", preserveCacheStatus: true},
 		{name: "replaced cache key users stay enabled and routable", multiKey: true, replaceCache: "users", preserveCacheStatus: true},
+		{name: "replaced cache empty allowlist stays enabled and routable", multiKey: true, replaceCache: "scope-mode", preserveCacheStatus: true},
+		{name: "replaced cache allocation identity stays enabled and routable", replaceCache: "allocation-id", preserveCacheStatus: true},
+		{name: "newer cache allocation revision stays enabled and routable", replaceCache: "allocation-revision", preserveCacheStatus: true},
 		{name: "stored cap change still disables cached routing", multiKey: true, setting: common.GetPointer(sourceSetting), storedSetting: changedCapSetting},
 		{name: "cached cap change is preserved while routing is disabled", setting: common.GetPointer(sourceSetting), cachedSetting: changedCapSetting},
 		{name: "nil cached setting receives a cap-only stored status", storedSetting: `{"max_concurrent_requests":2}`},
@@ -224,6 +228,14 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 				replacement.ChannelInfo.MultiKeyModels = map[int][]string{0: {"replacement-model"}}
 			case "users":
 				replacement.ChannelInfo.MultiKeyUsers = map[int]int{0: 123}
+			case "scope-mode":
+				replacement.ChannelInfo.MultiKeyScopeModes = map[int]string{0: "allowlist"}
+			case "allocation-id":
+				replacement.KeyEntryIDs = slices.Clone(channel.KeyEntryIDs)
+				replacement.KeyEntryIDs[0]++
+			case "allocation-revision":
+				replacement.KeyEntryRevisions = slices.Clone(channel.KeyEntryRevisions)
+				replacement.KeyEntryRevisions[0]++
 			}
 			hasReplacement := tc.replaceCache != "" || tc.cachedSetting != ""
 			for index, key := range keys {
@@ -250,6 +262,8 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 					assert.Equal(t, replacement.OtherSettings, cached.OtherSettings)
 					assert.Equal(t, replacement.ChannelInfo.MultiKeyModels, cached.ChannelInfo.MultiKeyModels)
 					assert.Equal(t, replacement.ChannelInfo.MultiKeyUsers, cached.ChannelInfo.MultiKeyUsers)
+					assert.Equal(t, replacement.ChannelInfo.MultiKeyScopeModes, cached.ChannelInfo.MultiKeyScopeModes)
+					assert.Equal(t, replacement.KeyEntryIDs, cached.KeyEntryIDs)
 				}
 				if tc.preserveCacheStatus {
 					assert.Empty(t, cached.ChannelInfo.MultiKeyStatusList, "an obsolete result must not disable keys in a replacement scope")
@@ -265,6 +279,144 @@ func TestUpdateChannelStatusCheckedCacheRouting(t *testing.T) {
 				} else {
 					assert.Nil(t, selected)
 				}
+			}
+		})
+	}
+}
+
+func TestUpdateChannelAllocationStatusPublication(t *testing.T) {
+	useScheduledChannelDatabase(t)
+	registerModelTestPlugin(t, taskOnlyPluginSource, "allocation-status-alias")
+	generation := jsplugin.DefaultRegistry.Generation()
+	channel := Channel{Type: constant.ChannelTypeOpenAI, Name: t.Name(), Key: "key-a\nkey-b", Status: common.ChannelStatusEnabled,
+		Models: "allocation-status-model,allocation-alias", Group: "default", Priority: common.GetPointer(int64(10)),
+		ModelMapping: common.GetPointer(`{"allocation-alias":"served"}`),
+		ChannelInfo:  ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling}}
+	require.NoError(t, channel.Insert())
+	lowerPriority := Channel{Type: constant.ChannelTypeOpenAI, Name: "lower priority", Key: "fallback", Status: common.ChannelStatusEnabled,
+		Models: "allocation-status-model", Group: channel.Group}
+	require.NoError(t, lowerPriority.Insert())
+	InitChannelCache()
+	_, aliasFound := ResolveTaskModelAlias(generation, "allocation-alias")
+	require.True(t, aliasFound)
+	cached, err := CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	replacement := *cached
+	replacement.ChannelInfo.MultiKeyPollingIndex = 1
+	replacement.SetOtherInfo(map[string]any{"cache_note": "preserve"})
+	CacheUpdateChannel(&replacement)
+	var stale ChannelAllocation
+	for index := range 2 {
+		cached, err = CacheGetChannel(channel.Id)
+		require.NoError(t, err)
+		allocation, ok := cached.ChannelAllocationByPosition(index)
+		require.True(t, ok)
+		if index == 0 {
+			stale = allocation
+		}
+		require.True(t, UpdateChannelAllocationStatus(context.Background(), allocation, common.ChannelStatusAutoDisabled, "unavailable"))
+		cached, err = CacheGetChannel(channel.Id)
+		require.NoError(t, err)
+		stored, err := GetChannelById(channel.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, stored.ChannelInfo.KeyEntryRevision, cached.ChannelInfo.KeyEntryRevision)
+		assert.Equal(t, stored.KeyEntryRevisions, cached.KeyEntryRevisions, "the next selection must carry the committed revisions")
+		assert.Equal(t, common.ChannelStatusAutoDisabled, cached.ChannelInfo.MultiKeyStatusList[index])
+		assert.Equal(t, 1, cached.ChannelInfo.MultiKeyPollingIndex, "status publication preserves the live cursor")
+		assert.Equal(t, "preserve", cached.GetOtherInfo()["cache_note"])
+		selected, err := GetRandomSatisfiedChannel(channel.Group, "allocation-status-model", 0, nil)
+		require.NoError(t, err)
+		require.NotNil(t, selected)
+		if index == 0 {
+			assert.Equal(t, channel.Id, selected.Id)
+		} else {
+			assert.Equal(t, lowerPriority.Id, selected.Id)
+		}
+		_, aliasFound = ResolveTaskModelAlias(generation, "allocation-alias")
+		assert.Equal(t, index == 0, aliasFound, "task aliases follow committed availability immediately")
+	}
+	before := channelsRevision(t)
+	assert.False(t, UpdateChannelAllocationStatus(context.Background(), stale, common.ChannelStatusEnabled, ""))
+	assert.Equal(t, before, channelsRevision(t), "stale results do not publish a sync task")
+	cached, err = CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	allocation, ok := cached.ChannelAllocationByPosition(0)
+	require.True(t, ok)
+	require.True(t, UpdateChannelAllocationStatus(context.Background(), allocation, common.ChannelStatusEnabled, ""))
+	cached, err = CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, cached.Status)
+	assert.NotContains(t, cached.ChannelInfo.MultiKeyStatusList, 0)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, cached.ChannelInfo.MultiKeyStatusList[1])
+	assert.Equal(t, 1, cached.ChannelInfo.MultiKeyPollingIndex)
+	selected, err := GetRandomSatisfiedChannel(channel.Group, "allocation-status-model", 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, channel.Id, selected.Id, "re-enabled routing returns at the channel's original priority")
+	_, aliasFound = ResolveTaskModelAlias(generation, "allocation-alias")
+	assert.True(t, aliasFound, "re-enabling immediately restores task alias visibility")
+
+	_, err = MutateChannelKeyEntries(context.Background(), channel.Id, cached.ChannelInfo.KeyEntryRevision,
+		func(_ *gorm.DB, _ *Channel, entries []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error) {
+			entries[0].Key = "admin-replacement"
+			entries[0].ConfigRevision++
+			return entries, nil, nil
+		})
+	require.NoError(t, err)
+	cached, err = CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	assert.Equal(t, "admin-replacement\nkey-b", cached.Key, "administrator edits still refresh the full configuration")
+}
+
+func TestUpdateChannelAllocationStatusNoOpPreservesCache(t *testing.T) {
+	for _, action := range []string{"rejected-check", "stale-revision", "unchanged-status", "admin-no-op", "newer-manual-disable"} {
+		t.Run(action, func(t *testing.T) {
+			useScheduledChannelDatabase(t)
+			channel := Channel{Type: constant.ChannelTypeOpenAI, Name: t.Name(), Key: "original", Status: common.ChannelStatusEnabled,
+				Models: "allocation-no-op-model", Group: "default"}
+			require.NoError(t, channel.Insert())
+			InitChannelCache()
+			allocation, ok := channel.ChannelAllocationByPosition(0)
+			require.True(t, ok)
+			replacement := channel
+			replacement.Key = "replacement"
+			replacement.Setting = common.GetPointer(`{"future_setting":"preserve"}`)
+			target := common.ChannelStatusAutoDisabled
+			if action == "stale-revision" {
+				allocation.Revision++
+			}
+			if action == "unchanged-status" {
+				target = common.ChannelStatusEnabled
+			}
+			if action == "newer-manual-disable" {
+				replacement.Key = channel.Key
+				replacement.Setting = channel.Setting
+				replacement.Status = common.ChannelStatusManuallyDisabled
+			}
+			before := channelsRevision(t)
+			if action == "admin-no-op" {
+				_, err := MutateChannelKeyEntries(context.Background(), channel.Id, 0,
+					func(_ *gorm.DB, _ *Channel, _ []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error) {
+						CacheUpdateChannel(&replacement)
+						return nil, nil, nil
+					})
+				require.NoError(t, err)
+			} else {
+				changed := UpdateChannelAllocationStatusChecked(context.Background(), allocation, target, "unavailable", func(*Channel) bool {
+					CacheUpdateChannel(&replacement)
+					return action != "rejected-check"
+				})
+				assert.Equal(t, action == "newer-manual-disable", changed)
+			}
+			cached, err := CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			assert.Equal(t, replacement, *cached, "an ignored status result must preserve the complete cached replacement")
+			if action != "newer-manual-disable" {
+				assert.Equal(t, before, channelsRevision(t))
+				stored, err := GetChannelById(channel.Id, true)
+				require.NoError(t, err)
+				assert.Equal(t, channel.Status, stored.Status)
+				assert.Equal(t, channel.KeyEntryRevisions, stored.KeyEntryRevisions)
 			}
 		})
 	}

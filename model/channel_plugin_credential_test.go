@@ -273,13 +273,19 @@ func useScheduledChannelDatabase(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, anchor.Close()) })
 	}
-	tables := []any{&Channel{}, &Ability{}, &SystemTask{}, &Option{}}
+	tables := []any{&Channel{}, &Ability{}, &SystemTask{}, &Option{}, &ChannelKeyEntry{}}
+	// ChannelKeyEntry has a fixed table name, so the prefix cannot isolate rows
+	// left by earlier tests in this disposable database, including the first run.
+	require.NoError(t, db.Migrator().DropTable(&ChannelKeyEntry{}))
 	require.NoError(t, db.AutoMigrate(tables...))
 	previousDB, previousType, previousMemory := DB, common.MainDatabaseType(), common.MemoryCacheEnabled
 	DB = db
 	common.SetMainDatabaseType(dialect)
 	common.MemoryCacheEnabled = true
 	initCol()
+	// Publish the fresh database while caching is enabled; channel ids restart
+	// at one and must not reuse an earlier fixture's cached identity.
+	InitChannelCache()
 	t.Cleanup(func() {
 		require.NoError(t, db.Migrator().DropTable(tables...))
 		DB = previousDB
@@ -473,15 +479,18 @@ func TestScheduledChannelDatabaseRowLock(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	first := make(chan error, 1)
 	go func() {
-		first <- DB.Transaction(func(tx *gorm.DB) error {
-			var stored Channel
-			if err := lockForUpdate(tx).Where("id = ?", channel.Id).First(&stored).Error; err != nil {
-				return err
-			}
-			close(entered)
-			<-release
-			return tx.Model(&Channel{}).Where("id = ?", channel.Id).Updates(map[string]any{"key": "new", "status": common.ChannelStatusEnabled}).Error
-		})
+		// Use the database-only mutation to stand for another node, without
+		// sharing this process's polling lock or bypassing allocation rows.
+		_, _, err := mutateChannelKeyEntries(context.Background(), channel.Id, 0,
+			func(_ *gorm.DB, stored *Channel, entries []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error) {
+				close(entered)
+				<-release
+				entries[0].Key = "new"
+				entries[0].ConfigRevision++
+				stored.Status = common.ChannelStatusEnabled
+				return entries, nil, nil
+			})
+		first <- err
 	}()
 	<-entered
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

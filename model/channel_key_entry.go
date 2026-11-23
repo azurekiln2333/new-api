@@ -511,7 +511,9 @@ func UpdateChannelAllocationStatus(ctx context.Context, selected ChannelAllocati
 }
 func UpdateChannelAllocationStatusChecked(ctx context.Context, selected ChannelAllocation, status int, reason string, check func(*Channel) bool) bool {
 	changed := false
-	_, err := MutateChannelKeyEntries(ctx, selected.ChannelID, 0, func(_ *gorm.DB, current *Channel, entries []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error) {
+	var source Channel
+	committed, _, err := mutateChannelKeyEntries(ctx, selected.ChannelID, 0, func(_ *gorm.DB, current *Channel, entries []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error) {
+		source = *current
 		if check != nil && !check(current) {
 			return nil, nil, nil
 		}
@@ -564,7 +566,14 @@ func UpdateChannelAllocationStatusChecked(ctx context.Context, selected ChannelA
 		}
 		return nil, nil, nil
 	})
-	return err == nil && changed
+	if err != nil || !changed {
+		return false
+	}
+	publishChannelStatus(&source, committed)
+	InvalidatePricingCache()
+	rebuildTaskAliasView()
+	BumpSyncTopic(SyncTopicChannels)
+	return true
 }
 
 // HasAvailableAllocationBudget is a conservative candidate filter; the ledger
@@ -637,7 +646,23 @@ func ModelsAvailableToUserGroups(ctx context.Context, groups []string, userID in
 // MutateChannelKeyEntries serializes entry and budget mutations in one channel
 // transaction. Account Tx calls may follow the sorted entry locks, never before.
 func MutateChannelKeyEntries(ctx context.Context, channelID int, revision int64, mutate func(*gorm.DB, *Channel, []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error)) (*Channel, error) {
+	updated, written, err := mutateChannelKeyEntries(ctx, channelID, revision, mutate)
+	if err != nil {
+		return nil, err
+	}
+	if written {
+		BumpSyncTopic(SyncTopicChannels)
+		InitChannelCache()
+	}
+	return updated, nil
+}
+
+// mutateChannelKeyEntries commits the allocation mutation without publishing a
+// cache snapshot. Administrative edits reload configuration; delayed health
+// results must instead publish only status against their source identity.
+func mutateChannelKeyEntries(ctx context.Context, channelID int, revision int64, mutate func(*gorm.DB, *Channel, []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error)) (*Channel, bool, error) {
 	var updated Channel
+	written := false
 	err := ChannelBudgetTransaction(ctx, channelID, func(tx *gorm.DB) error {
 		tx = tx.Session(&gorm.Session{Logger: logger.Discard})
 		if err := tx.First(&updated, channelID).Error; err != nil {
@@ -680,14 +705,16 @@ func MutateChannelKeyEntries(ctx context.Context, channelID int, revision int64,
 		if err := tx.Model(&Channel{}).Where("id = ?", channelID).Updates(map[string]any{"key": updated.Key, "channel_info": updated.ChannelInfo, "status": updated.Status, "models": updated.Models, "other_info": updated.OtherInfo}).Error; err != nil {
 			return err
 		}
-		return updated.UpdateAbilities(tx)
+		if err := updated.UpdateAbilities(tx); err != nil {
+			return err
+		}
+		written = true
+		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	BumpSyncTopic(SyncTopicChannels)
-	InitChannelCache()
-	return &updated, nil
+	return &updated, written, nil
 }
 func UpdateChannelKeyAllocations(channelID int, revision int64, mutate func([]ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error)) (*Channel, error) {
 	return MutateChannelKeyEntries(context.Background(), channelID, revision, func(_ *gorm.DB, _ *Channel, entries []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error) {

@@ -70,6 +70,19 @@ Rules that keep this consistent:
   `UpdateChannelLocked` or `MutateChannelKeyEntries`, then read back the channel.
   Keep stale source snapshots unchanged when testing delayed-result rejection;
   replacing the snapshot would remove the concurrency assertion.
+- **Delayed allocation status writes retain guarded cache publication.** Compare
+  the pre-write credential/configuration and allocation IDs/revisions under the
+  cache lock, then publish only committed status metadata and revisions. Preserve
+  newer cached settings and polling state; an admission-cap-only change is allowed.
+  A full configuration reload after a health result can overwrite a newer cache
+  replacement even when the database write was correctly guarded. Administrative
+  mutations retain their full refresh after an actual write; a no-op is not a
+  reason to reload. Re-enabling must immediately restore priority-ordered routes.
+- **Fixture table prefixes do not isolate explicit TableName models.** Initialize
+  and clean fixed-name allocation tables in the assigned disposable database before
+  the first test, as well as between tests. `InitChannelCache` with caching disabled
+  does not clear its ID/group routing maps. Load the newly installed fixture while
+  caching is enabled when the test depends on that cache.
 - **One derivation for `group x model`.** `Channel.channelAbilities()` in `model/ability.go`
   is the only place that turns a channel into abilities, and `model.InitChannelCache()`
   builds the in-memory routing table from the same inputs (`PublicModels()` and

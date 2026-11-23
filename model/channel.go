@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -1601,9 +1602,11 @@ func updateChannelStatus(ctx context.Context, channelId int, usingKey string, st
 	}()
 	// The status, the key statuses and the status reason are written from the
 	// stored row, keeping what another writer stores in other_info meanwhile.
+	var source Channel
 	var committed *Channel
 	update := func(channel *Channel) (map[string]any, error) {
 		shouldUpdateAbilities = false
+		source = *channel
 		if check != nil && !check(channel) {
 			return nil, nil
 		}
@@ -1656,49 +1659,95 @@ func updateChannelStatus(ctx context.Context, channelId int, usingKey string, st
 		// Publish only the status fields after the guarded write commits. Never
 		// let an obsolete result mutate cache before its database check.
 		bump = true
-		if common.MemoryCacheEnabled {
-			channelSyncLock.Lock()
-			if cached, ok := channelsIDM[channelId]; ok && cached.Type == committed.Type && cached.Key == committed.Key &&
-				cached.ChannelInfo.IsMultiKey == committed.ChannelInfo.IsMultiKey && cached.GetBaseURL() == committed.GetBaseURL() &&
-				reflect.DeepEqual(cached.ChannelInfo.MultiKeyModels, committed.ChannelInfo.MultiKeyModels) &&
-				maps.Equal(cached.ChannelInfo.MultiKeyUsers, committed.ChannelInfo.MultiKeyUsers) &&
-				cached.OtherSettings == committed.OtherSettings &&
-				(cached.HeaderOverride == nil && committed.HeaderOverride == nil || cached.HeaderOverride != nil && committed.HeaderOverride != nil && *cached.HeaderOverride == *committed.HeaderOverride) {
-				sameSettings := cached.Setting == nil && committed.Setting == nil || cached.Setting != nil && committed.Setting != nil && *cached.Setting == *committed.Setting
-				if !sameSettings {
-					// Admission-only cap changes do not invalidate a completed result.
-					// Preserve every other raw setting, including unknown provider fields.
-					cachedSetting, committedSetting := "{}", "{}"
-					if cached.Setting != nil && *cached.Setting != "" {
-						cachedSetting = *cached.Setting
-					}
-					if committed.Setting != nil && *committed.Setting != "" {
-						committedSetting = *committed.Setting
-					}
-					var cachedSettings, committedSettings map[string]json.RawMessage
-					if common.UnmarshalJsonStr(cachedSetting, &cachedSettings) == nil && cachedSettings != nil &&
-						common.UnmarshalJsonStr(committedSetting, &committedSettings) == nil && committedSettings != nil {
-						delete(cachedSettings, "max_concurrent_requests")
-						delete(committedSettings, "max_concurrent_requests")
-						sameSettings = reflect.DeepEqual(cachedSettings, committedSettings)
-					}
-				}
-				if sameSettings {
-					updated := *cached
-					updated.ChannelInfo.MultiKeyStatusList = committed.ChannelInfo.MultiKeyStatusList
-					updated.ChannelInfo.MultiKeyDisabledReason = committed.ChannelInfo.MultiKeyDisabledReason
-					updated.ChannelInfo.MultiKeyDisabledTime = committed.ChannelInfo.MultiKeyDisabledTime
-					channelsIDM[channelId] = &updated
-					cacheUpdateChannelStatusLocked(channelId, committed.Status)
-				}
-			}
-			channelSyncLock.Unlock()
-		}
+		publishChannelStatus(&source, committed)
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		common.SysLog(common.LogText("failed to update channel status: channel_id=%d, status=%d, error=%v", channelId, status, err))
 	}
 	return written
+}
+
+// publishChannelStatus preserves the current cached configuration when a delayed
+// status write commits. Allocation revisions also prevent an older status result
+// from replacing a newer result for identical credentials.
+func publishChannelStatus(source, committed *Channel) {
+	if !common.MemoryCacheEnabled {
+		return
+	}
+	channelSyncLock.Lock()
+	defer channelSyncLock.Unlock()
+	cached, ok := channelsIDM[committed.Id]
+	if !ok || cached.Type != source.Type || cached.Key != source.Key || cached.Status != source.Status ||
+		cached.ChannelInfo.IsMultiKey != source.ChannelInfo.IsMultiKey || cached.GetBaseURL() != source.GetBaseURL() ||
+		cached.ChannelInfo.KeyEntryRevision != source.ChannelInfo.KeyEntryRevision ||
+		!slices.Equal(cached.KeyEntryIDs, source.KeyEntryIDs) || !slices.Equal(cached.KeyEntryRevisions, source.KeyEntryRevisions) ||
+		!reflect.DeepEqual(cached.ChannelInfo.MultiKeyModels, source.ChannelInfo.MultiKeyModels) ||
+		!maps.Equal(cached.ChannelInfo.MultiKeyScopeModes, source.ChannelInfo.MultiKeyScopeModes) ||
+		!maps.Equal(cached.ChannelInfo.MultiKeyUsers, source.ChannelInfo.MultiKeyUsers) ||
+		cached.OtherSettings != source.OtherSettings || cached.Other != source.Other ||
+		cached.Models != source.Models || cached.Group != source.Group ||
+		!reflect.DeepEqual(cached.ModelMapping, source.ModelMapping) ||
+		!reflect.DeepEqual(cached.ParamOverride, source.ParamOverride) ||
+		!reflect.DeepEqual(cached.OpenAIOrganization, source.OpenAIOrganization) ||
+		!reflect.DeepEqual(cached.HeaderOverride, source.HeaderOverride) {
+		return
+	}
+	sameSettings := reflect.DeepEqual(cached.Setting, source.Setting)
+	if !sameSettings {
+		// Admission-only cap changes do not invalidate a completed result.
+		// Preserve every other raw setting, including unknown provider fields.
+		cachedSetting, sourceSetting := "{}", "{}"
+		if cached.Setting != nil && *cached.Setting != "" {
+			cachedSetting = *cached.Setting
+		}
+		if source.Setting != nil && *source.Setting != "" {
+			sourceSetting = *source.Setting
+		}
+		var cachedSettings, sourceSettings map[string]json.RawMessage
+		if common.UnmarshalJsonStr(cachedSetting, &cachedSettings) == nil && cachedSettings != nil &&
+			common.UnmarshalJsonStr(sourceSetting, &sourceSettings) == nil && sourceSettings != nil {
+			delete(cachedSettings, "max_concurrent_requests")
+			delete(sourceSettings, "max_concurrent_requests")
+			sameSettings = reflect.DeepEqual(cachedSettings, sourceSettings)
+		}
+	}
+	if !sameSettings {
+		return
+	}
+	updated := *cached
+	updated.ChannelInfo.MultiKeyStatusList = committed.ChannelInfo.MultiKeyStatusList
+	updated.ChannelInfo.MultiKeyDisabledReason = committed.ChannelInfo.MultiKeyDisabledReason
+	updated.ChannelInfo.MultiKeyDisabledTime = committed.ChannelInfo.MultiKeyDisabledTime
+	updated.ChannelInfo.KeyEntryRevision = committed.ChannelInfo.KeyEntryRevision
+	updated.KeyEntryRevisions = committed.KeyEntryRevisions
+	other, committedOther := updated.GetOtherInfo(), committed.GetOtherInfo()
+	for _, key := range []string{"status_reason", "status_time"} {
+		if value, exists := committedOther[key]; exists {
+			other[key] = value
+		} else {
+			delete(other, key)
+		}
+	}
+	updated.SetOtherInfo(other)
+	channelsIDM[updated.Id] = &updated
+	cacheUpdateChannelStatusLocked(updated.Id, committed.Status)
+	if cached.Status != common.ChannelStatusEnabled && committed.Status == common.ChannelStatusEnabled {
+		// A full reload used to restore these routes. Rebuild only this
+		// channel's public routes from the retained current configuration.
+		for _, ability := range updated.channelAbilities() {
+			if group2model2channels[ability.Group] == nil {
+				group2model2channels[ability.Group] = make(map[string][]int)
+			}
+			ids := group2model2channels[ability.Group][ability.Model]
+			if !slices.Contains(ids, updated.Id) {
+				ids = append(ids, updated.Id)
+				slices.SortStableFunc(ids, func(a, b int) int {
+					return cmp.Compare(channelsIDM[b].GetPriority(), channelsIDM[a].GetPriority())
+				})
+				group2model2channels[ability.Group][ability.Model] = ids
+			}
+		}
+	}
 }
 
 // channelPluginHasHook reports a task plugin channel whose plugin exports
