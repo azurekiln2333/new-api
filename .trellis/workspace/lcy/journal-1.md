@@ -193,3 +193,47 @@ Completed four pi implementation scopes and independent review; exact-SHA cloud 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: Release channel allocations and Messages routing
+<!-- trellis-session: v=2 fp=431ef6cf2c6a470a -->
+
+**Date**: 2026-11-24
+**Task**: Release channel allocations and Messages routing
+**Branch**: `merge/upstream`
+
+### Summary
+
+Released custom-20261124-53a71f8 after exact-SHA GitHub CI and all 12 publication jobs passed; archived five task records. Further executable validation is restricted to GitHub Actions by user instruction.
+
+### Main Changes
+
+Implemented stable channel key allocations and budgets, request-body/node diagnostics, separated panel rate scopes, configured OpenAI Messages upstream routing, and administrator-only channel fingerprint/model selection. Ordinary users continue to select eligible groups/models.
+
+Released code commit: `53a71f88d5b568847cd7233a08f934824dcb22d3`.
+
+- Exact-SHA CI `45227143675` succeeded, including SQLite 3.50.4, MySQL 8.4.13, PostgreSQL 16.16, Redis 7.4.12, real ClickHouse 25.8.33.6 fresh/released-upgrade storage, and race checks.
+- Release workflow `45230816749` succeeded in all 12 jobs. Tag `custom-20261124-53a71f8` and fork `main` resolve to the tested commit. The release is public, with AMD64/ARM64 images, four platform binaries and three checksum files.
+- Release: https://github.com/azurekiln2333/new-api/releases/tag/custom-20261124-53a71f8
+- No direct production deployment. Bookkeeping is confined to `merge/upstream` with `[skip ci]`; `main` remains at the released code SHA.
+
+The user prohibits local tests. Earlier local reproduction/preflight violated that instruction; after correction all local validation workers stopped. Further tests, builds, vet, lint, typechecks, database probes and executable artifact validation must run only in GitHub Actions. Post-correction work consisted of source/Git/task bookkeeping and read-only GitHub evidence retrieval; the prepared local release verifier was not run.
+
+Retained limits: channel budgets default off; activation requires every serving node upgraded, old work drained and batching disabled. Active-ledger continuous Realtime is rejected; SQL/cache delivery is not atomic. The 429 scopes remain IP-based with an aggregate cap; production proxy configuration is unverified. Unrelated full-web lint baseline issues and optional environment-gated test skips remain. No cross-region/five-node load or latency claim.
+
+Archived the parent task and four children using the saved 47-file tracked manifest. Unrelated workspace edits and untracked task scratch were left unstaged.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc9778764` | feat(channel): add stable key budgets, request diagnostics and panel rate isolation |
+| `2e1c7e161` | fix(logs): support ClickHouse payloads and initialize relay fixtures |
+| `c31cbc692` | fix(channel): guard cache publication after allocation status updates |
+| `c4c4dc4de` | feat(relay): support declared Messages upstreams and scoped diagnostics |
+| `53a71f88d` | test(channel): initialize authoritative allocations in routing fixtures |
+
+### Status
+
+[OK] **Completed**
