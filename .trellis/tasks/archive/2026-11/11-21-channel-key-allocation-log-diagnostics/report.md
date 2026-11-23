@@ -1,13 +1,34 @@
 # Integration and release evidence
 
-Status (2026-11-24): `c31cbc692` and `c4c4dc4de` are pushed to fork
-`merge/upstream`. Exact-SHA CI `45216894193` passed complete backend/frontend
-jobs, real database/cache/allocation checks, budget/log races, 429 isolation and
-Messages/administrator-boundary races. The later MySQL waiting selector failed
-inside a legacy fixture that writes a nil projected key-status map. Follow-up
-fixture repair also addresses WebSocket setup creating authoritative allocations
-only after its first turn. Those repairs await cloud validation. `main` has not
-advanced; no new release is claimed.
+Status (2026-11-24): exact-SHA CI `45227143675` succeeded for
+`53a71f88d5b568847cd7233a08f934824dcb22d3`. All three jobs and every workflow
+step passed, including the repaired waiting and per-turn WebSocket regressions
+on SQLite/MySQL/PostgreSQL and the final race gate. Fork `main` was fast-forwarded
+to that tested SHA. Release workflow `45230816749` also succeeded for the same
+SHA: all 12 jobs and every workflow step passed. Release
+`custom-20261124-53a71f8` is public, with both image architectures, four binaries
+and three checksum files. No direct production deployment was performed.
+
+Final hosted evidence:
+- CI: https://github.com/azurekiln2333/new-api/actions/runs/45227143675
+- Release workflow: https://github.com/azurekiln2333/new-api/actions/runs/45230816749
+- Published release: https://github.com/azurekiln2333/new-api/releases/tag/custom-20261124-53a71f8
+- GitHub's tag ref, release target and fork `main` all resolve to
+  `53a71f88d5b568847cd7233a08f934824dcb22d3`.
+- Published image: `ghcr.io/azurekiln2333/new-api:custom-20261124-53a71f8`,
+  built for `linux/amd64` and `linux/arm64` by the successful hosted jobs.
+  The hosted manifest publication log records digest
+  `sha256:061e90d5e2e55dd70f8fb0040f3f62d7c3705bf2ab567fe63594727a3b6fe1c2`
+  for the custom version, full-SHA tag and `latest`.
+- Release API confirms `isDraft=false` and all seven expected nonempty assets:
+  Linux AMD64 `new-api-custom-20261124-53a71f8` (150679817 bytes), Linux ARM64
+  `new-api-arm64-custom-20261124-53a71f8` (145686793 bytes), macOS ARM64
+  `new-api-macos-custom-20261124-53a71f8` (176354146 bytes), Windows
+  `new-api-custom-20261124-53a71f8.exe` (152672768 bytes), and
+  `checksums-linux.txt` / `checksums-macos.txt` / `checksums-windows.txt`
+  (202 / 104 / 102 bytes).
+- Evidence was read from GitHub Actions and GitHub's release/tag APIs. No local
+  binaries, artifact-verification scripts or checksum verification were run.
 
 Validation policy: the user explicitly prohibits local tests. Local reproduction
 and preflight runs were performed contrary to that instruction before the latest
@@ -41,9 +62,17 @@ allocations after the socket captured its original identity. It now uses public
 `channel.Insert()` before opening the connection, with explicit entry schema and
 scoped cleanup. The existing five-turn expectations remain; failed events include
 their payload for diagnosis. Only test fixtures changed. Final source state was
-not locally tested after the user's stop instruction; cloud CI is required.
+not locally tested after the user's stop instruction. Follow-up cloud run
+`45227143675` passed: disabled-key waiting case SQLite 1.30 s / MySQL 1.14 s /
+PostgreSQL 1.45 s; per-turn WebSocket goal policy 0.09 s / 0.17 s / 0.55 s.
+All final race packages passed, including controller 61.268 s. Actual ClickHouse
+request-content fresh and released-upgrade cases passed. Every workflow step ran;
+the broad suites still have their documented unrelated environment-gated skips,
+so this is not a claim that every individual optional integration test executed.
+Hosted engine versions recorded by that run: SQLite 3.50.4, MySQL 8.4.13,
+PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1), Redis 7.4.12 and ClickHouse 25.8.33.6.
 
-### Cache-status blocker repaired, 2026-11-23
+### Historical cache-status repair evidence, 2026-11-23
 
 The earlier worker explanation that an inactive `InitChannelCache` call clears
 the id-keyed cache is withdrawn: that branch leaves those maps untouched. The
@@ -285,7 +314,7 @@ Exact commands and detailed assertions are retained in the four child reports,
 `research/rate-limit-429.md`, `research/runtime-review.md`, and the diagnostics
 child's `research/integration-quality.md`.
 
-## Rollout limits and pending release gates
+## Rollout limits
 
 - `CHANNEL_BUDGET_ENABLED` defaults to false. Upgrade every node and drain old
   requests/batches before activating; all serving nodes must have
@@ -303,16 +332,15 @@ child's `research/integration-quality.md`.
 - Full frontend lint has existing errors outside task paths (135 errors,
   60 warnings at the retained check). Scoped task lint passes. No unrelated
   formatting sweep was performed.
-- Local ClickHouse is unavailable. The existing hosted integration job now
-  supplies ClickHouse 25.8 and selects actual log storage/read/cleanup and race
-  tests. Its executed result on the exact committed SHA is required; configured
-  YAML is not test evidence. Native TTL/fault-injection coverage limitations
-  remain documented by the diagnostics child.
+- Exact-SHA hosted validation passed actual ClickHouse 25.8.33.6 log
+  storage/read/cleanup, fresh/released-upgrade and race cases. Native
+  TTL/fault-injection coverage limitations remain documented by the diagnostics
+  child. The broad suites retain unrelated environment-gated optional skips.
 - Cross-region latency and a five-node load simulation were not performed.
   Active accounting adds primary-database transactions; this work does not
   promise reduced HK-to-US database latency.
 
-After local integration acceptance, commit only task-owned paths, run the fork
-CI on that exact SHA, and use the existing main release workflow to build
-AMD64/ARM64 images, binaries, checksums and the custom tag. No direct production
+Integration and publication are complete for the exact SHA recorded above.
+Task archival and journal updates remain bookkeeping on `merge/upstream`, with
+`[skip ci]`; fork `main` stays at the released code commit. No direct production
 deployment is authorized or performed.

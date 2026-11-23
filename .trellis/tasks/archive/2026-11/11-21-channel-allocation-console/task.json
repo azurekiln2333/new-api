@@ -1,17 +1,17 @@
 {
-  "id": "channel-manual-balance",
-  "name": "channel-manual-balance",
-  "title": "Manual channel balance entry",
-  "description": "Allow administrators to enter channel quota or balance without an upstream balance API",
-  "status": "in_progress",
+  "id": "channel-allocation-console",
+  "name": "channel-allocation-console",
+  "title": "Channel allocation and diagnostic console",
+  "description": "Implement duplicate Key quota management, manual channel budgets, request prompt details and node displays in the console",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
   "priority": "P2",
   "creator": "lcy",
-  "assignee": "pi-billing",
+  "assignee": "pi-ui",
   "createdAt": "2026-11-21",
-  "completedAt": null,
+  "completedAt": "2026-11-24",
   "branch": "merge/upstream",
   "base_branch": "merge/upstream",
   "worktree_path": null,
@@ -24,7 +24,7 @@
   "notes": "",
   "meta": {
     "dispatch": {
-      "worker": "pi-billing",
+      "worker": "pi-ui",
       "runtime": "pi-direct",
       "channel": "key-quota-log-1121",
       "approval": "user explicitly authorized implementation and four Pi workers"
