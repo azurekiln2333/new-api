@@ -1,12 +1,21 @@
 # Integration and release evidence
 
-Status (2026-11-24): local integration checks pass for R1–R9 and role-scoped
-model selection. Cache publication is repaired in `c31cbc692`; Messages routing,
-permission/dropdown regressions and all seven translations are frozen and ready
-for the feature commit. Root vet/build, affected three-engine and race checks,
-227 frontend regressions, whole-web typecheck, scoped lint/format, i18n validation
-and production build pass. Exact-SHA fork CI and the release workflow remain
-required; no new tag or release is claimed yet.
+Status (2026-11-24): `c31cbc692` and `c4c4dc4de` are pushed to fork
+`merge/upstream`. Exact-SHA CI `45216894193` passed complete backend/frontend
+jobs, real database/cache/allocation checks, budget/log races, 429 isolation and
+Messages/administrator-boundary races. The later MySQL waiting selector failed
+inside a legacy fixture that writes a nil projected key-status map. Follow-up
+fixture repair also addresses WebSocket setup creating authoritative allocations
+only after its first turn. Those repairs await cloud validation. `main` has not
+advanced; no new release is claimed.
+
+Validation policy: the user explicitly prohibits local tests. Local reproduction
+and preflight runs were performed contrary to that instruction before the latest
+correction; they are retained as historical evidence, not justification to repeat
+them. All further tests, builds, vet, lint, typechecks and executable verification
+must run in GitHub Actions. Local work is limited to source edits/review and Git
+operations. All local validation workers were stopped; the unrelated application
+process was left running.
 
 Historical hosted evidence: `2e1c7e161a7ae1daa45782ab9745b3b03389b2f3` run
 `45189185651` passed backend checks and actual ClickHouse storage, then failed
@@ -14,6 +23,25 @@ the MySQL cache-routing selector now repaired. Initial `dc9778764419ba8f16f6b034
 run `45181916416` failed backend fixtures and ClickHouse storage. Those failures
 and their repairs are retained below; earlier hosted passes do not replace CI
 on the new exact commit.
+
+### Waiting and reusable-connection fixture follow-up, 2026-11-24
+
+CI `45216894193` reached the MySQL per-turn routing/waiting step after all
+earlier steps passed. `TestChannelWaitRouting/disabled_keys_select_next_grant`
+panicked in test code while assigning to an enabled-entry status map that the
+authoritative projection intentionally leaves nil. Its raw `channel_info` write
+would also bypass the stored entry. The fixture now initializes the entry table,
+uses a revision-checked locked mutation, and verifies both the disabled entry and
+the still-enabled channel before releasing held capacity. Original routing,
+single-charge, log and lease assertions remain.
+
+The subsequent WebSocket goal-policy failure was a credential-identity refusal:
+the shared fixture used raw `DB.Create`, so the first polling update created
+allocations after the socket captured its original identity. It now uses public
+`channel.Insert()` before opening the connection, with explicit entry schema and
+scoped cleanup. The existing five-turn expectations remain; failed events include
+their payload for diagnosis. Only test fixtures changed. Final source state was
+not locally tested after the user's stop instruction; cloud CI is required.
 
 ### Cache-status blocker repaired, 2026-11-23
 

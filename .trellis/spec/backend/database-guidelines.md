@@ -70,6 +70,12 @@ Rules that keep this consistent:
   `UpdateChannelLocked` or `MutateChannelKeyEntries`, then read back the channel.
   Keep stale source snapshots unchanged when testing delayed-result rejection;
   replacing the snapshot would remove the concurrency assertion.
+  Reusable-connection fixtures must establish allocation rows before their first
+  request, using the public channel insertion path. A raw channel insert can let
+  the first polling update migrate its identity after the socket already captured
+  it, correctly causing the next turn to reject that stale credential identity.
+  Explicitly migrate the allocation table on every fixture engine; do not rely
+  on schema left behind by an earlier external-database test.
 - **Delayed allocation status writes retain guarded cache publication.** Compare
   the pre-write credential/configuration and allocation IDs/revisions under the
   cache lock, then publish only committed status metadata and revisions. Preserve

@@ -386,7 +386,7 @@ func newResponsesWSBillingTestWithHeaders(t *testing.T, expression string, handl
 		"group_ratio_setting.group_ratio": `{"default":1}`,
 		"perf_metrics_setting.enabled":    "true",
 	}))
-	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelKeyEntry{}))
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
 	require.NoError(t, model.DB.Model(token).Update("remain_quota", 3000).Error)
@@ -426,11 +426,13 @@ func newResponsesWSBillingTestWithHeaders(t *testing.T, expression string, handl
 	channel.ModelMapping = &modelMapping
 	channel.SetSetting(dto.ChannelSettings{ResponsesWebSocketEnabled: true})
 	channel.SetOtherSettings(dto.ChannelOtherSettings{AllowServiceTier: true})
-	require.NoError(t, model.DB.Create(channel).Error)
+	// Establish stable allocations before the socket selects its credential;
+	// polling must not migrate a raw fixture channel during its first turn.
+	require.NoError(t, channel.Insert())
 	fixture.channel = channel
-	require.NoError(t, model.DB.Create(&model.Ability{ChannelId: channel.Id, Model: "ws-billing", Group: "default", Enabled: true}).Error)
 	t.Cleanup(func() {
 		require.NoError(t, model.LOG_DB.Where("token_id = ?", token.Id).Delete(&model.Log{}).Error)
+		require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Delete(&model.ChannelKeyEntry{}).Error)
 		require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error)
 		require.NoError(t, model.DB.Delete(channel).Error)
 	})
@@ -736,7 +738,7 @@ func TestResponsesWebSocketGoalPolicyIsPerTurn(t *testing.T) {
 				assert.Contains(t, detail["message"], "reconnect")
 			}
 		} else {
-			require.Equal(t, "response.completed", event["type"], turn.name)
+			require.Equal(t, "response.completed", event["type"], "%s: %v", turn.name, event)
 		}
 		assert.Equal(t, turn.wantCalls, upstreamCalls.Load(), turn.name)
 	}

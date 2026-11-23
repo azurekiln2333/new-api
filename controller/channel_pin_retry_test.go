@@ -65,7 +65,7 @@ func TestChannelWaitRouting(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, i18n.Init())
 			user, token := setupResponsesWSRequestTest(t)
-			require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
+			require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelKeyEntry{}))
 			require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
 			require.NoError(t, model.DB.Model(user).Update("setting", `{"billing_preference":"wallet_only"}`).Error)
 			previousRetries, previousLogs, previousErrors := common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled
@@ -139,6 +139,7 @@ func TestChannelWaitRouting(t *testing.T) {
 				}
 				require.NoError(t, channels[i].Insert())
 				t.Cleanup(func() {
+					require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.ChannelKeyEntry{}).Error)
 					require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.Ability{}).Error)
 					require.NoError(t, model.DB.Delete(&channels[i]).Error)
 				})
@@ -199,8 +200,21 @@ func TestChannelWaitRouting(t *testing.T) {
 					channels[0].SetSetting(settings)
 					require.NoError(t, model.DB.Model(&channels[0]).Update("setting", channels[0].Setting).Error)
 				case "key":
-					channels[0].ChannelInfo.MultiKeyStatusList[0] = common.ChannelStatusManuallyDisabled
-					require.NoError(t, model.DB.Model(&channels[0]).Update("channel_info", channels[0].ChannelInfo).Error)
+					_, err := model.MutateChannelKeyEntries(t.Context(), channels[0].Id, channels[0].ChannelInfo.KeyEntryRevision,
+						func(_ *gorm.DB, _ *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+							require.Len(t, entries, 1)
+							entries[0].Status = common.ChannelStatusManuallyDisabled
+							entries[0].ConfigRevision++
+							return entries, nil, nil
+						})
+					require.NoError(t, err)
+					entry, err := model.ChannelKeyEntryByID(channels[0].Id, channels[0].ChannelKeyEntryID(0))
+					require.NoError(t, err)
+					require.Equal(t, common.ChannelStatusManuallyDisabled, entry.Status)
+					stored, err := model.GetChannelById(channels[0].Id, true)
+					require.NoError(t, err)
+					require.Equal(t, common.ChannelStatusEnabled, stored.Status)
+					require.Equal(t, common.ChannelStatusManuallyDisabled, stored.ChannelInfo.MultiKeyStatusList[0])
 				}
 				if tc.cancel {
 					cancel()
