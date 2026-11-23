@@ -19,6 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // Channel capability labels and validation messages passed to t() dynamically.
+  'Inherit existing routing',
+  'Chat Completions only',
+  'Responses only',
+  'Anthropic Messages (/v1/messages)',
+  'Chat Completions and Responses',
+  'Chat Completions and Anthropic Messages',
+  'Responses and Anthropic Messages',
+  'Chat Completions, Responses and Anthropic Messages',
+  'supported_endpoints messages is only supported for the OpenAI channel type',
+  'supported_endpoints must contain only chat, responses or messages',
+  'Choose a model offered by the channel',
   'Operational',
   'Degraded performance',
   'Partial outage',

@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
+import { ModelSelector } from '@/components/model-group-selector'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -39,8 +40,11 @@ import {
 } from '@/components/ui/select'
 import { searchChannels } from '@/features/channels/api'
 import { toIntlLocale } from '@/i18n/languages'
+import { hasPermission } from '@/lib/admin-permissions'
 import { formatNumber } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { getServerErrorMessage } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   cancelChannelFingerprint,
@@ -177,7 +181,38 @@ function translateRunMessage(
   return message
 }
 
+// Channel model fields are comma separated; blank entries are not candidates.
+function parseChannelModels(models: string | undefined): string[] {
+  return (models ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+}
+
+// A fingerprint check needs channel operate rights. Reading the live identity
+// here means a demotion, a permission edit or an account switch never keeps an
+// earlier admin's channel names, models or running job on screen, because the
+// console below is keyed by exactly those facts and is unmounted when they
+// change.
+function fingerprintAccessKey(
+  user: ReturnType<typeof useAuthStore.getState>['auth']['user']
+) {
+  if (!user || user.role < ROLE.ADMIN) return null
+  if (!hasPermission(user, 'channel', 'operate')) return null
+  const channelGrants = JSON.stringify(
+    user.permissions?.admin_permissions?.channel ?? null
+  )
+  return `${user.id}:${user.role}:${channelGrants}`
+}
+
 export function ChannelFingerprint() {
+  const user = useAuthStore((state) => state.auth.user)
+  const accessKey = fingerprintAccessKey(user)
+  if (!accessKey) return null
+  return <FingerprintConsole key={accessKey} identity={accessKey} />
+}
+
+function FingerprintConsole({ identity }: { identity: string }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [channelId, setChannelId] = useState('')
@@ -214,10 +249,15 @@ export function ChannelFingerprint() {
 
   const channelsQuery = useQuery({
     // Search uses the existing channel search endpoint, so a deployment with
-    // more channels than one page still allows selecting any of them.
-    queryKey: ['fingerprint-channels', debouncedKeyword],
-    queryFn: () =>
-      searchChannels({ keyword: debouncedKeyword, p: 1, page_size: 30 }),
+    // more channels than one page still allows selecting any of them. The
+    // identity and permission are part of the key so a demotion or account switch
+    // cannot read another identity's cached channel names or models.
+    queryKey: ['fingerprint-channels', identity, debouncedKeyword],
+    queryFn: ({ signal }) =>
+      searchChannels(
+        { keyword: debouncedKeyword, p: 1, page_size: 30 },
+        signal
+      ),
     staleTime: 60_000,
     meta: { errorToast: false },
   })
@@ -225,23 +265,51 @@ export function ChannelFingerprint() {
   const selectedChannel = channels.find(
     (channel) => String(channel.id) === channelId
   )
-  const channelModels = useMemo(
-    () =>
-      (selectedChannel?.models ?? '')
-        .split(',')
-        .map((name) => name.trim())
-        .filter(Boolean),
-    [selectedChannel?.models]
-  )
+  // A search reload can drop the chosen channel from the current page. Only the
+  // channel chosen by id is remembered, so a valid model survives that reload;
+  // a keyword edit still clears it because the channel itself may be gone.
+  const [chosenModels, setChosenModels] = useState<string[]>([])
+  useEffect(() => {
+    if (!selectedChannel) return
+    setChosenModels(parseChannelModels(selectedChannel.models))
+  }, [selectedChannel])
+  const channelModels = useMemo(() => {
+    const names = selectedChannel
+      ? parseChannelModels(selectedChannel.models)
+      : chosenModels
+    // Channel model lists can repeat an alias; the shared selector needs unique
+    // values, and the alias text itself must stay exactly as configured.
+    return [...new Set(names)].map((name) => ({ label: name, value: name }))
+  }, [chosenModels, selectedChannel])
+  // A channel switch replaces the candidates, so a model the new channel does
+  // not serve must not stay selected and be submitted against it.
+  useEffect(() => {
+    if (!channelId) return
+    if (channelModels.some((option) => option.value === model)) return
+    setModel(channelModels[0]?.value ?? '')
+  }, [channelId, channelModels, model])
+  // The effect that repairs a stale model runs after render, so the submit path
+  // must reject a model the current channel cannot serve instead of relying on
+  // it having caught up.
+  const modelServable =
+    !!channelModels.length &&
+    channelModels.some((option) => option.value === model.trim())
 
   const startMutation = useMutation({
-    mutationFn: () =>
-      startChannelFingerprint(Number(channelId), {
-        model: model.trim(),
+    mutationFn: () => {
+      const name = model.trim()
+      if (!channelId || !modelServable) {
+        return Promise.reject(
+          new Error('Choose a model offered by the channel')
+        )
+      }
+      return startChannelFingerprint(Number(channelId), {
+        model: name,
         endpoint_type: endpoint,
         count,
         token_budget: tokenBudget,
-      }),
+      })
+    },
     onSuccess: (started) => {
       setStartError('')
       setPollError('')
@@ -267,7 +335,7 @@ export function ChannelFingerprint() {
   // One query drives the poll instead of a bare interval: it never overlaps a
   // request with the next tick, and stops as soon as the run is terminal.
   const pollQuery = useQuery({
-    queryKey: ['fingerprint-job', jobChannelId, jobId, pollAttempt],
+    queryKey: ['fingerprint-job', identity, jobChannelId, jobId, pollAttempt],
     queryFn: ({ signal }) =>
       getChannelFingerprint(jobChannelId as number, jobId as string, signal),
     enabled: !!running && !pollStopped && !!jobId && !!jobChannelId,
@@ -302,7 +370,7 @@ export function ChannelFingerprint() {
     : 0
   const canStart =
     !!channelId &&
-    !!model.trim() &&
+    modelServable &&
     !startMutation.isPending &&
     (!running || pollStopped)
   // Editing is allowed while a stopped run is still shown, so the operator can
@@ -346,6 +414,7 @@ export function ChannelFingerprint() {
                     onValueChange={(value) => {
                       setChannelId(value ?? '')
                       setModel('')
+                      setChosenModels([])
                     }}
                     disabled={controlsDisabled}
                   >
@@ -363,19 +432,24 @@ export function ChannelFingerprint() {
                 </div>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-model'>{t('Model')}</Label>
-                  <Input
-                    id='fingerprint-model'
-                    list='fingerprint-channel-models'
-                    value={model}
-                    placeholder={t('Model name')}
-                    onChange={(event) => setModel(event.target.value)}
-                    disabled={controlsDisabled}
+                  <ModelSelector
+                    triggerId='fingerprint-model'
+                    className='w-full justify-start'
+                    selectedModel={model}
+                    models={channelModels}
+                    onModelChange={setModel}
+                    disabled={controlsDisabled || !channelId}
                   />
-                  <datalist id='fingerprint-channel-models'>
-                    {channelModels.map((name) => (
-                      <option key={name} value={name} />
-                    ))}
-                  </datalist>
+                  {!channelId && (
+                    <p className='text-muted-foreground text-xs'>
+                      {t('Choose a channel to list its models')}
+                    </p>
+                  )}
+                  {!!channelId && !channelModels.length && (
+                    <p className='text-muted-foreground text-xs'>
+                      {t('This channel declares no models')}
+                    </p>
+                  )}
                 </div>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-endpoint'>{t('Endpoint')}</Label>

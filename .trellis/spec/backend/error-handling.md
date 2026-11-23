@@ -908,3 +908,76 @@ Wrong: every critical panel action spends `CT + ClientIP`, or a caller-provided
 session identifier chooses a new anonymous bucket. Correct: server-defined
 business scopes retain IP enforcement, all login aliases share CT, and GA
 continues to bound aggregate panel traffic.
+
+## Declared Messages upstream on OpenAI channels
+
+### 1. Scope / Trigger
+
+Apply when selecting a text upstream, converting an OpenAI-channel request, or
+rendering the administrator's `supported_endpoints` capability set.
+
+### 2. Signatures
+
+`ChannelSettings.SupportedEndpoints` accepts `chat`, `responses` and `messages`.
+`ValidateChannelSupportedEndpoints` permits `messages` only for the OpenAI channel
+type. `resolveTextUpstreamEndpoint` records the Messages choice in the per-attempt
+`RelayInfo.UpstreamTextEndpoint`; `InitChannelMeta` clears it before every attempt.
+
+### 3. Contracts
+
+An empty declaration preserves legacy routing, including Claude-client conversion
+to Chat. Never infer a Messages upstream from the client format or model name.
+Claude clients prefer declared Messages; Chat clients retain existing Chat/Responses
+selection and use Messages when those endpoints are absent. HTTP Responses can use
+the existing Claude conversion. A declaration containing `responses` retains native
+Responses and compact behavior.
+
+Delegate request/response conversion to the existing Claude adaptor inside the
+OpenAI adaptor. Retain the outer adaptor wrappers, client protocol, channel identity,
+OpenAI Bearer/organization credentials and header-override ordering. Use channel
+credentials, never client credentials. Preserve Anthropic version, beta headers and
+the existing beta-query policy. Apply the channel system prompt once before Chat
+conversion. Keep the original Anthropic billing usage separate from client-facing
+usage conversion; this path does not introduce new pricing or token arithmetic.
+On upstream errors, retain classification and `Retry-After` for native Claude
+clients as well as converted Chat and Responses clients.
+
+Messages-only does not provide a Responses WebSocket transport. Reject its
+`response.create` before any upstream dial; the client WebSocket may already be
+upgraded because channel selection happens per turn. Preserve HTTP Responses
+conversion and combinations containing `responses`. The fingerprint output-token
+guard must validate the actual Claude request body even though the channel API type
+remains OpenAI.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Non-OpenAI channel declares Messages | Save rejected |
+| No declaration | Existing selection and conversion policy |
+| Messages-only Chat / HTTP Responses | Convert request and JSON/SSE response through existing Claude support |
+| Claude client with Messages declared | Native Messages request and response |
+| Messages-only Responses WS / compact / Gemini | Local invalid-request with SkipRetry, zero upstream dispatch |
+| Passthrough requires a protocol conversion | Local translated invalid-request with SkipRetry |
+| Retry selects a different channel | Recompute target; no retained Messages state |
+
+### 5. Good / Base / Bad Cases
+
+Good: a Chat client receives Chat tool-call SSE from a Messages upstream. Base:
+an undeclared OpenAI channel keeps its historical Chat endpoint. Bad: changing only
+the URL sends Chat JSON to Messages, or replacing the adaptor drops diagnostic bounds.
+
+### 6. Tests Required
+
+Extend existing endpoint-selection, save-validation and diagnostic tests. Exercise
+actual HTTP JSON/SSE round trips, tools, nonzero cache usage, system prompts, beta
+policy, channel authentication and header overrides. Test Messages-only WebSocket
+rejection with an observed zero upstream dial count and retain a Responses-capable
+control. Build and test relaykit independently with `GOWORK=off`.
+
+### 7. Wrong vs Correct
+
+Wrong: infer Messages from `RelayFormatClaude`, convert twice to add a prompt, or
+detect a WebSocket turn from stripped Upgrade headers. Correct: use the selected
+attempt target, apply the prompt once before conversion, and enforce transport
+support at the Responses WebSocket payload boundary.

@@ -130,7 +130,7 @@ export type Channel = z.infer<typeof channelSchema>
 export interface ChannelSettings {
   max_concurrent_requests?: number
   upstream_first_byte_timeout_seconds?: number | null
-  supported_endpoints?: ('chat' | 'responses')[]
+  supported_endpoints?: ('chat' | 'responses' | 'messages')[]
   task_plugin_key?: string
   task_extend_plugin_keys?: string[]
   /** Request processing instance ids, in the order they run. */

@@ -22,9 +22,16 @@ func TestChannelSettingsSupportedEndpoints(t *testing.T) {
 		{name: "chat", body: `{"supported_endpoints":["chat"]}`, wantEndpoints: []string{"chat"}},
 		{name: "responses", body: `{"supported_endpoints":["responses"]}`, wantEndpoints: []string{"responses"}},
 		{name: "both", body: `{"supported_endpoints":["chat","responses"]}`, wantEndpoints: []string{"chat", "responses"}},
-		{name: "unknown", body: `{"supported_endpoints":["messages"]}`, wantError: "supported_endpoints must contain only chat or responses"},
+		{name: "messages", body: `{"supported_endpoints":["messages"]}`, wantEndpoints: []string{"messages"}},
+		{name: "chat and messages", body: `{"supported_endpoints":["chat","messages"]}`, wantEndpoints: []string{"chat", "messages"}},
+		{name: "responses and messages", body: `{"supported_endpoints":["responses","messages"]}`, wantEndpoints: []string{"responses", "messages"}},
+		{name: "all preserves declared order", body: `{"supported_endpoints":["messages","chat","responses"]}`, wantEndpoints: []string{"messages", "chat", "responses"}},
+		{name: "unknown", body: `{"supported_endpoints":["realtime"]}`, wantError: "supported_endpoints must contain only chat, responses or messages"},
+		{name: "noncanonical name", body: `{"supported_endpoints":[" Messages "]}`, wantError: "supported_endpoints must contain only chat, responses or messages"},
 		{name: "duplicates", body: `{"supported_endpoints":["chat","chat"]}`, wantError: "supported_endpoints must not contain duplicates"},
+		{name: "messages duplicate", body: `{"supported_endpoints":["messages","chat","messages"]}`, wantError: "supported_endpoints must not contain duplicates"},
 		{name: "passthrough conflict", body: `{"supported_endpoints":["responses"],"pass_through_body_enabled":true}`, wantError: "supported_endpoints cannot be combined with pass_through_body_enabled"},
+		{name: "messages passthrough conflict", body: `{"supported_endpoints":["messages"],"pass_through_body_enabled":true}`, wantError: "supported_endpoints cannot be combined with pass_through_body_enabled"},
 		{name: "legacy passthrough", body: `{"pass_through_body_enabled":true}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

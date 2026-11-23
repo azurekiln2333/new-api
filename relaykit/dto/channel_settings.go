@@ -81,8 +81,12 @@ func (s ChannelSettings) TaskPluginBindings() []string {
 }
 
 const (
-	ChannelEndpointChat                = "chat"
-	ChannelEndpointResponses           = "responses"
+	ChannelEndpointChat      = "chat"
+	ChannelEndpointResponses = "responses"
+	// ChannelEndpointMessages declares an Anthropic Messages (/v1/messages)
+	// text upstream. It is only accepted for channels whose adaptor can serve
+	// that protocol.
+	ChannelEndpointMessages            = "messages"
 	HTTPProtocolAuto                   = "auto"
 	HTTPProtocolHTTP1                  = "http1"
 	MaxHTTP2ConnectionShards           = 8
@@ -95,8 +99,8 @@ func (s *ChannelSettings) ValidateSupportedEndpoints() error {
 		return nil
 	}
 	for i, endpoint := range s.SupportedEndpoints {
-		if endpoint != ChannelEndpointChat && endpoint != ChannelEndpointResponses {
-			return fmt.Errorf("supported_endpoints must contain only chat or responses")
+		if endpoint != ChannelEndpointChat && endpoint != ChannelEndpointResponses && endpoint != ChannelEndpointMessages {
+			return fmt.Errorf("supported_endpoints must contain only chat, responses or messages")
 		}
 		if slices.Contains(s.SupportedEndpoints[:i], endpoint) {
 			return fmt.Errorf("supported_endpoints must not contain duplicates")

@@ -888,6 +888,18 @@ func buildResponsesWSCreatePayload(c *gin.Context, info *relaycommon.RelayInfo, 
 		return nil, apiErr
 	}
 	defer closer.Close()
+	// The OpenAI adaptor answers a selected Anthropic Messages upstream over an
+	// HTTP call, but this turn would be sent on a WebSocket dial with an
+	// Anthropic body. Refuse here, before the dial; a declaration that also
+	// includes responses keeps the ordinary Responses transport.
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointUnsupported)),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	jsonData, err := io.ReadAll(body)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())

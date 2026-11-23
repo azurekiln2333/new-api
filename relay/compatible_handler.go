@@ -103,6 +103,12 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 		requestBody = common.NewReplayableBodyReader(storage)
 	} else {
+		if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+			// A Messages upstream receives an Anthropic request, so the configured
+			// prompt must be applied to the chat request before the single
+			// conversion; the returned *ClaudeRequest would skip the OpenAI hook.
+			applySystemPromptIfNeeded(c, info, request)
+		}
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
 		if err != nil {
 			return newConvertRequestFailedError(c, info, err)

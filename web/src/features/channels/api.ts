@@ -254,9 +254,10 @@ export async function getChannels(
  * Search channels with filters
  */
 export async function searchChannels(
-  params: SearchChannelsParams
+  params: SearchChannelsParams,
+  signal?: AbortSignal
 ): Promise<SearchChannelsResponse> {
-  const res = await api.get('/api/channel/search', { params })
+  const res = await api.get('/api/channel/search', { params, signal })
   return res.data
 }
 

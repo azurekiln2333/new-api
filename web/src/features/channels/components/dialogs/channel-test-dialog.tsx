@@ -177,11 +177,14 @@ function getLatestChannelTestCachePatch(
   return latest?.patch
 }
 
+// A required upstream lists the declarations that can serve the request shape.
+// Streaming is not a separate requirement: an HTTP SSE Responses request is
+// converted for a Messages-only channel exactly like the non-streaming one.
 const endpointTypeOptions: Array<{
   value: string
   label: string
   path?: string
-  requiresUpstream?: 'chat' | 'responses'
+  requiresAnyUpstream?: readonly ('chat' | 'responses' | 'messages')[]
 }> = [
   { value: 'auto', label: 'Auto detect (default)' },
   {
@@ -190,16 +193,21 @@ const endpointTypeOptions: Array<{
     path: '/v1/chat/completions',
   },
   {
+    // Responses is converted to Messages for a Messages-only upstream, including
+    // the SSE variant. Responses WebSocket is a different path and is not offered
+    // here.
     value: 'openai-response',
     label: 'OpenAI Responses (/v1/responses)',
     path: '/v1/responses',
-    requiresUpstream: 'responses',
+    requiresAnyUpstream: ['responses', 'messages'],
   },
   {
+    // Compaction has no Anthropic Messages equivalent and is refused before
+    // dispatch, so it still needs a declared Responses upstream.
     value: 'openai-response-compact',
     label: 'OpenAI Response Compaction (/v1/responses/compact)',
     path: '/v1/responses/compact',
-    requiresUpstream: 'responses',
+    requiresAnyUpstream: ['responses'],
   },
   {
     value: 'anthropic',
@@ -210,7 +218,7 @@ const endpointTypeOptions: Array<{
     value: 'gemini',
     label: 'Gemini (/v1beta/models/{model}:generateContent)',
     path: '/v1beta/models/{model}:generateContent',
-    requiresUpstream: 'chat',
+    requiresAnyUpstream: ['chat'],
   },
   {
     value: 'jina-rerank',
@@ -243,9 +251,13 @@ const BATCH_TEST_DELAY_MS = 100
 const AUTO_TEST_KEY = 'auto'
 
 // A key scoped to other models cannot serve this test, so the channel picks the
-// key instead of the named one.
+// key instead of the named one. An explicit allowlist is authoritative even when
+// empty (it denies every model); only a legacy row without a scope mode treats a
+// missing model list as unrestricted.
 function keyServesModel(key: KeyStatus, model: string) {
-  return !key.models?.length || key.models.includes(model)
+  const models = key.models ?? []
+  if (key.scope_mode === 'allowlist') return models.includes(model)
+  return !models.length || models.includes(model)
 }
 
 function getKeyDisabledReason(key: KeyStatus) {
@@ -416,6 +428,9 @@ function ChannelTestDialogContent({
   const supportedEndpoints = supportsChannelEndpointSelection(currentRow.type)
     ? settings?.supported_endpoints
     : undefined
+  const declaredUpstreams = supportedEndpoints?.length
+    ? supportedEndpoints
+    : undefined
   const endpointSelectItems = useMemo(
     () =>
       endpointTypeOptions
@@ -423,18 +438,19 @@ function ChannelTestDialogContent({
           if (relayPaths && option.path && !relayPaths.includes(option.path)) {
             return false
           }
-          // Chat and Messages inputs can also reach a Responses-only channel.
-          return (
-            !supportedEndpoints?.length ||
-            !option.requiresUpstream ||
-            supportedEndpoints.includes(option.requiresUpstream)
+          // No declaration keeps the historical behavior: every request shape is
+          // offered and the channel decides.
+          if (!declaredUpstreams) return true
+          if (!option.requiresAnyUpstream) return true
+          return option.requiresAnyUpstream.some((upstream) =>
+            declaredUpstreams.includes(upstream)
           )
         })
         .map((option) => ({
           value: option.value,
           label: t(option.label),
         })),
-    [relayPaths, supportedEndpoints, t]
+    [declaredUpstreams, relayPaths, t]
   )
   const effectiveEndpointType = endpointSelectItems.some(
     (option) => option.value === endpointType
@@ -530,7 +546,9 @@ function ChannelTestDialogContent({
     setPagination({ pageIndex: 0, pageSize: 30 })
   }, [])
 
-  const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(effectiveEndpointType)
+  const streamDisabled = STREAM_INCOMPATIBLE_ENDPOINTS.has(
+    effectiveEndpointType
+  )
   const effectiveStreamTest = !streamDisabled && isStreamTest
 
   const handleEndpointTypeChange = useCallback((value: string | null) => {
@@ -687,7 +705,9 @@ function ChannelTestDialogContent({
             channelName: currentRow.name,
             testModel: model,
             endpointType:
-              effectiveEndpointType === 'auto' ? undefined : effectiveEndpointType,
+              effectiveEndpointType === 'auto'
+                ? undefined
+                : effectiveEndpointType,
             stream: effectiveStreamTest || undefined,
             keyIndex: testKeyIndex,
             silent,

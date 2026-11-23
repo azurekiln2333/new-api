@@ -26,6 +26,8 @@ export const CHANNEL_PRIORITY_GUIDE_KEYS = {
 // All label/name values are i18n keys; use t(value) when displaying.
 // ============================================================================
 
+export const CHANNEL_TYPE_OPENAI = 1
+
 export const CHANNEL_TYPE_OLLAMA = 4
 
 export const CHANNEL_TYPE_SUB2API = 59

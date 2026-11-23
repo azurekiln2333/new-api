@@ -123,9 +123,14 @@ func (adaptor *fingerprintBoundedAdaptor) DoRequest(c *gin.Context, info *relayc
 		return nil, errors.New("invalid fingerprint output token limit")
 	}
 	format := info.GetFinalRequestRelayFormat()
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+		// A declared Messages upstream receives an Anthropic body even though
+		// the channel's API type is OpenAI; check that shape, not chat shape.
+		format = types.RelayFormatClaude
+	}
 	switch info.ApiType {
 	case constant.APITypeOpenAI:
-		if format != types.RelayFormatOpenAIResponses {
+		if format != types.RelayFormatOpenAIResponses && format != types.RelayFormatClaude {
 			format = types.RelayFormatOpenAI
 		}
 	case constant.APITypeAnthropic:

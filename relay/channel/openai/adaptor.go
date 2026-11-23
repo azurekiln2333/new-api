@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
+	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -59,7 +60,25 @@ func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayIn
 	return a.ConvertOpenAIRequest(c, info, openaiRequest)
 }
 
+// setupOpenAIMessagesHeaders adds the Anthropic transport headers a Messages
+// upstream requires. The OpenAI channel's own auth, organization and header
+// override handling stay as they are, and the client's key is never forwarded.
+func setupOpenAIMessagesHeaders(c *gin.Context, header *http.Header, info *relaycommon.RelayInfo) {
+	anthropicVersion := c.Request.Header.Get("anthropic-version")
+	if anthropicVersion == "" {
+		anthropicVersion = "2023-06-01"
+	}
+	header.Set("anthropic-version", anthropicVersion)
+	claude.CommonClaudeHeadersOperation(c, header, info)
+}
+
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+		// A Claude client already speaks the declared upstream protocol; the
+		// Claude adaptor keeps the body and applies its own thinking/max_tokens
+		// normalization instead of converting to chat completions.
+		return (&claude.Adaptor{}).ConvertClaudeRequest(c, info, request)
+	}
 	//if !strings.Contains(request.Model, "claude") {
 	//	return nil, fmt.Errorf("you are using openai channel type with path /v1/messages, only claude model supported convert, but got %s", request.Model)
 	//}
@@ -180,6 +199,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
+		if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+			// Build the Messages URL through the Claude adaptor so its
+			// ?beta=true handling (client query and ClaudeBetaQuery setting) is
+			// preserved; auth stays with this adaptor.
+			return (&claude.Adaptor{}).GetRequestURL(info)
+		}
 		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
@@ -247,12 +272,20 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 			header.Set("X-OpenRouter-Title", "New API")
 		}
 	}
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+		setupOpenAIMessagesHeaders(c, header, info)
+	}
 	return nil
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
+	}
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+		// Messages-only declaration: the existing Claude converter turns the
+		// OpenAI chat request into an Anthropic Messages request.
+		return (&claude.Adaptor{}).ConvertOpenAIRequest(c, info, request)
 	}
 	if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAzure {
 		request.StreamOptions = nil
@@ -677,6 +710,11 @@ func detectImageMimeType(filename string) string {
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+		// Responses HTTP with no declared Responses endpoint falls back to the
+		// existing Claude conversion; compaction is refused before this point.
+		return (&claude.Adaptor{}).ConvertOpenAIResponsesRequest(c, info, request)
+	}
 	//  转换模型推理力度后缀
 	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
 	preserveSuffix := model_setting.ShouldPreserveThinkingSuffix(request.Model) || (info != nil && model_setting.ShouldPreserveThinkingSuffix(info.OriginModelName))
@@ -760,6 +798,12 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+		// The Messages upstream answers in Anthropic format; the Claude adaptor
+		// converts it back to the client's protocol (chat JSON, chat SSE, or
+		// Responses events) and keeps its usage semantics.
+		return (&claude.Adaptor{}).DoResponse(c, resp, info)
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeRealtime:
 		err, usage = OpenaiRealtimeHandler(c, info)

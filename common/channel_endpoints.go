@@ -22,8 +22,15 @@ func ValidateChannelSupportedEndpoints(channelType int, settings *dto.ChannelSet
 	case constant.ChannelTypeOpenAI, constant.ChannelTypeAzure,
 		constant.ChannelTypeOpenAIMax, constant.ChannelTypeOpenRouter,
 		constant.ChannelTypeXinference:
-		return nil
 	default:
 		return fmt.Errorf("supported_endpoints is not supported for this channel type")
 	}
+	// A Messages upstream is an Anthropic-shaped endpoint behind an OpenAI
+	// channel. Only the plain OpenAI channel is verified for it.
+	for _, endpoint := range settings.SupportedEndpoints {
+		if endpoint == dto.ChannelEndpointMessages && channelType != constant.ChannelTypeOpenAI {
+			return fmt.Errorf("supported_endpoints messages is only supported for the OpenAI channel type")
+		}
+	}
+	return nil
 }

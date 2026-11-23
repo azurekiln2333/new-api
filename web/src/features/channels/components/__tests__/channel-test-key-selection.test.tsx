@@ -250,24 +250,61 @@ test('a named key is tested even when it is disabled', async () => {
   expect(config.params).toEqual({ model: 'model-a', key_index: 1 })
 })
 
-test('a key scoped to another model lets the channel pick the key', async () => {
-  const { get } = renderDialog(makeChannel(), [
-    { index: 0, status: 1, key_preview: 'sk-…mnop', models: ['model-b'] },
-    { index: 1, status: 1, key_preview: '…67' },
-  ])
-  const user = userEvent.setup()
+test.each<{
+  label: string
+  models: string[]
+  scopeMode?: KeyStatus['scope_mode']
+  pinned: boolean
+}>([
+  {
+    label: 'a legacy key scoped to another model',
+    models: ['model-b'],
+    pinned: false,
+  },
+  {
+    label: 'an explicit empty allowlist',
+    models: [],
+    scopeMode: 'allowlist',
+    pinned: false,
+  },
+  {
+    label: 'an unrestricted key with an empty model list',
+    models: [],
+    scopeMode: 'all',
+    pinned: true,
+  },
+])(
+  '$label sends the expected key selection (pinned=$pinned)',
+  async ({ models, scopeMode, pinned }) => {
+    const { get } = renderDialog(makeChannel(), [
+      {
+        index: 0,
+        status: 1,
+        key_preview: 'sk-…mnop',
+        models,
+        scope_mode: scopeMode,
+      },
+      { index: 1, status: 1, key_preview: '…67' },
+    ])
+    const user = userEvent.setup()
 
-  await user.click(await screen.findByRole('combobox', { name: 'Tested key' }))
-  await user.click(
-    await screen.findByRole('option', { name: '1 · sk-…mnop · Enabled' })
-  )
+    await user.click(
+      await screen.findByRole('combobox', { name: 'Tested key' })
+    )
+    await user.click(
+      await screen.findByRole('option', { name: '1 · sk-…mnop · Enabled' })
+    )
 
-  const row = await testModelRow('model-a')
-  await user.click(row.getByRole('button', { name: 'Test Connection' }))
+    const row = await testModelRow('model-a')
+    await user.click(row.getByRole('button', { name: 'Test Connection' }))
 
-  await waitFor(() => expect(get).toHaveBeenCalled())
-  const [, config] = get.mock.calls.find(
-    ([url]) => url === '/api/channel/test/7'
-  ) as [string, { params: Record<string, unknown> }]
-  expect(config.params).toEqual({ model: 'model-a' })
-})
+    await waitFor(() => expect(get).toHaveBeenCalled())
+    const [, config] = get.mock.calls.find(
+      ([url]) => url === '/api/channel/test/7'
+    ) as [string, { params: Record<string, unknown> }]
+    expect(config.params).toEqual({
+      model: 'model-a',
+      ...(pinned ? { key_index: 0 } : {}),
+    })
+  }
+)

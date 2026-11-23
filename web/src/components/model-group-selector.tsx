@@ -103,6 +103,8 @@ interface ModelSelectorProps {
   onModelChange: (value: string) => void
   className?: string
   disabled?: boolean
+  /** Associates the trigger with an external `<Label htmlFor>`. */
+  triggerId?: string
 }
 
 interface GroupSelectorProps {
@@ -126,7 +128,6 @@ const ModelTriggerButton = React.forwardRef<
     variant='outline'
     role='combobox'
     size='sm'
-    disabled={isDisabled}
     className={cn(
       'flex h-8 items-center gap-2 border px-3 font-medium',
       'justify-center p-0 sm:w-auto sm:justify-start sm:px-3',
@@ -138,6 +139,9 @@ const ModelTriggerButton = React.forwardRef<
       triggerClassName
     )}
     {...props}
+    // A trigger wrapper may inject its own props, including a disabled flag, so
+    // the caller's intent is applied last and wins.
+    disabled={isDisabled}
   >
     <CpuIcon className='text-muted-foreground block size-4 sm:hidden' />
     <span className='text-muted-foreground sm:text-foreground hidden truncate text-xs sm:block'>
@@ -162,7 +166,6 @@ const GroupTriggerButton = React.forwardRef<
     variant='outline'
     role='combobox'
     size='sm'
-    disabled={isDisabled}
     className={cn(
       'flex h-8 items-center gap-2 border px-3 font-medium',
       'justify-center p-0 sm:w-auto sm:justify-start sm:px-3',
@@ -174,6 +177,7 @@ const GroupTriggerButton = React.forwardRef<
       triggerClassName
     )}
     {...props}
+    disabled={isDisabled}
   >
     <LayersIcon className='text-muted-foreground block size-4 sm:hidden' />
     <span className='text-muted-foreground sm:text-foreground hidden truncate text-xs sm:block'>
@@ -190,7 +194,14 @@ GroupTriggerButton.displayName = 'GroupTriggerButton'
  * Styled following Scira's form-component design patterns
  */
 export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
-  ({ selectedModel, models, onModelChange, className, disabled = false }) => {
+  ({
+    selectedModel,
+    models,
+    onModelChange,
+    className,
+    disabled = false,
+    triggerId,
+  }) => {
     const { t } = useTranslation()
     const [open, setOpen] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
@@ -335,8 +346,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
 
     return isMobile ? (
       <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerTrigger asChild>
+        <DrawerTrigger asChild disabled={disabled}>
           <ModelTriggerButton
+            id={triggerId}
             currentLabel={currentModel?.label || t('Model')}
             triggerClassName={className}
             isDisabled={disabled}
@@ -359,12 +371,18 @@ export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
         <PopoverTrigger
           render={
             <ModelTriggerButton
+              id={triggerId}
               currentLabel={currentModel?.label || t('Model')}
               triggerClassName={className}
               isDisabled={disabled}
               aria-expanded={open}
             />
           }
+          // Base UI's trigger merges its own hover/press props into the rendered
+          // button and would otherwise re-enable it, so the disabled state is
+          // asserted last. It also keeps assistive technology from announcing an
+          // interactive combobox.
+          disabled={disabled}
         />
         <PopoverContent
           className='bg-popover z-40 w-[90vw] max-w-[20em] rounded-lg border p-0 !shadow-none sm:w-[20em]'

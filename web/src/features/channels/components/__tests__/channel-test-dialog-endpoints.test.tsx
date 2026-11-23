@@ -119,31 +119,47 @@ test('a plugin channel offers only the endpoints its plugin relays', async () =>
   ])
 })
 
-test('a built-in channel offers every endpoint', async () => {
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <ChannelsProvider>
-        <OpenDialog channel={channel(1)} />
-      </ChannelsProvider>
-    </QueryClientProvider>
-  )
+test.each(['', '{}', '{"supported_endpoints":[]}'])(
+  'a built-in channel without declared upstreams offers every legacy endpoint (%s)',
+  async (setting) => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChannelsProvider>
+          <OpenDialog channel={channel(1, setting)} />
+        </ChannelsProvider>
+      </QueryClientProvider>
+    )
 
-  const options = await endpointOptions()
-  expect(options).toHaveLength(9)
-  expect(options).toContain('OpenAI (/v1/chat/completions)')
-  expect(api.get).not.toHaveBeenCalledWith('/api/task_plugin_options')
-})
+    const options = await endpointOptions()
+    expect(options).toEqual([
+      'Auto detect (default)',
+      'OpenAI (/v1/chat/completions)',
+      'OpenAI Responses (/v1/responses)',
+      'OpenAI Response Compaction (/v1/responses/compact)',
+      'Anthropic (/v1/messages)',
+      'Gemini (/v1beta/models/{model}:generateContent)',
+      'Jina Rerank (/v1/rerank)',
+      'Image Generation (/v1/images/generations)',
+      'Embeddings (/v1/embeddings)',
+    ])
+    expect(api.get).not.toHaveBeenCalledWith('/api/task_plugin_options')
+  }
+)
 
 test('Auto on a Responses-only channel leaves endpoint resolution to the server', async () => {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <ChannelsProvider>
-        <OpenDialog channel={channel(1, '{"supported_endpoints":["responses"]}')} />
+        <OpenDialog
+          channel={channel(1, '{"supported_endpoints":["responses"]}')}
+        />
       </ChannelsProvider>
     </QueryClientProvider>
   )
 
-  const endpoint = await screen.findByRole('combobox', { name: 'Endpoint Type' })
+  const endpoint = await screen.findByRole('combobox', {
+    name: 'Endpoint Type',
+  })
   expect(endpoint).toHaveValue('Auto detect (default)')
   await userEvent
     .setup()
@@ -156,7 +172,9 @@ test('Auto on a Responses-only channel leaves endpoint resolution to the server'
   )
   const options = await endpointOptions()
   expect(options).toContain('OpenAI Responses (/v1/responses)')
-  expect(options).not.toContain('Gemini (/v1beta/models/{model}:generateContent)')
+  expect(options).not.toContain(
+    'Gemini (/v1beta/models/{model}:generateContent)'
+  )
 })
 
 test('a Chat-only channel does not offer explicit Responses overrides', async () => {
@@ -177,3 +195,97 @@ test('a Chat-only channel does not offer explicit Responses overrides', async ()
     'OpenAI Response Compaction (/v1/responses/compact)'
   )
 })
+
+test.each([
+  { endpoints: ['messages'], responses: true, compact: false, gemini: false },
+  {
+    endpoints: ['chat', 'messages'],
+    responses: true,
+    compact: false,
+    gemini: true,
+  },
+  {
+    endpoints: ['responses', 'messages'],
+    responses: true,
+    compact: true,
+    gemini: false,
+  },
+  {
+    endpoints: ['chat', 'responses', 'messages'],
+    responses: true,
+    compact: true,
+    gemini: true,
+  },
+])(
+  'Messages capabilities $endpoints offer only supported diagnostic client protocols',
+  async ({ endpoints, responses, compact, gemini }) => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChannelsProvider>
+          <OpenDialog
+            channel={channel(
+              1,
+              JSON.stringify({ supported_endpoints: endpoints })
+            )}
+          />
+        </ChannelsProvider>
+      </QueryClientProvider>
+    )
+
+    const options = await endpointOptions()
+    expect(options).toContain('OpenAI (/v1/chat/completions)')
+    expect(options).toContain('Anthropic (/v1/messages)')
+    expect(options.includes('OpenAI Responses (/v1/responses)')).toBe(responses)
+    expect(
+      options.includes('OpenAI Response Compaction (/v1/responses/compact)')
+    ).toBe(compact)
+    expect(
+      options.includes('Gemini (/v1beta/models/{model}:generateContent)')
+    ).toBe(gemini)
+  }
+)
+
+test.each([false, true])(
+  'a Messages-only channel submits HTTP Responses with streaming=%s',
+  async (stream) => {
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChannelsProvider>
+          <OpenDialog
+            channel={channel(1, '{"supported_endpoints":["messages"]}')}
+          />
+        </ChannelsProvider>
+      </QueryClientProvider>
+    )
+
+    await user.click(
+      await screen.findByRole('combobox', { name: 'Endpoint Type' })
+    )
+    await user.click(
+      await screen.findByRole('option', {
+        name: 'OpenAI Responses (/v1/responses)',
+      })
+    )
+    const streamSwitch = screen.getByRole('switch', { name: 'Stream Mode' })
+    expect(streamSwitch).toBeEnabled()
+    expect(streamSwitch).not.toBeChecked()
+    if (stream) {
+      await user.click(streamSwitch)
+      expect(streamSwitch).toBeChecked()
+    }
+    await user.click(screen.getByRole('button', { name: 'Test Connection' }))
+    await vi.waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        '/api/channel/test/9',
+        expect.objectContaining({
+          params: {
+            model: 'model-a',
+            endpoint_type: 'openai-response',
+            ...(stream ? { stream: true } : {}),
+          },
+        })
+      )
+    )
+  }
+)

@@ -7,12 +7,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	appdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/internal/testutil"
+	"github.com/QuantumNous/new-api/model"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -22,8 +26,10 @@ import (
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +48,9 @@ func TestChannelSupportedEndpointsChooseOutboundRequest(t *testing.T) {
 		channelPassthrough                 bool
 		wantLocalError                     bool
 	}{
+		{name: "legacy Claude keeps chat", inputPath: "/v1/messages", wantPath: "/v1/chat/completions"},
+		{name: "chat plus messages retains chat", endpoints: []string{"chat", "messages"}, wantPath: "/v1/chat/completions"},
+		{name: "messages-only rejects chat passthrough", endpoints: []string{"messages"}, channelPassthrough: true, wantLocalError: true},
 		{name: "legacy native chat", wantPath: "/v1/chat/completions"},
 		{name: "legacy global conversion", globalResponses: true, wantPath: "/v1/responses"},
 		{name: "empty declaration keeps global conversion", endpoints: []string{}, globalResponses: true, wantPath: "/v1/responses"},
@@ -51,6 +60,9 @@ func TestChannelSupportedEndpointsChooseOutboundRequest(t *testing.T) {
 		{name: "both honors supported global preference", endpoints: []string{"chat", "responses"}, globalResponses: true, wantPath: "/v1/responses"},
 		{name: "messages to responses", inputPath: "/v1/messages", endpoints: []string{"responses"}, wantPath: "/v1/responses"},
 		{name: "messages to chat", inputPath: "/v1/messages", endpoints: []string{"chat"}, globalResponses: true, wantPath: "/v1/chat/completions"},
+		{name: "messages to declared messages", inputPath: "/v1/messages", endpoints: []string{"messages"}, wantPath: "/v1/messages"},
+		{name: "messages prefers declared messages over responses", inputPath: "/v1/messages", endpoints: []string{"messages", "responses"}, wantPath: "/v1/messages"},
+		{name: "messages-only converts a chat client", endpoints: []string{"messages"}, wantPath: "/v1/messages"},
 		{name: "playground to responses", inputPath: "/pg/chat/completions", endpoints: []string{"responses"}, wantPath: "/v1/responses"},
 		{name: "responses-only rejects global passthrough", endpoints: []string{"responses"}, globalPassthrough: true, wantLocalError: true},
 		{name: "messages rejects global passthrough", inputPath: "/v1/messages", endpoints: []string{"chat", "responses"}, globalPassthrough: true, wantLocalError: true},
@@ -129,9 +141,17 @@ func TestChannelSupportedEndpointsChooseOutboundRequest(t *testing.T) {
 				assert.Contains(t, sent, "input")
 				assert.NotContains(t, sent, "messages")
 				assert.Equal(t, relaytypes.RelayFormat(relaytypes.RelayFormatOpenAIResponses), info.GetFinalRequestRelayFormat())
+			} else if tc.wantPath == "/v1/messages" {
+				assert.Contains(t, sent, "messages")
+				assert.NotContains(t, sent, "input")
+				assert.NotEmpty(t, sent["max_tokens"], "a Messages upstream requires max_tokens")
+				assert.Equal(t, relaytypes.RelayFormat(relaytypes.RelayFormatClaude), info.UpstreamTextEndpoint)
+				assert.Equal(t, "2023-06-01", request.headers.Get("anthropic-version"))
+				assert.Equal(t, "Bearer test-key", request.headers.Get("Authorization"))
 			} else {
 				assert.Contains(t, sent, "messages")
 				assert.NotContains(t, sent, "input")
+				assert.Empty(t, info.UpstreamTextEndpoint)
 			}
 		})
 	}
@@ -263,6 +283,8 @@ func TestChannelEndpointDeclarationsConstrainNativeResponsesHTTPAndWebSocket(t *
 			{name: "legacy"},
 			{name: "chat only", endpoints: []string{"chat"}, wantError: true},
 			{name: "responses only", endpoints: []string{"responses"}},
+			{name: "messages only", endpoints: []string{"messages"}, wantError: transport != "http"},
+			{name: "responses and messages", endpoints: []string{"responses", "messages"}},
 			{name: "both", endpoints: []string{"chat", "responses"}},
 		} {
 			t.Run(transport+"/"+tc.name, func(t *testing.T) {
@@ -291,7 +313,11 @@ func TestChannelEndpointDeclarationsConstrainNativeResponsesHTTPAndWebSocket(t *
 						require.Nil(t, apiErr)
 						payload, err := io.ReadAll(body)
 						require.NoError(t, err)
-						assert.Contains(t, string(payload), `"input"`)
+						if tc.name == "messages only" {
+							assert.Contains(t, string(payload), `"messages"`)
+						} else {
+							assert.Contains(t, string(payload), `"input"`)
+						}
 					}
 				}
 				if tc.wantError {
@@ -354,16 +380,26 @@ func TestResponsesRefusalRetainsRetryAfter(t *testing.T) {
 
 func TestChannelEndpointResponsesOnlyRejectsGeminiBeforeSending(t *testing.T) {
 	require.NoError(t, i18n.Init())
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gpt-4o:generateContent", nil)
-	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
-	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
-	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{SupportedEndpoints: []string{"responses"}})
-	request := &dto.GeminiChatRequest{}
-	info := relaycommon.GenRelayInfoGemini(c, request)
-	apiErr := GeminiHelper(c, info)
-	require.NotNil(t, apiErr)
-	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	for _, endpoint := range []string{"responses", "messages"} {
+		t.Run(endpoint, func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(http.StatusTeapot) }))
+			defer upstream.Close()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gpt-4o:generateContent", nil)
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-4o")
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{SupportedEndpoints: []string{endpoint}})
+			request := &dto.GeminiChatRequest{}
+			info := relaycommon.GenRelayInfoGemini(c, request)
+			apiErr := GeminiHelper(c, info)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			assert.True(t, relaytypes.IsSkipRetryError(apiErr))
+			assert.Zero(t, calls.Load())
+		})
+	}
 }
 
 func TestChannelEndpointResponsesConversionPreservesClientFormat(t *testing.T) {
@@ -712,6 +748,587 @@ func TestApplySystemPromptIfNeededSkipsToolLoadingMessages(t *testing.T) {
 			}
 			_, overrideSet := common.GetContextKey(c, constant.ContextKeySystemPromptOverride)
 			assert.Equal(t, tt.wantOverride, overrideSet)
+		})
+	}
+}
+
+// TestMessagesEndpointServesOpenAIProtocols exercises successful conversion and
+// real preconsume/settlement against one Anthropic upstream for each client format.
+func TestMessagesEndpointServesOpenAIProtocols(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	service.InitHttpClient()
+	previousRedis, previousBatch := common.RedisEnabled, common.BatchUpdateEnabled
+	previousLog, previousExport := common.LogConsumeEnabled, common.DataExportEnabled
+	previousTimeout := constant.StreamingTimeout
+	settings := model_setting.GetGlobalSettings()
+	previousSettings := *settings
+	common.RedisEnabled, common.BatchUpdateEnabled = false, false
+	common.LogConsumeEnabled, common.DataExportEnabled = true, false
+	constant.StreamingTimeout = 30
+	settings.PassThroughRequestEnabled = false
+	settings.ChatCompletionsToResponsesPolicy.Enabled = false
+	t.Cleanup(func() {
+		common.RedisEnabled, common.BatchUpdateEnabled = previousRedis, previousBatch
+		common.LogConsumeEnabled, common.DataExportEnabled = previousLog, previousExport
+		constant.StreamingTimeout = previousTimeout
+		*settings = previousSettings
+	})
+
+	const usage = `{"input_tokens":11,"output_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}`
+	const message = `{"id":"msg_1","type":"message","role":"assistant","model":"upstream-model",` +
+		`"content":[{"type":"text","text":"hello from messages"},{"type":"tool_use","id":"tool_1","name":"weather","input":{"city":"Paris"}}],` +
+		`"stop_reason":"tool_use","stop_sequence":null,"usage":` + usage + `}`
+	const streamEvents = "event: message_start\ndata: " +
+		`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"upstream-model","content":[],"usage":{"input_tokens":11,"output_tokens":0,"cache_read_input_tokens":5,"cache_creation_input_tokens":3}}}` + "\n\n" +
+		"event: content_block_start\ndata: " + `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\ndata: " + `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello from messages"}}` + "\n\n" +
+		"event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: content_block_start\ndata: " + `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_1","name":"weather","input":{}}}` + "\n\n" +
+		"event: content_block_delta\ndata: " + `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}` + "\n\n" +
+		"event: content_block_delta\ndata: " + `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"Paris\"}"}}` + "\n\n" +
+		"event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":1}` + "\n\n" +
+		"event: message_delta\ndata: " + `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":7}}` + "\n\n" +
+		"event: message_stop\ndata: " + `{"type":"message_stop"}` + "\n\n"
+
+	for _, client := range []string{"chat", "claude", "responses"} {
+		for _, stream := range []bool{false, true} {
+			name := client + "/json"
+			if stream {
+				name = client + "/sse"
+			}
+			t.Run(name, func(t *testing.T) {
+				testutil.UseInactiveChannelBudget(t)
+				db := model.DB
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.Log{}))
+				const startingQuota = 1000000
+				user := model.User{Username: "messages-user", Quota: startingQuota, Status: common.UserStatusEnabled}
+				require.NoError(t, db.Create(&user).Error)
+				token := model.Token{UserId: user.Id, Key: "client-token", RemainQuota: startingQuota, Status: common.TokenStatusEnabled}
+				require.NoError(t, db.Create(&token).Error)
+				channel := model.Channel{Name: "messages", Key: "channel-secret", Status: common.ChannelStatusEnabled, Type: constant.ChannelTypeOpenAI}
+				require.NoError(t, db.Create(&channel).Error)
+
+				type capturedRequest struct {
+					body   []byte
+					header http.Header
+					path   string
+				}
+				captured := make(chan capturedRequest, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					captured <- capturedRequest{body: body, header: r.Header.Clone(), path: r.URL.Path}
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = io.WriteString(w, streamEvents)
+					} else {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, message)
+					}
+				}))
+				defer server.Close()
+				path := "/v1/chat/completions"
+				body := `{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":64,"temperature":0,"tools":[{"type":"function","function":{"name":"weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}]}`
+				switch client {
+				case "claude":
+					path = "/v1/messages"
+					body = `{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":64,"temperature":0,"tools":[{"name":"weather","input_schema":{"type":"object","properties":{"city":{"type":"string"}}}}]}`
+				case "responses":
+					path = "/v1/responses"
+					body = `{"model":"m","input":"hi","max_output_tokens":64,"temperature":0,"tools":[{"type":"function","name":"weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}]}`
+				}
+				if stream {
+					body = strings.TrimSuffix(body, "}") + `,"stream":true}`
+				}
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				c.Request.Header.Set("Authorization", "Bearer client-token")
+				c.Request.Header.Set("x-api-key", "client-anthropic-key")
+				t.Cleanup(func() { common.CleanupBodyStorage(c) })
+				common.SetContextKey(c, constant.ContextKeyOriginalModel, "m")
+				common.SetContextKey(c, constant.ContextKeyUserId, user.Id)
+				common.SetContextKey(c, constant.ContextKeyTokenId, token.Id)
+				common.SetContextKey(c, constant.ContextKeyTokenKey, token.Key)
+				common.SetContextKey(c, constant.ContextKeyUserQuota, startingQuota)
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+				common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+				common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{BillingPreference: "wallet_only"})
+				common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
+				common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
+				common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+				common.SetContextKey(c, constant.ContextKeyChannelKey, channel.Key)
+				common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{SupportedEndpoints: []string{"messages"}})
+				c.Set("channel_organization", "channel-org")
+
+				var info *relaycommon.RelayInfo
+				var run func(*gin.Context, *relaycommon.RelayInfo) *relaytypes.NewAPIError
+				switch client {
+				case "claude":
+					var req dto.ClaudeRequest
+					require.NoError(t, common.Unmarshal([]byte(body), &req))
+					info, run = relaycommon.GenRelayInfoClaude(c, &req), ClaudeHelper
+				case "responses":
+					var req dto.OpenAIResponsesRequest
+					require.NoError(t, common.Unmarshal([]byte(body), &req))
+					info, run = relaycommon.GenRelayInfoResponses(c, &req), ResponsesHelper
+				default:
+					var req dto.GeneralOpenAIRequest
+					require.NoError(t, common.Unmarshal([]byte(body), &req))
+					info, run = relaycommon.GenRelayInfoOpenAI(c, &req), TextHelper
+				}
+				clientFormat := info.RelayFormat
+				info.InitChannelMeta(c)
+				info.DisablePing, info.ForcePreConsume = true, true
+				info.PriceData = hosttypes.PriceData{ModelRatio: 2, CompletionRatio: 3, CacheRatio: 0.2, CacheCreationRatio: 2, CacheCreation5mRatio: 2, CacheCreation1hRatio: 3.2,
+					GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}
+				require.Nil(t, service.PreConsumeBilling(c, 100, info))
+				var heldUser model.User
+				require.NoError(t, db.First(&heldUser, user.Id).Error)
+				assert.Equal(t, startingQuota-100, heldUser.Quota)
+				require.Nil(t, run(c, info))
+				assert.Equal(t, http.StatusOK, recorder.Code)
+				assert.Equal(t, clientFormat, info.RelayFormat, "conversion preserves the client protocol")
+				assert.False(t, info.Billing.NeedsRefund())
+
+				require.Len(t, captured, 1)
+				sent := <-captured
+				assert.Equal(t, "/v1/messages", sent.path)
+				assert.Equal(t, "Bearer channel-secret", sent.header.Get("Authorization"))
+				assert.Equal(t, "channel-org", sent.header.Get("OpenAI-Organization"))
+				assert.Equal(t, "2023-06-01", sent.header.Get("anthropic-version"))
+				assert.Empty(t, sent.header.Get("x-api-key"))
+				var sentBody map[string]any
+				require.NoError(t, common.Unmarshal(sent.body, &sentBody))
+				assert.Equal(t, float64(64), sentBody["max_tokens"])
+				assert.Equal(t, float64(0), sentBody["temperature"], "explicit zero survives conversion")
+				assert.Contains(t, sentBody, "messages")
+				assert.NotContains(t, sentBody, "input")
+				require.Len(t, sentBody["tools"], 1)
+				assert.Equal(t, "weather", sentBody["tools"].([]any)[0].(map[string]any)["name"])
+
+				responseBody := recorder.Body.String()
+				if client == "claude" {
+					if stream {
+						assert.Equal(t, 1, strings.Count(responseBody, "event: message_stop\n"))
+						assert.Contains(t, responseBody, `"type":"input_json_delta"`)
+						assert.Contains(t, responseBody, `"cache_read_input_tokens":5`)
+						assert.Contains(t, responseBody, `"cache_creation_input_tokens":3`)
+						assert.Contains(t, responseBody, `"output_tokens":7`)
+					} else {
+						var response dto.ClaudeResponse
+						require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+						require.Len(t, response.Content, 2)
+						assert.Equal(t, "hello from messages", response.Content[0].GetText())
+						assert.Equal(t, "tool_use", response.Content[1].Type)
+						assert.Equal(t, "tool_use", response.StopReason)
+						assert.Equal(t, 11, response.Usage.InputTokens)
+						assert.Equal(t, 5, response.Usage.CacheReadInputTokens)
+						assert.Equal(t, 3, response.Usage.CacheCreationInputTokens)
+					}
+				} else if client == "chat" {
+					var clientUsage *dto.Usage
+					if stream {
+						var text, toolName, toolArgs strings.Builder
+						var finish string
+						for line := range strings.SplitSeq(responseBody, "\n") {
+							data, ok := strings.CutPrefix(line, "data: ")
+							if !ok || data == "[DONE]" {
+								continue
+							}
+							var chunk dto.ChatCompletionsStreamResponse
+							require.NoError(t, common.Unmarshal([]byte(data), &chunk))
+							if chunk.Usage != nil {
+								clientUsage = chunk.Usage
+							}
+							for _, choice := range chunk.Choices {
+								text.WriteString(choice.Delta.GetContentString())
+								for _, call := range choice.Delta.ToolCalls {
+									toolName.WriteString(call.Function.Name)
+									toolArgs.WriteString(call.Function.Arguments)
+								}
+								if choice.FinishReason != nil {
+									finish = *choice.FinishReason
+								}
+							}
+						}
+						assert.Equal(t, "hello from messages", text.String())
+						assert.Equal(t, "weather", toolName.String())
+						assert.JSONEq(t, `{"city":"Paris"}`, toolArgs.String())
+						assert.Equal(t, "tool_calls", finish)
+						assert.Equal(t, 1, strings.Count(responseBody, "data: [DONE]"))
+					} else {
+						var response dto.OpenAITextResponse
+						require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+						require.Len(t, response.Choices, 1)
+						assert.Equal(t, "hello from messages", response.Choices[0].Message.StringContent())
+						require.Len(t, response.Choices[0].Message.ParseToolCalls(), 1)
+						assert.Equal(t, "weather", response.Choices[0].Message.ParseToolCalls()[0].Function.Name)
+						assert.JSONEq(t, `{"city":"Paris"}`, response.Choices[0].Message.ParseToolCalls()[0].Function.Arguments)
+						assert.Equal(t, "tool_calls", response.Choices[0].FinishReason)
+						clientUsage = &response.Usage
+					}
+					require.NotNil(t, clientUsage)
+					assert.Equal(t, 19, clientUsage.PromptTokens, "OpenAI input includes cache reads and writes")
+					assert.Equal(t, 7, clientUsage.CompletionTokens)
+					assert.Equal(t, 26, clientUsage.TotalTokens)
+					assert.Equal(t, 5, clientUsage.PromptTokensDetails.CachedTokens)
+					assert.Equal(t, 3, clientUsage.PromptTokensDetails.CacheCreationTokensTotal())
+				} else {
+					var response dto.OpenAIResponsesResponse
+					if stream {
+						var types []string
+						for line := range strings.SplitSeq(responseBody, "\n") {
+							data, ok := strings.CutPrefix(line, "data: ")
+							if !ok {
+								continue
+							}
+							var event struct {
+								Type     string                      `json:"type"`
+								Response dto.OpenAIResponsesResponse `json:"response"`
+							}
+							require.NoError(t, common.Unmarshal([]byte(data), &event))
+							types = append(types, event.Type)
+							if event.Type == "response.completed" {
+								response = event.Response
+							}
+						}
+						require.NotEmpty(t, types)
+						assert.Equal(t, "response.created", types[0])
+						assert.Equal(t, "response.completed", types[len(types)-1])
+						assert.Equal(t, 1, strings.Count(responseBody, "event: response.completed\n"))
+						assert.Contains(t, types, "response.function_call_arguments.delta")
+					} else {
+						require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+					}
+					assert.Equal(t, "response", response.Object)
+					assert.JSONEq(t, `"completed"`, string(response.Status))
+					require.Len(t, response.Output, 2)
+					assert.Equal(t, "hello from messages", response.Output[0].Content[0].Text)
+					assert.Equal(t, "function_call", response.Output[1].Type)
+					assert.Equal(t, "weather", response.Output[1].Name)
+					var arguments string
+					require.NoError(t, common.Unmarshal(response.Output[1].Arguments, &arguments))
+					assert.JSONEq(t, `{"city":"Paris"}`, arguments)
+					require.NotNil(t, response.Usage)
+					assert.Equal(t, 19, response.Usage.InputTokens)
+					assert.Equal(t, 7, response.Usage.OutputTokens)
+					assert.Equal(t, 26, response.Usage.TotalTokens)
+					assert.Equal(t, 5, response.Usage.InputTokensDetails.CachedTokens)
+				}
+
+				// Anthropic input excludes cache categories. Charge exactly
+				// (11 + 5*0.2 + 3*2 + 7*3)*2 = 78, irrespective of client shape.
+				require.NoError(t, db.First(&user, user.Id).Error)
+				require.NoError(t, db.First(&token, token.Id).Error)
+				require.NoError(t, db.First(&channel, channel.Id).Error)
+				assert.Equal(t, startingQuota-78, user.Quota)
+				assert.Equal(t, 78, user.UsedQuota)
+				assert.Equal(t, 1, user.RequestCount)
+				assert.Equal(t, startingQuota-78, token.RemainQuota)
+				assert.Equal(t, 78, token.UsedQuota)
+				assert.Equal(t, int64(78), channel.UsedQuota)
+				var logs []model.Log
+				require.NoError(t, db.Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Find(&logs).Error)
+				require.Len(t, logs, 1)
+				assert.Equal(t, 78, logs[0].Quota)
+				assert.Equal(t, 11, logs[0].PromptTokens)
+				assert.Equal(t, 7, logs[0].CompletionTokens)
+				assert.Equal(t, stream, logs[0].IsStream)
+				var other map[string]any
+				require.NoError(t, common.UnmarshalJsonStr(logs[0].Other, &other))
+				assert.Equal(t, float64(5), other["cache_tokens"])
+				assert.Equal(t, float64(3), other["cache_creation_tokens"])
+				assert.Equal(t, "anthropic", other["usage_semantic"])
+			})
+		}
+	}
+}
+
+func TestMessagesEndpointRetainsConfigurationAndResetsOnRetry(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
+	settings := model_setting.GetGlobalSettings()
+	previous := *settings
+	settings.PassThroughRequestEnabled = false
+	settings.ChatCompletionsToResponsesPolicy.Enabled = false
+	t.Cleanup(func() { *settings = previous })
+	for _, client := range []string{"chat", "claude"} {
+		for _, prompt := range []string{"absent", "client preserved", "admin prepended"} {
+			t.Run(client+"/"+prompt, func(t *testing.T) {
+				type capturedRequest struct {
+					body   []byte
+					header http.Header
+					uri    string
+				}
+				captured := make(chan capturedRequest, 2)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					captured <- capturedRequest{body: body, header: r.Header.Clone(), uri: r.URL.RequestURI()}
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("Retry-After", "45")
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","code":"concurrency_limit_exceeded","message":"concurrency limit exceeded for user"}}`)
+				}))
+				defer server.Close()
+				path := "/v1/chat/completions"
+				body := `{"model":"m","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`
+				if client == "claude" {
+					path = "/v1/messages?beta=true"
+					if prompt != "absent" {
+						body = strings.TrimSuffix(body, "}") + `,"system":"client prompt"}`
+					}
+				} else if prompt != "absent" {
+					body = strings.Replace(body, `"messages":[`, `"messages":[{"role":"system","content":"client prompt"},`, 1)
+				}
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				c.Request.Header.Set("Authorization", "Bearer client-secret")
+				c.Request.Header.Set("x-api-key", "client-anthropic-secret")
+				c.Request.Header.Set("anthropic-version", "2023-06-02")
+				c.Request.Header.Add("anthropic-beta", "client-beta-a")
+				c.Request.Header.Add("anthropic-beta", "client-beta-b")
+				t.Cleanup(func() { common.CleanupBodyStorage(c) })
+				common.SetContextKey(c, constant.ContextKeyOriginalModel, "m")
+				common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+				common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+				common.SetContextKey(c, constant.ContextKeyChannelKey, "channel-key")
+				common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{
+					SupportedEndpoints: []string{"messages"}, SystemPrompt: "admin prompt", SystemPromptOverride: prompt == "admin prepended",
+				})
+				common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{ClaudeBetaQuery: client == "chat"})
+				c.Set("channel_organization", "channel-org")
+				wantAuth, wantVersion, wantBeta := "Bearer channel-key", "2023-06-02", "client-beta-a,client-beta-b"
+				if prompt == "admin prepended" {
+					common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, map[string]any{
+						"Authorization": "Bearer configured-key", "anthropic-version": "2023-06-03", "anthropic-beta": "configured-beta",
+					})
+					wantAuth, wantVersion, wantBeta = "Bearer configured-key", "2023-06-03", "configured-beta"
+				}
+				var info *relaycommon.RelayInfo
+				var run func(*gin.Context, *relaycommon.RelayInfo) *relaytypes.NewAPIError
+				if client == "claude" {
+					var req dto.ClaudeRequest
+					require.NoError(t, common.Unmarshal([]byte(body), &req))
+					info, run = relaycommon.GenRelayInfoClaude(c, &req), ClaudeHelper
+				} else {
+					var req dto.GeneralOpenAIRequest
+					require.NoError(t, common.Unmarshal([]byte(body), &req))
+					info, run = relaycommon.GenRelayInfoOpenAI(c, &req), TextHelper
+				}
+				apiErr := run(c, info)
+				require.NotNil(t, apiErr)
+				assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
+				assert.Equal(t, service.UpstreamRejectionConcurrency, service.ClassifyUpstreamRejection(apiErr))
+				assert.Equal(t, "45", helper.UpstreamRetryAfter(c))
+				assert.False(t, c.Writer.Written())
+				require.Len(t, captured, 1)
+				sent := <-captured
+				assert.Equal(t, "/v1/messages?beta=true", sent.uri)
+				assert.Equal(t, wantAuth, sent.header.Get("Authorization"))
+				assert.Equal(t, wantVersion, sent.header.Get("anthropic-version"))
+				assert.Equal(t, wantBeta, sent.header.Get("anthropic-beta"))
+				assert.Equal(t, "channel-org", sent.header.Get("OpenAI-Organization"))
+				assert.Empty(t, sent.header.Get("x-api-key"))
+				var upstream dto.ClaudeRequest
+				require.NoError(t, common.Unmarshal(sent.body, &upstream))
+				var system strings.Builder
+				if upstream.IsStringSystem() {
+					system.WriteString(upstream.GetStringSystem())
+				} else {
+					for _, part := range upstream.ParseSystem() {
+						system.WriteString(part.GetText())
+					}
+				}
+				wantAdmin := 1
+				if prompt == "client preserved" {
+					wantAdmin = 0
+				}
+				assert.Equal(t, wantAdmin, strings.Count(system.String(), "admin prompt"))
+				assert.Equal(t, prompt != "absent", strings.Contains(system.String(), "client prompt"))
+
+				// A retry reuses RelayInfo but must use its newly selected channel.
+				common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{SupportedEndpoints: []string{"chat"}})
+				common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{})
+				common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, map[string]any{})
+				apiErr = run(c, info)
+				require.NotNil(t, apiErr)
+				assert.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
+				assert.Empty(t, info.UpstreamTextEndpoint)
+				require.Len(t, captured, 1)
+				retried := <-captured
+				assert.Equal(t, "/v1/chat/completions", retried.uri)
+				assert.Empty(t, retried.header.Get("anthropic-version"))
+				assert.Empty(t, retried.header.Get("anthropic-beta"))
+				assert.NotContains(t, string(retried.body), "admin prompt", "retry starts from the original request")
+			})
+		}
+	}
+}
+
+func TestMessagesEndpointRejectsResponsesWebSocketBeforeUpstreamDial(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	service.InitHttpClient()
+	previousRedis, previousMemory, previousBatch := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled
+	previousLog, previousExport, previousCount := common.LogConsumeEnabled, common.DataExportEnabled, constant.CountToken
+	previousPrice, err := common.Marshal(ratio_setting.GetModelPriceCopy())
+	require.NoError(t, err)
+	settings := model_setting.GetGlobalSettings()
+	previousSettings := *settings
+	common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled = false, false, false
+	common.LogConsumeEnabled, common.DataExportEnabled, constant.CountToken = true, false, false
+	settings.PassThroughRequestEnabled = false
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"messages-ws-test":0.000156}`))
+	t.Cleanup(func() {
+		common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled = previousRedis, previousMemory, previousBatch
+		common.LogConsumeEnabled, common.DataExportEnabled, constant.CountToken = previousLog, previousExport, previousCount
+		*settings = previousSettings
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(string(previousPrice)))
+	})
+	for _, supported := range []bool{false, true} {
+		name := "messages only"
+		if supported {
+			name = "messages and responses"
+		}
+		t.Run(name, func(t *testing.T) {
+			testutil.UseInactiveChannelBudget(t)
+			db := model.DB
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}, &model.ChannelKeyEntry{}, &model.Log{}))
+			const startingQuota = 1000000
+			user := model.User{Username: "ws-user", Quota: startingQuota, Status: common.UserStatusEnabled, Group: "default"}
+			require.NoError(t, db.Create(&user).Error)
+			token := model.Token{UserId: user.Id, Key: "ws-client-key", RemainQuota: startingQuota, Status: common.TokenStatusEnabled}
+			require.NoError(t, db.Create(&token).Error)
+			var dials atomic.Int32
+			upstreamDone := make(chan struct{}, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				dials.Add(1)
+				assert.Equal(t, "/v1/responses", r.URL.Path)
+				upgrader := websocket.Upgrader{}
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if !assert.NoError(t, err) {
+					return
+				}
+				defer conn.Close()
+				defer func() { upstreamDone <- struct{}{} }()
+				_, body, err := conn.ReadMessage()
+				if !assert.NoError(t, err) {
+					return
+				}
+				var create map[string]any
+				if !assert.NoError(t, common.Unmarshal(body, &create)) {
+					return
+				}
+				assert.Equal(t, "response.create", create["type"])
+				assert.Contains(t, create, "input")
+				assert.NotContains(t, create, "messages")
+				for _, event := range []string{
+					`{"type":"response.created","response":{"id":"resp_ws","model":"messages-ws-test","status":"in_progress"}}`,
+					`{"type":"response.output_text.delta","response_id":"resp_ws","delta":"native responses"}`,
+					`{"type":"response.completed","response":{"id":"resp_ws","model":"messages-ws-test","status":"completed","usage":{"input_tokens":11,"output_tokens":7,"total_tokens":18}}}`,
+				} {
+					if !assert.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte(event))) {
+						return
+					}
+				}
+				// Keep the socket open until the client closes it; EOF must not race settlement.
+				_, _, _ = conn.ReadMessage()
+			}))
+			defer upstream.Close()
+			endpoints := []string{"messages"}
+			if supported {
+				endpoints = append(endpoints, "responses")
+			}
+			channel := model.Channel{Name: "messages-ws", Type: constant.ChannelTypeOpenAI, Key: "upstream-key", BaseURL: &upstream.URL,
+				Models: "messages-ws-test", Group: "default", Status: common.ChannelStatusEnabled}
+			channel.SetSetting(dto.ChannelSettings{SupportedEndpoints: endpoints, ResponsesWebSocketEnabled: true})
+			require.NoError(t, db.Create(&channel).Error)
+			client, server, closeSockets := newTestWebSocketPair(t)
+			defer closeSockets()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				ResponsesWebSocketHelper(c, server, func(request *http.Request, id string, run func(*gin.Context) *relaytypes.NewAPIError) *relaytypes.NewAPIError {
+					ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+					ctx.Request = request
+					defer common.CleanupBodyStorage(ctx)
+					common.SetContextKey(ctx, common.RequestIdKey, id)
+					common.SetContextKey(ctx, constant.ContextKeyUserId, user.Id)
+					common.SetContextKey(ctx, constant.ContextKeyTokenId, token.Id)
+					common.SetContextKey(ctx, constant.ContextKeyTokenKey, token.Key)
+					common.SetContextKey(ctx, constant.ContextKeyUserQuota, startingQuota)
+					common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+					common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+					common.SetContextKey(ctx, constant.ContextKeyUserSetting, dto.UserSetting{BillingPreference: "wallet_only"})
+					service.GetChannelConstraints(ctx).AddPin(appdto.ChannelPin{ChannelId: channel.Id, Source: appdto.PinSourceToken, Rank: appdto.PinRankToken, RetryMode: appdto.PinRetrySingleAttempt})
+					return run(ctx)
+				})
+			}()
+			require.NoError(t, client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"messages-ws-test","input":"hi"}`)))
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(10*time.Second)))
+			var kinds []string
+			var payload map[string]any
+			for {
+				_, body, err := client.ReadMessage()
+				require.NoError(t, err)
+				require.NoError(t, common.Unmarshal(body, &payload))
+				kind, _ := payload["type"].(string)
+				kinds = append(kinds, kind)
+				if kind == "error" || kind == "response.completed" {
+					break
+				}
+			}
+			_ = client.Close()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("websocket session did not close")
+			}
+			if supported {
+				assert.Equal(t, []string{"response.created", "response.output_text.delta", "response.completed"}, kinds)
+				assert.Equal(t, int32(1), dials.Load())
+				select {
+				case <-upstreamDone:
+				case <-time.After(10 * time.Second):
+					t.Fatal("upstream socket did not close")
+				}
+			} else {
+				assert.Equal(t, []string{"error"}, kinds)
+				assert.Equal(t, float64(http.StatusBadRequest), payload["status"])
+				assert.Zero(t, dials.Load())
+			}
+			wantCharge := 0
+			if supported {
+				wantCharge = 78
+			}
+			// Failed attempts refund asynchronously; observe both durable balances before cleanup.
+			require.Eventually(t, func() bool {
+				var storedUser model.User
+				var storedToken model.Token
+				return db.First(&storedUser, user.Id).Error == nil && db.First(&storedToken, token.Id).Error == nil &&
+					storedUser.Quota == startingQuota-wantCharge && storedToken.RemainQuota == startingQuota-wantCharge
+			}, 5*time.Second, 10*time.Millisecond)
+			var logs []model.Log
+			require.NoError(t, db.Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Find(&logs).Error)
+			if supported {
+				require.Len(t, logs, 1)
+				assert.Equal(t, 78, logs[0].Quota)
+			} else {
+				assert.Empty(t, logs)
+			}
 		})
 	}
 }

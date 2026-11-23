@@ -480,21 +480,32 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name, endpoint, reply string
+		messagesUpstream      bool
 		wantErr               bool
 	}{
 		{name: "chat", endpoint: "openai", reply: "12 34 56"},
 		{name: "messages", endpoint: "anthropic", reply: "12 34 56"},
 		{name: "empty answer retains usage", endpoint: "openai", wantErr: true},
+		{name: "messages upstream chat client", endpoint: "openai", reply: "12 34 56", messagesUpstream: true},
+		{name: "messages upstream native client", endpoint: "anthropic", reply: "12 34 56", messagesUpstream: true},
+		{name: "messages upstream responses client", endpoint: "openai-response", reply: "12 34 56", messagesUpstream: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requests := make(chan channelDiagnosticWire, 1)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests <- captureChannelDiagnostic(r)
 				w.Header().Set("Content-Type", "application/json")
+				if tc.messagesUpstream {
+					_, _ = fmt.Fprintf(w, `{"id":"msg-fingerprint","type":"message","role":"assistant","model":"gpt-4.1","content":[{"type":"text","text":%q}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}`, tc.reply)
+					return
+				}
 				_, _ = fmt.Fprintf(w, `{"id":"resp-fingerprint","object":"response","status":"completed","model":"gpt-4.1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`, tc.reply)
 			}))
 			defer upstream.Close()
 			setting := `{"supported_endpoints":["responses"],"system_prompt":"diagnostic system prompt"}`
+			if tc.messagesUpstream {
+				setting = `{"supported_endpoints":["messages"],"system_prompt":"diagnostic system prompt"}`
+			}
 			override := `{"max_tokens":9000,"max_output_tokens":9000}`
 			selected := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "fingerprint-responses-" + tc.name, Key: "test-fingerprint-key", Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: &setting, ParamOverride: &override}
 			require.NoError(t, selected.Insert())
@@ -506,10 +517,21 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 				require.NoError(t, err)
 			}
 			wire := takeChannelDiagnostic(t, requests)
-			assert.Equal(t, "/v1/responses", wire.path)
+			limitField := "max_output_tokens"
+			if tc.messagesUpstream {
+				assert.Equal(t, "/v1/messages", wire.path)
+				assert.Equal(t, "2023-06-01", wire.headers.Get("anthropic-version"))
+				assert.True(t, gjson.GetBytes(wire.body, "messages").IsArray(), "Messages upstream receives a Claude body")
+				assert.False(t, gjson.GetBytes(wire.body, "input").Exists())
+				limitField = "max_tokens"
+			} else {
+				assert.Equal(t, "/v1/responses", wire.path)
+			}
+			assert.Equal(t, "Bearer test-fingerprint-key", wire.headers.Get("Authorization"))
+			assert.Empty(t, wire.headers.Get("x-api-key"), "the OpenAI channel retains its own authentication shape")
 			assert.Contains(t, string(wire.body), "fingerprint challenge")
 			assert.Equal(t, 1, strings.Count(string(wire.body), "diagnostic system prompt"))
-			assert.EqualValues(t, 300, gjson.GetBytes(wire.body, "max_output_tokens").Uint())
+			assert.EqualValues(t, 300, gjson.GetBytes(wire.body, limitField).Uint())
 			assert.Equal(t, tc.reply, result.Text)
 			assert.Equal(t, 10, result.PromptTokens)
 			assert.Equal(t, 5, result.OutputTokens)

@@ -1,10 +1,68 @@
 # Integration and release evidence
 
-Status: commit `dc9778764419ba8f16f6b034aadd4f52b4d0d7a8` was pushed to fork
-`merge/upstream`. Exact-SHA CI run `45181916416` failed in backend fixtures and
-ClickHouse detail storage; frontend checks passed. Follow-up repairs have passed
-the affected local suites, race checks and root vet/build. The repaired commit
-still requires a fresh hosted run. No tag or release is claimed yet.
+Status (2026-11-24): local integration checks pass for R1–R9 and role-scoped
+model selection. Cache publication is repaired in `c31cbc692`; Messages routing,
+permission/dropdown regressions and all seven translations are frozen and ready
+for the feature commit. Root vet/build, affected three-engine and race checks,
+227 frontend regressions, whole-web typecheck, scoped lint/format, i18n validation
+and production build pass. Exact-SHA fork CI and the release workflow remain
+required; no new tag or release is claimed yet.
+
+Historical hosted evidence: `2e1c7e161a7ae1daa45782ab9745b3b03389b2f3` run
+`45189185651` passed backend checks and actual ClickHouse storage, then failed
+the MySQL cache-routing selector now repaired. Initial `dc9778764419ba8f16f6b034aadd4f52b4d0d7a8`
+run `45181916416` failed backend fixtures and ClickHouse storage. Those failures
+and their repairs are retained below; earlier hosted passes do not replace CI
+on the new exact commit.
+
+### Cache-status blocker repaired, 2026-11-23
+
+The earlier worker explanation that an inactive `InitChannelCache` call clears
+the id-keyed cache is withdrawn: that branch leaves those maps untouched. The
+fixture now explicitly reloads with caching enabled and initializes the fixed
+`channel_key_entries` table, which does not honor its table prefix. Root seeded
+an unrelated allocation row before the first MySQL run to verify isolation.
+
+Before the production repair, exercising the authoritative allocation path caused
+both SQLite and MySQL to fail 15 replacement/cap cases in
+`TestUpdateChannelStatusCheckedCacheRouting`. The allocation status path calls
+`MutateChannelKeyEntries`, whose unconditional post-commit cache reload replaces
+newer cached configuration. The legacy guarded status-only publication is not
+used. The failure established a production regression and the allocation-table
+fixture and original assertions were retained. Original failure evidence:
+`root-cache-fixture-sqlite.log`, `root-cache-seed-mysql.log`,
+`root-cache-first-mysql.log`.
+
+The repair separates the locked allocation transaction from cache publication.
+Delayed health results compare source configuration and allocation identity/revision
+before publishing status, while administrator writes retain full refresh. Newer
+cached configuration and polling cursor survive; valid re-enables restore ordered
+public routing immediately. Pricing invalidation and task-alias refresh remain.
+Already-migrated no-op callbacks do not publish a cache snapshot. The remote-writer
+lock fixture now changes authoritative allocation rows rather than their obsolete
+channel projection.
+
+All original 17 cache cases were retained and expanded with allocation identity,
+scope/revision, no-op, re-enable and alias cases. Final command:
+`GOWORK=off go test -race -p 1 -count=1 ./model -run
+'TestScheduledChannel|TestUpdateChannelStatus|TestUpdateChannelAllocationStatus|TestBatchSetChannelTag'`.
+With `TEST_TASK_DB_DIALECT` and isolated `newapi_billing` external DSNs, results:
+SQLite 3.50.4 PASS 9.411 s; MySQL 8.4.13 PASS 21.479 s; PostgreSQL 16.16 PASS
+15.412 s, no DATA RACE. Full SQLite model PASS 16.564 s; model vet/build and format
+checks pass. Logs: `check-status-race-{sqlite,mysql,postgres}.log` and
+`check-status-model-full.log`. Source review found no further regression in this
+repair. New exact-SHA hosted CI is still required for release.
+
+Root also ran the existing Playground channel authorization/routing and
+fingerprint job ownership selectors on SQLite: PASS, controller 1.184 s,
+`root-channel-permission-check.log`. Real session/PAT/model-token router coverage
+now supplements that handler evidence: the three `TestAdminChannel` tests pass,
+full router PASS 20.289 s and focused race PASS 13.720 s. Ordinary users can read
+eligible groups/models but cannot list channels, run channel tests/fingerprints,
+or forge a Playground pin. PAT scope cannot exceed the account's authority;
+read-only administrator PATs cannot operate fingerprint jobs, while an operate
+PAT reaches the handler. Model tokens cannot authenticate panel routes. Logs:
+`router-authz-focused.log`, `router-full-final.log`, `router-race-final.log`.
 
 ## Delivered behavior
 
@@ -13,8 +71,66 @@ still requires a fresh hosted run. No tag or release is claimed yet.
 | R1 / R5 | Stable allocation IDs preserve duplicate credentials, separate user bindings and model scopes. Bound access precedes public grouping; both model lists retain token restrictions. Identity, alias routing and three-row scope edits passed SQLite, MySQL and PostgreSQL. |
 | R2 / R4 | Channel and allocation budgets reserve together and record actual usage independently of upstream balance queries. Limits and resets preserve holds. Wallet/subscription and token charges still apply. Real three-engine accounting, task and migration checks passed. |
 | R3 | Preview/apply dedup compares effective restrictions and budget configuration, conserves usage, checks revisions, and skips active reservations/tasks. Identical-key legacy task protection passed all three engines. |
-| R6 / R7 | Original prompt/messages and supported text fields are captured before rewriting; payloads are separately stored and fetched through authorized administrator details. Lists/details carry processing node and asynchronous submit-node provenance. Shared/independent storage, authorization, failure, cleanup and race tests passed locally; ClickHouse remains a hosted gate. |
+| R6 / R7 | Original prompt/messages and supported text fields are captured before rewriting; payloads are separately stored and fetched through authorized administrator details. Lists/details carry processing node and asynchronous submit-node provenance. Shared/independent storage, authorization, failure, cleanup and race tests passed locally; actual ClickHouse fresh/released-upgrade storage passed in run 45189185651. |
 | R8 | Registration, refresh, logout and panel mutations use separate static IP scopes; all login alternatives retain the existing login bucket. Aggregate API protection remains. Structured 429 and the shared frontend mapper show translated errors. Full middleware/router and focused race checks passed. |
+| R9 | Explicit Messages declaration, existing Claude conversion and preserved OpenAI credentials are implemented. Save/diagnostic regressions pass three engines and SQLite race. Successful Chat/Claude/HTTP Responses JSON/SSE, tools, cache usage, exact charges and WebSocket support boundaries pass normal/race tests. |
+| Model selection and permissions | Administrator fingerprint models come from the selected channel; ordinary-user models come from the eligible selected group. Real router permissions and frontend account/privilege transitions pass; stale channel/job results cannot reappear after identity changes. |
+
+R9 save/diagnostic command:
+`GOWORK=off go test -p 1 -count=1 ./controller -run
+'^(TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestFingerprintResponsesOnlyChannelProbe)$'`.
+Messages cases were added to the existing suites, retaining the CI selectors.
+SQLite 3.50.4 PASS 7.861 s; MySQL 8.4.13 PASS 2.009 s; PostgreSQL 16.16 PASS
+2.143 s (`TEST_CHANNEL_SQL_DSN`, isolated `newapi_matrix`). SQLite `-race` PASS
+5.395 s. Actual Chat, native Claude and HTTP Responses fingerprint probes reach
+`/v1/messages` with channel Bearer/version, a Claude body, one system prompt and
+max_tokens bounded to 300 despite a 9000 override; response text and one usage log
+are asserted. DTO endpoint tests PASS 1.342 s and independent relaykit build PASS
+with `GOWORK=off`. Controller vet and owned formatting/diff checks pass. Logs:
+`messages-contract-{sqlite,mysql,postgres,dto,vet,race}.log` and
+`messages-relaykit-build.log`.
+
+R9 successful relay verification:
+`GOWORK=off go test -p 1 -count=1 ./relay -run
+'TestChannelSupportedEndpoints|TestChannelEndpoint|TestMessagesEndpoint'`
+PASS 3.112 s; focused race PASS 6.884 s. Full relay/OpenAI/Claude packages PASS
+3.676 s / 6.174 s / 5.727 s. Each of six Chat/Claude/HTTP Responses JSON/SSE
+paths asserts tools and terminal output, cache-read 5 and cache-write 3, real
+preconsume 100 followed by final wallet/token charge 78, user/channel usage 78,
+and exactly one consume log. Configuration cases preserve/prepend the prompt
+exactly once, beta headers/query, version and channel authentication overrides;
+retry clears the prior Messages target. The native Claude error path now retains
+upstream Retry-After consistently with Chat and Responses. Messages-only
+Responses WebSocket returns a local 400 with zero upstream dials, restored
+balances and no consume log; adding Responses permits one dial and one charge.
+Independent relaykit build and DTO/converter tests pass; vet/format/diff checks
+pass. Logs: `messages-focused.log`, `messages-packages.log`, `messages-race.log`,
+`messages-relaykit.log`. The success/accounting fixtures use SQLite; the separate
+save/diagnostic matrix above provides the real three-engine persistence evidence.
+
+Frontend final regression command runs the four changed fingerprint/channel
+configuration/endpoint/key-selection suites, three shared model-selector suites,
+and the two Playground options/state suites with `bun run test --maxWorkers=1`.
+PASS 9 files / 227 tests, 177.62 s, `ui-contract-tests-final.log`. Assertions cover
+channel aliases/deduplication/source changes/empty choices, all eight capability
+sets, Messages HTTP Responses JSON and SSE, explicit empty key allowlist fallback,
+and unrestricted-key pinning. React committed-render checks reject old administrator
+metadata on identity or privilege changes; pending searches, polls and mutation
+results cannot restore the old job. Shared selector disabled propagation is fixed
+for desktop/mobile composition. These component tests supplement the independent
+server router tests and do not replace them. Final whole-web typecheck passes
+(1,600 files / two projects); scoped lint passes for 13 modified TS/TSX files,
+format checks pass for 20 source/locale files, and production build passes
+(6.70 s build, 10.13 s wall). Seven locales each add the same ten final keys;
+dynamic capability/validation keys are registered. i18n sync/validation and
+web diff checks pass; the temporary translation script is removed. Logs:
+`ui-{i18n-sync,i18n-validation,typecheck,lint,format,build}-final.log`.
+
+The final reviewer ran `GOWORK=off go vet ./...` and `go build ./...` after the
+runtime owners froze: both exit 0, logs `check-integration-root-vet.log` and
+`check-integration-root-build.log`. The bounded UI authorization checks reference
+OWASP ASVS 5.0.0 V8.2.1 and V8.3.2; real server tests provide separate evidence
+for V8.3.1. No whole-ASVS compliance claim is made.
 
 ## Final integration repairs
 
@@ -100,8 +216,9 @@ closed before upstream calls. These earlier package results are stale for that
 final runtime change. Fixture repairs must preserve admission behavior and all
 original assertions. The real ClickHouse server is 25.8.33.6; both independent
 fresh and released-upgrade detail-storage cases failed with storage errors,
-while SQLite/MySQL/PostgreSQL and full controller passed in that job. This is a
-release blocker under investigation, not a skipped or accepted storage gate.
+while SQLite/MySQL/PostgreSQL and full controller passed in that job. This was a
+release blocker; the follow-up repair and hosted validation below supersede that
+failure without skipping the storage gate.
 
 The follow-up repairs give database-free relay/adaptor tests a real temporary
 SQLite `Option` table with no activation marker through
@@ -121,7 +238,13 @@ covers fresh and released-upgrade stores with migration twice. Commands:
 `go test -race -p 1 -count=1 ./model -run
 'TestLogRequestPayloadIsAStringDriverValue|TestLogRequestDetail|TestLogRequestContent|TestCleanupLogRequestDetails|TestRecoverLogRequestContent'`.
 `TEST_CLICKHOUSE_DSN` was unset locally; neither the conversion regression nor
-the relational passes substitute for the pending hosted ClickHouse run.
+the relational passes substitute for a hosted ClickHouse run. Follow-up run
+`45189185651` subsequently passed both ClickHouse independent-store cases
+(`fresh` and `released_upgrade`), including cleanup during link commit and
+metadata-only tasks, on 25.8.33.6. Full backend checks also passed. The integration
+job progressed to the explicit MySQL `TestUpdateChannelStatusCheckedCacheRouting`
+selector, where 16 subtests failed after the first case. Later integration/race
+steps were not executed in that run; release acceptance remains pending.
 
 The console owner's final source review disposed of the three key-review
 questions: RB1 cited `UpdateChannelOtherInfoLocked`, which the append/stable-ID

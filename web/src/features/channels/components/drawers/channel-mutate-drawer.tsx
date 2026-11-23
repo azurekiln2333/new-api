@@ -198,6 +198,7 @@ import {
   type ChannelConfigurationSection,
   type ChannelProviderTarget,
 } from '../../lib/channel-configuration'
+import { supportsMessagesEndpoint } from '../../lib/channel-form'
 import {
   getChannelPluginExtensions,
   supportsChannelPluginExtensions,
@@ -327,6 +328,50 @@ const MODEL_MAPPING_PREVIEW_FALLBACK: Array<{
 
 const ADVANCED_CUSTOM_ROUTE_TYPE_PREVIEW_LIMIT = 3
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8
+
+// Every accepted capability set is one select option. `messages` is an additional
+// upstream capability on OpenAI channels. It does not make every client protocol
+// work: a Messages-only declaration still refuses Gemini, compaction and any
+// cross-format path without a conversion, such as Responses WebSocket.
+const CAPABILITY_OPTIONS: Array<{
+  value: string
+  label: string
+  endpoints: readonly ('chat' | 'responses' | 'messages')[]
+  messages?: boolean
+}> = [
+  { value: 'inherit', label: 'Inherit existing routing', endpoints: [] },
+  { value: 'chat', label: 'Chat Completions only', endpoints: ['chat'] },
+  { value: 'responses', label: 'Responses only', endpoints: ['responses'] },
+  {
+    value: 'messages',
+    label: 'Anthropic Messages (/v1/messages)',
+    endpoints: ['messages'],
+    messages: true,
+  },
+  {
+    value: 'chat-responses',
+    label: 'Chat Completions and Responses',
+    endpoints: ['chat', 'responses'],
+  },
+  {
+    value: 'chat-messages',
+    label: 'Chat Completions and Anthropic Messages',
+    endpoints: ['chat', 'messages'],
+    messages: true,
+  },
+  {
+    value: 'responses-messages',
+    label: 'Responses and Anthropic Messages',
+    endpoints: ['responses', 'messages'],
+    messages: true,
+  },
+  {
+    value: 'all',
+    label: 'Chat Completions, Responses and Anthropic Messages',
+    endpoints: ['chat', 'responses', 'messages'],
+    messages: true,
+  },
+]
 const SENSITIVE_FORM_FIELDS = [
   'type',
   'base_url',
@@ -2128,35 +2173,36 @@ export function ChannelMutateDrawer({
       name='supported_endpoints'
       render={({ field }) => {
         const endpoints = Array.isArray(field.value) ? field.value : []
-        let selection = 'inherit'
-        if (endpoints.includes('chat') && endpoints.includes('responses')) {
-          selection = 'both'
-        } else if (endpoints.includes('chat')) {
-          selection = 'chat'
-        } else if (endpoints.includes('responses')) {
-          selection = 'responses'
-        }
+        const canMessages = supportsMessagesEndpoint(currentType)
+        // The select is single-choice, so each valid capability set is one option.
+        // Order is normalised before comparing, and a stored set the browser does
+        // not offer (e.g. messages on a non-OpenAI type) still round-trips because
+        // the value is derived from the array itself.
+        const capabilityOptions = canMessages
+          ? CAPABILITY_OPTIONS
+          : CAPABILITY_OPTIONS.filter((option) => !option.messages)
+        const selection =
+          capabilityOptions.find(
+            (option) =>
+              option.endpoints.length === endpoints.length &&
+              option.endpoints.every((endpoint) => endpoints.includes(endpoint))
+          )?.value ?? 'inherit'
         const supported = supportsChannelEndpointSelection(currentType)
         return (
           <FormItem>
             <FormLabel>{t('Supported upstream endpoints')}</FormLabel>
             <Select
               disabled={sensitiveLocked || isSubmitting || !supported}
-              items={[
-                { value: 'inherit', label: t('Inherit existing routing') },
-                { value: 'chat', label: t('Chat Completions only') },
-                { value: 'responses', label: t('Responses only') },
-                { value: 'both', label: t('Chat Completions and Responses') },
-              ]}
+              items={capabilityOptions.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
               value={selection}
               onValueChange={(value) => {
-                if (value === 'both') {
-                  field.onChange(['chat', 'responses'])
-                } else if (value === 'chat' || value === 'responses') {
-                  field.onChange([value])
-                } else {
-                  field.onChange([])
-                }
+                const option = capabilityOptions.find(
+                  (candidate) => candidate.value === value
+                )
+                field.onChange(option ? [...option.endpoints] : [])
               }}
             >
               <FormControl>
@@ -2166,18 +2212,11 @@ export function ChannelMutateDrawer({
               </FormControl>
               <SelectContent alignItemWithTrigger={false}>
                 <SelectGroup>
-                  <SelectItem value='inherit'>
-                    {t('Inherit existing routing')}
-                  </SelectItem>
-                  <SelectItem value='chat'>
-                    {t('Chat Completions only')}
-                  </SelectItem>
-                  <SelectItem value='responses'>
-                    {t('Responses only')}
-                  </SelectItem>
-                  <SelectItem value='both'>
-                    {t('Chat Completions and Responses')}
-                  </SelectItem>
+                  {capabilityOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {t(option.label)}
+                    </SelectItem>
+                  ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
@@ -2194,6 +2233,13 @@ export function ChannelMutateDrawer({
               <FormDescription>
                 {t(
                   'Inherit keeps existing routing rules. Explicit endpoints cannot be combined with body passthrough.'
+                )}
+              </FormDescription>
+            )}
+            {canMessages && (
+              <FormDescription>
+                {t(
+                  'Messages-only supports Chat Completions, Claude Messages and HTTP Responses through protocol conversion.'
                 )}
               </FormDescription>
             )}

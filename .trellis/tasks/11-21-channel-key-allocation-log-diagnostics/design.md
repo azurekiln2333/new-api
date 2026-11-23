@@ -43,3 +43,13 @@
 原有 CT 按 ClientIP 在注册、登录、刷新、退出和其他控制台操作间共用，默认 20 次/1200 秒。保留现有阈值与 IP 防护，将注册、刷新、退出和控制台操作拆成静态业务作用域；密码、MFA、Passkey、OAuth 和密码恢复继续共用原 CT 登录计数。外层 GA 聚合计数、邮件验证和已认证用户限制保持有效，不以客户端 Cookie 或会话声明扩大匿名额度。
 
 通用拒绝返回 HTTP 429、Retry-After 及 RATE_LIMIT_EXCEEDED/message_key 标准错误。前端共享错误转换保留具体后端错误，仅对空响应或 HTML 429 使用已有七语 Too many requests 文案。真实路由与内存/Redis 测试覆盖跨业务隔离、登录别名不可绕过和 GA 聚合上限。线上代理是否错误合并 ClientIP 尚无部署证据，不把代码复现当成已确认的线上配置结论。
+
+## R9：OpenAI 渠道 Messages 出站
+
+扩展管理员已有的 `supported_endpoints` 声明，新增 `messages`，首期只允许 OpenAI 渠道类型使用新值。没有声明时保留原路由。声明是上游能力集合，不能通过模型名猜测或请求失败后探测接口。Claude 客户端优先使用已声明的 Messages；OpenAI Chat 客户端保留既有 Chat/Responses 选择策略，只有这些接口不能承载而声明了 Messages 时才转换到 Messages。仅声明 Messages 的 OpenAI 渠道必须支持 OpenAI Chat 请求及普通、流式响应往返转换，不能只支持原生 Claude 客户端。
+
+复用现有 Claude 适配器和 relaykit 转换器处理请求、响应、工具调用与用量；保留客户端协议、渠道身份、OpenAI 渠道 Bearer 凭据和管理员 Header Override，补齐 Messages 协议所需版本及 beta 头。不得将客户端认证凭据当作上游凭据。HTTP Responses 在已有转换器可支持时复用相同路径；Messages-only 不支持 Responses WebSocket 或 compact，必须在上游派发前明确拒绝。包含 responses 声明的组合仍可使用原 Responses 能力。Responses WebSocket 在客户端升级后才选择渠道，因此拒绝点是 response.create 的本地错误和零上游拨号，不宣称拒绝发生在客户端 101 之前。请求参数覆盖、插件、预算和结算继续经过既有宿主入口，不能以改 URL 代替协议转换。
+
+## 指纹及模型选择权限
+
+管理员渠道指纹模型下拉候选从所选渠道配置读取；普通用户从已获授权的所选分组读取模型列表，不能读取渠道清单、指定渠道或调用管理员指纹接口。复用现有模型选择、分组接口及筛选规则，切换来源后清理失效模型。页面入口限制和后端鉴权分别验证，包括手工调用接口及伪造 channel 参数，不能仅依赖隐藏控件。

@@ -21,6 +21,7 @@ import { z } from 'zod'
 import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_OPENAI,
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_VLLM,
@@ -86,6 +87,12 @@ export const MAX_HTTP2_CONNECTION_SHARDS = 8
 
 export function supportsChannelEndpointSelection(channelType: number): boolean {
   return [1, 3, 6, 20, 47].includes(channelType)
+}
+
+// An Anthropic Messages upstream is served by the plain OpenAI adaptor only, so
+// the endpoint list grows for that type alone; the others keep chat/responses.
+export function supportsMessagesEndpoint(channelType: number): boolean {
+  return channelType === CHANNEL_TYPE_OPENAI
 }
 
 export function normalizeHttpProtocol(
@@ -287,10 +294,14 @@ export const channelFormSchema = z
     upstream_first_byte_timeout_seconds: z.number().optional(),
     supported_endpoints: z
       .array(
-        z.enum(['chat', 'responses'], {
-          error: 'supported_endpoints must contain only chat or responses',
+        z.enum(['chat', 'responses', 'messages'], {
+          error:
+            'supported_endpoints must contain only chat, responses or messages',
         }),
-        { error: 'supported_endpoints must contain only chat or responses' }
+        {
+          error:
+            'supported_endpoints must contain only chat, responses or messages',
+        }
       )
       .optional(),
     force_format: z.boolean().optional(),
@@ -354,6 +365,16 @@ export const channelFormSchema = z
           ctx,
           'supported_endpoints',
           'supported_endpoints must not contain duplicates'
+        )
+      }
+      if (
+        data.supported_endpoints.includes('messages') &&
+        !supportsMessagesEndpoint(data.type)
+      ) {
+        addRequiredIssue(
+          ctx,
+          'supported_endpoints',
+          'supported_endpoints messages is only supported for the OpenAI channel type'
         )
       }
       if (data.pass_through_body_enabled) {

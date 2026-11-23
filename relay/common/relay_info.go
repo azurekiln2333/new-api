@@ -211,6 +211,12 @@ type RelayInfo struct {
 	// 最终请求到上游的格式。可由 adaptor 显式设置；
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
 	FinalRequestRelayFormat types.RelayFormat
+	// UpstreamTextEndpoint records that this attempt selected the declared
+	// Anthropic Messages upstream, and is empty otherwise. It is set only by
+	// endpoint resolution, cleared at the start of every attempt, and never
+	// inferred from the client's RelayFormat, so a channel that declares
+	// nothing keeps its historical routing.
+	UpstreamTextEndpoint types.RelayFormat
 
 	StreamStatus *StreamStatus
 	// VendorToolUsage reads the upstream's own billed tool counts from a raw
@@ -289,6 +295,7 @@ func (info *RelayInfo) RequestedImageCount() int {
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	info.ResponseModel = nil
 	info.FinalRequestRelayFormat = ""
+	info.UpstreamTextEndpoint = ""
 	info.RequestConversionChain = nil
 	info.InitRequestConversionChain()
 	// Per-attempt only. Do not clear StreamStatus, conversion diagnostics,

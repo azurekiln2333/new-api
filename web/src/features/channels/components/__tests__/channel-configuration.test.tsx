@@ -100,7 +100,14 @@ test.each([
   { endpoints: [], expected: [] },
   { endpoints: ['chat'], expected: ['chat'] },
   { endpoints: ['responses'], expected: ['responses'] },
+  { endpoints: ['messages'], expected: ['messages'] },
   { endpoints: ['chat', 'responses'], expected: ['chat', 'responses'] },
+  { endpoints: ['chat', 'messages'], expected: ['chat', 'messages'] },
+  { endpoints: ['responses', 'messages'], expected: ['responses', 'messages'] },
+  {
+    endpoints: ['chat', 'responses', 'messages'],
+    expected: ['chat', 'responses', 'messages'],
+  },
 ])(
   'upstream endpoints $endpoints preserve their routing choice through save and reload',
   ({ endpoints, expected }) => {
@@ -131,14 +138,14 @@ test.each([
 
 test.each([
   {
-    setting: { supported_endpoints: ['messages'] },
+    setting: { supported_endpoints: ['unknown'] },
     type: 1,
-    error: 'supported_endpoints must contain only chat or responses',
+    error: 'supported_endpoints must contain only chat, responses or messages',
   },
   {
     setting: { supported_endpoints: 'responses' },
     type: 1,
-    error: 'supported_endpoints must contain only chat or responses',
+    error: 'supported_endpoints must contain only chat, responses or messages',
   },
   {
     setting: { supported_endpoints: ['chat', 'chat'] },
@@ -185,11 +192,51 @@ test.each([
   }
 )
 
+test.each([3, 6, 20, 47])(
+  'non-OpenAI channel type %s retains Chat/Responses but rejects Messages',
+  (type) => {
+    const values = transformChannelToFormDefaults({
+      ...editingChannel,
+      type,
+      other: type === 3 ? '2024-06-01' : '',
+      setting: '{"supported_endpoints":["chat","responses"]}',
+    })
+    expect(channelFormSchema.safeParse(values).success).toBe(true)
+    const result = channelFormSchema.safeParse({
+      ...values,
+      supported_endpoints: ['chat', 'responses', 'messages'],
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ['supported_endpoints'],
+          message:
+            'supported_endpoints messages is only supported for the OpenAI channel type',
+        })
+      )
+    }
+  }
+)
+
 test.each([
   { label: 'Inherit existing routing', expected: undefined },
   { label: 'Chat Completions only', expected: ['chat'] },
   { label: 'Responses only', expected: ['responses'] },
+  { label: 'Anthropic Messages (/v1/messages)', expected: ['messages'] },
   { label: 'Chat Completions and Responses', expected: ['chat', 'responses'] },
+  {
+    label: 'Chat Completions and Anthropic Messages',
+    expected: ['chat', 'messages'],
+  },
+  {
+    label: 'Responses and Anthropic Messages',
+    expected: ['responses', 'messages'],
+  },
+  {
+    label: 'Chat Completions, Responses and Anthropic Messages',
+    expected: ['chat', 'responses', 'messages'],
+  },
 ])(
   'upstream endpoints save the $label selection',
   async ({ label, expected }) => {
