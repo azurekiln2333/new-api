@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -195,6 +196,7 @@ func (s *stubTaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, 
 // *bytes.Reader bodies the task adaptors pass in, and it must be left intact.
 func TestDoTaskApiRequest_KeepsReplayableGetBody(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 
 	payload := []byte(`{"model":"test-model","prompt":"hello"}`)
 

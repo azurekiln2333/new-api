@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -41,6 +42,9 @@ func setupRelayChannelDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, database.AutoMigrate(&model.Option{}, &model.Channel{}))
+	// The ledger activation probe reads the options table even with local
+	// budgets off, so this isolated database owns an empty one.
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	model.DB = database
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	common.MemoryCacheEnabled = false
@@ -732,6 +736,7 @@ func TestRelayTaskSubmitPricesModelsAPluginAlsoRelays(t *testing.T) {
 // failures that keep the upstream status and body.
 func TestRelayTaskSubmitAcceptsAnySuccessfulUpstreamStatus(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	const source = `
 export const meta = {apiVersion:1,key:"status-echo",name:"Status Echo",version:"1.0.0",author:{name:"Test"},models:["declared-model"],fetchMode:"per_task"};
 export function buildSubmitRequest(ctx) { return {url: ctx.baseUrl+"/submit", method:"POST", body:{model: ctx.model}, action:"text_to_video"}; }
@@ -794,6 +799,7 @@ export function parseTaskResult() { return {status:"SUCCESS"}; }
 // SetupContextForSelectedChannel pins another candidate plugin's channel.
 func TestRelayTaskSubmitRetryRepricesAndReservesBeforeUpstream(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	const source = `
 export const meta = {apiVersion:1,key:"KEY",name:"KEY",version:"1.0.0",author:{name:"Test"},models:["declared-model"],fetchMode:"per_task",usageSchema:{seconds:{type:"number",unit:"second",description:"Video generation unit price"}}};
 export function buildSubmitRequest(ctx) { return {url: ctx.baseUrl+"/submit", method:"POST", body:{model: ctx.model}, action:"text_to_video"}; }

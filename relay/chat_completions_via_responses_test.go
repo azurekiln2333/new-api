@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -30,6 +31,7 @@ import (
 func TestChannelSupportedEndpointsChooseOutboundRequest(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	settings := model_setting.GetGlobalSettings()
 	previous := *settings
 	t.Cleanup(func() { *settings = previous })
@@ -154,6 +156,7 @@ func TestPlaygroundWebSearchPreservesFinalUpstreamIntent(t *testing.T) {
 		{name: "removed converted search", endpoint: "responses", removed: "web_search_options"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			testutil.UseInactiveChannelBudget(t)
 			captured := make(chan []byte, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
@@ -304,6 +307,7 @@ func TestChannelEndpointDeclarationsConstrainNativeResponsesHTTPAndWebSocket(t *
 
 func TestResponsesRefusalRetainsRetryAfter(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	settings := model_setting.GetGlobalSettings()
 	previousPassthrough := settings.PassThroughRequestEnabled
 	settings.PassThroughRequestEnabled = false
@@ -364,6 +368,7 @@ func TestChannelEndpointResponsesOnlyRejectsGeminiBeforeSending(t *testing.T) {
 
 func TestChannelEndpointResponsesConversionPreservesClientFormat(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	previousTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
 	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
@@ -454,6 +459,7 @@ func TestChannelEndpointResponsesConversionPreservesClientFormat(t *testing.T) {
 }
 
 func TestPrepareResponsesRequestRetainsConvertedAdaptor(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	type capturedRequest struct {
 		path string
 		body []byte
@@ -567,6 +573,7 @@ func TestRecalcQuotaFromRatiosRejectsAllInvalidAdjustedRatios(t *testing.T) {
 }
 
 func TestTextRequestViaResponsesConvertsClaudeDirectly(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	type capturedRequest struct {
 		path string
 		body []byte

@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -78,6 +79,7 @@ func TestSGLangChannelProtocols(t *testing.T) {
 }
 
 func TestSGLangRerankRequestAndResponse(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	service.InitHttpClient()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/prefix/v1/rerank", r.URL.Path)

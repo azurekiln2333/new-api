@@ -11,6 +11,7 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/pkg/requestpatch"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -67,6 +68,7 @@ func TestAPIAndFormRequestsInheritClientCancellation(t *testing.T) {
 }
 
 func TestFirstByteTimeoutDoesNotCommitEarlySSEKeepAlive(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	synctest.Test(t, func(t *testing.T) {
 		clientConn, upstreamConn := net.Pipe()
 		t.Cleanup(func() { _ = clientConn.Close(); _ = upstreamConn.Close() })

@@ -2,7 +2,9 @@ package model
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -32,6 +34,29 @@ const (
 
 // LogRequestPayload stores UTF-8 JSON. MySQL TEXT cannot hold 256 KiB.
 type LogRequestPayload string
+
+// Value and Scan make the payload a driver value like the plain string it is.
+// ClickHouse's String column converter accepts driver.Valuer and fmt.Stringer
+// but rejects an arbitrary named string, so without this the payload write
+// fails only on that dialect.
+func (p LogRequestPayload) Value() (driver.Value, error) { return string(p), nil }
+
+func (p *LogRequestPayload) Scan(value any) error {
+	if p == nil {
+		return errors.New("LogRequestPayload.Scan on a nil receiver")
+	}
+	switch typed := value.(type) {
+	case nil:
+		*p = ""
+	case string:
+		*p = LogRequestPayload(typed)
+	case []byte:
+		*p = LogRequestPayload(typed)
+	default:
+		return fmt.Errorf("LogRequestPayload cannot scan %T", value)
+	}
+	return nil
+}
 
 func (LogRequestPayload) GormDataType() string { return "text" }
 

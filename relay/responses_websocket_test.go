@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	appdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -196,6 +197,7 @@ func TestSelectResponsesWSChannelAcceptsNativeResponsesChannelTypes(t *testing.T
 }
 
 func TestResponsesWSAzureDialUsesAzureResponsesURLAndAPIKey(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	for _, tc := range []struct {
 		name           string
 		host           string

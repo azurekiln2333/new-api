@@ -19,6 +19,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
@@ -694,6 +695,7 @@ func TestMantleEndpointAndCredentialValidation(t *testing.T) {
 }
 
 func TestMantleHTTPResponsesPreserveCacheUsage(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	originalTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
 	t.Cleanup(func() { constant.StreamingTimeout = originalTimeout })
@@ -757,6 +759,7 @@ func TestMantleHTTPResponsesPreserveCacheUsage(t *testing.T) {
 }
 
 func TestMantleDoesNotFollowRedirectsOrFallbackOnAuthFailure(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusUnauthorized, http.StatusTooManyRequests} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			calls := 0
@@ -858,6 +861,7 @@ func TestMantleRejectsInvalidRequestsAndPreservesExplicitModelIDs(t *testing.T) 
 }
 
 func TestMantleSignatureMatchesWireHeaders(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	for _, test := range []struct {
 		name          string
 		http2         bool

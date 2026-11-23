@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/QuantumNous/new-api/internal/testutil"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,7 @@ import (
 )
 
 func TestDoRequestReturnsUpstreamRedirectWithoutFollowing(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	service.InitHttpClient()
 	gin.SetMode(gin.TestMode)
 	sharedClient := service.GetHttpClient()

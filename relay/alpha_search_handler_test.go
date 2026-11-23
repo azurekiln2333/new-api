@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -103,6 +104,7 @@ func (*recordedSettlement) ReserveBeforeSubmit(int) error { return nil }
 // anything.
 func TestDeepSeekToolsHelper(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	gin.SetMode(gin.TestMode)
 	batch, logConsume := common.BatchUpdateEnabled, common.LogConsumeEnabled
 	common.BatchUpdateEnabled, common.LogConsumeEnabled = true, false

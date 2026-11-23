@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	taskdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -882,6 +883,7 @@ export function parseBatchResult() {return [];}
 func TestTaskAdaptorMapsJSContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/submit":
@@ -969,6 +971,7 @@ func TestTaskAdaptorMapsJSContract(t *testing.T) {
 
 func TestTaskAdaptorHeaderOverrides(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	source := strings.ReplaceAll(mockPlugin, `"X-Plugin":`, `"Authorization": "plugin-default", "X-Plugin":`)
 	source += `
 export function buildBatchQueryRequest(ctx) {
@@ -1915,6 +1918,7 @@ export function parseTaskResult(ctx, body, response){
 
 func TestTaskAdaptorParseSubmitResponsePersistsState(t *testing.T) {
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"id":"upstream-1"}`))
 	}))
@@ -2719,6 +2723,7 @@ func newAPIGateway(t *testing.T, routes map[string]string, seen *[]string) *http
 func TestTaskAdaptorChainsDoubaoThroughNewAPIUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	var seen []string
 	gateway := newAPIGateway(t, map[string]string{
 		"POST /doubao/api/v3/contents/generations/tasks":               `{"id":"task_up_public"}`,
@@ -2778,6 +2783,7 @@ func TestTaskAdaptorChainsDoubaoThroughNewAPIUpstream(t *testing.T) {
 func TestTaskAdaptorChainsSunoBatchFetchThroughNewAPIUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.InitHttpClient()
+	testutil.UseInactiveChannelBudget(t)
 	var seen []string
 	gateway := newAPIGateway(t, map[string]string{
 		"POST /suno/submit/MUSIC": `{"code":"success","message":"","data":"task_up_public"}`,

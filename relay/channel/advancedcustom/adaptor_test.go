@@ -15,6 +15,7 @@ import (
 	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -61,6 +62,7 @@ func TestAdaptorUsesExactRouteAndQueryAuth(t *testing.T) {
 // URL, and a channel proxy is dialed before the upstream; a failed handshake
 // must hide both.
 func TestAdaptorMasksDialedHostsInDialFailure(t *testing.T) {
+	testutil.UseInactiveChannelBudget(t)
 	originalDialer := websocket.DefaultDialer
 	dialer := *originalDialer
 	dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {

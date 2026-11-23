@@ -1,7 +1,10 @@
 # Integration and release evidence
 
-Status: final integration checks are in progress. This report does not claim a
-commit, hosted CI pass, tag or release for the working tree.
+Status: commit `dc9778764419ba8f16f6b034aadd4f52b4d0d7a8` was pushed to fork
+`merge/upstream`. Exact-SHA CI run `45181916416` failed in backend fixtures and
+ClickHouse detail storage; frontend checks passed. Follow-up repairs have passed
+the affected local suites, race checks and root vet/build. The repaired commit
+still requires a fresh hosted run. No tag or release is claimed yet.
 
 ## Delivered behavior
 
@@ -62,14 +65,21 @@ directory. No production database was used.
 | Diagnostic readmission/fingerprint/model-discovery fixtures | PASS, SQLite 3.776 s, MySQL 7.200 s, PostgreSQL 2.872 s |
 | Provider cancellation and streaming keepalive fixtures | PASS, 5.788 s; race 7.280 s |
 | Balance refresh source/replacement matrix | PASS, real SQLite/MySQL/PostgreSQL under race, 10.647 s; original assertions retained |
+| Complete controller package after final repairs | PASS, 369.654 s, real external DSNs configured; `root-controller-final.log` |
 | HTTP budget admission / Realtime guard / Responses reuse | PASS, SQLite 5.417 s, MySQL 1.329 s, PostgreSQL 5.060 s; race 8.828 s |
 | R8 full middleware / router | PASS, 6.471 s / 9.251 s; race 4.497 s / 4.846 s |
 | Released `de5c967` database upgrades | PASS, actual initialization twice on all three engines; preserved data, identities and indexes |
 | Frontend affected suites / typecheck / scoped lint / production build | PASS, 298 tests in 13 suites; additional 429 mapper/notification coverage 52 tests |
 | Complete frontend suite | PASS, 281 files / 3407 tests, 1459.83 s, `bun run test --maxWorkers=1` |
-| Remaining 81 root packages | 44 PASS, 36 without tests; one Windows HTTP/2 GOAWAY fixture failure reproduced on unchanged `47a5639c5` baseline |
+| Earlier remaining-81-package check | 44 PASS, 36 without tests; pre-existing Windows HTTP/2 GOAWAY failure. Superseded for relay/e2e by the final hosted admission-fixture failures below |
 | Independent relaykit / tokenkit | Tests and builds PASS with `GOWORK=off` |
 | Root vet / build on the integrated tree | PASS, `go vet ./...` and `go build ./...`; latest fixture gofmt/diff checks clean |
+| Hosted-failure repair: complete root relay package | PASS, normal 0.479 s / race 7.908 s; individual conversion selectors and vet passed; `relay-full.log`, `relay-race.log`, `relay-anchored.log` |
+| Hosted-failure repair: complete e2e package | PASS, normal 5.757 s / race 7.039 s; document-plugin selector and vet passed; `e2e-full.log`, `e2e-race.log` |
+| Hosted-failure repair: AWS / task-jsplugin packages | PASS, normal 5.746 s / 12.638 s, race 6.882 s / 9.567 s; individual original-failure selectors and vet passed; `subpkg-after.log`, `subpkg-race.log`, `subpkg-anchored.log` |
+| Hosted-failure repair: channel / advancedcustom packages | PASS, full normal 5.742 s / 0.174 s, affected channel race 6.885 s / full advancedcustom race 12.413 s; original-failure selectors preserved |
+| ClickHouse payload conversion repair, local verification | Installed driver reproduction and regression PASS; real relational storage matrix PASS 16.680 s, full model PASS 32.472 s, focused race PASS 12.833 s; actual ClickHouse remains the hosted gate |
+| Follow-up integrated root vet / build | PASS, `ci-followup-root-vet.log`, `ci-followup-root-build.log` |
 
 The earlier full controller failures (`root-final-main-packages.log`) are
 superseded by the focused repairs above. The subsequent full run finished in
@@ -78,11 +88,40 @@ failing. Its test fixture wrote obsolete key projections after credential refres
 created authoritative allocation rows. Public locked mutations now simulate the
 replacement, scope change, reorder and disable operations; all original balance,
 source identity and status assertions pass on three engines under race
-(`balance-matrix-3db-race.log`). A fresh complete controller rerun is pending in
-`root-controller-final.log`; no fresh whole-package pass is claimed yet.
+(`balance-matrix-3db-race.log`). The fresh complete controller rerun passed in
+369.654 s (`root-controller-final.log`).
 The complete frontend suite passed serially in
 `root-web-full-serial.log` after the initial parallel attempt exhausted local
 Windows memory.
+
+First hosted run `45181916416` exercised the committed final admission guards:
+the e2e/relay/adaptor fixtures lacking an initialized inactive ledger now fail
+closed before upstream calls. These earlier package results are stale for that
+final runtime change. Fixture repairs must preserve admission behavior and all
+original assertions. The real ClickHouse server is 25.8.33.6; both independent
+fresh and released-upgrade detail-storage cases failed with storage errors,
+while SQLite/MySQL/PostgreSQL and full controller passed in that job. This is a
+release blocker under investigation, not a skipped or accepted storage gate.
+
+The follow-up repairs give database-free relay/adaptor tests a real temporary
+SQLite `Option` table with no activation marker through
+`internal/testutil.UseInactiveChannelBudget(t)`. Existing database fixtures add
+`Option` to their own migration list. They explicitly disable the process flag;
+production admission checks and all original assertions remain unchanged.
+Full affected packages and focused race checks now pass as recorded above.
+
+The ClickHouse failure was reproduced against the installed
+`clickhouse-go/v2@v2.46.0` String converter: a named string without `driver.Valuer`
+is rejected, while native strings and a value implementing that interface pass.
+`LogRequestPayload` now implements `Value` and `Scan`, preserving JSON bytes and
+existing dialect-specific column types. The regression exercises the real
+converter with empty, ASCII and non-ASCII payloads; the relational matrix still
+covers fresh and released-upgrade stores with migration twice. Commands:
+`GOWORK=off go test -p 1 -count=1 ./model` with both real relational DSNs, and
+`go test -race -p 1 -count=1 ./model -run
+'TestLogRequestPayloadIsAStringDriverValue|TestLogRequestDetail|TestLogRequestContent|TestCleanupLogRequestDetails|TestRecoverLogRequestContent'`.
+`TEST_CLICKHOUSE_DSN` was unset locally; neither the conversion regression nor
+the relational passes substitute for the pending hosted ClickHouse run.
 
 The console owner's final source review disposed of the three key-review
 questions: RB1 cited `UpdateChannelOtherInfoLocked`, which the append/stable-ID

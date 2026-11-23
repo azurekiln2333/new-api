@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -429,6 +430,37 @@ func TestLogRequestDetailWriterLeaseAndTaskFallback(t *testing.T) {
 	require.Error(t, InsertTaskWithRequestContent(t.Context(), &task, snapshot))
 	require.NoError(t, DB.Model(&Task{}).Where("task_id = ?", task.TaskID).Count(&count).Error)
 	assert.Zero(t, count)
+}
+
+func TestLogRequestPayloadIsAStringDriverValue(t *testing.T) {
+	// ClickHouse's String column converter accepts driver.Valuer, fmt.Stringer,
+	// []byte or a plain string and rejects any other named string type. Its
+	// stdDriver.CheckNamedValue returns nil without converting, so database/sql
+	// skips the default named-value conversion and the driver receives the
+	// payload type as is. The contract is asserted here without a server.
+	var payloadColumn column.String
+	for _, payload := range []LogRequestPayload{
+		"",
+		`{"messages":[{"role":"user","content":"hi"}]}`,
+		`{"messages":[{"role":"user","content":"你好，世界"}]}`,
+	} {
+		require.NoError(t, payloadColumn.AppendRow(payload))
+		assert.Equal(t, string(payload), payloadColumn.Row(payloadColumn.Rows()-1, false))
+	}
+	for _, test := range []struct {
+		value any
+		want  LogRequestPayload
+	}{
+		{value: "x", want: "x"},
+		{value: []byte("y"), want: "y"},
+		{value: nil, want: ""},
+	} {
+		var payload LogRequestPayload
+		require.NoError(t, payload.Scan(test.value))
+		assert.Equal(t, test.want, payload, "scan of %T", test.value)
+	}
+	var payload LogRequestPayload
+	assert.Error(t, payload.Scan(int64(1)))
 }
 
 func runRequestLogStorageMatrix(t *testing.T, test func(*testing.T, *gorm.DB, bool)) {

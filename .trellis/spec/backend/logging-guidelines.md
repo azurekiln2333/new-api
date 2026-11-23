@@ -23,6 +23,11 @@ It does not authorize request bodies in audit events or process logs.
 - Payload rows live only in `LOG_DB.log_request_details`. Primary
   `DB.log_request_content_protections` and `TaskPrivateData.RequestContent` hold
   references and coordination metadata, never payload bytes.
+- `LogRequestPayload.Value() (driver.Value, error)` exposes native string bytes
+  to database drivers; `(*LogRequestPayload).Scan(any) error` accepts strings,
+  byte slices and SQL NULL. Keep the dialect-specific text column definition.
+  ClickHouse's named-value path does not perform the default `database/sql`
+  conversion of an arbitrary named string.
 
 ### 3. Contracts
 
@@ -83,6 +88,9 @@ It does not authorize request bodies in audit events or process logs.
   shared/independent stores, fresh/unchanged released-log schema, migration twice,
   >64 KiB payload, surviving retries, task liveness, cleanup during publication.
   Missing DSNs explicitly skip; configured connection failures must fail.
+- `TestLogRequestPayloadIsAStringDriverValue`: the installed ClickHouse String
+  converter must accept the actual payload type and preserve its bytes. This
+  local driver regression complements the real server storage matrix.
 - `TestLogRequestDetailConfiguredSQLiteAlias`: actual configured
   `SQL_DSN=local` / `LOG_SQL_DSN=local` startup and persisted payload/link.
 - `TestLogRequestDetailIndependentStoreRecovery` and
@@ -112,3 +120,11 @@ Wrong: weaken production activation/storage checks to repair a fresh fixture.
 Correct: seed required `Option`/allocation schema before follower `InitDB`, use
 isolated external databases for fixed-name allocation tables, and close fixture
 handles in cleanup. Keep the production fail-closed check unchanged.
+
+Relay/adaptor tests without their own database use
+`internal/testutil.UseInactiveChannelBudget(t)`. It creates a temporary SQLite
+`Option` table with no durable activation marker, sets
+`CHANNEL_BUDGET_ENABLED=false`, and restores both database handles and dialects
+in cleanup. Tests that already own a database add `Option` to that fixture
+instead. A false process flag alone cannot replace the activation read. Do not
+set `IsChannelTest` or change runtime admission to make these fixtures pass.
