@@ -137,9 +137,7 @@ const files = (
     ? requestedPaths.map((path) => join(root, path))
     : walk(root)
 ).filter(
-  (file) =>
-    statSync(file).isFile() &&
-    statSync(file).size < 10 * 1024 * 1024
+  (file) => statSync(file).isFile() && statSync(file).size < 10 * 1024 * 1024
 )
 const before = mode === '--check' ? snapshotFiles(files) : null
 let headers = new Map()
@@ -175,17 +173,6 @@ try {
           console.log(
             `::error file=${file}::Frontend formatter would change this file`
           )
-          if (file === 'scripts/format-with-protected-headers.mjs') {
-            const formattedBase64 = Buffer.from(readFileSync(file)).toString('base64')
-            const chunkSize = 2500
-            const chunkCount = Math.ceil(formattedBase64.length / chunkSize)
-            for (let offset = 0; offset < formattedBase64.length; offset += chunkSize) {
-              const chunkNumber = Math.floor(offset / chunkSize) + 1
-              console.log(
-                `::error file=${file}::formatted_base64_part=${chunkNumber}/${chunkCount}:${formattedBase64.slice(offset, offset + chunkSize)}`
-              )
-            }
-          }
         }
       }
       exitCode = 1
