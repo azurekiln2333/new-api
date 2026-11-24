@@ -504,6 +504,12 @@ func TestAuditOutboxClickHouseDelivery(t *testing.T) {
 		common.SetLogDatabaseType(previousLogType)
 	})
 	require.NoError(t, migrateClickHouseLogDB())
+	var deliveryErr error
+	require.NoError(t, logDB.Callback().Create().After("gorm:commit_or_rollback_transaction").Register("test:capture_audit_delivery_error", func(tx *gorm.DB) {
+		if tx.Error != nil {
+			deliveryErr = tx.Error
+		}
+	}))
 
 	eventTime := common.GetTimestamp()
 	eventId := common.NewRequestId()
@@ -517,7 +523,10 @@ func TestAuditOutboxClickHouseDelivery(t *testing.T) {
 		}, eventTime)
 		return err
 	}))
-	require.Equal(t, 1, DrainAuditOutbox(context.Background()))
+	delivered := DrainAuditOutbox(context.Background())
+	var outbox AuditEventOutbox
+	require.NoError(t, db.Where("event_id = ?", eventId).First(&outbox).Error)
+	require.Equal(t, 1, delivered, "outbox last_error=%q; insert error=%v", outbox.LastError, sanitizeDBError(deliveryErr))
 
 	var stored AuditLog
 	require.NoError(t, logDB.Table("audit_logs").Where("event_id = ?", eventId).First(&stored).Error)

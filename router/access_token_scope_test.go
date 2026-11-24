@@ -377,6 +377,10 @@ func setupAdminChannelSurfaceFixture(t *testing.T) *adminChannelSurfaceFixture {
 	// LIFO and t.TempDir removes its tree in its own late cleanup, so the
 	// restore/close must be registered after it to run before the removal.
 	taskDir := t.TempDir()
+	common.OptionMapRWMutex.Lock()
+	previousOptions := common.OptionMap
+	common.OptionMap = make(map[string]string)
+	common.OptionMapRWMutex.Unlock()
 	// One cleanup restores the globals first and only then closes the temp
 	// handle, so no later test can observe a closed database.
 	var tempDB *gorm.DB
@@ -387,6 +391,9 @@ func setupAdminChannelSurfaceFixture(t *testing.T) *adminChannelSurfaceFixture {
 		common.IsMasterNode, common.RedisEnabled, common.SessionSecret = previousMaster, previousRedis, previousSecret
 		common.MemoryCacheEnabled = previousCache
 		common.SQLitePath = previousSQLitePath
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptions
+		common.OptionMapRWMutex.Unlock()
 		if tempDB != nil && tempDB != previousDB {
 			if sqlDB, err := tempDB.DB(); err == nil {
 				_ = sqlDB.Close()

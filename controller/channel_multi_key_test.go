@@ -762,11 +762,12 @@ func TestUpdateChannelKeepsCurrentKeyState(t *testing.T) {
 			}
 			injected := false
 			if tc.concurrent {
-				// Change the stored metadata immediately before the configuration
-				// write, after its reads and any explicit mode merge. Map-based
-				// writes in UpdateChannelLocked do not re-enter this callback.
+				// Commit another writer's metadata after the handler captures its
+				// original projected row, before the atomic edit acquires its lock.
+				// Injecting inside the edit's UPDATE would open a second transaction
+				// while the first already owns the row (or SQLite's writer lock).
 				const callback = "test:channel-edit-current-key-state"
-				require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+				require.NoError(t, model.DB.Callback().Query().After("gorm:after_query").Register(callback, func(tx *gorm.DB) {
 					editing, ok := tx.Statement.Dest.(*model.Channel)
 					if !ok || editing.Id != channel.Id || injected {
 						return
@@ -783,7 +784,7 @@ func TestUpdateChannelKeepsCurrentKeyState(t *testing.T) {
 						tx.AddError(err)
 					}
 				}))
-				t.Cleanup(func() { require.NoError(t, model.DB.Callback().Update().Remove(callback)) })
+				t.Cleanup(func() { require.NoError(t, model.DB.Callback().Query().Remove(callback)) })
 			}
 			payload, err := common.Marshal(body)
 			require.NoError(t, err)

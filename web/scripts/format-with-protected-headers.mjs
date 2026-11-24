@@ -17,7 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { spawnSync } from 'node:child_process'
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  rmdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 const mode = process.argv[2]
@@ -132,6 +141,101 @@ function listChangedFiles(before, files) {
   return changed
 }
 
+function escapeAnnotation(value, property = false) {
+  const escaped = String(value)
+    .replaceAll('%', '%25')
+    .replaceAll('\r', '%0D')
+    .replaceAll('\n', '%0A')
+  return property
+    ? escaped.replaceAll(':', '%3A').replaceAll(',', '%2C')
+    : escaped
+}
+
+function reportFormatterDiff(file, original) {
+  let temporaryDirectory
+  try {
+    temporaryDirectory = mkdtempSync(join(tmpdir(), 'new-api-format-diff-'))
+    const originalFile = join(temporaryDirectory, 'original')
+    writeFileSync(originalFile, original)
+    const result = spawnSync(
+      'git',
+      [
+        'diff',
+        '--no-index',
+        '--no-color',
+        '--no-ext-diff',
+        '--unified=3',
+        '--',
+        originalFile,
+        join(root, file),
+      ],
+      { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }
+    )
+    if (result.error || (result.status !== 0 && result.status !== 1)) {
+      throw new Error(
+        result.error?.message ||
+          result.stderr?.trim() ||
+          `git diff exited with status ${result.status}`
+      )
+    }
+    if (!result.stdout) {
+      throw new Error('git diff produced no output for changed file bytes')
+    }
+
+    // Chunk after escaping so every annotation stays bounded. Iterating code
+    // points also avoids cutting Unicode characters or workflow escape tokens.
+    const parts = []
+    let part = ''
+    let size = 0
+    let truncated = false
+    for (const character of result.stdout) {
+      const escaped = escapeAnnotation(character)
+      if (size + escaped.length > 60_000) {
+        truncated = true
+        break
+      }
+      if (part.length + escaped.length > 6000) {
+        parts.push(part)
+        part = ''
+      }
+      part += escaped
+      size += escaped.length
+    }
+    if (part) parts.push(part)
+    const annotationFile = escapeAnnotation(file, true)
+    for (const [index, content] of parts.entries()) {
+      const title = `Formatter diff part ${index + 1} of ${parts.length}`
+      console.log(`::notice file=${annotationFile},title=${title}::${content}`)
+    }
+    if (truncated) {
+      console.log(
+        `::notice file=${annotationFile}::Formatter diff truncated after 60000 escaped characters.`
+      )
+    }
+  } catch (error) {
+    const message = String(error.message ?? error).slice(0, 1200)
+    console.log(
+      `::warning file=${escapeAnnotation(file, true)}::${escapeAnnotation(
+        `Could not report formatter diff: ${message}`
+      )}`
+    )
+  } finally {
+    if (temporaryDirectory) {
+      try {
+        rmSync(join(temporaryDirectory, 'original'), { force: true })
+        rmdirSync(temporaryDirectory)
+      } catch (error) {
+        const message = String(error.message ?? error).slice(0, 1200)
+        console.log(
+          `::warning file=${escapeAnnotation(file, true)}::${escapeAnnotation(
+            `Could not remove formatter diff temporary file: ${message}`
+          )}`
+        )
+      }
+    }
+  }
+}
+
 const files = (
   requestedPaths.length > 0
     ? requestedPaths.map((path) => join(root, path))
@@ -171,8 +275,9 @@ try {
         console.error(file)
         if (process.env.GITHUB_ACTIONS === 'true') {
           console.log(
-            `::error file=${file}::Frontend formatter would change this file`
+            `::error file=${escapeAnnotation(file, true)}::Frontend formatter would change this file`
           )
+          reportFormatterDiff(file, before.get(join(root, file)))
         }
       }
       exitCode = 1

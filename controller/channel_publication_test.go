@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -154,70 +156,45 @@ func TestChannelUpdateAuditFailureRollsBackConfiguration(t *testing.T) {
 // advanced the generation must not publish its older bindings.
 //
 // The interleaving is barrier-driven: a GORM query callback pauses the reload once
-// its channel rows are read, the test then performs a real targeted write with the
-// memory cache disabled, and the reload resumes provably stale.
+// its channel and allocation rows are read, the test then performs a real targeted
+// write with the memory cache disabled, and the reload resumes provably stale.
 func TestChannelBoundIndexNoCacheReloadRejectsStaleSnapshot(t *testing.T) {
 	setupChannelCreateTest(t)
 	previousCache := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = false
 	t.Cleanup(func() { common.MemoryCacheEnabled = previousCache })
 
-	// A multi-key channel bound to a user, so it contributes to the bound index.
-	// The binding is keyed by allocation index, matching the production shape.
-	channel := &model.Channel{Name: "bound-stale-guard", Type: 1, Key: "sk-bound-stale", Models: "bound-model", Group: "default"}
-	require.NoError(t, channel.Insert())
-	t.Cleanup(func() { _, _ = model.BatchDeleteChannels([]int{channel.Id}) })
+	// Insert the binding with its authoritative allocation rows. Replacing the
+	// channel_info projection afterwards would erase its migration revision.
 	const boundUser = 4242
-	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).
-		Update("channel_info", model.ChannelInfo{
+	channel := &model.Channel{Name: "bound-stale-guard", Type: 1, Key: "sk-bound-stale\nsk-unbound-stale", Models: "bound-model", Group: "default",
+		ChannelInfo: model.ChannelInfo{
 			IsMultiKey:     true,
+			MultiKeySize:   2,
 			MultiKeyUsers:  map[int]int{0: boundUser},
 			MultiKeyModels: map[int][]string{0: {"bound-model"}},
-		}).Error)
+		},
+	}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { _, _ = model.BatchDeleteChannels([]int{channel.Id}) })
 	model.InitChannelCache()
 	// Positive control: the binding is indexed before the interleaving, so the
 	// assertion below fails for the right reason rather than because the probe
 	// never observed anything.
 	require.Equal(t, []int{channel.Id}, model.UserBoundChannelIDs(boundUser))
 
-	const callback = "test:bound-index-stale-barrier"
-	loaded := make(chan struct{})
-	release := make(chan struct{})
-	var interceptOnce sync.Once
-	database := model.DB
-	require.NoError(t, database.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
-		if tx.Statement.Table != "channels" {
-			return
-		}
-		intercepted := false
-		interceptOnce.Do(func() { intercepted = true })
-		if !intercepted {
-			return
-		}
-		close(loaded)
-		<-release
-	}))
-	t.Cleanup(func() { require.NoError(t, database.Callback().Query().After("gorm:query").Remove(callback)) })
-
-	reloadDone := make(chan struct{})
-	go func() {
-		defer close(reloadDone)
-		model.InitChannelCache()
-	}()
-
-	<-loaded
+	resumeReload := pauseChannelCacheReload(t, channel.Id)
 	// The reload has read the old bindings and is paused. Commit and publish a
 	// newer state that drops the binding, through the production write path.
 	_, err := model.UpdateChannelConfigAtomic(channel.Id, model.ChannelConfigEdit{
 		Apply: func(baseline *model.Channel, stored *model.Channel) error {
 			stored.ChannelInfo.MultiKeyUsers = nil
-			stored.ChannelInfo.IsMultiKey = false
 			return nil
 		},
 	})
 	require.NoError(t, err)
-	close(release)
-	<-reloadDone
+	assert.Empty(t, model.UserBoundChannelIDs(boundUser), "the committed write removes the binding before the stale reload resumes")
+	resumeReload()
 
 	// The reload was stale: the removed binding must not come back. Reading the
 	// index directly is the precise probe; a stale publish would restore the id.
@@ -230,8 +207,8 @@ func TestChannelBoundIndexNoCacheReloadRejectsStaleSnapshot(t *testing.T) {
 // older snapshot instead of publishing it over the newer committed routing.
 //
 // The interleaving is deterministic and barrier-driven, not timing-based. A GORM
-// query callback pauses the reload once its channel rows are already read, the
-// test then performs a real targeted write (the production commit path) that
+// query callback pauses the reload once its channel and allocation rows are read,
+// the test then performs a real targeted write (the production commit path) that
 // publishes newer routing and advances the generation, and the reload resumes
 // provably stale. Afterwards the replaced model must not be routable again.
 func TestChannelCacheReloadRejectsStaleSnapshot(t *testing.T) {
@@ -258,32 +235,7 @@ func TestChannelCacheReloadRejectsStaleSnapshot(t *testing.T) {
 	// relative to everything the test publishes from here on. The callback is
 	// registered only after the priming reload finished, so the reload it pauses
 	// is exactly the one this test interleaves.
-	const callback = "test:stale-reload-barrier"
-	loaded := make(chan struct{})
-	release := make(chan struct{})
-	var interceptOnce sync.Once
-	database := model.DB
-	require.NoError(t, database.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
-		if tx.Statement.Table != "channels" {
-			return
-		}
-		intercepted := false
-		interceptOnce.Do(func() { intercepted = true })
-		if !intercepted {
-			return
-		}
-		close(loaded)
-		<-release
-	}))
-	t.Cleanup(func() { require.NoError(t, database.Callback().Query().After("gorm:query").Remove(callback)) })
-
-	reloadDone := make(chan struct{})
-	go func() {
-		defer close(reloadDone)
-		model.InitChannelCache()
-	}()
-
-	<-loaded
+	resumeReload := pauseChannelCacheReload(t, channel.Id)
 	// The reload has read the old rows and is paused. Commit and publish newer
 	// routing through the same production path a console edit uses. It runs on its
 	// own connection, so the paused reload does not block it.
@@ -294,16 +246,80 @@ func TestChannelCacheReloadRejectsStaleSnapshot(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	close(release)
-	<-reloadDone
+	resumeReload()
 
 	// The resumed reload held an older snapshot and must have discarded it, so the
 	// replaced model stays unroutable and the newer committed routing survives.
 	stale, err := model.GetRandomSatisfiedChannel("default", staleModel, 0, nil)
-	assert.Error(t, err, "a stale reload must not republish routing that was already replaced")
-	assert.Nil(t, stale)
+	require.NoError(t, err)
+	assert.Nil(t, stale, "a stale reload must not republish routing that was already replaced")
 	fresh, err := model.GetRandomSatisfiedChannel("default", freshModel, 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, fresh, "the newer committed routing must survive the stale reload")
 	assert.Equal(t, channel.Id, fresh.Id)
+}
+
+// pauseChannelCacheReload holds a real reload after both its channel rows and
+// authoritative allocations have been read. Pausing only the channel query lets
+// the resumed projection read newer bindings, which would hide a stale publish.
+// Cleanup always releases and joins the reload, including after a fatal assertion.
+func pauseChannelCacheReload(t *testing.T, channelID int) func() {
+	t.Helper()
+	const callback = "test:channel-cache-allocation-snapshot"
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	t.Cleanup(cancel)
+	loaded := make(chan struct{})
+	release := make(chan struct{})
+	reloadDone := make(chan struct{})
+	var interceptOnce, releaseOnce sync.Once
+	database := model.DB
+	require.NoError(t, database.Callback().Query().After("gorm:after_query").Register(callback, func(tx *gorm.DB) {
+		entries, ok := tx.Statement.Dest.(*[]model.ChannelKeyEntry)
+		if tx.Error != nil || !ok {
+			return
+		}
+		containsChannel := false
+		for _, entry := range *entries {
+			if entry.ChannelId == channelID {
+				containsChannel = true
+				break
+			}
+		}
+		if !containsChannel {
+			return
+		}
+		intercepted := false
+		interceptOnce.Do(func() { intercepted = true })
+		if !intercepted {
+			return
+		}
+		close(loaded)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}))
+	resume := func() {
+		t.Helper()
+		releaseOnce.Do(func() { close(release) })
+		select {
+		case <-reloadDone:
+		case <-time.After(10 * time.Second):
+			t.Fatal("channel cache reload did not finish after releasing its snapshot")
+		}
+	}
+	t.Cleanup(func() {
+		defer func() { assert.NoError(t, database.Callback().Query().Remove(callback)) }()
+		resume()
+	})
+	go func() {
+		defer close(reloadDone)
+		model.InitChannelCache()
+	}()
+	select {
+	case <-loaded:
+	case <-ctx.Done():
+		t.Fatal("channel cache reload did not reach its allocation snapshot")
+	}
+	return resume
 }
