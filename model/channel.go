@@ -979,23 +979,161 @@ func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOpti
 	var channels []*Channel
 	var err error
 	order := resolveChannelSortOptions(idSort, sortOptions)
+	ctx := WithBatchedChannelKeyEntries(context.Background())
 	if selectAll {
-		err = order.Apply(DB).Find(&channels).Error
+		err = order.Apply(DB.WithContext(ctx)).Find(&channels).Error
 	} else {
-		err = order.Apply(DB).Limit(num).Offset(startIdx).Omit("key").Find(&channels).Error
+		err = order.Apply(DB.WithContext(ctx)).Limit(num).Offset(startIdx).Omit("key").Find(&channels).Error
 	}
-	return channels, err
+	if err != nil {
+		return nil, err
+	}
+	if err := ProjectChannelKeyEntries(DB, ctx, channels, !selectAll); err != nil {
+		return nil, err
+	}
+	return channels, nil
+}
+
+// ChannelSearchQueryFiltered builds the base filtered query behind
+// /api/channel/search supports: keyword (id/name/key/base_url plus model), group,
+// status (enabled / disabled / all) and type. The caller adds pagination,
+// ordering or aggregate projection, so the total and type counts are SQL
+// aggregates over the same filter instead of the in-memory result set.
+func ChannelSearchQueryFiltered(ctx context.Context, keyword, group, modelKeyword string, statusFilter int, typeFilter int) *gorm.DB {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	modelsCol := "`models`"
+	baseURLCol := "`base_url`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		modelsCol = `"models"`
+		baseURLCol = `"base_url"`
+	}
+	query := DB.WithContext(ctx).Model(&Channel{})
+	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
+	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + modelKeyword + "%"}
+	query = ApplyChannelGroupFilter(query.Where(whereClause, args...), group)
+	if statusFilter == common.ChannelStatusEnabled {
+		query = query.Where("status = ?", common.ChannelStatusEnabled)
+	} else if statusFilter == 0 {
+		query = query.Where("status != ?", common.ChannelStatusEnabled)
+	}
+	if typeFilter >= 0 {
+		query = query.Where("type = ?", typeFilter)
+	}
+	return query
+}
+
+// ListChannelsPage reads one page of channels through SQL with the same filters
+// and ordering the tag-mode listing uses, projecting allocations in bounded
+// chunks. The returned total is the SQL count of the filtered set, so callers no
+// longer load the whole table to paginate or to size the result.
+func ListChannelsPage(ctx context.Context, query *gorm.DB, startIdx, pageSize int, omitKey bool, sortOptions ChannelSortOptions) ([]*Channel, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var total int64
+	if err := query.WithContext(ctx).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	channels := make([]*Channel, 0)
+	// Marking the context makes AfterFind defer to the batch projection below,
+	// so the page read does not run one allocation query per row.
+	pageQuery := sortOptions.Apply(query.WithContext(WithBatchedChannelKeyEntries(ctx))).Limit(pageSize).Offset(startIdx)
+	if omitKey {
+		pageQuery = pageQuery.Omit("key")
+	}
+	if err := pageQuery.Find(&channels).Error; err != nil {
+		return nil, 0, err
+	}
+	// Project through the caller's connection (same session/transaction), never a
+	// global handle: NewDB in ProjectChannelKeyEntries strips the query's model,
+	// where and limit clauses, leaving a plain allocation read.
+	if err := ProjectChannelKeyEntries(query, ctx, channels, omitKey); err != nil {
+		return nil, 0, err
+	}
+	return channels, total, nil
+}
+
+// CountChannelTypesByQuery reads the per-type channel counts of a filtered
+// query in one grouped aggregate instead of deriving them from every matching
+// row. It is distinct from CountChannelsByType(channelType int), which counts a
+// single type.
+func CountChannelTypesByQuery(query *gorm.DB) (map[int64]int64, error) {
+	type row struct {
+		Type  int64 `gorm:"column:type"`
+		Count int64 `gorm:"column:count"`
+	}
+	var rows []row
+	if err := query.Select("type, count(*) as count").Group("type").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	counts := make(map[int64]int64, len(rows))
+	for i := range rows {
+		counts[rows[i].Type] = rows[i].Count
+	}
+	return counts, nil
+}
+
+// ChannelTagSearchSubquery expresses, as a SQL subquery, the set of tags whose
+// channels match the tag-search filters. Callers use it as `tag IN (subquery)` so
+// they can filter, count and page in SQL instead of expanding every matching tag
+// into channel rows in memory. The matching conditions are identical to
+// searchTags, so the same tags are selected.
+func ChannelTagSearchSubquery(ctx context.Context, keyword, group, model string) *gorm.DB {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	modelsCol := "`models`"
+	baseURLCol := "`base_url`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		modelsCol = `"models"`
+		baseURLCol = `"base_url"`
+	}
+	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
+	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
+	query := DB.WithContext(ctx).Model(&Channel{}).Select("tag").Where("tag != ''").Where(whereClause, args...)
+	return ApplyChannelGroupFilter(query, group)
+}
+
+// ChannelTagSearchQuery builds the channel listing query for tag mode: the same
+// status/type filters as a normal search, narrowed to the tags the tag-search
+// subquery matches. The caller adds the ordering and the page window.
+func ChannelTagSearchQuery(ctx context.Context, keyword, group, model string, statusFilter int, typeFilter int) *gorm.DB {
+	tagSubquery := ChannelTagSearchSubquery(ctx, keyword, group, model)
+	// A bare `tag IN (subquery)` keeps the SQL the same on SQLite, MySQL and
+	// PostgreSQL; wrapping the subquery in a derived table would need a dialect
+	// alias rule for no benefit.
+	query := DB.WithContext(ctx).Model(&Channel{}).Where("tag IN (?)", tagSubquery)
+	// The original tag mode filtered the per-tag channel fetch by group as well as
+	// the tag search, so the outer query carries the same group filter.
+	query = ApplyChannelGroupFilter(query, group)
+	if statusFilter == common.ChannelStatusEnabled {
+		query = query.Where("status = ?", common.ChannelStatusEnabled)
+	} else if statusFilter == 0 {
+		query = query.Where("status != ?", common.ChannelStatusEnabled)
+	}
+	if typeFilter >= 0 {
+		query = query.Where("type = ?", typeFilter)
+	}
+	return query
 }
 
 func GetChannelsByTag(tag string, idSort bool, selectAll bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
 	var channels []*Channel
 	order := resolveChannelSortOptions(idSort, sortOptions)
-	query := order.Apply(DB.Where("tag = ?", tag))
+	ctx := WithBatchedChannelKeyEntries(context.Background())
+	query := order.Apply(DB.WithContext(ctx).Where("tag = ?", tag))
 	if !selectAll {
 		query = query.Omit("key")
 	}
-	err := query.Find(&channels).Error
-	return channels, err
+	if err := query.Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	if err := ProjectChannelKeyEntries(DB, ctx, channels, !selectAll); err != nil {
+		return nil, err
+	}
+	return channels, nil
 }
 
 func SearchChannels(keyword string, group string, model string, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
@@ -1896,7 +2034,22 @@ func GetPaginatedChannelTags(query *gorm.DB, offset int, limit int) ([]*string, 
 	return tags, err
 }
 
+// SearchTags lists the tags matching a keyword. It exists for callers without a
+// request context; request paths use SearchTagsWithContext so a cancelled client
+// request also cancels this query.
 func SearchTags(keyword string, group string, model string, idSort bool) ([]*string, error) {
+	return searchTags(context.Background(), keyword, group, model, idSort)
+}
+
+// SearchTagsWithContext is SearchTags bound to the caller's request context.
+func SearchTagsWithContext(ctx context.Context, keyword string, group string, model string, idSort bool) ([]*string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return searchTags(ctx, keyword, group, model, idSort)
+}
+
+func searchTags(ctx context.Context, keyword string, group string, model string, idSort bool) ([]*string, error) {
 	var tags []*string
 	modelsCol := "`models`"
 
@@ -1917,7 +2070,7 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 	}
 
 	// 构造基础查询
-	baseQuery := DB.Model(&Channel{}).Omit("key")
+	baseQuery := DB.WithContext(ctx).Model(&Channel{}).Omit("key")
 
 	// 构造WHERE子句
 	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
@@ -1929,7 +2082,7 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 		Where("tag != ''").
 		Order(order)
 
-	err := DB.Table("(?) as sub", subQuery).
+	err := DB.WithContext(ctx).Table("(?) as sub", subQuery).
 		Select("DISTINCT tag").
 		Find(&tags).Error
 

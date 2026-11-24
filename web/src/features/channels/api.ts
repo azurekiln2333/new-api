@@ -40,6 +40,9 @@ import type {
   ChannelBalanceResponse,
   ChannelBudgetView,
   ChannelOpsResponse,
+  ChannelOption,
+  ChannelOptionsParams,
+  ChannelOptionsResponse,
   ChannelTestResponse,
   ChannelConcurrencyEntry,
   ChannelUpdateRequest,
@@ -258,6 +261,19 @@ export async function searchChannels(
   signal?: AbortSignal
 ): Promise<SearchChannelsResponse> {
   const res = await api.get('/api/channel/search', { params, signal })
+  return res.data
+}
+
+/**
+ * Lightweight admin channel projection for the fingerprint dropdown. The page is
+ * bounded server-side, and `ids` lets a selected channel outside the page still
+ * resolve.
+ */
+export async function getChannelOptions(
+  params: ChannelOptionsParams = {},
+  signal?: AbortSignal
+): Promise<ChannelOptionsResponse> {
+  const res = await api.get('/api/channel/options', { params, signal })
   return res.data
 }
 

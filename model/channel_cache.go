@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -31,45 +32,34 @@ var channelSyncLock sync.RWMutex
 var userBoundChannelsLock sync.RWMutex
 var userBoundChannels map[int][]int // user id -> channel ids carrying a bound key
 
-// refreshUserBoundChannelIndex rebuilds the user-bound channel index from the
-// database. It runs on cache initialization and after every channel mutation,
-// never on the request path.
+// refreshUserBoundChannelIndex rebuilds the bound-user index from the database for
+// the no-memory-cache mode. It takes the same generation guard as a full reload so
+// it cannot publish bindings that a targeted publication already superseded.
+// Targeted publications update the index per channel, so this full rebuild is only
+// a fallback for callers that need to resynchronize the whole index.
 func refreshUserBoundChannelIndex() {
 	if DB == nil {
 		return
 	}
+	generation := ChannelCacheGeneration()
 	var channels []*Channel
-	if err := DB.Find(&channels).Error; err != nil {
+	ctx := WithBatchedChannelKeyEntries(context.Background())
+	if err := DB.WithContext(ctx).Find(&channels).Error; err != nil {
 		common.SysLog(common.LogText("failed to load channels for the user bound index: %v", err))
 		return
 	}
-	rebuildUserBoundChannelIndex(channels)
-}
-
-func rebuildUserBoundChannelIndex(channels []*Channel) {
-	index := make(map[int][]int)
-	for _, channel := range channels {
-		if !channel.ChannelInfo.IsMultiKey {
-			continue
-		}
-		bound := make(map[int]struct{}, len(channel.ChannelInfo.MultiKeyUsers))
-		for _, userId := range channel.ChannelInfo.MultiKeyUsers {
-			if userId <= 0 {
-				continue
-			}
-			if _, duplicate := bound[userId]; duplicate {
-				continue
-			}
-			bound[userId] = struct{}{}
-			index[userId] = append(index[userId], channel.Id)
-		}
+	if err := ProjectChannelKeyEntries(DB, ctx, channels, false); err != nil {
+		common.SysLog(common.LogText("failed to project channel allocations for the user bound index: %v", err))
+		return
 	}
-	for _, ids := range index {
-		slices.Sort(ids)
+	pending := buildUserBoundChannelIndex(channels)
+	channelSyncLock.Lock()
+	defer channelSyncLock.Unlock()
+	if ChannelCacheGeneration() != generation {
+		common.SysLog(common.LogText("discarded a stale user bound index refresh"))
+		return
 	}
-	userBoundChannelsLock.Lock()
-	userBoundChannels = index
-	userBoundChannelsLock.Unlock()
+	publishUserBoundChannelIndex(pending)
 }
 
 // userBoundChannelIDs lists the channels carrying a key bound to userId. The
@@ -79,6 +69,17 @@ func userBoundChannelIDs(userId int) []int {
 	userBoundChannelsLock.RLock()
 	defer userBoundChannelsLock.RUnlock()
 	return userBoundChannels[userId]
+}
+
+// UserBoundChannelIDs returns the channel ids currently indexed as carrying a key
+// bound to userId. It exposes the published index, so a caller can observe the
+// effect of a cache publication without a second database read.
+func UserBoundChannelIDs(userId int) []int {
+	ids := userBoundChannelIDs(userId)
+	if len(ids) == 0 {
+		return nil
+	}
+	return append([]int(nil), ids...)
 }
 
 // GetUserBoundChannel returns an enabled channel where a key bound to userId can
@@ -157,15 +158,32 @@ func InitChannelCache() {
 	channelCacheReloadLock.Lock()
 	defer channelCacheReloadLock.Unlock()
 	if !common.MemoryCacheEnabled {
+		// There is no routing snapshot in this mode, but the bound-user index is
+		// still shared state read by the request path. The helper takes the same
+		// generation guard as the routing branch, so a reload that read the database
+		// before a targeted publication advanced it does not publish older bindings.
 		refreshUserBoundChannelIndex()
 		InvalidatePricingCache()
 		rebuildTaskAliasView()
 		return
 	}
+	// Capture the routing generation before reading. A targeted publication that
+	// commits while this reload is reading advances it, and this reload must not
+	// publish a snapshot that predates that newer write.
+	generation := ChannelCacheGeneration()
 	newChannelId2channel := make(map[int]*Channel)
 	newChannel2advancedCustomConfig := make(map[int]*kitdto.AdvancedCustomConfig)
 	var channels []*Channel
-	DB.Find(&channels)
+	// The full reload is the busiest bulk read, so it hydrates allocations in
+	// bounded chunks instead of one query per migrated channel.
+	if err := DB.WithContext(WithBatchedChannelKeyEntries(context.Background())).Find(&channels).Error; err != nil {
+		common.SysLog(common.LogText("failed to load channels for the cache: %s", err.Error()))
+		return
+	}
+	if err := ProjectChannelKeyEntries(DB, context.Background(), channels, false); err != nil {
+		common.SysLog(common.LogText("failed to project channel allocations for the cache: %s", err.Error()))
+		return
+	}
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
@@ -212,7 +230,9 @@ func InitChannelCache() {
 			}
 		}
 	}
-	rebuildUserBoundChannelIndex(channels)
+	// Deliberately not published yet: a reload rejected by the generation check
+	// below must not overwrite a newer targeted publication's binding index.
+	pendingBoundIndex := buildUserBoundChannelIndex(channels)
 
 	// sort by priority
 	for group, model2channels := range newGroup2model2channels {
@@ -225,6 +245,17 @@ func InitChannelCache() {
 	}
 
 	channelSyncLock.Lock()
+	if ChannelCacheGeneration() != generation {
+		// A targeted publication advanced the routing snapshot while this reload
+		// was reading, so its rows are already older than what is published.
+		// Discard the stale snapshot instead of resurrecting replaced routes.
+		channelSyncLock.Unlock()
+		common.SysLog(common.LogText("discarded a stale channel cache reload"))
+		return
+	}
+	// Publish the binding index with the routing table under the same lock, so the
+	// two derived views can never disagree about which channels are bound.
+	publishUserBoundChannelIndex(pendingBoundIndex)
 	group2model2channels = newGroup2model2channels
 	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
@@ -480,15 +511,15 @@ func CacheUpdateChannel(channel *Channel) {
 		}
 	}
 	logger.LogDebug(nil, "CacheUpdateChannel after: id=%d, name=%s, status=%d, polling_index=%d", channel.Id, channel.Name, channel.Status, channel.ChannelInfo.MultiKeyPollingIndex)
-	cached := make([]*Channel, 0, len(channelsIDM))
-	for _, cachedChannel := range channelsIDM {
-		cached = append(cached, cachedChannel)
-	}
+	// Update the bound index for this channel only, while channelSyncLock is still
+	// held: the reload branches take the same lock and compare the generation before
+	// publishing, so releasing it here would let an older reload slot in a
+	// superseded index.
+	publishUserBoundChannelIndexForChannel(channel)
 	// Lock ordering: do NOT hold channelSyncLock while calling
 	// InvalidatePricingCache. GetPricing acquires updatePricingLock first and then
 	// channelSyncLock.RLock (via loadPricingAdvancedCustomConfigs); acquiring
 	// updatePricingLock while holding channelSyncLock would be an AB-BA deadlock.
 	channelSyncLock.Unlock()
-	rebuildUserBoundChannelIndex(cached)
 	InvalidatePricingCache()
 }

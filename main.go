@@ -413,6 +413,10 @@ func InitResources() error {
 	service.StartAuthArtifactCleanup()
 	service.StartLogRequestContentCleanup()
 	go service.RunChannelBudgetReconciliation(context.Background())
+	// Audit events are enqueued into the primary outbox and delivered here. Every
+	// node may drain: the per-row lease keeps concurrent drains from
+	// double-delivering the rows they claim.
+	model.StartAuditOutboxDrain(context.Background())
 
 	return nil
 }

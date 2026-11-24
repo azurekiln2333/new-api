@@ -147,3 +147,39 @@ export type RankingsSnapshot = {
   /** 100%-stacked area history of token share by vendor over the period. */
   vendor_share_history: VendorShareSeries
 }
+
+// ----------------------------------------------------------------------------
+// Model usage drawer
+// ----------------------------------------------------------------------------
+
+export type RankingModelUsageTotals = {
+  requests: number
+  tokens: number
+  quota: number
+}
+
+/**
+ * One user's ranking row inside the model usage drawer.
+ *
+ * When `masked` is true the server withheld the identity: `user_id` is absent
+ * from the payload entirely and `display_name` is an opaque placeholder, so a
+ * masked row cannot be joined back to an account.
+ */
+export type RankingModelUsageUser = {
+  rank: number
+  masked: boolean
+  display_name: string
+  user_id?: number
+  requests: number
+  tokens: number
+  quota: number
+}
+
+export type RankingModelUsage = {
+  model_name: string
+  period: RankingPeriod
+  start_time: number
+  end_time: number
+  totals: RankingModelUsageTotals
+  users: RankingModelUsageUser[]
+}

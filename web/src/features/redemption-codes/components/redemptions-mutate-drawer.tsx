@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { DateTimePicker } from '@/components/datetime-picker'
+import { useCodeExport } from '@/components/code-export/code-export-provider'
 import {
   SideDrawerSection,
   sideDrawerContentClassName,
@@ -53,6 +54,10 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import {
+  completeCodeCreateOperation,
+  getCodeCreateOperation,
+} from '@/lib/code-create-operation'
+import {
   formatQuotaWithCurrency,
   getCurrencyDisplay,
   getCurrencyLabel,
@@ -64,6 +69,7 @@ import {
 } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { addTimeToDate } from '@/lib/time'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { createRedemption, updateRedemption, getRedemption } from '../api'
 import { SUCCESS_MESSAGES } from '../constants'
@@ -75,10 +81,6 @@ import {
   transformRedemptionToFormDefaults,
 } from '../lib'
 import type { Redemption } from '../types'
-import {
-  RedemptionsExportDialog,
-  type RedemptionExportData,
-} from './redemptions-export-dialog'
 import { useRedemptions } from './redemptions-provider'
 
 type RedemptionsMutateDrawerProps = {
@@ -96,10 +98,9 @@ export function RedemptionsMutateDrawer({
   const isUpdate = !!currentRow
   const redemptionId = currentRow?.id
   const { triggerRefresh } = useRedemptions()
+  const { exportBatch } = useCodeExport()
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [createdCodes, setCreatedCodes] = useState<RedemptionExportData | null>(
-    null
-  )
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [redemptionLoadState, setRedemptionLoadState] = useState<
     'idle' | 'loading' | 'ready' | 'error'
   >('idle')
@@ -196,8 +197,22 @@ export function RedemptionsMutateDrawer({
         }
       } else {
         // Create mode
-        const result = await createRedemption(basePayload)
+        const actor = useAuthStore.getState().auth.user
+        const operation = getCodeCreateOperation(
+          actor,
+          'redemption',
+          basePayload
+        )
+        const result = await createRedemption(basePayload, operation.id)
         if (result.success) {
+          completeCodeCreateOperation(operation)
+          const currentActor = useAuthStore.getState().auth.user
+          if (
+            currentActor?.id !== actor?.id ||
+            currentActor?.role !== actor?.role
+          ) {
+            return
+          }
           const count = result.data?.length || 0
           toast.success(
             count > 1
@@ -206,14 +221,12 @@ export function RedemptionsMutateDrawer({
                 })
               : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
           )
-          if (result.data?.length) {
-            setCreatedCodes({
-              keys: result.data,
-              name: basePayload.name,
-              quota: formatQuotaWithCurrency(basePayload.quota, {
-                abbreviate: false,
-              }),
-            })
+          // Re-open the committed batch through the shared dialog. The batch is
+          // already durable, so exporting by identity is what makes a replayed
+          // create and a fresh create behave identically, and it keeps key
+          // exposure on the actor-bound server read instead of a client copy.
+          if (result.operation_id) {
+            exportBatch(result.operation_id)
           }
           onOpenChange(false)
           triggerRefresh()
@@ -486,12 +499,6 @@ export function RedemptionsMutateDrawer({
           </SheetFooter>
         </SheetContent>
       </Sheet>
-      {createdCodes && (
-        <RedemptionsExportDialog
-          data={createdCodes}
-          onClose={() => setCreatedCodes(null)}
-        />
-      )}
     </>
   )
 }

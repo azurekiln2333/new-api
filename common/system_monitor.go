@@ -31,6 +31,31 @@ type SystemStatus struct {
 	CPUOverloaded    bool
 	MemoryOverloaded bool
 	DiskOverloaded   bool
+
+	// CPUSampled/MemorySampled 记录该次采样是否真正取到值。只在采样成功时为 true，
+	// 采样出错或监控关闭时为 false，因此 0% 空闲 CPU 与“没有采样”可以区分开。
+	// 这两个字段只描述采样本身，不参与过载判定或准入决策。
+	CPUSampled    bool
+	MemorySampled bool
+	// SampledEnabled 记录本次采样时监控是否开启，用于区分“监控开启且取到 0%”
+	// 与“监控关闭后写入的空状态”。
+	SampledEnabled bool
+}
+
+// CPUValid and MemoryValid report whether a recent sample contains a real
+// reading. A disabled monitor, an unavailable measurement, or an expired
+// sample is not valid, even when SampledAt is non-zero.
+func (s SystemStatus) CPUValid() bool {
+	return s.SampledEnabled && s.CPUSampled && s.hasRecentSample()
+}
+
+func (s SystemStatus) MemoryValid() bool {
+	return s.SampledEnabled && s.MemorySampled && s.hasRecentSample()
+}
+
+func (s SystemStatus) hasRecentSample() bool {
+	age := time.Since(s.SampledAt)
+	return !s.SampledAt.IsZero() && age >= 0 && age <= systemStatusMaxAge
 }
 
 // SystemOverload 是哨兵据以拒绝请求的过载项，Error 文本带当前值与生效阈值。
@@ -113,19 +138,23 @@ func exceedsThreshold(usage float64, threshold int) bool {
 
 func collectSystemStatus(usage *containerUsage) SystemStatus {
 	now := time.Now()
-	status := SystemStatus{SampledAt: now}
+	status := SystemStatus{SampledAt: now, SampledEnabled: true}
 
 	// CPU / 内存优先按容器 cgroup 配额计算；容器口径不可用时回退宿主机口径，
 	// 保持对未限制资源或被挂载为宿主 cgroup 的环境的兼容。
 	if saturation, ok := usage.cpuSaturation(now); ok {
 		status.CPUUsage = saturation
+		status.CPUSampled = true
 	} else if percents, err := cpu.Percent(0, false); err == nil && len(percents) > 0 {
 		status.CPUUsage = percents[0]
+		status.CPUSampled = true
 	}
 	if containerMemory, ok := usage.memoryUsage(); ok {
 		status.MemoryUsage = containerMemory
+		status.MemorySampled = true
 	} else if memInfo, err := mem.VirtualMemory(); err == nil {
 		status.MemoryUsage = memInfo.UsedPercent
+		status.MemorySampled = true
 	}
 
 	diskInfo := GetDiskSpaceInfo()

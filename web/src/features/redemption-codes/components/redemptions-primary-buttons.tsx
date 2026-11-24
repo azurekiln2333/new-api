@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Download, History } from 'lucide-react'
+import { getRouteApi } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { useCodeExport } from '@/components/code-export/code-export-provider'
 import { Button } from '@/components/ui/button'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -29,9 +31,13 @@ import { deleteInvalidRedemptions } from '../api'
 import { ERROR_MESSAGES } from '../constants'
 import { useRedemptions } from './redemptions-provider'
 
+const route = getRouteApi('/_authenticated/redemption-codes/')
+
 export function RedemptionsPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, triggerRefresh } = useRedemptions()
+  const { exportFiltered, openHistory } = useCodeExport()
+  const search = route.useSearch()
   const [showDeleteInvalidConfirm, setShowDeleteInvalidConfirm] =
     useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -60,6 +66,23 @@ export function RedemptionsPrimaryButtons() {
   return (
     <>
       <div className='flex flex-wrap gap-2'>
+        <Button size='sm' variant='outline' onClick={openHistory}>
+          <History className='h-4 w-4' />
+          {t('Create history')}
+        </Button>
+        <Button
+          size='sm'
+          variant='outline'
+          onClick={() =>
+            exportFiltered({
+              keyword: search.filter ?? '',
+              status: search.status?.[0] ?? '',
+            })
+          }
+        >
+          <Download className='h-4 w-4' />
+          {t('Export filtered')}
+        </Button>
         <Button
           size='sm'
           variant='outline'

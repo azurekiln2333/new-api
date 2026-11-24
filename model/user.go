@@ -505,6 +505,35 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	return users, total, nil
 }
 
+// GetUsernamesByIDs resolves current display names for a bounded set of user
+// ids. Only currently existing users are returned; a missing id means the
+// account no longer exists and the caller renders a generic label. Callers pass
+// only ids a viewer may see, so this never looks up masked identities.
+func GetUsernamesByIDs(ctx context.Context, ids []int) (map[int]string, error) {
+	names := make(map[int]string, len(ids))
+	if len(ids) == 0 {
+		return names, nil
+	}
+	if len(ids) > 200 {
+		ids = ids[:200]
+	}
+	var users []struct {
+		Id       int
+		Username string
+	}
+	err := DB.WithContext(ctx).Model(&User{}).
+		Select("id, username").
+		Where("id IN ?", ids).
+		Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		names[user.Id] = user.Username
+	}
+	return names, nil
+}
+
 func GetUserById(id int, selectAll bool) (*User, error) {
 	if id == 0 {
 		return nil, common.NewMessage("ID is empty!")

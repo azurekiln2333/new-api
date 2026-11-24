@@ -44,6 +44,8 @@ func SetApiRouter(router *gin.Engine) {
 			perfMetricsRoute.GET("", controller.GetPerfMetrics)
 		}
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
+		apiRouter.GET("/rankings/model-usage", middleware.DisableCache(), middleware.HeaderNavModulePublicOrUserAuth("rankings"), controller.GetRankingModelUsage)
+		apiRouter.GET("/status/instances", middleware.DisableCache(), middleware.UserAuth(), controller.GetInstanceResourceSummary)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)
 		apiRouter.GET("/reset_password", middleware.CriticalRateLimitFor(middleware.CriticalScopeLogin), middleware.TurnstileCheck(), controller.SendPasswordResetEmail)
 		apiRouter.POST("/user/reset", middleware.CriticalRateLimitFor(middleware.CriticalScopeLogin), anonymousRequestBodyLimit, controller.ResetPassword)
@@ -332,6 +334,8 @@ func SetApiRouter(router *gin.Engine) {
 			read := authz.Permission{Resource: "invitation", Action: authz.ActionRead}
 			write := authz.Permission{Resource: "invitation", Action: authz.ActionWrite}
 			handlePermissionRoute(invitationRoute, http.MethodGet, "/", read, controller.ListInvitations)
+			handlePermissionRoute(invitationRoute, http.MethodGet, "/export", read, controller.ExportInvitations)
+			handlePermissionRoute(invitationRoute, http.MethodGet, "/batches", read, controller.ListCodeBatches(model.CodeOperationInvitation))
 			handlePermissionRoute(invitationRoute, http.MethodPost, "/", write, middleware.CriticalRateLimit(), controller.AddInvitations)
 			handlePermissionRoute(invitationRoute, http.MethodPut, "/", write, controller.UpdateInvitation)
 			handlePermissionRoute(invitationRoute, http.MethodPost, "/batch", write, controller.DeleteInvitationBatch)
@@ -342,6 +346,8 @@ func SetApiRouter(router *gin.Engine) {
 		redemptionRoute.Use(middleware.AdminAuth())
 		{
 			redemptionRoute.GET("/", controller.GetAllRedemptions)
+			redemptionRoute.GET("/export", middleware.DisableCache(), controller.ExportRedemptions)
+			redemptionRoute.GET("/batches", middleware.DisableCache(), controller.ListCodeBatches(model.CodeOperationRedemption))
 			redemptionRoute.GET("/search", controller.SearchRedemptions)
 			redemptionRoute.GET("/:id", controller.GetRedemption)
 			redemptionRoute.POST("/", controller.AddRedemption)

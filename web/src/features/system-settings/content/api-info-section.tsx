@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Plus, Trash2, Save } from 'lucide-react'
+import { Plus, Trash2, Save, ChevronUp, ChevronDown } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -72,6 +72,8 @@ type ApiInfo = {
   route: string
   description: string
   color: string
+  /** System instance this API domain is bound to. Empty means unbound. */
+  node_name?: string
 }
 
 type ApiInfoSectionProps = {
@@ -85,6 +87,7 @@ const createApiInfoSchema = (t: (key: string) => string) =>
     route: z.string().min(1, t('Route is required')),
     description: z.string().min(1, t('Description is required')),
     color: z.string().min(1, t('Color is required')),
+    node_name: z.string().optional(),
   })
 
 type ApiInfoFormValues = z.infer<ReturnType<typeof createApiInfoSchema>>
@@ -113,10 +116,27 @@ function parseApiInfoList(data: string): ApiInfo[] {
     const parsed = JSON.parse(data || '[]')
     if (!Array.isArray(parsed)) return []
 
-    return parsed.map((item, idx) => ({
-      ...item,
-      id: item.id || idx + 1,
-    }))
+    // Ids are the stable identity every consumer relies on: editing, deleting,
+    // reordering and the card-to-instance mapping all address a row by id.
+    // Existing positive ids are preserved exactly. A legacy entry saved before
+    // ids existed gets a distinct draft id above the current maximum, so two
+    // legacy rows can never share one identity (which would make one edit or
+    // delete hit several rows). These draft ids are persisted on save.
+    let maxId = 0
+    for (const item of parsed) {
+      if (typeof item.id === 'number' && item.id > maxId) {
+        maxId = item.id
+      }
+    }
+
+    let nextId = maxId
+    return parsed.map((item) => {
+      if (typeof item.id === 'number' && item.id > 0) {
+        return { ...item, id: item.id }
+      }
+      nextId += 1
+      return { ...item, id: nextId }
+    })
   } catch {
     return []
   }
@@ -147,6 +167,7 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
       route: '',
       description: '',
       color: 'blue',
+      node_name: '',
     },
   })
 
@@ -170,6 +191,7 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
       route: '',
       description: '',
       color: 'blue',
+      node_name: '',
     })
     setShowDialog(true)
   }
@@ -181,8 +203,21 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
       route: apiInfo.route,
       description: apiInfo.description,
       color: apiInfo.color,
+      node_name: apiInfo.node_name ?? '',
     })
     setShowDialog(true)
+  }
+
+  // One instance may serve many domains, so reordering the entries is purely a
+  // display preference; ids stay attached to their entries.
+  const handleMove = (id: number, direction: -1 | 1) => {
+    const from = apiInfoList.findIndex((item) => item.id === id)
+    const to = from + direction
+    if (from < 0 || to < 0 || to >= apiInfoList.length) return
+    const next = [...apiInfoList]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    setDraftApiInfoList(next)
   }
 
   const handleDelete = (apiInfo: ApiInfo) => {
@@ -222,16 +257,21 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
   }
 
   const handleSubmitForm = (values: ApiInfoFormValues) => {
+    // Normalise the optional binding so an empty field is stored as absent.
+    const next: ApiInfoFormValues = {
+      ...values,
+      node_name: values.node_name?.trim() ? values.node_name.trim() : undefined,
+    }
     if (editingApiInfo) {
       setDraftApiInfoList(
         apiInfoList.map((item) =>
-          item.id === editingApiInfo.id ? { ...item, ...values } : item
+          item.id === editingApiInfo.id ? { ...item, ...next } : item
         )
       )
       toast.success(t('API info updated. Click "Save Settings" to apply.'))
     } else {
       const newId = Math.max(...apiInfoList.map((item) => item.id), 0) + 1
-      setDraftApiInfoList([...apiInfoList, { id: newId, ...values }])
+      setDraftApiInfoList([...apiInfoList, { id: newId, ...next }])
       toast.success(t('API info added. Click "Save Settings" to apply.'))
     }
     setShowDialog(false)
@@ -239,6 +279,9 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
 
   const handleSaveAll = async () => {
     try {
+      // parseApiInfoList already gives every row a distinct positive id, so the
+      // list is persisted as-is and legacy rows stop depending on array
+      // position from this save on.
       const result = await updateOption.mutateAsync({
         key: 'console_setting.api_info',
         value: JSON.stringify(apiInfoList),
@@ -372,6 +415,57 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
               ),
             },
             {
+              id: 'node_name',
+              header: t('Instance'),
+              cellClassName: 'max-w-xs truncate',
+              cell: (apiInfo) =>
+                apiInfo.node_name ? (
+                  <BadgeCell>
+                    <StatusBadge
+                      label={apiInfo.node_name}
+                      variant='neutral'
+                      copyable={false}
+                    />
+                  </BadgeCell>
+                ) : (
+                  <span className='text-muted-foreground text-sm'>
+                    {t('Unbound')}
+                  </span>
+                ),
+            },
+            {
+              id: 'order',
+              header: t('Order'),
+              cell: (apiInfo) => (
+                <div className='flex items-center gap-1'>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon'
+                    className='size-7'
+                    aria-label={t('Move up')}
+                    disabled={apiInfoList[0]?.id === apiInfo.id}
+                    onClick={() => handleMove(apiInfo.id, -1)}
+                  >
+                    <ChevronUp className='size-4' />
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon'
+                    className='size-7'
+                    aria-label={t('Move down')}
+                    disabled={
+                      apiInfoList[apiInfoList.length - 1]?.id === apiInfo.id
+                    }
+                    onClick={() => handleMove(apiInfo.id, 1)}
+                  >
+                    <ChevronDown className='size-4' />
+                  </Button>
+                </div>
+              ),
+            },
+            {
               id: 'actions',
               header: t('Actions'),
               cell: (apiInfo) => (
@@ -459,6 +553,28 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
                       {...field}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='node_name'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Instance')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder={t('Node name of the serving instance')}
+                      {...field}
+                      value={field.value ?? ''}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Bind this API domain to a system instance. One instance can serve multiple domains.'
+                    )}
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

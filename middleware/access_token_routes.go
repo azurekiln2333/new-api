@@ -48,6 +48,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/perf-metrics/summary":       accessTokenAnyRule,
 	"GET /api/perf-metrics":               accessTokenAnyRule,
 	"GET /api/rankings":                   accessTokenAnyRule,
+	"GET /api/rankings/model-usage":       accessTokenAnyRule,
+	"GET /api/status/instances":           accessTokenAnyRule,
 	"POST /api/oauth/state":               accessTokenSessionRule,
 	"POST /api/oauth/email/bind/start":    accessTokenScopeRule("account_security:write"),
 	"POST /api/oauth/email/bind/resend":   accessTokenScopeRule("account_security:write"),
@@ -238,6 +240,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 
 	// router/api-router.go: /api/redemption
 	"GET /api/redemption/":           accessTokenScopeRule("redemption:read"),
+	"GET /api/redemption/export":      accessTokenScopeRule("redemption:read"),
+	"GET /api/redemption/batches":     accessTokenScopeRule("redemption:read"),
 	"GET /api/redemption/search":     accessTokenScopeRule("redemption:read"),
 	"GET /api/redemption/:id":        accessTokenScopeRule("redemption:read"),
 	"POST /api/redemption/":          accessTokenScopeRule("redemption:write"),

@@ -121,13 +121,15 @@ export function VendorMutateDialog(props: {
       }
       return response.data
     },
-    onSuccess: async () => {
-      await invalidateVendorData(client)
+    onSuccess: () => {
       toast.success(
         id ? t('Vendor updated successfully') : t('Vendor created successfully')
       )
       form.reset(form.getValues())
       props.onOpenChange(false)
+      // Refresh vendors, models, and pricing after the committed save; the
+      // drawer no longer waits for the refetches to finish.
+      void invalidateVendorData(client)
     },
   })
   const isDirty = form.formState.isDirty

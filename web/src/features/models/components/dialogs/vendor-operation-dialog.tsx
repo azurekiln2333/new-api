@@ -95,8 +95,7 @@ export function VendorOperationDialog(props: {
         ...request,
         expected_version: preview.data?.version,
       }),
-    onSuccess: async (result) => {
-      await invalidateVendorData(client)
+    onSuccess: (result) => {
       toast.success(
         t(
           'Updated {{models}} model assignments and deleted {{vendors}} vendor records.',
@@ -108,6 +107,9 @@ export function VendorOperationDialog(props: {
       )
       props.onSuccess?.()
       props.onClose()
+      // Refresh vendors, models, and pricing after the committed operation; the
+      // dialog no longer waits for the refetches to finish.
+      void invalidateVendorData(client)
     },
   })
   let title = t('Change model vendor')

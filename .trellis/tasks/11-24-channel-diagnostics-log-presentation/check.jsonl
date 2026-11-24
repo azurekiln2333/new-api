@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/11-24-console-responsiveness-diagnostics/research/source-findings.md","reason":"Source-proven latency and UX facts; no local validation"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Authoritative allocations/cache identity/compatibility"}
+{"file":".trellis/spec/frontend/model-selection.md","reason":"Admin-only channel state and identity-keyed query safety"}
+{"file":".trellis/spec/frontend/channel-card-interactions.md","reason":"Preserve interactions; requested relative time supersedes previous full timestamp presentation"}

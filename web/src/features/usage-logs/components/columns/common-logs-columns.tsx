@@ -936,7 +936,43 @@ export function useCommonLogsColumns(
       }
     )
 
-    return columns
+    // Column order prioritizes the fields an operator scans first: time, user,
+    // model, stream, token usage, duration, cost, channel, node.
+    const orderedColumns: ColumnDef<UsageLog>[] = []
+    const byId = new Map<string, ColumnDef<UsageLog>>()
+    for (const column of columns) {
+      // `ColumnDef` is a union: only accessor columns carry `accessorKey`.
+      const id =
+        column.id ??
+        ('accessorKey' in column ? column.accessorKey : undefined)
+      if (typeof id === 'string') byId.set(id, column)
+    }
+    for (const id of [
+      'created_at',
+      'user',
+      'model_name',
+      'is_stream',
+      'prompt_tokens',
+      'use_time',
+      'quota',
+      'channel',
+      'node_name',
+    ]) {
+      const column = byId.get(id)
+      if (column) {
+        orderedColumns.push(column)
+        byId.delete(id)
+      }
+    }
+    // Any remaining column keeps its original relative position at the end.
+    for (const column of columns) {
+      const id =
+        column.id ??
+        ('accessorKey' in column ? column.accessorKey : undefined)
+      if (typeof id !== 'string' || byId.has(id)) orderedColumns.push(column)
+    }
+
+    return orderedColumns
     // Log formatters read currency settings from the store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, isAdmin, isRoot, showBillingSource, currency, locale])

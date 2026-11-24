@@ -22,6 +22,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	settingConfig "github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -601,4 +603,177 @@ func TestAdminChannelSurfaceAdmitsOnlyAuthorizedAdmins(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, response.Code, path)
 		assert.NotContains(t, response.Body.String(), "fixture-model", path)
 	}
+}
+
+// seedDashboardRankingUsage writes one hourly usage row per user for a model in
+// the current ranking week, plus the two rows every ranking assertion relies on:
+// a second model that must never appear, and a usage row for a deleted account.
+func seedDashboardRankingUsage(t *testing.T, database *gorm.DB, adminId, ordinaryId int, modelName string) {
+	t.Helper()
+	now := common.GetTimestamp()
+	rows := []model.QuotaData{
+		{UserID: adminId, ModelName: modelName, CreatedAt: now, UseGroup: "default", TokenUsed: 5000, Count: 50, Quota: 500},
+		{UserID: ordinaryId, ModelName: modelName, CreatedAt: now, UseGroup: "default", TokenUsed: 2000, Count: 20, Quota: 200},
+		// A removed account still has historical usage; its identity must not
+		// reappear through the leaderboard.
+		{UserID: 987654, ModelName: modelName, CreatedAt: now, UseGroup: "default", TokenUsed: 1000, Count: 10, Quota: 100},
+		{UserID: adminId, ModelName: "unrelated-model", CreatedAt: now, UseGroup: "default", TokenUsed: 99, Count: 9, Quota: 9},
+	}
+	for i := range rows {
+		require.NoError(t, database.Create(&rows[i]).Error)
+	}
+}
+
+// TestRankingModelUsageMasksIdentitiesPerViewer pins the server-side masking of
+// the per-model usage drawer (ASVS 5.0.0 V8.2.1 / V8.3.1: authorisation and data
+// minimisation are enforced by the trusted layer, not the client) and the
+// viewer-scoped caching rule that keeps a masked payload from being replayed to
+// another identity.
+func TestRankingModelUsageMasksIdentitiesPerViewer(t *testing.T) {
+	fixture := setupAdminChannelSurfaceFixture(t)
+	const modelName = "fixture-ranking-model"
+	seedDashboardRankingUsage(t, fixture.database, fixture.adminId, fixture.ordinaryId, modelName)
+
+	path := "/api/rankings/model-usage?model=" + modelName + "&period=week"
+
+	// Anonymous: nobody is identifiable, and no name is looked up at all.
+	anonymous := fixture.request(http.MethodGet, path, "", "")
+	require.Equal(t, http.StatusOK, anonymous.Code, anonymous.Body.String())
+	anonymousBody := anonymous.Body.String()
+	assert.Contains(t, anonymousBody, `"masked":true`)
+	assert.NotContains(t, anonymousBody, "surface-admin")
+	assert.NotContains(t, anonymousBody, "surface-ordinary")
+	// No masked row may carry a user id key at all.
+	assert.NotContains(t, anonymousBody, `"user_id"`)
+	// Totals cover every user in the period, so they are not truncated by the
+	// bounded leaderboard.
+	assert.Contains(t, anonymousBody, `"tokens":8000`)
+	assert.NotContains(t, anonymousBody, "unrelated-model")
+	// A viewer-scoped payload is never stored in a shared cache.
+	assert.Equal(t, "no-store", anonymous.Header().Get("Cache-Control"))
+
+	// An ordinary user sees exactly one identity: their own.
+	ordinary := fixture.request(http.MethodGet, path, fixture.ordinarySession, "")
+	require.Equal(t, http.StatusOK, ordinary.Code, ordinary.Body.String())
+	ordinaryBody := ordinary.Body.String()
+	assert.Contains(t, ordinaryBody, "surface-ordinary")
+	assert.NotContains(t, ordinaryBody, "surface-admin")
+	assert.NotContains(t, ordinaryBody, "987654")
+	assert.Contains(t, ordinaryBody, `"masked":true`)
+	assert.Equal(t, "no-store", ordinary.Header().Get("Cache-Control"))
+
+	// An administrator sees every identity, including the deleted account under
+	// its generic label rather than a stale username or a recoverable id.
+	admin := fixture.request(http.MethodGet, path, fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, admin.Code, admin.Body.String())
+	adminBody := admin.Body.String()
+	assert.Contains(t, adminBody, "surface-admin")
+	assert.Contains(t, adminBody, "surface-ordinary")
+	// The deleted account keeps no identity: only the generic label remains.
+	assert.Contains(t, adminBody, "Deleted user")
+	assert.NotContains(t, adminBody, "987654")
+	assert.Equal(t, "no-store", admin.Header().Get("Cache-Control"))
+
+	// The same URL must never serve one viewer's payload to another: the admin
+	// response carries names the anonymous one must not contain.
+	assert.NotEqual(t, anonymousBody, adminBody)
+}
+
+// TestRankingModelUsageRequiresModelAndHonoursModulePolicy pins the request
+// contract: the parameter is required, and the route is registered with
+// HeaderNavModulePublicOrUserAuth, so a disabled rankings module falls back to
+// requiring a login instead of a 403. Anonymous viewers are challenged and
+// authenticated viewers keep working.
+func TestRankingModelUsageRequiresModelAndHonoursModulePolicy(t *testing.T) {
+	fixture := setupAdminChannelSurfaceFixture(t)
+	const modelName = "fixture-ranking-model"
+	seedDashboardRankingUsage(t, fixture.database, fixture.adminId, fixture.ordinaryId, modelName)
+
+	missing := fixture.request(http.MethodGet, "/api/rankings/model-usage?period=week", fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, missing.Code, missing.Body.String())
+	assert.Contains(t, missing.Body.String(), `"success":false`)
+
+	invalid := fixture.request(http.MethodGet, "/api/rankings/model-usage?model=x&period=never", fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, invalid.Code, invalid.Body.String())
+	assert.Contains(t, invalid.Body.String(), `"success":false`)
+
+	path := "/api/rankings/model-usage?model=" + modelName + "&period=week"
+
+	// Module enabled (the default): the public branch serves anonymous viewers
+	// with masked identities.
+	publicView := fixture.request(http.MethodGet, path, "", "")
+	require.Equal(t, http.StatusOK, publicView.Code, publicView.Body.String())
+	assert.Contains(t, publicView.Body.String(), `"masked":true`)
+
+	common.OptionMapRWMutex.Lock()
+	previous, hadPrevious := common.OptionMap["HeaderNavModules"]
+	common.OptionMap["HeaderNavModules"] = `{"rankings":{"enabled":false}}`
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		if hadPrevious {
+			common.OptionMap["HeaderNavModules"] = previous
+		} else {
+			delete(common.OptionMap, "HeaderNavModules")
+		}
+		common.OptionMapRWMutex.Unlock()
+	})
+
+	// Module disabled: the public branch is closed, so an anonymous viewer is
+	// challenged for a credential rather than told 403.
+	anonymous := fixture.request(http.MethodGet, path, "", "")
+	require.Equal(t, http.StatusUnauthorized, anonymous.Code, anonymous.Body.String())
+	assert.Contains(t, anonymous.Body.String(), "AUTH_UNAUTHORIZED")
+	assert.NotContains(t, anonymous.Body.String(), `"masked":true`)
+
+	// Authenticated viewers are unaffected by the module toggle: the fallback
+	// only requires a login, it does not deny access.
+	ordinary := fixture.request(http.MethodGet, path, fixture.ordinarySession, "")
+	require.Equal(t, http.StatusOK, ordinary.Code, ordinary.Body.String())
+	assert.Contains(t, ordinary.Body.String(), "surface-ordinary")
+	assert.NotContains(t, ordinary.Body.String(), "surface-admin")
+	assert.Equal(t, "no-store", ordinary.Header().Get("Cache-Control"))
+
+	admin := fixture.request(http.MethodGet, path, fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, admin.Code, admin.Body.String())
+	assert.Contains(t, admin.Body.String(), "surface-admin")
+	assert.Equal(t, "no-store", admin.Header().Get("Cache-Control"))
+}
+
+// TestStatusInstancesIsViewerSafeAndAuthenticated pins the public instance
+// resource summary: it needs a dashboard credential, and even then it exposes
+// only approved resource fields - never stored node identity.
+func TestStatusInstancesIsViewerSafeAndAuthenticated(t *testing.T) {
+	fixture := setupAdminChannelSurfaceFixture(t)
+	const nodeName = "surface-secret-node"
+	require.NoError(t, fixture.database.Create(&model.SystemInstance{
+		NodeName:   nodeName,
+		Info:       `{"schema_version":1,"host":{"hostname":"surface-secret-host"},"resources":{"monitoring":true,"cpu":{"usage_percent":12,"available":true},"memory":{"usage_percent":34,"available":true},"storage":{"used_percent":56,"available":true}}}`,
+		LastSeenAt: common.GetTimestamp(),
+	}).Error)
+
+	// Bind a configured API entry to that instance. The binding lives in the
+	// console settings and its URL is already public.
+	bindings := `[{"id":1,"url":"https://surface-public.example.com","route":"Surface","description":"fixture","color":"blue","node_name":"` + nodeName + `"}]`
+	previousBindings := console_setting.GetConsoleSetting().ApiInfo
+	require.NoError(t, settingConfig.GlobalConfig.LoadFromDB(map[string]string{"console_setting.api_info": bindings}))
+	t.Cleanup(func() {
+		require.NoError(t, settingConfig.GlobalConfig.LoadFromDB(map[string]string{"console_setting.api_info": previousBindings}))
+	})
+
+	anonymous := fixture.request(http.MethodGet, "/api/status/instances", "", "")
+	assert.Equal(t, http.StatusUnauthorized, anonymous.Code, anonymous.Body.String())
+	assert.NotContains(t, anonymous.Body.String(), nodeName)
+
+	ordinary := fixture.request(http.MethodGet, "/api/status/instances", fixture.ordinarySession, "")
+	require.Equal(t, http.StatusOK, ordinary.Code, ordinary.Body.String())
+	body := ordinary.Body.String()
+	assert.Equal(t, "no-store", ordinary.Header().Get("Cache-Control"))
+	assert.Contains(t, body, "surface-public.example.com")
+	assert.Contains(t, body, `"cpu_percent":12`)
+	// Stored node identity never leaves the root-only system-info surface.
+	assert.NotContains(t, body, nodeName)
+	assert.NotContains(t, body, "surface-secret-host")
+	assert.NotContains(t, body, "schema_version")
+	assert.NotContains(t, body, "hostname")
 }

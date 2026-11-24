@@ -37,7 +37,7 @@ func setupTaskPluginBindChannelTest(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	// Option holds the durable activation marker; the allocation and budget
 	// tables keep channel insertion and key allocation on their real schema.
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.Log{}, &model.AuditLog{}, &model.User{},
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.Log{}, &model.AuditLog{}, &model.AuditEventOutbox{}, &model.User{},
 		&model.Option{}, &model.ChannelKeyEntry{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}))
 	model.DB = database
 	model.LOG_DB = database
@@ -165,6 +165,7 @@ export function parseTaskResult() { return {}; }
 	require.NotNil(t, created.BaseURL)
 	assert.Equal(t, "http://10.0.0.5:8000", *created.BaseURL, "the normalized plugin default is stored on the channel row")
 
+	drainControllerAuditOutbox(t)
 	var audits []model.AuditLog
 	require.NoError(t, model.LOG_DB.Where("action = ?", "channel.create").Find(&audits).Error)
 	encoded, err := common.Marshal(audits)

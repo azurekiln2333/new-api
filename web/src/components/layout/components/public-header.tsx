@@ -23,10 +23,10 @@ import { useTranslation } from 'react-i18next'
 import { Dialog } from '@/components/dialog'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { NotificationPopover } from '@/components/notification-popover'
-import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { UserAvatar } from '@/components/user-avatar'
 import { SystemUpdateAction } from '@/features/system-update/system-update-action'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useSystemConfig } from '@/hooks/use-system-config'
@@ -119,7 +119,24 @@ export function PublicHeader(props: PublicHeaderProps) {
       {t('Sign in')}
     </Button>
   )
-  if (isAuthenticated) authContent = <ProfileDropdown />
+  // On the public homepage the signed-in avatar navigates straight to the
+  // console dashboard; the console header keeps its own profile menu.
+  if (isAuthenticated) {
+    authContent = (
+      <Link
+        to='/dashboard'
+        aria-label={t('Go to Dashboard')}
+        className='inline-flex items-center rounded-full focus-visible:ring-2 focus-visible:outline-none'
+      >
+        <UserAvatar
+          name={user?.username || ''}
+          avatarUrl={user?.avatar_url}
+          className='size-7'
+          fallbackClassName='font-semibold text-white text-[11px]'
+        />
+      </Link>
+    )
+  }
   if (loading) authContent = <Skeleton className='h-8 w-20 rounded-lg' />
 
   useEffect(() => {
@@ -314,7 +331,18 @@ export function PublicHeader(props: PublicHeaderProps) {
             <div className='flex shrink-0 items-center gap-2 lg:hidden'>
               {showThemeSwitch && <ThemeSwitch />}
               {showAuthButtons && !loading && isAuthenticated && (
-                <ProfileDropdown />
+                <Link
+                  to='/dashboard'
+                  aria-label={t('Go to Dashboard')}
+                  className='inline-flex items-center rounded-full'
+                >
+                  <UserAvatar
+                    name={user?.username || ''}
+                    avatarUrl={user?.avatar_url}
+                    className='size-7'
+                    fallbackClassName='font-semibold text-white text-[11px]'
+                  />
+                </Link>
               )}
               <Button
                 type='button'

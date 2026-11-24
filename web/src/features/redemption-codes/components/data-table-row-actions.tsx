@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { Row } from '@tanstack/react-table'
-import { Trash2, Edit, Power, PowerOff } from 'lucide-react'
+import { Download, Trash2, Edit, Power, PowerOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { DataTableRowActionMenu } from '@/components/data-table/core/row-action-menu'
+import { useCodeExport } from '@/components/code-export/code-export-provider'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenuItem,
@@ -51,6 +52,7 @@ export function DataTableRowActions<TData>({
   const { t } = useTranslation()
   const redemption = redemptionSchema.parse(row.original)
   const { setOpen, setCurrentRow, triggerRefresh } = useRedemptions()
+  const { exportIds } = useCodeExport()
   const isEnabled = redemption.status === REDEMPTION_STATUS.ENABLED
   const isUsed = redemption.status === REDEMPTION_STATUS.USED
   const isExpired = isRedemptionExpired(
@@ -105,6 +107,13 @@ export function DataTableRowActions<TData>({
       </Tooltip>
 
       <DataTableRowActionMenu ariaLabel={t('Open menu')} modal={false}>
+        <DropdownMenuItem onClick={() => exportIds([redemption.id])}>
+          {t('Download')}
+          <DropdownMenuShortcut>
+            <Download size={16} />
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         {canToggle && (
           <DropdownMenuItem onClick={handleToggleStatus}>
             {isEnabled ? (

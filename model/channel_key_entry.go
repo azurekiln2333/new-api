@@ -15,6 +15,66 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// channelKeyEntryProjectionChunk bounds an IN list so a large channel set still
+// uses many small, indexed queries instead of one oversized list that SQLite's
+// bound-parameter limit would reject. The chunk size is constant, so the number
+// of queries scales linearly with the channel count but stays valid on every
+// supported engine.
+const channelKeyEntryProjectionChunk = 200
+
+// ProjectChannelKeyEntries loads the active allocations of the given channels
+// in bounded chunks and applies the same projection AfterFind applies per row.
+// A reader that loads many channels calls it with the query's transaction so a
+// page or a full reload costs a small constant per chunk instead of one query
+// per channel. omitKey mirrors the key column omission: the projection derives
+// Key from the allocation rows, so a reader that did not select the key column
+// clears it again here.
+func ProjectChannelKeyEntries(tx *gorm.DB, ctx context.Context, channels []*Channel, omitKey bool) error {
+	ids := make([]int, 0, len(channels))
+	needs := make([]*Channel, 0, len(channels))
+	for _, channel := range channels {
+		if channel != nil && channel.Id > 0 && channel.ChannelInfo.KeyEntryRevision != 0 {
+			ids = append(ids, channel.Id)
+			needs = append(needs, channel)
+		}
+	}
+	if len(needs) == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if tx == nil {
+		tx = DB
+	}
+	// NewDB strips the caller's model/where/limit clauses so the projection is a
+	// plain channel_key_entries read on the caller's connection, and Context
+	// keeps request cancellation and any transaction visible to it.
+	scope := tx.Session(&gorm.Session{NewDB: true, Context: ctx})
+	byChannel := make(map[int][]ChannelKeyEntry, len(needs))
+	for chunk := range slices.Chunk(ids, channelKeyEntryProjectionChunk) {
+		var entries []ChannelKeyEntry
+		if err := scope.
+			Where("retired_at = 0 AND channel_id IN ?", chunk).
+			Order("channel_id, position, id").
+			Find(&entries).Error; err != nil {
+			return err
+		}
+		for i := range entries {
+			byChannel[entries[i].ChannelId] = append(byChannel[entries[i].ChannelId], entries[i])
+		}
+	}
+	for _, channel := range needs {
+		if err := channel.applyKeyEntryProjection(byChannel[channel.Id]); err != nil {
+			return err
+		}
+		if omitKey {
+			channel.Key = ""
+		}
+	}
+	return nil
+}
+
 // ChannelKeyEntry is authoritative after the channel's allocation migration.
 // A credential is not an allocation identity; duplicate static credentials have
 // distinct rows, permissions, revisions and retained budget history.
@@ -135,6 +195,16 @@ func loadActiveChannelKeyEntries(tx *gorm.DB, channelID int) ([]ChannelKeyEntry,
 	err := tx.Where("channel_id = ? AND retired_at = 0", channelID).Order("position, id").Find(&entries).Error
 	return entries, err
 }
+
+// projectChannelKeyEntriesKey marks a query context whose bulk reader owns the
+// allocation projection, so AfterFind does not run the per-row query.
+type projectChannelKeyEntriesKey struct{}
+
+// WithBatchedChannelKeyEntries marks ctx so AfterFind defers to
+// ProjectChannelKeyEntries for a bulk channel read.
+func WithBatchedChannelKeyEntries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, projectChannelKeyEntriesKey{}, true)
+}
 func ChannelKeyEntryByID(channelID int, id int64) (*ChannelKeyEntry, error) {
 	var entry ChannelKeyEntry
 	if err := DB.Where("channel_id = ? AND id = ? AND retired_at = 0", channelID, id).First(&entry).Error; err != nil {
@@ -212,7 +282,16 @@ func (channel *Channel) applyKeyEntryProjection(entries []ChannelKeyEntry) error
 
 // AfterFind derives the legacy projection from rows, rather than trusting a
 // stale compatibility JSON document. A zero marker is a pre-migration row.
+//
+// A reader that loads many channels disables the hook and calls
+// ProjectChannelKeyEntries once for the whole result set, so the projection
+// costs one query per page/reload instead of one per channel.
 func (channel *Channel) AfterFind(tx *gorm.DB) error {
+	if tx.Statement != nil && tx.Statement.Context != nil {
+		if _, batched := tx.Statement.Context.Value(projectChannelKeyEntriesKey{}).(bool); batched {
+			return nil
+		}
+	}
 	if channel.ChannelInfo.KeyEntryRevision == 0 {
 		return nil
 	}

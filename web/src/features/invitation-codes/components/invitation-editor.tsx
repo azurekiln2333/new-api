@@ -34,15 +34,25 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  completeCodeCreateOperation,
+  getCodeCreateOperation,
+} from '@/lib/code-create-operation'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { createInvitations, updateInvitation, type Invitation } from '../api'
+import {
+  createInvitations,
+  updateInvitation,
+  type Invitation,
+  type InvitationCreateResult,
+} from '../api'
 
 type InvitationFormValues = { name: string; count: number; expires: string }
 
 export function InvitationEditor(props: {
   invitation?: Invitation
   onClose: () => void
-  onSaved: (keys: string[]) => void
+  onSaved: (result: InvitationCreateResult) => void
 }) {
   const { t } = useTranslation()
   const validationMessage = t(
@@ -89,15 +99,30 @@ export function InvitationEditor(props: {
           name: values.name,
           expired_time: expires,
         })
-        props.onSaved([])
+        props.onSaved({
+          keys: [],
+          operationId: '',
+          creationBatchId: '',
+          replayed: false,
+        })
       } else {
-        props.onSaved(
-          await createInvitations({
-            name: values.name,
-            count: values.count,
-            expired_time: expires,
-          })
-        )
+        const input = {
+          name: values.name.trim(),
+          count: values.count,
+          expired_time: expires,
+        }
+        const actor = useAuthStore.getState().auth.user
+        const operation = getCodeCreateOperation(actor, 'invitation', input)
+        const created = await createInvitations(input, operation.id)
+        completeCodeCreateOperation(operation)
+        const currentActor = useAuthStore.getState().auth.user
+        if (
+          currentActor?.id !== actor?.id ||
+          currentActor?.role !== actor?.role
+        ) {
+          return
+        }
+        props.onSaved(created)
       }
     },
   })

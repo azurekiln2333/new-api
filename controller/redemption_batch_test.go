@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -88,7 +89,7 @@ func TestRedemptionBatchLimit(t *testing.T) {
 					common.SetDatabaseTypes(previousMain, previousLog)
 					common.RedisEnabled = previousRedis
 				})
-				for _, table := range []any{&model.User{}, &model.Redemption{}, &model.RedemptionBatchClaim{}, &model.Log{}, &model.AuditLog{}} {
+				for _, table := range []any{&model.User{}, &model.Redemption{}, &model.RedemptionBatchClaim{}, &model.Log{}, &model.AuditLog{}, &model.ManagementOperationBatch{}, &model.AuditEventOutbox{}} {
 					require.False(t, db.Migrator().HasTable(table), "use an empty test database")
 					t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
 				}
@@ -101,7 +102,7 @@ func TestRedemptionBatchLimit(t *testing.T) {
 					require.NoError(t, db.Create(&legacy).Error)
 				}
 				for range 2 {
-					require.NoError(t, db.AutoMigrate(&model.User{}, &model.Redemption{}, &model.RedemptionBatchClaim{}, &model.Log{}, &model.AuditLog{}))
+					require.NoError(t, db.AutoMigrate(&model.User{}, &model.Redemption{}, &model.RedemptionBatchClaim{}, &model.Log{}, &model.AuditLog{}, &model.ManagementOperationBatch{}, &model.AuditEventOutbox{}))
 				}
 				if upgrade {
 					var preserved []legacyBatchRedemption
@@ -310,7 +311,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				common.SetDatabaseTypes(previousMain, previousLog)
 				common.RedisEnabled = previousRedis
 			})
-			for _, table := range []any{&model.User{}, &model.Redemption{}, &model.Option{}, &model.CasbinRule{}, &model.AuthzRole{}} {
+			for _, table := range []any{&model.User{}, &model.Redemption{}, &model.Option{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.AuditEventOutbox{}} {
 				require.False(t, db.Migrator().HasTable(table), "use an empty test database")
 				require.NoError(t, db.AutoMigrate(table))
 				t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
@@ -386,6 +387,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 				assert.True(t, result.Success)
 				assert.Equal(t, expectedCount, result.Data)
+				require.Equal(t, 1, model.DrainAuditOutbox(context.Background()))
 				var events []model.AuditLog
 				require.NoError(t, logDB.Where("request_id = ? AND category = ?", response.Header().Get(common.RequestIdKey), model.AuditCategoryOperation).Find(&events).Error)
 				require.Len(t, events, 1, "one operation event, without a duplicate single-delete fallback")

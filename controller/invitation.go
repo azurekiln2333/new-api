@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"crypto/rand"
+	"errors"
+	"net/http"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -52,17 +55,64 @@ func AddInvitations(c *gin.Context) {
 		common.ApiErrorT(c, "Use a name of 1–80 characters and generate 1–100 invitation codes")
 		return
 	}
-	if request.ExpiredTime != 0 && request.ExpiredTime <= common.GetTimestamp() {
-		common.ApiErrorT(c, "Expiration time cannot be earlier than current time")
-		return
-	}
-	keys, err := model.CreateInvitations(c.GetInt("id"), request.Name, request.Count, request.ExpiredTime)
+	snapshot := snapshotAuditActor(c)
+	digest := model.CodeRequestDigest(model.CodeOperationInvitation, map[string]string{
+		"name":         request.Name,
+		"count":        strconv.Itoa(request.Count),
+		"expired_time": strconv.FormatInt(request.ExpiredTime, 10),
+	})
+	params := map[string]any{"count": request.Count}
+	result, err := model.CreateCodeBatch(model.CodeBatchRequest{
+		OperationId:   c.Query("operation_id"),
+		OperationType: model.CodeOperationInvitation,
+		RequestDigest: digest,
+		ActorUserId:   snapshot.UserId,
+		ActorRole:     snapshot.Role,
+		RequestId:     snapshot.RequestId,
+		BuildRows: func() (any, []string, error) {
+			if request.ExpiredTime != 0 && request.ExpiredTime <= common.GetTimestamp() {
+				return nil, nil, model.ErrCodeBatchRejected
+			}
+			keys := make([]string, request.Count)
+			rows := make([]model.Invitation, request.Count)
+			createdTime := common.GetTimestamp()
+			for i := range request.Count {
+				keys[i] = rand.Text()
+				rows[i] = model.Invitation{
+					UserId:      snapshot.UserId,
+					Code:        keys[i],
+					Name:        request.Name,
+					Status:      model.InvitationEnabled,
+					CreatedTime: createdTime,
+					ExpiredTime: request.ExpiredTime,
+				}
+			}
+			return rows, keys, nil
+		},
+		Audit: buildAuditDraft(snapshot, "invitation.create", params),
+	})
 	if err != nil {
-		common.ApiErrorT(c, "Database error, please contact the administrator")
+		switch {
+		case errors.Is(err, model.ErrCodeBatchActorMismatch), errors.Is(err, model.ErrCodeBatchConflict):
+			common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("This operation was already used for a different request"))
+		case errors.Is(err, model.ErrCodeBatchInvalid):
+			common.ApiErrorT(c, "Invalid create operation request")
+		case errors.Is(err, model.ErrCodeBatchRejected):
+			common.ApiErrorT(c, "Expiration time cannot be earlier than current time")
+		default:
+			common.ApiErrorT(c, "Database error, please contact the administrator")
+		}
 		return
 	}
-	recordManageAudit(c, "invitation.create", map[string]any{"count": request.Count})
-	common.ApiSuccess(c, keys)
+	markAuditLogged(c)
+	c.JSON(http.StatusOK, gin.H{
+		"success":      true,
+		"message":      "",
+		"data":         result.Keys,
+		"operation_id": result.OperationId,
+		"replayed":     result.Replayed,
+		"batch_id":     result.CreationBatchId,
+	})
 }
 
 func UpdateInvitation(c *gin.Context) {

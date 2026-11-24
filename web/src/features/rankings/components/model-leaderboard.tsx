@@ -34,6 +34,8 @@ type ModelLeaderboardProps = {
   variant?: 'default' | 'compact'
   /** Optional cap (rows beyond this are dropped). */
   limit?: number
+  /** Opens the model usage drawer. When omitted rows link to pricing. */
+  onOpenModel?: (modelName: string) => void
 }
 
 /**
@@ -58,8 +60,18 @@ export function ModelLeaderboard(props: ModelLeaderboardProps) {
 
   return (
     <div className='grid grid-cols-1 gap-x-8 md:grid-cols-2'>
-      <ModelList rows={left} variant={variant} />
-      {right.length > 0 && <ModelList rows={right} variant={variant} />}
+      <ModelList
+        rows={left}
+        variant={variant}
+        onOpenModel={props.onOpenModel}
+      />
+      {right.length > 0 && (
+        <ModelList
+          rows={right}
+          variant={variant}
+          onOpenModel={props.onOpenModel}
+        />
+      )}
     </div>
   )
 }
@@ -67,6 +79,7 @@ export function ModelLeaderboard(props: ModelLeaderboardProps) {
 function ModelList(props: {
   rows: ModelRanking[]
   variant: 'default' | 'compact'
+  onOpenModel?: (modelName: string) => void
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -91,6 +104,7 @@ function ModelList(props: {
           <div className='min-w-0 flex-1'>
             <ModelLink
               modelName={row.model_name}
+              onOpenModel={props.onOpenModel}
               className={
                 compact
                   ? 'text-foreground block truncate font-mono text-xs font-medium'

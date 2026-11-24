@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -35,7 +36,7 @@ func setupInvitationTest(t *testing.T) {
 	// Add the new table beside existing account data and repeat migration.
 	// A latest-release schema upgrade still needs the integration DB matrix.
 	for range 2 {
-		require.NoError(t, model.DB.AutoMigrate(&model.Invitation{}, &model.Log{}, &model.ExternalIdentityClaim{}))
+		require.NoError(t, model.DB.AutoMigrate(&model.Invitation{}, &model.Log{}, &model.ExternalIdentityClaim{}, &model.ManagementOperationBatch{}, &model.AuditEventOutbox{}))
 	}
 	var count int64
 	require.NoError(t, model.DB.Model(&model.User{}).Where("username = ?", "enrollment-user").Count(&count).Error)
@@ -189,6 +190,10 @@ func TestInvitationCreationValidationAndSafeAudit(t *testing.T) {
 	var codes []string
 	require.NoError(t, common.Unmarshal(result.Data, &codes))
 	require.Len(t, codes, 2)
+	var outboxCount int64
+	require.NoError(t, model.DB.Model(&model.AuditEventOutbox{}).Where("action = ?", "invitation.create").Count(&outboxCount).Error)
+	require.EqualValues(t, 1, outboxCount, "the creation commits its audit obligation")
+	require.Equal(t, 1, model.DrainAuditOutbox(context.Background()))
 	var entry model.AuditLog
 	require.NoError(t, model.LOG_DB.Where("action = ?", "invitation.create").Take(&entry).Error)
 	serialized, err := common.Marshal(entry)
@@ -198,6 +203,101 @@ func TestInvitationCreationValidationAndSafeAudit(t *testing.T) {
 	}
 	assert.NotContains(t, string(serialized), "admin-secret-name")
 	assert.Equal(t, "Created invitation codes", entry.Content)
+}
+
+func TestManagementCodeCreateReplaySurvivesExpiry(t *testing.T) {
+	for _, tc := range []struct {
+		resource string
+		handler  gin.HandlerFunc
+	}{
+		{resource: "invitation", handler: AddInvitations},
+		{resource: "redemption", handler: AddRedemption},
+	} {
+		t.Run(tc.resource, func(t *testing.T) {
+			setupInvitationTest(t)
+			confirmPaymentComplianceForTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.Redemption{}))
+			operationType := tc.resource + ".create"
+			fields := map[string]string{"name": "retry", "count": "1", "expired_time": "1"}
+			body := map[string]any{"name": "retry", "count": 1, "expired_time": 1}
+			if tc.resource == "redemption" {
+				fields["quota"] = "100"
+				fields["limit_per_user"] = "false"
+				body["quota"] = 100
+				body["limit_per_user"] = false
+			}
+			// Seed a historical committed batch whose expiry has passed. This
+			// avoids sleeps and keeps the replay's original request unchanged.
+			created, err := model.CreateCodeBatch(model.CodeBatchRequest{
+				OperationId:   common.GetUUID(),
+				OperationType: operationType,
+				RequestDigest: model.CodeRequestDigest(operationType, fields),
+				ActorUserId:   1,
+				ActorRole:     common.RoleAdminUser,
+				BuildRows: func() (any, []string, error) {
+					key := common.GetUUID()
+					if tc.resource == "invitation" {
+						return []model.Invitation{{UserId: 1, Code: key, Name: "retry", Status: model.InvitationEnabled, CreatedTime: 1, ExpiredTime: 1}}, []string{key}, nil
+					}
+					return []model.Redemption{{UserId: 1, Key: key, Name: "retry", Quota: 100, Status: common.RedemptionCodeStatusEnabled, CreatedTime: 1, ExpiredTime: 1}}, []string{key}, nil
+				},
+				Audit: buildAuditDraft(auditActorSnapshot{UserId: 1, Role: common.RoleAdminUser}, operationType, nil),
+			})
+			require.NoError(t, err)
+			var conflictBody string
+			for _, attempt := range []struct {
+				name        string
+				operationId string
+				actor       int
+				expiry      int
+				status      int
+				replay      bool
+			}{
+				{name: "committed replay", operationId: created.OperationId, actor: 1, expiry: 1, status: http.StatusOK, replay: true},
+				{name: "fresh expired create", operationId: common.GetUUID(), actor: 1, expiry: 1, status: http.StatusOK},
+				{name: "changed expiry", operationId: created.OperationId, actor: 1, expiry: 2, status: http.StatusConflict},
+				{name: "different actor", operationId: created.OperationId, actor: 2, expiry: 1, status: http.StatusConflict},
+			} {
+				body["expired_time"] = attempt.expiry
+				encoded, err := common.Marshal(body)
+				require.NoError(t, err)
+				path := "/api/" + tc.resource + "/?operation_id=" + attempt.operationId
+				response := securityEnrollmentRequest(http.MethodPost, path, string(encoded), "", service.AuthIdentity{UserID: attempt.actor}, tc.handler)
+				assert.Equal(t, attempt.status, response.Code, attempt.name)
+				var result struct {
+					Success  bool     `json:"success"`
+					Data     []string `json:"data"`
+					Replayed bool     `json:"replayed"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				assert.Equal(t, attempt.replay, result.Success, attempt.name)
+				if attempt.replay {
+					assert.True(t, result.Replayed)
+					assert.Equal(t, created.Keys, result.Data)
+				} else {
+					assert.Empty(t, result.Data)
+				}
+				if attempt.status == http.StatusConflict {
+					if conflictBody == "" {
+						conflictBody = response.Body.String()
+					} else {
+						assert.Equal(t, conflictBody, response.Body.String(), "actor and payload conflicts have the same response")
+					}
+				}
+			}
+			var rows, batches, audits int64
+			if tc.resource == "invitation" {
+				require.NoError(t, model.DB.Model(&model.Invitation{}).Count(&rows).Error)
+			} else {
+				require.NoError(t, model.DB.Model(&model.Redemption{}).Count(&rows).Error)
+			}
+			require.NoError(t, model.DB.Model(&model.ManagementOperationBatch{}).Count(&batches).Error)
+			require.NoError(t, model.DB.Model(&model.AuditEventOutbox{}).Count(&audits).Error)
+			assert.EqualValues(t, 1, rows)
+			assert.EqualValues(t, 1, batches)
+			assert.EqualValues(t, 1, audits)
+		})
+	}
 }
 
 func TestInvitationOAuthCallbackUsesServerPayload(t *testing.T) {

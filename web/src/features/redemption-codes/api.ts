@@ -64,9 +64,18 @@ export async function getRedemption(
 
 // Create redemption code(s)
 export async function createRedemption(
-  data: RedemptionFormData
-): Promise<ApiResponse<string[]>> {
-  const res = await api.post('/api/redemption/', data)
+  data: RedemptionFormData,
+  operationId?: string
+): Promise<
+  ApiResponse<string[]> & {
+    operation_id?: string
+    replayed?: boolean
+    batch_id?: string
+  }
+> {
+  const res = await api.post('/api/redemption/', data, {
+    params: { operation_id: operationId },
+  })
   return res.data
 }
 

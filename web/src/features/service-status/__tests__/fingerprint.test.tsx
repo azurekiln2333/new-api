@@ -37,7 +37,7 @@ import { useAuthStore, type AuthUser } from '@/stores/auth-store'
 import { ChannelFingerprint } from '../fingerprint'
 import type { FingerprintJob } from '../fingerprint-api'
 
-const searchChannels = vi.fn()
+const getChannelOptions = vi.fn()
 const getChannelFingerprint = vi.fn()
 const cancelChannelFingerprint = vi.fn()
 const originalAuth = useAuthStore.getState().auth
@@ -51,7 +51,7 @@ const adminUser: AuthUser = {
 }
 
 vi.mock('@/features/channels/api', () => ({
-  searchChannels: (...args: unknown[]) => searchChannels(...args),
+  getChannelOptions: (...args: unknown[]) => getChannelOptions(...args),
 }))
 
 vi.mock('../fingerprint-api', () => ({
@@ -92,10 +92,11 @@ function renderPage(onCommit?: () => void) {
 const channels = {
   success: true,
   data: {
-    items: [{ id: 7, name: 'channel-seven', models: 'gpt-4.1' }],
-    total: 1,
+    items: [{ id: 7, name: 'channel-seven', models: ['gpt-4.1'] }],
     page: 1,
-    page_size: 200,
+    page_size: 30,
+    total: 1,
+    has_more: false,
   },
 }
 
@@ -144,7 +145,7 @@ function runningJob(overrides: Partial<FingerprintJob> = {}): FingerprintJob {
 }
 
 it('states that a match is not proof of identity', async () => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   renderPage()
 
   expect(
@@ -160,7 +161,7 @@ it.each([
   { count: 1, changeCount: true },
   { count: 2, changeCount: true },
 ])('submits $count challenges while defaulting to three', async (testCase) => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   const { startChannelFingerprint } = await import('../fingerprint-api')
   vi.mocked(startChannelFingerprint).mockResolvedValue(
     runningJob({ state: 'completed' })
@@ -193,7 +194,7 @@ it.each([
 })
 
 it('shows a failed poll with a retry instead of freezing progress', async () => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   getChannelFingerprint.mockRejectedValue(new Error('check expired'))
   renderPage()
 
@@ -228,7 +229,7 @@ it('shows a failed poll with a retry instead of freezing progress', async () => 
 }, 10000)
 
 it('polls a new run after the previous one stopped', async () => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   getChannelFingerprint.mockReset()
   getChannelFingerprint.mockRejectedValueOnce(new Error('check expired'))
   renderPage()
@@ -271,7 +272,7 @@ it('polls a new run after the previous one stopped', async () => {
 }, 15000)
 
 it('keeps a new run when cancelling the previous run completes late', async () => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   getChannelFingerprint.mockReset()
   getChannelFingerprint.mockRejectedValueOnce(new Error('status unavailable'))
   let completeCancel!: (job: FingerprintJob) => void
@@ -319,7 +320,7 @@ it('keeps a new run when cancelling the previous run completes late', async () =
 }, 15000)
 
 it('shows the budget that is spent on input and output together', async () => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   renderPage()
 
   expect(await screen.findByLabelText(/estimated token budget/i)).toBeTruthy()
@@ -327,7 +328,7 @@ it('shows the budget that is spent on input and output together', async () => {
 })
 
 it('reports both verified checksums next to the result', async () => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   renderPage()
 
   const user = userEvent.setup()
@@ -350,7 +351,7 @@ it('reports both verified checksums next to the result', async () => {
 }, 10000)
 
 it('offers unique channel model aliases and replaces stale selections on channel changes', async () => {
-  searchChannels.mockResolvedValue({
+  getChannelOptions.mockResolvedValue({
     ...channels,
     data: {
       ...channels.data,
@@ -358,12 +359,13 @@ it('offers unique channel model aliases and replaces stale selections on channel
         {
           id: 7,
           name: 'channel-seven',
-          models: ' qwen3-max@stable, gpt-4.1, qwen3-max@stable, ,gpt-4.1',
+          // The server already splits and trims the model list; a repeated
+          // alias must still collapse to one option.
+          models: ['qwen3-max@stable', 'gpt-4.1', 'qwen3-max@stable', 'gpt-4.1'],
         },
-        { id: 8, name: 'channel-eight', models: 'claude-sonnet-4' },
-        { id: 9, name: 'channel-empty', models: ' , ' },
+        { id: 8, name: 'channel-eight', models: ['claude-sonnet-4'] },
+        { id: 9, name: 'channel-empty', models: [] },
       ],
-      total: 3,
     },
   })
   const { startChannelFingerprint } = await import('../fingerprint-api')
@@ -449,7 +451,7 @@ it.each([
   expect(
     screen.queryByRole('button', { name: /start check/i })
   ).not.toBeInTheDocument()
-  expect(searchChannels).not.toHaveBeenCalled()
+  expect(getChannelOptions).not.toHaveBeenCalled()
   expect(getChannelFingerprint).not.toHaveBeenCalled()
 })
 
@@ -467,7 +469,7 @@ it.each([
 ])(
   'hides cached channel data and cancels polling immediately on $label',
   async ({ nextUser }) => {
-    searchChannels.mockResolvedValue(channels)
+    getChannelOptions.mockResolvedValue(channels)
     let completePoll!: (job: FingerprintJob) => void
     getChannelFingerprint.mockReturnValue(
       new Promise<FingerprintJob>((resolve) => {
@@ -519,14 +521,14 @@ it.each([
       screen.queryByText(/channel-seven|gpt-4\.1|late-detector/)
     ).not.toBeInTheDocument()
     expect(getChannelFingerprint).toHaveBeenCalledTimes(1)
-    expect(searchChannels).toHaveBeenCalledTimes(1)
+    expect(getChannelOptions).toHaveBeenCalledTimes(1)
   }
 )
 
 it('clears a completed run and model selection when another administrator signs in', async () => {
-  searchChannels.mockResolvedValueOnce(channels)
+  getChannelOptions.mockResolvedValueOnce(channels)
   let completeSearch!: (result: typeof channels) => void
-  searchChannels.mockReturnValueOnce(
+  getChannelOptions.mockReturnValueOnce(
     new Promise<typeof channels>((resolve) => {
       completeSearch = resolve
     })
@@ -560,7 +562,7 @@ it('clears a completed run and model selection when another administrator signs 
   ).not.toBeInTheDocument()
   expect(screen.getByRole('combobox', { name: /^model$/i })).toBeDisabled()
   expect(screen.getByRole('button', { name: /start check/i })).toBeDisabled()
-  expect(searchChannels).toHaveBeenCalledTimes(2)
+  expect(getChannelOptions).toHaveBeenCalledTimes(2)
   await act(async () => {
     completeSearch(channels)
   })
@@ -573,7 +575,7 @@ it('clears a completed run and model selection when another administrator signs 
 })
 
 it('does not resurrect an old pending start after an administrator account switch', async () => {
-  searchChannels.mockResolvedValue(channels)
+  getChannelOptions.mockResolvedValue(channels)
   let completeStart!: (job: FingerprintJob) => void
   const { startChannelFingerprint } = await import('../fingerprint-api')
   vi.mocked(startChannelFingerprint).mockReturnValueOnce(
@@ -624,22 +626,22 @@ it('does not resurrect an old pending start after an administrator account switc
 
 it('cancels the previous account channel search and ignores its late results', async () => {
   let completeSearch!: (result: typeof channels) => void
-  searchChannels.mockReturnValueOnce(
+  getChannelOptions.mockReturnValueOnce(
     new Promise<typeof channels>((resolve) => {
       completeSearch = resolve
     })
   )
-  searchChannels.mockResolvedValueOnce({
+  getChannelOptions.mockResolvedValueOnce({
     ...channels,
     data: {
       ...channels.data,
-      items: [{ id: 8, name: 'channel-eight', models: 'claude-sonnet-4' }],
+      items: [{ id: 8, name: 'channel-eight', models: ['claude-sonnet-4'] }],
     },
   })
   const user = userEvent.setup()
   renderPage()
-  await waitFor(() => expect(searchChannels).toHaveBeenCalledTimes(1))
-  const searchSignal = searchChannels.mock.calls[0][1] as AbortSignal
+  await waitFor(() => expect(getChannelOptions).toHaveBeenCalledTimes(1))
+  const searchSignal = getChannelOptions.mock.calls[0][1] as AbortSignal
   expect(searchSignal.aborted).toBe(false)
 
   act(() => {
@@ -658,4 +660,123 @@ it('cancels the previous account channel search and ignores its late results', a
   expect(
     screen.queryByRole('option', { name: '#7 channel-seven' })
   ).not.toBeInTheDocument()
+})
+
+it('searches channels by keyword and follows has_more instead of fetching everything', async () => {
+  getChannelOptions.mockResolvedValue(channels)
+  const user = userEvent.setup()
+  renderPage()
+  await waitFor(() => expect(getChannelOptions).toHaveBeenCalledTimes(1))
+  expect(getChannelOptions.mock.calls[0][0]).toMatchObject({
+    p: 1,
+    page_size: 30,
+  })
+
+  await user.type(
+    screen.getByPlaceholderText('Search channels'),
+    'seven'
+  )
+  await waitFor(() =>
+    expect(getChannelOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ keyword: 'seven', p: 1 }),
+      expect.any(AbortSignal)
+    )
+  )
+
+  // has_more=false means the only page is loaded, so paging stays closed.
+  expect(screen.getByRole('button', { name: /next/i })).toBeDisabled()
+  // Narrowing with a keyword restarts at the first page.
+  expect(getChannelOptions).toHaveBeenLastCalledWith(
+    expect.objectContaining({ keyword: 'seven', p: 1 }),
+    expect.any(AbortSignal)
+  )
+})
+
+it('shows the actual prompt and reply of every probe in its own card', async () => {
+  getChannelOptions.mockResolvedValue(channels)
+  const { startChannelFingerprint } = await import('../fingerprint-api')
+  vi.mocked(startChannelFingerprint).mockResolvedValue(
+    runningJob({
+      state: 'running',
+      probes: [
+        {
+          id: 'p1',
+          state: 'complete',
+          expected_count: 100,
+          parsed_count: 100,
+          prompt_tokens: 40,
+          output_tokens: 60,
+          max_tokens: 4488,
+          prompt: 'list one hundred integers',
+          output: '1 2 3 4 5',
+        },
+        {
+          id: 'p2',
+          state: 'queued',
+          expected_count: 100,
+          parsed_count: 0,
+          prompt_tokens: 0,
+          output_tokens: 0,
+          max_tokens: 0,
+          prompt: 'list one hundred integers again',
+        },
+      ] as never,
+    })
+  )
+  getChannelFingerprint.mockImplementation(() => new Promise(() => {}))
+  const user = userEvent.setup()
+  renderPage()
+
+  await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
+  await user.click(
+    await screen.findByRole('option', { name: '#7 channel-seven' })
+  )
+  await user.click(screen.getByRole('button', { name: /start check/i }))
+
+  expect(await screen.findByText('list one hundred integers')).toBeVisible()
+  expect(screen.getByText('1 2 3 4 5')).toBeVisible()
+  expect(screen.getByText('list one hundred integers again')).toBeVisible()
+  // Every slot is rendered: two real probes plus one explicit not-run slot.
+  expect(document.querySelectorAll('[data-probe-slot="probe"]')).toHaveLength(
+    2
+  )
+  expect(
+    document.querySelectorAll('[data-probe-slot="unused"]')
+  ).toHaveLength(1)
+  expect(screen.getByText('Not run')).toBeVisible()
+})
+
+it('marks retained probe text that was cut at the memory cap', async () => {
+  getChannelOptions.mockResolvedValue(channels)
+  const { startChannelFingerprint } = await import('../fingerprint-api')
+  vi.mocked(startChannelFingerprint).mockResolvedValue(
+    runningJob({
+      state: 'running',
+      probes: [
+        {
+          id: 'p1',
+          state: 'complete',
+          expected_count: 100,
+          parsed_count: 100,
+          prompt_tokens: 40,
+          output_tokens: 60,
+          max_tokens: 4488,
+          prompt: 'list integers',
+          output: '1 2 3',
+          output_truncated: true,
+        },
+      ] as never,
+    })
+  )
+  getChannelFingerprint.mockImplementation(() => new Promise(() => {}))
+  const user = userEvent.setup()
+  renderPage()
+
+  await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
+  await user.click(
+    await screen.findByRole('option', { name: '#7 channel-seven' })
+  )
+  await user.click(screen.getByRole('button', { name: /start check/i }))
+
+  expect(await screen.findByText('Truncated')).toBeVisible()
 })

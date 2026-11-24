@@ -208,11 +208,12 @@ export function ModelMutateDrawer(props: {
           response.data
         )
       }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: modelsQueryKeys.all }),
-        queryClient.invalidateQueries({ queryKey: ['pricing'] }),
-        queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.all }),
-      ])
+      // Refresh list projections after the committed save without holding the
+      // drawer open while they resolve. A dirty pricing section still keeps the
+      // drawer open for its own separate save.
+      void queryClient.invalidateQueries({ queryKey: modelsQueryKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['pricing'] })
+      void queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.all })
       toast.success(t('Model metadata saved'))
       if (!pricingDirty) props.onOpenChange(false)
     },

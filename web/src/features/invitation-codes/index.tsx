@@ -23,13 +23,16 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { CopyButton } from '@/components/copy-button'
+import {
+  CodeExportProvider,
+  useCodeExport,
+} from '@/components/code-export/code-export-provider'
 import {
   DataTableBulkActions,
   DataTablePage,
   useDataTable,
 } from '@/components/data-table'
-import { Dialog } from '@/components/dialog'
+import { Download, History } from 'lucide-react'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { MaskedValueDisplay } from '@/components/masked-value-display'
@@ -49,11 +52,19 @@ import { InvitationEditor } from './components/invitation-editor'
 const route = getRouteApi('/_authenticated/invitation-codes/')
 
 export function InvitationCodes() {
+  return (
+    <CodeExportProvider scope='invitation'>
+      <InvitationCodesContent />
+    </CodeExportProvider>
+  )
+}
+
+function InvitationCodesContent() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const { exportIds, exportBatch, exportFiltered, openHistory } = useCodeExport()
   const [editor, setEditor] = useState<Invitation | 'new' | null>(null)
   const [remove, setRemove] = useState<number[] | 'invalid' | null>(null)
-  const [exportKeys, setExportKeys] = useState<string[]>([])
   const state = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
@@ -203,6 +214,13 @@ export function InvitationCodes() {
           <Button
             variant='ghost'
             size='sm'
+            onClick={() => exportIds([row.original.id])}
+          >
+            {t('Download')}
+          </Button>
+          <Button
+            variant='ghost'
+            size='sm'
             onClick={() => setRemove([row.original.id])}
           >
             {t('Delete')}
@@ -242,11 +260,27 @@ export function InvitationCodes() {
             <Button variant='outline' onClick={() => setRemove('invalid')}>
               {t('Clean invalid codes')}
             </Button>
+            <Button variant='outline' onClick={openHistory}>
+              <History className='h-4 w-4' />
+              {t('Create history')}
+            </Button>
+            <Button
+              variant='outline'
+              onClick={() =>
+                exportFiltered({
+                  keyword: state.globalFilter ?? '',
+                  status,
+                })
+              }
+            >
+              <Download className='h-4 w-4' />
+              {t('Export filtered')}
+            </Button>
             <Button
               variant='outline'
               disabled={!query.data?.items.length}
               onClick={() =>
-                setExportKeys((query.data?.items ?? []).map((row) => row.key))
+                exportIds((query.data?.items ?? []).map((row) => row.id))
               }
             >
               {t('Export current page')}
@@ -292,9 +326,7 @@ export function InvitationCodes() {
                 >
                   <Button
                     variant='outline'
-                    onClick={() =>
-                      setExportKeys(selected.map((row) => row.key))
-                    }
+                    onClick={() => exportIds(selected.map((row) => row.id))}
                   >
                     {t('Export')}
                   </Button>
@@ -314,10 +346,14 @@ export function InvitationCodes() {
         <InvitationEditor
           invitation={editor === 'new' ? undefined : editor}
           onClose={() => setEditor(null)}
-          onSaved={(keys) => {
+          onSaved={(result) => {
             setEditor(null)
-            setExportKeys(keys)
             void refresh()
+            // Route the committed batch through the shared dialog so a fresh
+            // create and a recovered replay download through one path. The batch
+            // identity is what the server re-reads under the actor binding, which
+            // keeps key exposure limited to the operator who committed it.
+            exportBatch(result.operationId)
           }}
         />
       )}
@@ -334,41 +370,6 @@ export function InvitationCodes() {
           if (remove) deletion.mutate(remove)
         }}
       />
-      <Dialog
-        open={exportKeys.length > 0}
-        onOpenChange={(open) => {
-          if (!open) setExportKeys([])
-        }}
-        title={t('Export invitation codes')}
-        contentHeight='auto'
-        footer={
-          <>
-            <CopyButton value={exportKeys.join('\n')} size='default'>
-              {t('Copy')}
-            </CopyButton>
-            <Button
-              onClick={() => {
-                const url = URL.createObjectURL(
-                  new Blob([`${exportKeys.join('\n')}\n`], {
-                    type: 'text/plain;charset=utf-8',
-                  })
-                )
-                const link = document.createElement('a')
-                link.href = url
-                link.download = 'invitation-codes.txt'
-                link.click()
-                URL.revokeObjectURL(url)
-              }}
-            >
-              {t('Download')}
-            </Button>
-          </>
-        }
-      >
-        <pre className='max-h-72 overflow-auto text-xs break-all whitespace-pre-wrap'>
-          {exportKeys.join('\n')}
-        </pre>
-      </Dialog>
     </>
   )
 }

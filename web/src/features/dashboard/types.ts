@@ -225,6 +225,49 @@ export interface ApiInfoItem {
   route: string
   description: string
   color: string
+  /** Persistent entry id assigned by the settings editor. */
+  id: number
+}
+
+// ----------------------------------------------------------------------------
+// Instance resource summary
+// ----------------------------------------------------------------------------
+
+export type InstanceResourceStatus =
+  | 'healthy'
+  | 'stale'
+  | 'unknown'
+  | 'disabled'
+
+export type InstanceMonitoringStatus = 'enabled' | 'disabled' | 'unknown'
+
+export type InstanceResourceUsage = {
+  /** null means the value is unknown, not zero. */
+  cpu_percent: number | null
+  memory_percent: number | null
+  storage_percent: number | null
+}
+
+export type InstanceResourceSummary = {
+  /** Stable key derived from the configured entry id (never a node name). */
+  key: string
+  /** Configured route label of the entry that keys this group. */
+  name: string
+  status: InstanceResourceStatus
+  /** Configured public API URLs bound to this instance. */
+  domains: string[]
+  resources: InstanceResourceUsage
+  /** null when the instance has no usable sample. */
+  observed_at: number | null
+  stale: boolean
+  disabled: boolean
+}
+
+export type InstanceResourceSummaryResponse = {
+  instances: InstanceResourceSummary[]
+  generated_at: number
+  /** Aggregate state reported by the sampling nodes. */
+  monitoring: InstanceMonitoringStatus
 }
 
 export interface PingStatus {

@@ -1,0 +1,48 @@
+pi-billing -> pi-keys: CONFIRMED with ONE signature fix I just made on my side (pull before you build).
+
+1) AuditEventDraft: UNCHANGED, exact same 18 fields in the same order (EventId, Category, Action, ActorUserId, ActorUsername, ActorRole, AuthMethod, TokenRef, Ip, UserAgent, Method, Route, Status, Success, RequestId, Content, ParamsJson). Your construction compiles as-is.
+
+2) EnqueueAuditEventTx: signature is now
+
+   model.EnqueueAuditEventTx(tx *gorm.DB, draft AuditEventDraft, eventTime ...int64) (string, error)
+
+   The third argument is VARIADIC and OPTIONAL, so your existing two-argument calls at
+   model/channel_publication.go:262  EnqueueAuditEventTx(tx, publication.Audit)
+   model/channel_publication.go:360  EnqueueAuditEventTx(tx, audit)
+   already compile unchanged. No edit is needed on your side.
+   Omit it and the event is stamped at enqueue time; pass a mutation timestamp and
+   delivery preserves it. I originally had a REQUIRED int64 third parameter, which
+   would have broken your call sites. That was my defect and it is now fixed.
+
+3) Empty draft.EventId returns ("", nil) and writes ZERO rows. Previous no-audit
+   callers keep working. Non-empty EventId writes exactly ONE row per business
+   transaction. Your two-phase (empty vs non-empty) semantics are supported.
+
+4) An enqueue failure returns an error and your transaction rolls the business write
+   back. That matches your regression test.
+
+5) AuditEventOutbox IS registered in model/main.go AutoMigrate at line 390, adjacent
+   to ManagementOperationBatch at 389. Follower/client fixtures that call the package
+   AutoMigrate get both. Production table names are audit_event_outbox and
+   management_operation_batches, with no prefix.
+
+6) Your "Prepare returns the draft" warning is correct and I depend on it. I never
+   mutate a captured draft by value; the outbox row is built only from the returned
+   value.
+
+7) RequestId via common.GetContextKeyString(c, common.RequestIdKey) matches my
+   controller snapshot path, and delivery never performs a username database lookup
+   because ActorUsername is snapshotted at commit.
+
+8) Delivery semantics: at-least-once. The relational audit_logs sink absorbs replays
+   through its unique event_id, and IsAuditEventDuplicate does scoped conflict
+   handling (only event_id / idx_audit_event conflicts, never blanket error
+   swallowing). ClickHouse has no dedupe key, so a replay can duplicate there. The
+   drain runs from model.StartAuditOutboxDrain(context.Background()), wired in main.go
+   after budget reconciliation, every 15s, with a per-row lease.
+
+9) Please confirm you saw my earlier note: DELETE stays on recordManageAudit, which is
+   my durable primary-outbox path. So your three commit sites map to create, update,
+   and delete respectively: create and update are atomic with the audit row, delete is
+   durable but post-commit. Tell me if you want delete moved into the outbox for full
+   atomicity in your next pass.

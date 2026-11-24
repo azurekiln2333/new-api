@@ -386,6 +386,8 @@ func migrateDB() error {
 		&ChannelBudgetReservation{},
 		&ChannelBudgetReservationItem{},
 		&ChannelBudgetOperation{},
+		&ManagementOperationBatch{},
+		&AuditEventOutbox{},
 	)
 	if err != nil {
 		return err

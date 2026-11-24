@@ -39,7 +39,7 @@ func setupAccessTokenAudit(t *testing.T) (*model.User, string) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, i18n.Init())
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Option{},
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.AuditLog{}, &model.AuditEventOutbox{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.UserAccessToken{}, &model.Option{},
 		&model.AuthFlow{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.UserOAuthBinding{}))
 	model.DB, model.LOG_DB = db, db
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
@@ -58,6 +58,14 @@ func setupAccessTokenAudit(t *testing.T) (*model.User, string) {
 	user := &model.User{Username: "audit-owner", Password: "placeholder", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AccessToken: &token, AuthVersion: 1, AffCode: "audit-owner"}
 	require.NoError(t, db.Create(user).Error)
 	return user, token
+}
+
+func drainControllerAuditOutbox(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	model.DrainAuditOutbox(ctx)
+	require.NoError(t, ctx.Err())
 }
 
 func auditRequest(router http.Handler, method, path, token string) *httptest.ResponseRecorder {
@@ -546,6 +554,7 @@ func TestAccessTokenAuditsResultsAndExcludesBrowserSessions(t *testing.T) {
 		assert.Equal(t, "audit-test-client", access.UserAgent)
 		assert.NotContains(t, access.Route, "sensitive-id")
 	}
+	drainControllerAuditOutbox(t)
 	var operationCount int64
 	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("category = ?", model.AuditCategoryOperation).Count(&operationCount).Error)
 	assert.EqualValues(t, 2, operationCount, "manual operation must not be duplicated by fallback")

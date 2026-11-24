@@ -52,13 +52,39 @@ export async function listInvitations(
   return response.data.data
 }
 
-export async function createInvitations(input: InvitationInput) {
-  const response = await api.post<{ success: boolean; data: string[] }>(
-    '/api/invitation/',
-    input
-  )
+/**
+ * Result of one invitation create. `operationId` identifies the create for
+ * replay, `creationBatchId` groups rows that share one claim limit, and
+ * `replayed` marks a retry that recovered an already-committed batch instead of
+ * inserting new rows.
+ */
+export type InvitationCreateResult = {
+  keys: string[]
+  operationId: string
+  creationBatchId: string
+  replayed: boolean
+}
+
+export async function createInvitations(
+  input: InvitationInput,
+  operationId?: string
+): Promise<InvitationCreateResult> {
+  const response = await api.post<{
+    success: boolean
+    data: string[]
+    operation_id?: string
+    replayed?: boolean
+    batch_id?: string
+  }>('/api/invitation/', input, {
+    params: { operation_id: operationId },
+  })
   requireServerSuccess(response.data)
-  return response.data.data
+  return {
+    keys: response.data.data ?? [],
+    operationId: response.data.operation_id ?? '',
+    creationBatchId: response.data.batch_id ?? '',
+    replayed: response.data.replayed ?? false,
+  }
 }
 
 export async function updateInvitation(input: {

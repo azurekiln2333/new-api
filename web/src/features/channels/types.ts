@@ -451,6 +451,42 @@ export interface SearchChannelsParams {
   page_size?: number
 }
 
+/** Lightweight channel projection for the fingerprint dropdown (admin only). */
+export interface ChannelOption {
+  id: number
+  name: string
+  models: string[]
+}
+
+export interface ChannelOptionsParams {
+  /** 1-based page. */
+  p?: number
+  /** Defaults to 30; the server clamps values above 100. */
+  page_size?: number
+  /** Narrows by channel id, name or model. */
+  keyword?: string
+  /**
+   * Channel ids outside the current page that must still resolve, so an
+   * off-page selection keeps its label. Deduplicated and capped at 100 by the
+   * server; extra ids are ignored.
+   */
+  ids?: string
+}
+
+export interface ChannelOptionsResponse {
+  success: boolean
+  message?: string
+  data?: {
+    items: ChannelOption[]
+    page: number
+    page_size: number
+    /** Matching channels for the keyword, independent of the page window. */
+    total: number
+    /** True while more matching rows exist after this page. */
+    has_more: boolean
+  }
+}
+
 export interface ChannelTestParams {
   test_model?: string
 }

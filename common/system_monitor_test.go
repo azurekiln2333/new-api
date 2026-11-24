@@ -278,3 +278,30 @@ func TestCheckSystemOverload(t *testing.T) {
 		})
 	}
 }
+
+func TestSystemResourceSampleValidityRequiresRecentEnabledSample(t *testing.T) {
+	status := SystemStatus{
+		SampledAt:      time.Now(),
+		CPUSampled:     true,
+		MemorySampled:  true,
+		SampledEnabled: true,
+	}
+	assert.True(t, status.CPUValid())
+	assert.True(t, status.MemoryValid())
+
+	status.CPUSampled = false
+	assert.False(t, status.CPUValid(), "a failed CPU measurement is unknown")
+	status.CPUSampled = true
+	status.MemorySampled = false
+	assert.False(t, status.MemoryValid(), "a failed memory measurement is unknown")
+
+	status.MemorySampled = true
+	status.SampledEnabled = false
+	assert.False(t, status.CPUValid(), "a disabled monitor has no valid CPU reading")
+	assert.False(t, status.MemoryValid(), "a disabled monitor has no valid memory reading")
+
+	status.SampledEnabled = true
+	status.SampledAt = time.Now().Add(-systemStatusMaxAge - time.Second)
+	assert.False(t, status.CPUValid(), "an expired sample is unknown")
+	assert.False(t, status.MemoryValid(), "an expired sample is unknown")
+}

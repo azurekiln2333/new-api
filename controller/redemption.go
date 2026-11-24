@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"unicode/utf8"
@@ -92,45 +93,83 @@ func AddRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := validateExpiredTime(redemption.ExpiredTime); err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	batchId := ""
 	if redemption.LimitPerUser {
 		batchId = common.GetUUID()
 	}
-	var keys []string
-	for range redemption.Count {
-		key := common.GetUUID()
-		cleanRedemption := model.Redemption{
-			UserId:      c.GetInt("id"),
-			Name:        redemption.Name,
-			Key:         key,
-			CreatedTime: common.GetTimestamp(),
-			Quota:       redemption.Quota,
-			ExpiredTime: redemption.ExpiredTime,
-			BatchId:     batchId,
-		}
-		err = cleanRedemption.Insert()
-		if err != nil {
-			common.SysError(common.LogText("failed to insert redemption: %s", err.Error()))
-			common.ApiErrorStatus(c, http.StatusOK, common.NewMessage("Failed to create redemption code, please try again later"), gin.H{"data": keys})
-			return
-		}
-		keys = append(keys, key)
-	}
-	recordManageAudit(c, "redemption.create", map[string]any{
+	snapshot := snapshotAuditActor(c)
+	params := map[string]any{
 		"name":           redemption.Name,
 		"count":          redemption.Count,
 		"quota":          logger.FormatQuota(redemption.Quota),
 		"batch_id":       batchId,
 		"limit_per_user": redemption.LimitPerUser,
+	}
+	// The digest covers every business create field. Generated keys, the
+	// operation identity, the timestamp, and the actor identity are excluded so a
+	// faithful client retry digests identically.
+	digest := model.CodeRequestDigest(model.CodeOperationRedemption, map[string]string{
+		"name":           redemption.Name,
+		"count":          strconv.Itoa(redemption.Count),
+		"quota":          strconv.FormatInt(int64(redemption.Quota), 10),
+		"expired_time":   strconv.FormatInt(redemption.ExpiredTime, 10),
+		"limit_per_user": strconv.FormatBool(redemption.LimitPerUser),
 	})
+	result, err := model.CreateCodeBatch(model.CodeBatchRequest{
+		OperationId:     c.Query("operation_id"),
+		OperationType:   model.CodeOperationRedemption,
+		RequestDigest:   digest,
+		ActorUserId:     snapshot.UserId,
+		ActorRole:       snapshot.Role,
+		RequestId:       snapshot.RequestId,
+		CreationBatchId: batchId,
+		BuildRows: func() (any, []string, error) {
+			if err := validateExpiredTime(redemption.ExpiredTime); err != nil {
+				return nil, nil, model.ErrCodeBatchRejected
+			}
+			createdTime := common.GetTimestamp()
+			rows := make([]model.Redemption, redemption.Count)
+			createdKeys := make([]string, redemption.Count)
+			for i := range redemption.Count {
+				createdKeys[i] = common.GetUUID()
+				rows[i] = model.Redemption{
+					UserId:      snapshot.UserId,
+					Name:        redemption.Name,
+					Key:         createdKeys[i],
+					CreatedTime: createdTime,
+					Quota:       redemption.Quota,
+					ExpiredTime: redemption.ExpiredTime,
+					BatchId:     batchId,
+				}
+			}
+			return rows, createdKeys, nil
+		},
+		Audit: buildAuditDraft(snapshot, "redemption.create", params),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, model.ErrCodeBatchActorMismatch), errors.Is(err, model.ErrCodeBatchConflict):
+			common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("This operation was already used for a different request"))
+		case errors.Is(err, model.ErrCodeBatchInvalid):
+			common.ApiErrorT(c, "Invalid create operation request")
+		case errors.Is(err, model.ErrCodeBatchRejected):
+			common.ApiErrorT(c, "Expiration time cannot be earlier than current time")
+		default:
+			// The storage error may embed SQL and generated keys; only the opaque
+			// sentinel is reported.
+			common.ApiErrorT(c, "Failed to create redemption code, please try again later")
+		}
+		return
+	}
+	markAuditLogged(c)
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    keys,
+		"success":        true,
+		"message":        "",
+		"data":           result.Keys,
+		"operation_id":   result.OperationId,
+		"replayed":       result.Replayed,
+		"batch_id":       result.CreationBatchId,
+		"creation_batch": result.CreationBatchId,
 	})
 	return
 }

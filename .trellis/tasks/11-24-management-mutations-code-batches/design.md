@@ -1,0 +1,8 @@
+# Design
+Read parent design.md and research/source-findings.md first.
+## Ownership
+pi-billing exclusively owns controller/audit.go, invitation/redemption controllers and models, related audit/operation files, model/main.go, router/api-router.go, web invitation-codes/redemptions and shared operation components. You are not alone; preserve peer edits and request handoff before overlapping changes.
+## Behavior
+Fix post-commit audit actor/cache/LOG_DB response blocking with durable deferred delivery and bounded context; avoid dropped audit or goroutine Gin captures. Inspect existing durable queue first and publish design before schema edits. Batch redemption insertion atomically with clear failures. Preserve distinct invitation/redemption semantics and limits. Introduce durable recoverable create operation identity if required, same retry key returns original batch, permissions and no secret audit. Unify creation-result export, page/filtered selection and historical batch export plus overflow actions; reuse components. Audit all management create/save lifecycles; use a shared operation state only where semantics permit, no blind global optimistic success. Own API router registrations requested by peers and model/main schema registrations. Send locale keys to pi-ui; do not edit locale JSON. model/log.go only audit functions, no ranking edits.
+## Compatibility
+Preserve existing auth scopes, revision/CAS, routing, log/audit durability and quota units. Add optional compatible DTO fields; avoid unbounded queries. Publish exact interface early. Unsafe or materially wider choices must be sent to root before editing that portion; continue independent owned work.

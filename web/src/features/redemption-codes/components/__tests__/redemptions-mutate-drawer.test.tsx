@@ -23,8 +23,11 @@ import {
   waitFor,
   type RenderResult,
 } from '@testing-library/react'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
+import { useAuthStore } from '@/stores/auth-store'
+
+import { createRedemption } from '../../api'
 import type { Redemption } from '../../types'
 
 const i18n = (await import('i18next')).default
@@ -32,6 +35,9 @@ const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { Toaster, toast } = await import('sonner')
 const { api } = await import('@/lib/api')
 const { useSystemConfigStore } = await import('@/stores/system-config-store')
+const { CodeExportProvider } = await import(
+  '@/components/code-export/code-export-provider'
+)
 const { RedemptionsProvider } = await import('../redemptions-provider')
 const { RedemptionsMutateDrawer } = await import('../redemptions-mutate-drawer')
 
@@ -68,6 +74,11 @@ const originalPut = apiClient.put
 const originalConsoleLog = Reflect.get(console, 'log')
 let renderedDrawer: RenderedDrawer | null = null
 
+beforeEach(() => {
+  sessionStorage.clear()
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 100 })
+})
+
 function redemption(id: number, quota = 500001): Redemption {
   return {
     id,
@@ -93,23 +104,25 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
-function drawerTree(currentRow: Redemption, open = true) {
+function drawerTree(currentRow?: Redemption, open = true) {
   return (
     <I18nextProvider i18n={i18n}>
-      <RedemptionsProvider>
-        <RedemptionsMutateDrawer
-          open={open}
-          currentRow={currentRow}
-          onOpenChange={() => undefined}
-        />
-      </RedemptionsProvider>
+      <CodeExportProvider scope='redemption'>
+        <RedemptionsProvider>
+          <RedemptionsMutateDrawer
+            open={open}
+            currentRow={currentRow}
+            onOpenChange={() => undefined}
+          />
+        </RedemptionsProvider>
+      </CodeExportProvider>
       <Toaster duration={60_000} />
     </I18nextProvider>
   )
 }
 
 async function renderDrawer(
-  currentRow: Redemption,
+  currentRow?: Redemption,
   currency: CurrencyFixture = {
     quotaDisplayType: 'USD',
     usdExchangeRate: 1,
@@ -130,7 +143,7 @@ async function renderDrawer(
 }
 
 async function rerenderDrawer(
-  currentRow: Redemption,
+  currentRow?: Redemption,
   open = true
 ): Promise<void> {
   if (!renderedDrawer) {
@@ -196,15 +209,208 @@ async function waitForLoadedForm(): Promise<void> {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   apiClient.get = originalGet
   apiClient.put = originalPut
   Reflect.set(console, 'log', originalConsoleLog)
   toast.dismiss()
   localStorage.clear()
+  sessionStorage.clear()
+  useAuthStore.getState().auth.setUser(null)
   renderedDrawer = null
 })
 
 describe('redemption drawer', () => {
+  test.each(['lost response', 'server rejection'])(
+    'reuses the redemption operation ID after %s for an unchanged create',
+    async (failure) => {
+      const post = vi.spyOn(api, 'post')
+      if (failure === 'lost response') {
+        post.mockRejectedValueOnce(new Error('response lost'))
+      } else {
+        post.mockResolvedValueOnce({
+          data: { success: false, message: 'Database temporarily unavailable' },
+        })
+      }
+      post.mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: ['original-code'],
+          operation_id: 'replayed-operation',
+          replayed: true,
+          batch_id: 'original-claim-batch',
+        },
+      })
+      await renderDrawer()
+      await waitForLoadedForm()
+      changeInput(getControlByLabel('Name'), 'Launch')
+      submitForm()
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+      await waitForLoadedForm()
+      expect(
+        screen.queryByRole('dialog', { name: 'Export codes' })
+      ).not.toBeInTheDocument()
+      expect(post.mock.calls[0]?.[2]?.params?.operation_id).toBeTruthy()
+
+      submitForm()
+      await screen.findByRole('dialog', { name: 'Export codes' })
+      expect(post).toHaveBeenNthCalledWith(
+        2,
+        '/api/redemption/',
+        post.mock.calls[0]?.[1],
+        post.mock.calls[0]?.[2]
+      )
+    }
+  )
+
+  test(
+    'uses a new redemption operation ID when a failed create payload changes',
+    async () => {
+      const post = vi.spyOn(api, 'post').mockResolvedValue({
+        data: { success: false, message: 'Database temporarily unavailable' },
+      })
+      await renderDrawer()
+      await waitForLoadedForm()
+      changeInput(getControlByLabel('Name'), 'Launch')
+      submitForm()
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+      await waitForLoadedForm()
+      const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+
+      changeInput(getControlByLabel('Name'), 'Partners')
+      submitForm()
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+      await waitForLoadedForm()
+      expect(originalId).toBeTruthy()
+      expect(post.mock.calls[1]?.[1]).toEqual(
+        expect.objectContaining({ name: 'Partners' })
+      )
+      expect(post.mock.calls[1]?.[2]?.params?.operation_id).toEqual(
+        expect.any(String)
+      )
+      expect(post.mock.calls[1]?.[2]?.params?.operation_id).not.toBe(originalId)
+    }
+  )
+
+  test(
+    'uses a new redemption operation ID for another create after success',
+    async () => {
+      const post = vi
+        .spyOn(api, 'post')
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: ['first-code'],
+            operation_id: 'first-operation',
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: ['second-code'],
+            operation_id: 'second-operation',
+          },
+        })
+      await renderDrawer()
+      await waitForLoadedForm()
+      changeInput(getControlByLabel('Name'), 'Launch')
+      submitForm()
+      await screen.findByRole('dialog', { name: 'Export codes' })
+      const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      await rerenderDrawer(undefined, false)
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      )
+      await rerenderDrawer()
+      await waitForLoadedForm()
+      changeInput(getControlByLabel('Name'), 'Launch')
+      submitForm()
+      await screen.findByRole('dialog', { name: 'Export codes' })
+      expect(post).toHaveBeenCalledTimes(2)
+      expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
+      expect(originalId).toBeTruthy()
+      expect(post.mock.calls[1]?.[2]?.params?.operation_id).toEqual(
+        expect.any(String)
+      )
+      expect(post.mock.calls[1]?.[2]?.params?.operation_id).not.toBe(originalId)
+    }
+  )
+
+  test('keeps redemption keys and replay metadata in the create API response', async () => {
+    const input = {
+      name: 'Launch',
+      quota: 500000,
+      expired_time: 0,
+      count: 1,
+      limit_per_user: true,
+    }
+    const response = {
+      success: true,
+      data: ['original-code'],
+      operation_id: 'retry-operation',
+      replayed: true,
+      batch_id: 'original-claim-batch',
+    }
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: response })
+
+    await expect(createRedemption(input, 'retry-operation')).resolves.toEqual(
+      response
+    )
+    expect(post).toHaveBeenCalledWith('/api/redemption/', input, {
+      params: { operation_id: 'retry-operation' },
+    })
+  })
+
+  test('recovers a lost redemption response after remount and clears confirmed success', async () => {
+    const post = vi
+      .spyOn(api, 'post')
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: ['original-code'],
+          operation_id: 'recovered-operation',
+          replayed: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: ['fresh-code'],
+          operation_id: 'fresh-operation',
+        },
+      })
+    await renderDrawer()
+    await waitForLoadedForm()
+    changeInput(getControlByLabel('Name'), 'Launch')
+    submitForm()
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitForLoadedForm()
+    const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+    expect(originalId).toBeTruthy()
+    expect(sessionStorage.length).toBe(1)
+    renderedDrawer?.result.unmount()
+
+    await renderDrawer()
+    await waitForLoadedForm()
+    changeInput(getControlByLabel('Name'), 'Launch')
+    submitForm()
+    await screen.findByRole('dialog', { name: 'Export codes' })
+    expect(post.mock.calls[1]?.[2]?.params?.operation_id).toBe(originalId)
+    expect(sessionStorage.length).toBe(0)
+    renderedDrawer?.result.unmount()
+
+    await renderDrawer()
+    await waitForLoadedForm()
+    changeInput(getControlByLabel('Name'), 'Launch')
+    submitForm()
+    await screen.findByRole('dialog', { name: 'Export codes' })
+    expect(post.mock.calls[2]?.[2]?.params?.operation_id).not.toBe(originalId)
+    expect(sessionStorage.length).toBe(0)
+  })
+
   test('shows the reported CNY quota without floating-point noise', async () => {
     const original = redemption(1, 13888889)
     apiClient.get = async () => ({ data: { success: true, data: original } })
