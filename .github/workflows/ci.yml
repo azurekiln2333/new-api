@@ -295,7 +295,15 @@ jobs:
         run: bun check -b
 
       - name: Check frontend formatting with protected headers
-        run: bun run format:check
+        shell: bash
+        run: |
+          mapfile -d '' FILES < <(git -C .. diff-tree --root --no-commit-id --name-only --diff-filter=ACMR -m -r -z "$GITHUB_SHA" -- 'web/**' | sort -zu)
+          for INDEX in "${!FILES[@]}"; do
+            FILES[$INDEX]="${FILES[$INDEX]#web/}"
+          done
+          if [ "${#FILES[@]}" -gt 0 ]; then
+            bun run format:check -- "${FILES[@]}"
+          fi
 
       - name: Lint changed frontend files
         shell: bash

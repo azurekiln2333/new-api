@@ -30,6 +30,7 @@ if (mode !== '--check' && mode !== '--write') {
 }
 
 const root = process.cwd()
+const requestedPaths = process.argv.slice(3)
 const excludedDirs = new Set([
   '.git',
   '.tanstack',
@@ -131,8 +132,12 @@ function listChangedFiles(before, files) {
   return changed
 }
 
-const files = walk(root).filter(
-  (file) => statSync(file).size < 10 * 1024 * 1024
+const files = (requestedPaths.length > 0
+  ? requestedPaths.map((path) => join(root, path))
+  : walk(root)
+).filter(
+  (file) =>
+    statSync(file).isFile() && statSync(file).size < 10 * 1024 * 1024
 )
 const before = mode === '--check' ? snapshotFiles(files) : null
 let headers = new Map()
@@ -142,7 +147,14 @@ try {
   headers = stripProtectedHeaders(files)
   const result = spawnSync(
     'oxfmt',
-    ['-c', '.oxfmtrc.json', '--ignore-path', '.gitignore', '--write', '.'],
+    [
+      '-c',
+      '.oxfmtrc.json',
+      '--ignore-path',
+      '.gitignore',
+      '--write',
+      ...(requestedPaths.length > 0 ? requestedPaths : ['.']),
+    ],
     {
       cwd: root,
       stdio: 'inherit',
@@ -157,6 +169,11 @@ try {
       console.error('Format issues found in protected-header-safe check:')
       for (const file of changed) {
         console.error(file)
+        if (process.env.GITHUB_ACTIONS === 'true') {
+          console.log(
+            `::error file=${file}::Frontend formatter would change this file`
+          )
+        }
       }
       exitCode = 1
     }
