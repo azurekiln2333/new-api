@@ -58,7 +58,6 @@ import {
   getCodeCreateOperation,
 } from '@/lib/code-create-operation'
 import {
-  formatQuotaWithCurrency,
   getCurrencyDisplay,
   getCurrencyLabel,
 } from '@/lib/currency'
@@ -99,7 +98,6 @@ export function RedemptionsMutateDrawer({
   const redemptionId = currentRow?.id
   const { triggerRefresh } = useRedemptions()
   const { exportBatch } = useCodeExport()
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [redemptionLoadState, setRedemptionLoadState] = useState<
     'idle' | 'loading' | 'ready' | 'error'

@@ -269,7 +269,7 @@ func TestChannelSearchTagModePagesInSQL(t *testing.T) {
 		require.True(t, body.Success, response.Body.String())
 		require.EqualValues(t, tags*perTag, body.Data.Total, "the total must cover the whole expanded set")
 		require.Len(t, body.Data.Items, pageSize, "the page must be bounded by page_size")
-		_, _, channelRows, _ := observer.snapshot()
+		_, _, channelRows, _ = observer.snapshot()
 		return body, channelRows
 	}
 
