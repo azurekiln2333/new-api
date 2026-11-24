@@ -172,13 +172,20 @@ try {
       for (const file of changed) {
         console.error(file)
         if (process.env.GITHUB_ACTIONS === 'true') {
-          const diagnosticContent =
-            file === 'scripts/format-with-protected-headers.mjs'
-              ? ` formatted_base64=${Buffer.from(readFileSync(file)).toString('base64')}`
-              : ''
           console.log(
-            `::error file=${file}::Frontend formatter would change this file${diagnosticContent}`
+            `::error file=${file}::Frontend formatter would change this file`
           )
+          if (file === 'scripts/format-with-protected-headers.mjs') {
+            const formattedBase64 = Buffer.from(readFileSync(file)).toString('base64')
+            const chunkSize = 2500
+            const chunkCount = Math.ceil(formattedBase64.length / chunkSize)
+            for (let offset = 0; offset < formattedBase64.length; offset += chunkSize) {
+              const chunkNumber = Math.floor(offset / chunkSize) + 1
+              console.log(
+                `::error file=${file}::formatted_base64_part=${chunkNumber}/${chunkCount}:${formattedBase64.slice(offset, offset + chunkSize)}`
+              )
+            }
+          }
         }
       }
       exitCode = 1
