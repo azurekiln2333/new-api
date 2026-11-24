@@ -1396,8 +1396,6 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	baseURLFromPluginDefault := channel.Type == constant.ChannelTypeTaskPlugin &&
-		(channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "")
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
@@ -1647,7 +1645,7 @@ func UpdateChannel(c *gin.Context) {
 			return nil
 		},
 		Apply: func(baseline, stored *model.Channel) error {
-			applyChannelConfigEdit(channel, stored)
+			applyChannelConfigEdit(&channel, stored)
 			// The audit baseline is the locked row before this edit, so a field
 			// another writer changed in the meantime is not misreported as ours.
 			auditBaseline = baseline
@@ -1722,10 +1720,10 @@ func applyChannelConfigEdit(request *PatchChannel, stored *model.Channel) {
 	if candidate.Setting != nil {
 		stored.Setting = candidate.Setting
 	}
-	if candidate.Priority != 0 {
+	if candidate.Priority != nil {
 		stored.Priority = candidate.Priority
 	}
-	if candidate.Weight != 0 {
+	if candidate.Weight != nil {
 		stored.Weight = candidate.Weight
 	}
 	if candidate.Tag != nil {

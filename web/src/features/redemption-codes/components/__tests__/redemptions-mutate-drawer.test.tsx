@@ -74,6 +74,12 @@ const originalPut = apiClient.put
 const originalConsoleLog = Reflect.get(console, 'log')
 let renderedDrawer: RenderedDrawer | null = null
 
+function operationIdFromRequestConfig(config: unknown) {
+  return (
+    config as { params?: { operation_id?: string } } | undefined
+  )?.params?.operation_id
+}
+
 beforeEach(() => {
   sessionStorage.clear()
   useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 100 })
@@ -250,7 +256,7 @@ describe('redemption drawer', () => {
       expect(
         screen.queryByRole('dialog', { name: 'Export codes' })
       ).not.toBeInTheDocument()
-      expect(post.mock.calls[0]?.[2]?.params?.operation_id).toBeTruthy()
+      expect(operationIdFromRequestConfig(post.mock.calls[0]?.[2])).toBeTruthy()
 
       submitForm()
       await screen.findByRole('dialog', { name: 'Export codes' })
@@ -275,7 +281,7 @@ describe('redemption drawer', () => {
       submitForm()
       await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
       await waitForLoadedForm()
-      const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+      const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
 
       changeInput(getControlByLabel('Name'), 'Partners')
       submitForm()
@@ -285,10 +291,12 @@ describe('redemption drawer', () => {
       expect(post.mock.calls[1]?.[1]).toEqual(
         expect.objectContaining({ name: 'Partners' })
       )
-      expect(post.mock.calls[1]?.[2]?.params?.operation_id).toEqual(
+      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
         expect.any(String)
       )
-      expect(post.mock.calls[1]?.[2]?.params?.operation_id).not.toBe(originalId)
+      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+        originalId
+      )
     }
   )
 
@@ -316,7 +324,7 @@ describe('redemption drawer', () => {
       changeInput(getControlByLabel('Name'), 'Launch')
       submitForm()
       await screen.findByRole('dialog', { name: 'Export codes' })
-      const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+      const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
 
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
       await rerenderDrawer(undefined, false)
@@ -331,10 +339,12 @@ describe('redemption drawer', () => {
       expect(post).toHaveBeenCalledTimes(2)
       expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
       expect(originalId).toBeTruthy()
-      expect(post.mock.calls[1]?.[2]?.params?.operation_id).toEqual(
+      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
         expect.any(String)
       )
-      expect(post.mock.calls[1]?.[2]?.params?.operation_id).not.toBe(originalId)
+      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+        originalId
+      )
     }
   )
 
@@ -388,7 +398,7 @@ describe('redemption drawer', () => {
     submitForm()
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
     await waitForLoadedForm()
-    const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+    const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
     expect(originalId).toBeTruthy()
     expect(sessionStorage.length).toBe(1)
     renderedDrawer?.result.unmount()
@@ -398,7 +408,9 @@ describe('redemption drawer', () => {
     changeInput(getControlByLabel('Name'), 'Launch')
     submitForm()
     await screen.findByRole('dialog', { name: 'Export codes' })
-    expect(post.mock.calls[1]?.[2]?.params?.operation_id).toBe(originalId)
+    expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toBe(
+      originalId
+    )
     expect(sessionStorage.length).toBe(0)
     renderedDrawer?.result.unmount()
 
@@ -407,7 +419,9 @@ describe('redemption drawer', () => {
     changeInput(getControlByLabel('Name'), 'Launch')
     submitForm()
     await screen.findByRole('dialog', { name: 'Export codes' })
-    expect(post.mock.calls[2]?.[2]?.params?.operation_id).not.toBe(originalId)
+    expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).not.toBe(
+      originalId
+    )
     expect(sessionStorage.length).toBe(0)
   })
 

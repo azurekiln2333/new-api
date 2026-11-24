@@ -166,7 +166,7 @@ function SummaryStat(props: { label: string; value: string }) {
 
 function UserRankingRow(props: {
   row: RankingModelUsageUser
-  locale: string
+  locale?: string
 }) {
   const { t } = useTranslation()
   const { row, locale } = props

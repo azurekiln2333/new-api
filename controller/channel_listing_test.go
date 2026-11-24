@@ -160,12 +160,12 @@ func TestChannelSearchQueryCountDoesNotGrowWithPageSize(t *testing.T) {
 		require.True(t, body.Success, response.Body.String())
 		require.EqualValues(t, 40, body.Data.Total, "the SQL total must cover every matching channel")
 		require.Len(t, body.Data.Items, pageSize, "the page must be bounded by page_size")
-		channels, allocations, channelRows, _ := observer.snapshot()
+		channels, allocations, channelRows, _ = observer.snapshot()
 		return body, channels, channelRows, allocations
 	}
 
 	_, smallChannels, smallChannelRows, smallAllocations := measure(2)
-	_, largeChannels, largeChannelRows, largeAllocations := measure(40)
+	_, _, largeChannelRows, largeAllocations := measure(40)
 
 	require.Positive(t, smallChannelRows, "the search must actually read the channels table")
 	// The small page must not have read more channel rows than the page plus the
