@@ -32,12 +32,18 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { positiveIntegerSchema } from '../../utils/numeric-field'
 import { GroupRatioForm } from '../group-ratio-form'
+import { GroupSpecialUsableRulesEditor } from '../group-special-usable-editor'
+import { RatioSettingsCard } from '../ratio-settings-card'
+
+const originalAuth = useAuthStore.getState().auth
 
 beforeEach(() => {
+  useAuthStore.setState({ auth: { ...originalAuth, user: null } })
   vi.spyOn(api, 'get').mockResolvedValue({
     data: {
       success: true,
@@ -45,7 +51,10 @@ beforeEach(() => {
     },
   })
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  useAuthStore.setState({ auth: originalAuth })
+  vi.restoreAllMocks()
+})
 
 const defaults = {
   GroupRatio: '{"default":1,"vip":0.8}',
@@ -56,6 +65,21 @@ const defaults = {
   MaxTokenAutoGroups: 5,
   DefaultUseAutoGroup: false,
   GroupSpecialUsableGroup: '{}',
+}
+
+const modelDefaults = {
+  ModelPrice: '{}',
+  ModelRatio: '{}',
+  CacheRatio: '{}',
+  CreateCacheRatio: '{}',
+  CompletionRatio: '{}',
+  ImageRatio: '{}',
+  AudioRatio: '{}',
+  AudioCompletionRatio: '{}',
+  ExposeRatioEnabled: false,
+  BillingMode: '{}',
+  BillingExpr: '{}',
+  PluginBillingExpr: '{}',
 }
 
 const schema = z.object({
@@ -96,6 +120,36 @@ function Fixture(props: {
           form={form}
           onSave={props.onSave ?? (async () => {})}
           isSaving={props.isSaving ?? false}
+        />
+      </SettingsPageProvider>
+    </QueryClientProvider>
+  )
+}
+
+function RatioCardFixture({
+  groupDefaults,
+}: {
+  groupDefaults: typeof defaults
+}) {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      })
+  )
+  const [actions, setActions] = useState<HTMLDivElement | null>(null)
+  return (
+    <QueryClientProvider client={client}>
+      <SettingsPageProvider actionsContainer={actions}>
+        <div ref={setActions} />
+        <RatioSettingsCard
+          modelDefaults={modelDefaults}
+          groupDefaults={groupDefaults}
+          toolPricesDefault='{}'
+          visibleTabs={['groups']}
         />
       </SettingsPageProvider>
     </QueryClientProvider>
@@ -376,12 +430,134 @@ describe('group settings workspace', () => {
   })
 })
 
+it('preserves manual drafts after saving levels and receiving unchanged group defaults', async () => {
+  vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  const initial = {
+    ...defaults,
+    GroupSpecialUsableGroup: '{"vip":{"+:default":"Standard"}}',
+  }
+  const { rerender } = render(<RatioCardFixture groupDefaults={initial} />)
+  await user.click(screen.getByRole('tab', { name: 'Group visibility' }))
+  const description = screen.getByRole('textbox', { name: 'Description' })
+  await user.clear(description)
+  await user.type(description, 'Draft access')
+  await user.click(screen.getByRole('button', { name: 'Add rule' }))
+  const level = await screen.findByRole('spinbutton', { name: 'Level for vip' })
+  fireEvent.change(level, { target: { value: '2' } })
+  await user.click(screen.getByRole('button', { name: 'Save group levels' }))
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'GroupLevels',
+      value: '{"default":0,"vip":2}',
+    })
+  )
+
+  rerender(<RatioCardFixture groupDefaults={{ ...initial }} />)
+  expect(
+    screen
+      .getAllByRole<HTMLInputElement>('textbox', { name: 'Description' })
+      .map((input) => input.value)
+  ).toEqual(['Draft access', ''])
+  expect(
+    screen.getAllByRole('combobox', { name: 'Group name' })
+  ).toHaveLength(2)
+  await user.click(screen.getByRole('button', { name: 'Save group settings' }))
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'group_ratio_setting.group_special_usable_group',
+      value: '{"vip":{"+:default":"Draft access"}}',
+    })
+  )
+
+  rerender(
+    <RatioCardFixture
+      groupDefaults={{
+        ...initial,
+        GroupSpecialUsableGroup:
+          '{"vip":{"+:default":"Updated on server"}}',
+      }}
+    />
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Description' })).toHaveValue(
+      'Updated on server'
+    )
+  )
+})
+
+it('loads manual visibility rules received after mount and preserves every rule on edit', async () => {
+  const user = userEvent.setup()
+  const onChange = vi.fn()
+  const { rerender } = render(
+    <GroupSpecialUsableRulesEditor
+      value='{}'
+      groupOptions={['default', 'vip', 'svip']}
+      onChange={onChange}
+    />
+  )
+  expect(
+    screen.getByText('No rules yet. Add a group below to get started.')
+  ).toBeVisible()
+
+  rerender(
+    <GroupSpecialUsableRulesEditor
+      value='{"vip":{"-:default":"remove","+:svip":"Special access"}}'
+      groupOptions={['default', 'vip', 'svip']}
+      onChange={onChange}
+    />
+  )
+  const description = await screen.findByRole('textbox', {
+    name: 'Description',
+  })
+  expect(description).toHaveValue('Special access')
+  expect(screen.getByText('Hidden')).toBeVisible()
+  await user.clear(description)
+  await user.type(description, 'Updated access')
+  expect(JSON.parse(onChange.mock.lastCall?.[0])).toEqual({
+    vip: { '-:default': 'remove', '+:svip': 'Updated access' },
+  })
+})
+
+it('keeps unfinished manual rules when the parent echoes the current serialized value', async () => {
+  const user = userEvent.setup()
+  const onChange = vi.fn()
+  const { rerender } = render(
+    <GroupSpecialUsableRulesEditor
+      value='{"vip":{"default":"Standard"}}'
+      groupOptions={['default', 'vip']}
+      onChange={onChange}
+    />
+  )
+  await user.click(screen.getByRole('button', { name: 'Add rule' }))
+  const echoedValue = onChange.mock.lastCall?.[0]
+  expect(JSON.parse(echoedValue)).toEqual({
+    vip: { '+:default': 'Standard' },
+  })
+  rerender(
+    <GroupSpecialUsableRulesEditor
+      value={echoedValue}
+      groupOptions={['default', 'vip']}
+      onChange={onChange}
+    />
+  )
+  expect(
+    screen.getAllByRole('combobox', { name: 'Group name' })
+  ).toHaveLength(2)
+})
+
 it('edits group levels, rejects fractions and previews the server permission result', async () => {
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
   vi.spyOn(api, 'post').mockResolvedValue({
-    data: { success: true, data: ['default', 'vip'] },
+    data: { success: true, data: ['vip'] },
   })
-  render(<Fixture />)
+  render(
+    <Fixture
+      initial={{
+        GroupSpecialUsableGroup: '{"vip":{"-:default":"remove"}}',
+      }}
+    />
+  )
   await userEvent.click(screen.getByRole('tab', { name: 'Group visibility' }))
   const input = await screen.findByRole('spinbutton', { name: 'Level for vip' })
   expect(input).toHaveValue(1)
@@ -399,6 +575,13 @@ it('edits group levels, rejects fractions and previews the server permission res
       value: '{"default":0,"vip":2}',
     })
   )
+  expect(screen.getByText('Hidden')).toBeVisible()
+  expect(api.put).not.toHaveBeenCalledWith(
+    '/api/option/',
+    expect.objectContaining({
+      key: 'group_ratio_setting.group_special_usable_group',
+    })
+  )
   const select = screen.getByRole('combobox', {
     name: 'Select user group to preview',
   })
@@ -407,16 +590,18 @@ it('edits group levels, rejects fractions and previews the server permission res
   await userEvent.click(
     screen.getByRole('button', { name: 'Preview visible groups' })
   )
-  expect(await screen.findByText('default, vip')).toBeVisible()
+  expect(await screen.findByRole('status')).toHaveTextContent('vip')
   expect(api.post).toHaveBeenCalledWith(
     '/api/group/preview',
     expect.objectContaining({
       user_group: 'vip',
       levels: { default: 0, vip: 2 },
+      usable_groups: { default: 'Standard access', vip: 'Premium access' },
+      special_groups: { vip: { '-:default': 'remove' } },
     })
   )
   fireEvent.change(input, { target: { value: '' } })
-  expect(screen.queryByText('default, vip')).not.toBeInTheDocument()
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
   await userEvent.click(
     screen.getByRole('button', { name: 'Save group levels' })
   )
@@ -426,4 +611,21 @@ it('edits group levels, rejects fractions and previews the server permission res
       value: '{"default":0}',
     })
   )
+})
+
+it('explains global manual grants and opens their existing pricing controls', async () => {
+  const user = userEvent.setup()
+  render(<Fixture />)
+  await user.click(screen.getByRole('tab', { name: 'Group visibility' }))
+  expect(
+    await screen.findByText(
+      'Global manual grants: default, vip. These groups are available regardless of level unless explicitly hidden. Edit User selectable in Pricing groups to change this list.'
+    )
+  ).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Pricing groups' }))
+  expect(screen.getByRole('tab', { name: 'Pricing groups' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(screen.getByRole('table', { name: 'Pricing groups' })).toBeVisible()
 })

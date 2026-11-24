@@ -85,7 +85,7 @@ export function ChannelQuotaCell(props: {
     return <ChannelBudgetViewDisplay view={view} variant='quota' />
   }
   // Known and explicitly disabled: the upstream balance is authoritative.
-  return <>{props.fallback}</>
+  return props.fallback
 }
 
 function ChannelBudgetViewDisplay({

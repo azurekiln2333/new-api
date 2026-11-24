@@ -24,7 +24,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -68,6 +68,7 @@ export function GroupLevelsEditor(props: {
   groupOptions: string[]
   userUsableGroups: string
   specialGroups: string
+  onEditGlobalVisibility: () => void
 }) {
   const { t } = useTranslation()
   const query = useSystemOptions()
@@ -138,6 +139,10 @@ export function GroupLevelsEditor(props: {
   } catch {
     invalidVisibility = true
   }
+  const globalGroups =
+    manual && typeof manual === 'object' && !Array.isArray(manual)
+      ? Object.keys(manual)
+      : []
   const levels = Object.fromEntries(
     Object.entries(values)
       .filter(([, value]) => value !== '')
@@ -162,11 +167,16 @@ export function GroupLevelsEditor(props: {
         <CardTitle>{t('Group levels')}</CardTitle>
         <CardDescription>
           {t(
-            'Higher levels include all lower levels. Leave blank to keep manual visibility only. Manual grants are always included.'
+            'Larger numbers mean higher levels, for example 0 < 1 < 2 < 3 < 4. Groups inherit the same and lower levels. Leave blank for manual visibility only.'
           )}
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-4'>
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            "Manual visibility is applied after level inheritance. Hidden rules take priority; a user's own group is always available."
+          )}
+        </p>
         {groups.map((group) => (
           <div key={group} className='grid min-w-0 gap-2 sm:grid-cols-2'>
             <Label htmlFor={`group-level-${group}`} className='break-all'>
@@ -201,6 +211,21 @@ export function GroupLevelsEditor(props: {
         >
           {t('Save group levels')}
         </Button>
+        <div className='bg-muted/20 space-y-2 rounded-lg border p-3'>
+          <p className='text-muted-foreground text-sm break-words'>
+            {t(
+              'Global manual grants: {{groups}}. These groups are available regardless of level unless explicitly hidden. Edit User selectable in Pricing groups to change this list.',
+              { groups: globalGroups.join(', ') || t('None') }
+            )}
+          </p>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={props.onEditGlobalVisibility}
+          >
+            {t('Pricing groups')}
+          </Button>
+        </div>
         <div className='flex flex-wrap items-center gap-2'>
           <Combobox
             aria-label={t('Select user group to preview')}
@@ -524,6 +549,18 @@ export function GroupSpecialUsableRulesEditor(
   const [rules, setRules] = useState<Rule[]>(() =>
     flattenRules(safeParseJson(props.value))
   )
+
+  useEffect(() => {
+    const incomingRules = flattenRules(safeParseJson(props.value))
+    setRules((currentRules) => {
+      // Parent echoes omit unfinished rows. Keep their IDs and input state when
+      // the saved portion is unchanged, but accept externally loaded settings.
+      if (serializeRules(currentRules) === serializeRules(incomingRules)) {
+        return currentRules
+      }
+      return incomingRules
+    })
+  }, [props.value])
 
   const { onChange } = props
   const emitChange = useCallback(

@@ -18,46 +18,42 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 }
 
 // ResolveUserUsableGroups is shared by runtime authorization and the settings
-// preview. Manual grants and level grants form a union; unranked groups retain
-// their previous behavior.
+// preview. Manual and level grants form a union, then explicit visibility rules
+// apply. Hidden rules win over other grants; the user's own group stays usable.
 func ResolveUserUsableGroups(userGroup string, manual, specialSettings map[string]string, levels map[string]int) map[string]string {
 	groupsCopy := maps.Clone(manual)
 	if groupsCopy == nil {
 		groupsCopy = make(map[string]string)
 	}
-	if userGroup != "" {
-		if len(specialSettings) > 0 {
-			// 处理特殊可用分组
-			for specialGroup, desc := range specialSettings {
-				if after, ok := strings.CutPrefix(specialGroup, "-:"); ok {
-					// 移除分组
-					groupToRemove := after
-					delete(groupsCopy, groupToRemove)
-				} else if after, ok := strings.CutPrefix(specialGroup, "+:"); ok {
-					// 添加分组
-					groupToAdd := after
-					groupsCopy[groupToAdd] = desc
-				} else {
-					// 直接添加分组
-					groupsCopy[specialGroup] = desc
-				}
+	if userGroup == "" {
+		return groupsCopy
+	}
+	if level, ranked := levels[userGroup]; ranked {
+		for group, candidateLevel := range levels {
+			if group == "auto" || candidateLevel > level || !ratio_setting.ContainsGroupRatio(group) {
+				continue
+			}
+			if _, exists := groupsCopy[group]; !exists {
+				groupsCopy[group] = setting.GetUsableGroupDescription(group)
 			}
 		}
-		if level, ranked := levels[userGroup]; ranked {
-			for group, candidateLevel := range levels {
-				if group == "auto" || candidateLevel > level || !ratio_setting.ContainsGroupRatio(group) {
-					continue
-				}
-				if _, exists := groupsCopy[group]; !exists {
-					groupsCopy[group] = setting.GetUsableGroupDescription(group)
-				}
-			}
+	}
+	for specialGroup, desc := range specialSettings {
+		if strings.HasPrefix(specialGroup, "-:") {
+			continue
 		}
-		// 如果userGroup不在UserUsableGroups中，返回UserUsableGroups + userGroup。
-		// 描述是英文源文本，由 web 控制台翻译；管理员配置的描述原样显示。
-		if _, ok := groupsCopy[userGroup]; !ok {
-			groupsCopy[userGroup] = "User group"
+		group, _ := strings.CutPrefix(specialGroup, "+:")
+		groupsCopy[group] = desc
+	}
+	// Apply hides last so map iteration order cannot re-grant an explicit denial.
+	for specialGroup := range specialSettings {
+		if group, hidden := strings.CutPrefix(specialGroup, "-:"); hidden {
+			delete(groupsCopy, group)
 		}
+	}
+	// The user's assigned group remains available, including unranked groups.
+	if _, ok := groupsCopy[userGroup]; !ok {
+		groupsCopy[userGroup] = "User group"
 	}
 	return groupsCopy
 }

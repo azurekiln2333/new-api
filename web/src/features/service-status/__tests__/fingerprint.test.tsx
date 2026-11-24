@@ -423,6 +423,77 @@ it('offers unique channel model aliases and replaces stale selections on channel
   expect(startChannelFingerprint).toHaveBeenCalledTimes(1)
 })
 
+it.each(['page', 'refetch'] as const)(
+  'keeps models during a pending %s and disables a missing hydrated channel when it settles',
+  async (reload) => {
+    const available = {
+      ...channels,
+      data: { ...channels.data, has_more: true },
+    }
+    getChannelOptions.mockResolvedValue(available)
+    const { startChannelFingerprint } = await import('../fingerprint-api')
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
+    await user.click(
+      await screen.findByRole('option', { name: '#7 channel-seven' })
+    )
+    await waitFor(() => expect(getChannelOptions).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^next$/i })).toBeEnabled()
+    )
+
+    let completeOptions!: (result: typeof channels) => void
+    getChannelOptions.mockReturnValueOnce(
+      new Promise<typeof channels>((resolve) => {
+        completeOptions = resolve
+      })
+    )
+    if (reload === 'page') {
+      await user.click(screen.getByRole('button', { name: /^next$/i }))
+    } else {
+      act(() => {
+        void client.invalidateQueries({ queryKey: ['fingerprint-channels'] })
+      })
+    }
+    await waitFor(() => expect(getChannelOptions).toHaveBeenCalledTimes(3))
+    expect(getChannelOptions).toHaveBeenLastCalledWith(
+      expect.objectContaining({ p: reload === 'page' ? 2 : 1, ids: '7' }),
+      expect.any(AbortSignal)
+    )
+    expect(
+      screen.getByRole('combobox', { name: /^model$/i })
+    ).toHaveTextContent('gpt-4.1')
+    expect(screen.getByRole('button', { name: /start check/i })).toBeEnabled()
+    expect(screen.queryByText('Unavailable')).not.toBeInTheDocument()
+
+    await act(async () => {
+      completeOptions({
+        ...channels,
+        data: {
+          ...channels.data,
+          items: [
+            { id: 8, name: 'channel-eight', models: ['claude-sonnet-4'] },
+          ],
+          page: reload === 'page' ? 2 : 1,
+        },
+      })
+    })
+    expect(await screen.findByText('Unavailable')).toBeVisible()
+    expect(screen.getByRole('combobox', { name: /^model$/i })).toBeDisabled()
+    expect(
+      screen.getByRole('combobox', { name: /^model$/i })
+    ).not.toHaveTextContent(/gpt-4\.1|claude-sonnet-4/)
+    expect(
+      screen.getByRole('combobox', { name: /^channel$/i })
+    ).not.toHaveTextContent('channel-eight')
+    const startButton = screen.getByRole('button', { name: /start check/i })
+    expect(startButton).toBeDisabled()
+    await user.click(startButton)
+    expect(startChannelFingerprint).not.toHaveBeenCalled()
+  }
+)
+
 it.each([
   { label: 'signed out', user: null },
   {
@@ -495,6 +566,7 @@ it.each([
     expect(getChannelFingerprint).toHaveBeenCalledTimes(1)
     const pollSignal = getChannelFingerprint.mock.calls[0][2] as AbortSignal
     expect(pollSignal.aborted).toBe(false)
+    const channelLoadsBeforeDemotion = getChannelOptions.mock.calls.length
 
     visibleCommits.length = 0
     act(() => {
@@ -521,18 +593,21 @@ it.each([
       screen.queryByText(/channel-seven|gpt-4\.1|late-detector/)
     ).not.toBeInTheDocument()
     expect(getChannelFingerprint).toHaveBeenCalledTimes(1)
-    expect(getChannelOptions).toHaveBeenCalledTimes(1)
+    expect(getChannelOptions).toHaveBeenCalledTimes(channelLoadsBeforeDemotion)
   }
 )
 
 it('clears a completed run and model selection when another administrator signs in', async () => {
-  getChannelOptions.mockResolvedValueOnce(channels)
+  getChannelOptions
+    .mockResolvedValueOnce(channels)
+    .mockResolvedValueOnce(channels)
   let completeSearch!: (result: typeof channels) => void
   getChannelOptions.mockReturnValueOnce(
     new Promise<typeof channels>((resolve) => {
       completeSearch = resolve
     })
   )
+  getChannelOptions.mockResolvedValue(channels)
   const { startChannelFingerprint } = await import('../fingerprint-api')
   vi.mocked(startChannelFingerprint).mockResolvedValue(
     runningJob({ state: 'completed' })
@@ -562,7 +637,7 @@ it('clears a completed run and model selection when another administrator signs 
   ).not.toBeInTheDocument()
   expect(screen.getByRole('combobox', { name: /^model$/i })).toBeDisabled()
   expect(screen.getByRole('button', { name: /start check/i })).toBeDisabled()
-  expect(getChannelOptions).toHaveBeenCalledTimes(2)
+  expect(getChannelOptions).toHaveBeenCalledTimes(3)
   await act(async () => {
     completeSearch(channels)
   })
@@ -662,9 +737,8 @@ it('cancels the previous account channel search and ignores its late results', a
   ).not.toBeInTheDocument()
 })
 
-it('searches channels by keyword and follows has_more instead of fetching everything', async () => {
+it('debounces channel search and follows has_more instead of fetching everything', async () => {
   getChannelOptions.mockResolvedValue(channels)
-  const user = userEvent.setup()
   renderPage()
   await waitFor(() => expect(getChannelOptions).toHaveBeenCalledTimes(1))
   expect(getChannelOptions.mock.calls[0][0]).toMatchObject({
@@ -672,15 +746,19 @@ it('searches channels by keyword and follows has_more instead of fetching everyt
     page_size: 30,
   })
 
-  await user.type(
-    screen.getByPlaceholderText('Search channels'),
-    'seven'
-  )
-  await waitFor(() =>
-    expect(getChannelOptions).toHaveBeenLastCalledWith(
-      expect.objectContaining({ keyword: 'seven', p: 1 }),
-      expect.any(AbortSignal)
-    )
+  vi.useFakeTimers()
+  const search = screen.getByPlaceholderText('Search channels')
+  fireEvent.change(search, { target: { value: 'sev' } })
+  fireEvent.change(search, { target: { value: 'seven' } })
+  expect(getChannelOptions).toHaveBeenCalledTimes(1)
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(300)
+  })
+  expect(getChannelOptions).toHaveBeenCalledTimes(2)
+  expect(getChannelOptions).toHaveBeenLastCalledWith(
+    expect.objectContaining({ keyword: 'seven', p: 1 }),
+    expect.any(AbortSignal)
   )
 
   // has_more=false means the only page is loaded, so paging stays closed.
@@ -690,6 +768,31 @@ it('searches channels by keyword and follows has_more instead of fetching everyt
     expect.objectContaining({ keyword: 'seven', p: 1 }),
     expect.any(AbortSignal)
   )
+})
+
+it('shows a channel options business failure and retries the load', async () => {
+  getChannelOptions
+    .mockResolvedValueOnce({
+      success: false,
+      message: 'Channel options are temporarily unavailable',
+    })
+    .mockResolvedValue(channels)
+  const user = userEvent.setup()
+  renderPage()
+
+  expect(
+    await screen.findByText('Channel options are temporarily unavailable')
+  ).toBeVisible()
+  await user.click(screen.getByRole('button', { name: /retry/i }))
+  await waitFor(() =>
+    expect(
+      screen.queryByText('Channel options are temporarily unavailable')
+    ).not.toBeInTheDocument()
+  )
+  await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
+  expect(
+    await screen.findByRole('option', { name: '#7 channel-seven' })
+  ).toBeVisible()
 })
 
 it('shows the actual prompt and reply of every probe in its own card', async () => {

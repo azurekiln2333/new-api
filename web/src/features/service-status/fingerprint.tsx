@@ -39,11 +39,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { getChannelOptions } from '@/features/channels/api'
+import { useDebounce } from '@/hooks/use-debounce'
 import { toIntlLocale } from '@/i18n/languages'
 import { hasPermission } from '@/lib/admin-permissions'
 import { formatNumber } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
-import { getServerErrorMessage } from '@/lib/server-error-message'
+import {
+  getServerErrorMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -81,6 +85,7 @@ const KNOWN_REPLY_REASON =
   'Consecutive numbers change differently from the language-model replies in the reference bank. Program-generated, sorted or shuffled numbers often do this. No ranking was produced.'
 
 const STATE_TONES: Record<string, StatusVariant> = {
+  complete: 'success',
   completed: 'success',
   running: 'info',
   inconclusive: 'warning',
@@ -222,6 +227,8 @@ function FingerprintConsole({ identity }: { identity: string }) {
   const [pollStopped, setPollStopped] = useState(false)
   const [page, setPage] = useState(1)
   const [keyword, setKeyword] = useState('')
+  const debouncedKeyword = useDebounce(keyword, 300)
+  const searchPending = keyword !== debouncedKeyword
   // Bumped by the retry button so a stopped poll starts again.
   const [pollAttempt, setPollAttempt] = useState(0)
 
@@ -232,20 +239,30 @@ function FingerprintConsole({ identity }: { identity: string }) {
     // outside the page still resolves with its models. The identity is part of
     // the key so a demotion or account switch cannot read another identity's
     // cached channel names.
-    queryKey: ['fingerprint-channels', identity, channelId, keyword, page],
-    queryFn: ({ signal }) =>
-      getChannelOptions(
-        {
-          p: page,
-          page_size: 30,
-          ...(keyword.trim() ? { keyword: keyword.trim() } : {}),
-          ...(channelId ? { ids: channelId } : {}),
-        },
-        signal
+    queryKey: [
+      'fingerprint-channels',
+      identity,
+      channelId,
+      debouncedKeyword,
+      page,
+    ],
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(
+        await getChannelOptions(
+          {
+            p: page,
+            page_size: 30,
+            ...(debouncedKeyword.trim()
+              ? { keyword: debouncedKeyword.trim() }
+              : {}),
+            ...(channelId ? { ids: channelId } : {}),
+          },
+          signal
+        )
       ),
-    // A stale page or keyword must not flash the previous result set, but an
-    // account switch must not keep showing the previous identity's channels, so
-    // the placeholder is only reused while the identity part of the key matches.
+    enabled: !searchPending,
+    // Keep the current options visible while the next page loads, but never
+    // reuse channel names across authorized identities.
     placeholderData: (previousData, previousQuery) =>
       previousQuery?.queryKey[1] === identity ? previousData : undefined,
     staleTime: 60_000,
@@ -257,22 +274,36 @@ function FingerprintConsole({ identity }: { identity: string }) {
   const selectedChannel = channels.find(
     (channel) => String(channel.id) === channelId
   )
+  const selectedChannelUnavailable =
+    !!channelId &&
+    !searchPending &&
+    channelsQuery.isSuccess &&
+    !channelsQuery.isFetching &&
+    !channelsQuery.isPlaceholderData &&
+    !selectedChannel
   // A page change can drop the chosen channel from the visible list. Only the
   // channel chosen by id is remembered, so a valid model survives that reload;
   // changing channel still clears it because the channel itself is different.
   const [chosenModels, setChosenModels] = useState<string[]>([])
   useEffect(() => {
+    if (selectedChannelUnavailable) {
+      setChosenModels([])
+      return
+    }
     if (!selectedChannel) return
     setChosenModels(selectedChannel.models ?? [])
-  }, [selectedChannel])
+  }, [selectedChannel, selectedChannelUnavailable])
   const channelModels = useMemo(() => {
+    // A settled hydration response is authoritative. Do not keep offering
+    // remembered models after the selected channel has been removed.
+    if (selectedChannelUnavailable) return []
     const names = selectedChannel
       ? (selectedChannel.models ?? [])
       : chosenModels
     // A repeated alias must not appear twice, and the alias text itself must
     // stay exactly as configured.
     return [...new Set(names)].map((name) => ({ label: name, value: name }))
-  }, [chosenModels, selectedChannel])
+  }, [chosenModels, selectedChannel, selectedChannelUnavailable])
   // A channel switch replaces the candidates, so a model the new channel does
   // not serve must not stay selected and be submitted against it.
   useEffect(() => {
@@ -412,6 +443,11 @@ function FingerprintConsole({ identity }: { identity: string }) {
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedChannelUnavailable && (
+                    <p role='status' className='text-destructive text-xs'>
+                      {t('Unavailable')}
+                    </p>
+                  )}
                   {/* The endpoint returns one bounded page per keyword, so the
                     search box narrows the result set and paging walks it. */}
                   <Input
@@ -431,7 +467,7 @@ function FingerprintConsole({ identity }: { identity: string }) {
                       onClick={() =>
                         setPage((current) => Math.max(1, current - 1))
                       }
-                      disabled={controlsDisabled || page <= 1}
+                      disabled={controlsDisabled || searchPending || page <= 1}
                     >
                       {t('Previous')}
                     </Button>
@@ -443,7 +479,10 @@ function FingerprintConsole({ identity }: { identity: string }) {
                       size='sm'
                       onClick={() => setPage((current) => current + 1)}
                       disabled={
-                        controlsDisabled || !hasMore || channelsQuery.isFetching
+                        controlsDisabled ||
+                        searchPending ||
+                        !hasMore ||
+                        channelsQuery.isFetching
                       }
                     >
                       {t('Next')}
@@ -458,18 +497,24 @@ function FingerprintConsole({ identity }: { identity: string }) {
                     selectedModel={model}
                     models={channelModels}
                     onModelChange={setModel}
-                    disabled={controlsDisabled || !channelId}
+                    disabled={
+                      controlsDisabled ||
+                      !channelId ||
+                      selectedChannelUnavailable
+                    }
                   />
                   {!channelId && (
                     <p className='text-muted-foreground text-xs'>
                       {t('Choose a channel to list its models')}
                     </p>
                   )}
-                  {!!channelId && !channelModels.length && (
-                    <p className='text-muted-foreground text-xs'>
-                      {t('This channel declares no models')}
-                    </p>
-                  )}
+                  {!!channelId &&
+                    !selectedChannelUnavailable &&
+                    !channelModels.length && (
+                      <p className='text-muted-foreground text-xs'>
+                        {t('This channel declares no models')}
+                      </p>
+                    )}
                 </div>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-endpoint'>{t('Endpoint')}</Label>
@@ -635,7 +680,10 @@ function FingerprintConsole({ identity }: { identity: string }) {
                     const probe = job.probes[index]
                     if (!probe) {
                       return (
-                        <Card key={`probe-slot-${index}`} data-probe-slot='unused'>
+                        <Card
+                          key={`probe-slot-${index}`}
+                          data-probe-slot='unused'
+                        >
                           <CardHeader className='pb-2'>
                             <CardTitle className='text-sm'>
                               {t('Challenge {{index}}', { index: index + 1 })}
@@ -650,7 +698,10 @@ function FingerprintConsole({ identity }: { identity: string }) {
                       )
                     }
                     return (
-                      <Card key={probe.id || `probe-slot-${index}`} data-probe-slot='probe'>
+                      <Card
+                        key={probe.id || `probe-slot-${index}`}
+                        data-probe-slot='probe'
+                      >
                         <CardHeader className='pb-2'>
                           <CardTitle className='text-sm'>
                             {t('Challenge {{index}}', { index: index + 1 })}
@@ -658,15 +709,7 @@ function FingerprintConsole({ identity }: { identity: string }) {
                           <div className='flex items-center gap-2'>
                             <StatusBadge
                               label={t(STATE_LABELS[probe.state] ?? 'Unknown')}
-                              variant={
-                                probe.state === 'complete'
-                                  ? 'success'
-                                  : probe.state === 'failed'
-                                    ? 'danger'
-                                    : probe.state === 'cancelled'
-                                      ? 'neutral'
-                                      : 'info'
-                              }
+                              variant={STATE_TONES[probe.state] ?? 'info'}
                               size='sm'
                               copyable={false}
                             />
@@ -786,6 +829,7 @@ function FingerprintConsole({ identity }: { identity: string }) {
           {channelsQuery.isError && (
             <ErrorState
               description={getServerErrorMessage(channelsQuery.error)}
+              onRetry={() => void channelsQuery.refetch()}
             />
           )}
         </div>

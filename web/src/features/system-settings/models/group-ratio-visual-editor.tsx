@@ -384,16 +384,17 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
           onChange={onChange}
         />
       </TabsContent>
-      <TabsContent value='visibility' keepMounted>
-        <GroupLevelsEditor
-          groupOptions={registryNames}
-          userUsableGroups={userUsableGroups}
-          specialGroups={groupSpecialUsableGroup}
-        />
+      <TabsContent value='visibility' keepMounted className='space-y-5'>
         <GroupSpecialUsableRulesEditor
           value={groupSpecialUsableGroup}
           groupOptions={registryNames}
           onChange={(value) => onChange('GroupSpecialUsableGroup', value)}
+        />
+        <GroupLevelsEditor
+          groupOptions={registryNames}
+          userUsableGroups={userUsableGroups}
+          specialGroups={groupSpecialUsableGroup}
+          onEditGlobalVisibility={() => onSectionChange('pricing')}
         />
       </TabsContent>
       <TabsContent value='auto' keepMounted>

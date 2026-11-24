@@ -291,52 +291,58 @@ export function ChannelsTable() {
       p: pagination.pageIndex + 1,
       page_size: pagination.pageSize,
     }),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (shouldSearch) {
         return requireServerSuccess(
-          await searchChannels({
-            keyword: globalFilter,
-            model: modelFilter,
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
-            status:
-              statusFilter.length > 0 && !statusFilter.includes('all')
-                ? statusFilter[0]
-                : undefined,
-            type:
-              typeFilter.length > 0 && !typeFilter.includes('all')
-                ? Number(typeFilter[0])
-                : undefined,
-            tag_mode: enableTagMode,
-            id_sort: idSort,
-            ...sortParams,
-            p: pagination.pageIndex + 1,
-            page_size: pagination.pageSize,
-          })
+          await searchChannels(
+            {
+              keyword: globalFilter,
+              model: modelFilter,
+              group:
+                groupFilter.length > 0 && !groupFilter.includes('all')
+                  ? groupFilter[0]
+                  : undefined,
+              status:
+                statusFilter.length > 0 && !statusFilter.includes('all')
+                  ? statusFilter[0]
+                  : undefined,
+              type:
+                typeFilter.length > 0 && !typeFilter.includes('all')
+                  ? Number(typeFilter[0])
+                  : undefined,
+              tag_mode: enableTagMode,
+              id_sort: idSort,
+              ...sortParams,
+              p: pagination.pageIndex + 1,
+              page_size: pagination.pageSize,
+            },
+            signal
+          )
         )
       } else {
         return requireServerSuccess(
-          await getChannels({
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
-            status:
-              statusFilter.length > 0 && !statusFilter.includes('all')
-                ? statusFilter[0]
-                : undefined,
-            type:
-              typeFilter.length > 0 && !typeFilter.includes('all')
-                ? Number(typeFilter[0])
-                : undefined,
-            tag_mode: enableTagMode,
-            id_sort: idSort,
-            ...sortParams,
-            p: pagination.pageIndex + 1,
-            page_size: pagination.pageSize,
-          })
+          await getChannels(
+            {
+              group:
+                groupFilter.length > 0 && !groupFilter.includes('all')
+                  ? groupFilter[0]
+                  : undefined,
+              status:
+                statusFilter.length > 0 && !statusFilter.includes('all')
+                  ? statusFilter[0]
+                  : undefined,
+              type:
+                typeFilter.length > 0 && !typeFilter.includes('all')
+                  ? Number(typeFilter[0])
+                  : undefined,
+              tag_mode: enableTagMode,
+              id_sort: idSort,
+              ...sortParams,
+              p: pagination.pageIndex + 1,
+              page_size: pagination.pageSize,
+            },
+            signal
+          )
         )
       }
     },

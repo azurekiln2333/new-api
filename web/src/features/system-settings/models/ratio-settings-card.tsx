@@ -255,6 +255,7 @@ export function RatioSettingsCard({
       groupDefaults.GroupSpecialUsableGroup
     ),
   })
+  const receivedGroupDefaults = useRef(groupNormalizedDefaults.current)
   const modelSchema = useMemo(() => createModelSchema(t), [t])
   const groupSchema = useMemo(() => createGroupSchema(t), [t])
 
@@ -333,7 +334,7 @@ export function RatioSettingsCard({
   }, [modelDefaults, modelForm])
 
   useEffect(() => {
-    groupNormalizedDefaults.current = {
+    const normalized = {
       GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
       TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
       UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
@@ -345,6 +346,18 @@ export function RatioSettingsCard({
         groupDefaults.GroupSpecialUsableGroup
       ),
     }
+    // Saving levels refreshes system options without changing these fields.
+    // A new props object must not discard unsaved visibility rules.
+    const keys = Object.keys(normalized) as Array<keyof typeof normalized>
+    if (
+      keys.every(
+        (key) => normalized[key] === receivedGroupDefaults.current[key]
+      )
+    ) {
+      return
+    }
+    receivedGroupDefaults.current = normalized
+    groupNormalizedDefaults.current = normalized
 
     groupForm.reset({
       ...groupDefaults,

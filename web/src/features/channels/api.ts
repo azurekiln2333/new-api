@@ -246,9 +246,10 @@ export type CodexCredentialRefreshResponse = {
  * Get paginated list of channels
  */
 export async function getChannels(
-  params: GetChannelsParams = {}
+  params: GetChannelsParams = {},
+  signal?: AbortSignal
 ): Promise<GetChannelsResponse> {
-  const res = await api.get('/api/channel', { params })
+  const res = await api.get('/api/channel', { params, signal })
   return res.data
 }
 

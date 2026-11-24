@@ -15,6 +15,7 @@ The user explicitly authorized task planning, immediate implementation by FOUR e
 | R7 | Public homepage signed-in avatar navigates directly to console; console avatar opens menu. Hide overview onboarding guide for admins, including entry/reminder; preserve initial installer | pi-logs |
 | R8 | Existing overview API cards are wider, order configurable, bound to instance through existing system settings; one instance supports multiple API domains. Everyone sees CPU/memory/storage in original cards. Clicking API item opens filtered node details, with unknown/stale states | pi-logs |
 | R9 | LLM model ranking click opens model-square-style side drawer instead of price navigation, with model usage and per-model user usage ranking. Admin sees full names; ordinary user only own full name, others masked SERVER-SIDE | pi-logs |
+| R10 | Group levels increase numerically (0 < 1 < 2 < 3 < 4); preview matches runtime permissions. Preserve global/manual grants, apply explicit hidden rules after level inheritance, and keep the manual editor synchronized with loaded settings without deleting existing rules | group_visibility_repair |
 ## Constraints and acceptance
 - Reuse existing business components, request APIs, quota formatters and node collectors. Seven frontend locales; do not change billing math or fabricate upstream totals/metrics.
 - Original admin-only channels/fingerprint boundaries remain. Resource public projection excludes hostname/private addresses/process secrets/sync errors. Rankings never leak real others' names/identifiers in raw payload/cache.

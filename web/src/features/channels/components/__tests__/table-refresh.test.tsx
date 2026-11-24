@@ -85,9 +85,12 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function renderChannelsPage(searchGate: () => Promise<void>) {
+async function renderChannelsPage(
+  searchGate: () => Promise<void>,
+  filtered = true
+) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/channel/search') {
+    if (url === '/api/channel/search' || url === '/api/channel') {
       await searchGate()
       return {
         data: {
@@ -113,8 +116,9 @@ async function renderChannelsPage(searchGate: () => Promise<void>) {
       </ChannelsProvider>
     ),
   })
-  const initialEntry =
-    '/channels/?filter=prod&group=%5B%22vip%22%5D&status=%5B%22enabled%22%5D&model=gpt-4o'
+  const initialEntry = filtered
+    ? '/channels/?filter=prod&group=%5B%22vip%22%5D&status=%5B%22enabled%22%5D&model=gpt-4o'
+    : '/channels/'
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([channelsRoute])]),
     history: createMemoryHistory({ initialEntries: [initialEntry] }),
@@ -153,3 +157,30 @@ it('refetches the channel list with the current filters and marks Refresh busy w
   release()
   await waitFor(() => expect(refresh).toHaveAttribute('aria-busy', 'false'))
 })
+
+it.each([
+  { filtered: false, endpoint: '/api/channel' },
+  { filtered: true, endpoint: '/api/channel/search' },
+])(
+  'cancels an unfinished $endpoint request when leaving the channel page',
+  async ({ filtered, endpoint }) => {
+    let gate = Promise.resolve()
+    const get = await renderChannelsPage(() => gate, filtered)
+    let release!: () => void
+    gate = new Promise((resolve) => {
+      release = resolve
+    })
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Refresh' }))
+    const listCalls = () => get.mock.calls.filter(([url]) => url === endpoint)
+    await waitFor(() => expect(listCalls()).toHaveLength(2))
+    const signal = listCalls()[1][1]?.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal?.aborted).toBe(false)
+
+    cleanup()
+
+    expect(signal?.aborted).toBe(true)
+    release()
+  }
+)

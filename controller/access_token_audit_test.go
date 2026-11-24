@@ -752,6 +752,7 @@ func TestSecurityAndOperationEventsUseAuditTable(t *testing.T) {
 	for _, typ := range []int{model.LogTypeTopup, model.LogTypeConsume, model.LogTypeRefund, model.LogTypeSystem} {
 		model.RecordLog(user.Id, typ, common.NewMessage("business entry"))
 	}
+	drainControllerAuditOutbox(t)
 	var audits []model.AuditLog
 	require.NoError(t, model.LOG_DB.Find(&audits).Error)
 	assert.Len(t, audits, 10)

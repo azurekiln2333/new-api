@@ -21,7 +21,7 @@ jobs:
     name: Backend vet, build, and test
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       GOWORK: 'off'
 
@@ -80,13 +80,60 @@ jobs:
         run: go build ./...
 
       - name: Test root, relaykit, and tokenkit modules
-        run: make test
+        run: |
+          LOG_FILE="$RUNNER_TEMP/backend-tests.log"
+          set +e
+          make test 2>&1 | tee "$LOG_FILE"
+          COMMAND_STATUS=("${PIPESTATUS[@]}")
+          set -e
+          if [ "${COMMAND_STATUS[0]}" -ne 0 ]; then
+            python3 - "$LOG_FILE" <<'PY' || true
+          import pathlib
+          import re
+          import sys
+
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          if not lines:
+              lines = ["Test command failed without output; inspect the step exit code."]
+          detail_pattern = re.compile(r"^\s*Error:|panic:|fatal error:|\.go:\d+:\d+:")
+          pattern = re.compile(r"--- FAIL:|^FAIL(?:\s|$)|panic:|fatal error:|\.go:\d+:\d+:|^\s*(?:Error Trace|Error|Messages):")
+          matches = [i for i, line in enumerate(lines) if pattern.search(line)]
+          if not matches:
+              matches = [max(0, len(lines) - 12)]
+          matches.sort(key=lambda i: not bool(detail_pattern.search(lines[i])))
+          contexts = []
+          for i in matches:
+              if any(start <= i < end for start, end in contexts):
+                  continue
+              start = max(0, i - 3)
+              end = min(len(lines), i + 18)
+              contexts.append((start, end))
+          for start, end in contexts[:30]:
+              message = f"Log lines {start + 1}-{end}:\n" + "\n".join(lines[start:end])
+              message = message[:2500].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=Backend test failure::{message}")
+          if len(contexts) > 30:
+              print(f"::error::{len(contexts) - 30} additional failure contexts are in the backend-test-logs artifact")
+          PY
+          fi
+          if [ "${COMMAND_STATUS[0]}" -ne 0 ]; then
+            exit "${COMMAND_STATUS[0]}"
+          fi
+          exit "${COMMAND_STATUS[1]}"
+
+      - name: Upload backend test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backend-test-logs-${{ github.sha }}
+          path: ${{ runner.temp }}/backend-tests.log
+          if-no-files-found: warn
 
   relay_policy_integration:
     name: Relay policy, request logs, and database integration
     if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       GOWORK: 'off'
       TEST_MYSQL_DSN: 'root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local'
@@ -159,15 +206,148 @@ jobs:
 
       - name: Record database and Redis versions
         run: |
-          docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -N -e 'SELECT VERSION()'
-          docker exec ${{ job.services.postgres.id }} psql -U postgres -d relay_policy -Atc 'SELECT VERSION()'
-          docker exec ${{ job.services.redis.id }} redis-server --version
-          docker exec ${{ job.services.clickhouse.id }} clickhouse-client --user default --password integration --query 'SELECT version()'
+          CI_MYSQL_VERSION=$(docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -N -e 'SELECT VERSION()')
+          printf '::notice title=MySQL version::%s\n' "$CI_MYSQL_VERSION"
+          CI_POSTGRES_VERSION=$(docker exec ${{ job.services.postgres.id }} psql -U postgres -d relay_policy -Atc 'SELECT VERSION()')
+          printf '::notice title=PostgreSQL version::%s\n' "$CI_POSTGRES_VERSION"
+          CI_REDIS_VERSION=$(docker exec ${{ job.services.redis.id }} redis-server --version)
+          printf '::notice title=Redis version::%s\n' "$CI_REDIS_VERSION"
+          CI_CLICKHOUSE_VERSION=$(docker exec ${{ job.services.clickhouse.id }} clickhouse-client --user default --password integration --query 'SELECT version()')
+          printf '::notice title=ClickHouse version::%s\n' "$CI_CLICKHOUSE_VERSION"
+
+      - name: Verify startup migration from released baseline
+        env:
+          RELEASED_BASELINE_SHA: 53a71f88d5b568847cd7233a08f934824dcb22d3
+          NODE_TYPE: master
+        run: |
+          set -o pipefail
+          OUTPUT_DIR="$RUNNER_TEMP/released-migration"
+          LOG_FILE="$OUTPUT_DIR/migration.log"
+          RELEASED_DIR="$RUNNER_TEMP/released-baseline"
+          mkdir -p "$OUTPUT_DIR/logs"
+
+          echo "Current source: $(git rev-parse HEAD)" | tee -a "$LOG_FILE"
+          echo "Released source: $RELEASED_BASELINE_SHA" | tee -a "$LOG_FILE"
+          git fetch --no-tags https://github.com/azurekiln2333/new-api.git "$RELEASED_BASELINE_SHA"
+          git worktree add --detach "$RELEASED_DIR" "$RELEASED_BASELINE_SHA"
+          mkdir -p "$RELEASED_DIR/.github/scripts"
+          cp .github/scripts/released_migration_probe.go "$RELEASED_DIR/.github/scripts/"
+
+          docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -e 'CREATE DATABASE released_migration_mysql CHARACTER SET utf8mb4'
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE released_migration_postgres'
+
+          run_probe() {
+            source_dir="$1"
+            phase="$2"
+            engine="$3"
+            dsn="$4"
+            sqlite_path="$5"
+            manifest="$OUTPUT_DIR/$engine.indexes"
+            source_sha="$RELEASED_BASELINE_SHA"
+            if [ "$source_dir" = "$GITHUB_WORKSPACE" ]; then
+              source_sha="$(git rev-parse HEAD)"
+            fi
+            echo "Invoking model.InitDB: source=$source_sha engine=$engine phase=$phase" | tee -a "$LOG_FILE"
+            echo "COMMAND: (cd $source_dir && SQL_DSN=<engine DSN redacted> SQLITE_PATH=$sqlite_path REDEMPTION_INDEX_MANIFEST=$manifest MIGRATION_LOG_DIR=$OUTPUT_DIR/logs/$engine-$phase-$source_sha go run .github/scripts/released_migration_probe.go $phase)" | tee -a "$LOG_FILE"
+            set +e
+            (
+              cd "$source_dir" || exit
+              SQL_DSN="$dsn" \
+              SQLITE_PATH="$sqlite_path" \
+              REDEMPTION_INDEX_MANIFEST="$manifest" \
+              MIGRATION_LOG_DIR="$OUTPUT_DIR/logs/$engine-$phase-$source_sha" \
+              go run .github/scripts/released_migration_probe.go "$phase"
+            ) 2>&1 | tee -a "$LOG_FILE"
+            probe_status=("${PIPESTATUS[@]}")
+            set -e
+            if [ "${probe_status[0]}" -ne 0 ]; then
+              failure_context="$(tail -n 20 "$LOG_FILE")"
+              failure_context="${failure_context: -2000}"
+              failure_context="${failure_context//%/%25}"
+              failure_context="${failure_context//$'\r'/%0D}"
+              failure_context="${failure_context//$'\n'/%0A}"
+              printf '::error title=Released migration failure::engine=%s phase=%s source=%s%%0A%s\n' "$engine" "$phase" "$source_sha" "$failure_context"
+              return "${probe_status[0]}"
+            fi
+            return "${probe_status[1]}"
+          }
+
+          MYSQL_RELEASE_DSN='root:integration@tcp(127.0.0.1:3306)/released_migration_mysql?charset=utf8mb4&parseTime=True&loc=Local'
+          POSTGRES_RELEASE_DSN='postgres://postgres:integration@127.0.0.1:5432/released_migration_postgres?sslmode=disable'
+          SQLITE_RELEASE_PATH="$OUTPUT_DIR/released-migration.sqlite"
+
+          run_probe "$RELEASED_DIR" seed mysql "$MYSQL_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify mysql "$MYSQL_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify mysql "$MYSQL_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
+
+          run_probe "$RELEASED_DIR" seed postgres "$POSTGRES_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify postgres "$POSTGRES_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify postgres "$POSTGRES_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
+
+          run_probe "$RELEASED_DIR" seed sqlite local "$SQLITE_RELEASE_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify sqlite local "$SQLITE_RELEASE_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify sqlite local "$SQLITE_RELEASE_PATH"
+
+      - name: Upload released migration logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: released-baseline-migration-${{ github.sha }}
+          path: ${{ runner.temp }}/released-migration/
+          if-no-files-found: warn
 
       # These packages use process-wide fixtures. Keep them sequential against
       # the isolated service databases, and require configured external engines.
       - name: Verify database contracts, channel settings and relay policies
-        run: go test -p 1 -count=1 -v ./model ./service ./controller
+        if: ${{ !cancelled() }}
+        run: |
+          LOG_FILE="$RUNNER_TEMP/database-integration-tests.log"
+          set +e
+          go test -p 1 -count=1 -v ./model ./service ./controller 2>&1 | tee "$LOG_FILE"
+          COMMAND_STATUS=("${PIPESTATUS[@]}")
+          set -e
+          if [ "${COMMAND_STATUS[0]}" -ne 0 ]; then
+            python3 - "$LOG_FILE" <<'PY' || true
+          import pathlib
+          import re
+          import sys
+
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          if not lines:
+              lines = ["Test command failed without output; inspect the step exit code."]
+          detail_pattern = re.compile(r"^\s*Error:|panic:|fatal error:|\.go:\d+:\d+:")
+          pattern = re.compile(r"--- FAIL:|^FAIL(?:\s|$)|panic:|fatal error:|\.go:\d+:\d+:|^\s*(?:Error Trace|Error|Messages):")
+          matches = [i for i, line in enumerate(lines) if pattern.search(line)]
+          if not matches:
+              matches = [max(0, len(lines) - 12)]
+          matches.sort(key=lambda i: not bool(detail_pattern.search(lines[i])))
+          contexts = []
+          for i in matches:
+              if any(start <= i < end for start, end in contexts):
+                  continue
+              start = max(0, i - 3)
+              end = min(len(lines), i + 18)
+              contexts.append((start, end))
+          for start, end in contexts[:30]:
+              message = f"Log lines {start + 1}-{end}:\n" + "\n".join(lines[start:end])
+              message = message[:2500].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=Database integration failure::{message}")
+          if len(contexts) > 30:
+              print(f"::error::{len(contexts) - 30} additional failure contexts are in the database-integration-test-logs artifact")
+          PY
+          fi
+          if [ "${COMMAND_STATUS[0]}" -ne 0 ]; then
+            exit "${COMMAND_STATUS[0]}"
+          fi
+          exit "${COMMAND_STATUS[1]}"
+
+      - name: Upload database integration test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: database-integration-test-logs-${{ github.sha }}
+          path: ${{ runner.temp }}/database-integration-tests.log
+          if-no-files-found: warn
 
       - name: Verify scheduled channel locks on MySQL and PostgreSQL
         run: |
@@ -351,6 +531,7 @@ jobs:
           src/features/channels/components/__tests__/channel-test-dialog-endpoints.test.tsx
           src/features/channels/components/__tests__/channel-configuration.test.tsx
           src/features/channels/components/__tests__/channel-test-key-selection.test.tsx
+          src/features/channels/components/__tests__/table-refresh.test.tsx
           src/features/channels/components/channel-usage-context.tsx
           src/features/channels/components/__tests__/channel-details-entry.test.tsx
           src/features/channels/hooks/__tests__/use-channel-usage.test.tsx
@@ -395,6 +576,11 @@ jobs:
           src/features/service-status/__tests__/fingerprint.test.tsx
           src/components/model-group-selector.tsx
           src/features/system-settings/models/upstream-ratio-sync.tsx
+          src/features/system-settings/models/group-ratio-form.tsx
+          src/features/system-settings/models/group-ratio-visual-editor.tsx
+          src/features/system-settings/models/group-special-usable-editor.tsx
+          src/features/system-settings/models/ratio-settings-card.tsx
+          src/features/system-settings/models/__tests__/group-settings.test.tsx
           src/features/system-settings/__tests__/pricing-sync.test.tsx
           src/lib/server-error-message.ts
           src/lib/server-error-message.test.ts

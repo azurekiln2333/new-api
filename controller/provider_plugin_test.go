@@ -373,6 +373,7 @@ func TestPluginLoginAPI(t *testing.T) {
 	require.True(t, ok)
 	assert.JSONEq(t, `{"token":"tok-123"}`, string(credential.Data))
 
+	drainControllerAuditOutbox(t)
 	var audits []model.AuditLog
 	require.NoError(t, model.DB.Find(&audits).Error)
 	require.Len(t, audits, 1)

@@ -99,3 +99,72 @@ func TestGroupLevelsUnionAndAuthorization(t *testing.T) {
 	}
 	assert.Equal(t, 1, setting.GetGroupLevelsCopy()["vip"], "invalid settings leave permissions intact")
 }
+
+func TestGroupLevelsRespectExplicitVisibility(t *testing.T) {
+	configureRequestAutoGroupsTest(t)
+	previousLevels := setting.GroupLevels2JSONString()
+	special := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup
+	previousSpecial := special.ReadAll()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateGroupLevelsByJSONString(previousLevels))
+		special.Clear()
+		special.AddAll(previousSpecial)
+	})
+	require.NoError(t, setting.UpdateGroupLevelsByJSONString(`{"default":0,"vip":1,"svip":2}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","vip","svip"]`))
+
+	for _, test := range []struct {
+		name       string
+		userGroup  string
+		manual     string
+		rules      map[string]string
+		wantGroups []string
+	}{
+		{
+			name:       "global manual grants remain independent of levels",
+			userGroup:  "default",
+			manual:     `{"default":"Default","vip":"VIP","svip":"SVIP"}`,
+			wantGroups: []string{"default", "vip", "svip"},
+		},
+		{
+			name:       "hidden inherited group is not restored by levels",
+			userGroup:  "svip",
+			manual:     `{}`,
+			rules:      map[string]string{"-:vip": "remove"},
+			wantGroups: []string{"default", "svip"},
+		},
+		{
+			name:       "hide wins over global and conflicting explicit grants",
+			userGroup:  "default",
+			manual:     `{"vip":"Global grant"}`,
+			rules:      map[string]string{"vip": "Legacy grant", "+:vip": "Extra grant", "-:vip": "remove"},
+			wantGroups: []string{"default"},
+		},
+		{
+			name:       "explicit grant can add a higher level",
+			userGroup:  "default",
+			manual:     `{}`,
+			rules:      map[string]string{"+:svip": "Extra grant"},
+			wantGroups: []string{"default", "svip"},
+		},
+		{
+			name:       "the user own group remains available",
+			userGroup:  "vip",
+			manual:     `{}`,
+			rules:      map[string]string{"-:vip": "remove"},
+			wantGroups: []string{"default", "vip"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(test.manual))
+			special.Clear()
+			special.Set(test.userGroup, test.rules)
+			visible := GetUserUsableGroups(test.userGroup)
+			assert.Len(t, visible, len(test.wantGroups))
+			for _, group := range test.wantGroups {
+				assert.Contains(t, visible, group)
+			}
+			assert.Equal(t, test.wantGroups, GetUserAutoGroup(test.userGroup))
+		})
+	}
+}
