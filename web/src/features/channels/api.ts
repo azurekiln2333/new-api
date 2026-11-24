@@ -40,7 +40,6 @@ import type {
   ChannelBalanceResponse,
   ChannelBudgetView,
   ChannelOpsResponse,
-  ChannelOption,
   ChannelOptionsParams,
   ChannelOptionsResponse,
   ChannelTestResponse,

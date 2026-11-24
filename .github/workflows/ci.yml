@@ -51,7 +51,9 @@ jobs:
         run: |
           FILES=$(git diff-tree --root --no-commit-id --name-only --diff-filter=ACMR -m -r -z "$GITHUB_SHA" -- '*.go' | sort -zu | xargs -0 -r gofmt -l)
           if [ -n "$FILES" ]; then
-            printf 'Go files requiring gofmt:\n%s\n' "$FILES"
+            while IFS= read -r FILE; do
+              printf '::error file=%s::Go file requires gofmt\n' "$FILE"
+            done <<< "$FILES"
             exit 1
           fi
 

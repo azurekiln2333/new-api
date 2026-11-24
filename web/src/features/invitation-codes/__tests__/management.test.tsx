@@ -47,6 +47,13 @@ import { InvitationCodes } from '../index'
 
 const clients: QueryClient[] = []
 const actor = { id: 1, username: 'admin', role: 100 }
+
+function operationIdFromRequestConfig(config: unknown) {
+  return (
+    config as { params?: { operation_id?: string } } | undefined
+  )?.params?.operation_id
+}
+
 const item: Invitation = {
   id: 7,
   key: 'private-invitation-code',
@@ -180,7 +187,7 @@ it.each(['lost response', 'server rejection'])(
       expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
     )
     expect(saved).not.toHaveBeenCalled()
-    expect(post.mock.calls[0]?.[2]?.params?.operation_id).toBeTruthy()
+    expect(operationIdFromRequestConfig(post.mock.calls[0]?.[2])).toBeTruthy()
 
     await user.clear(name)
     await user.type(name, 'Launch')
@@ -207,7 +214,7 @@ it('uses a new invitation operation ID when a failed create payload changes', as
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
-  const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
 
   await user.clear(name)
   await user.type(name, 'Partners')
@@ -222,10 +229,10 @@ it('uses a new invitation operation ID when a failed create payload changes', as
     count: 1,
     expired_time: 0,
   })
-  expect(post.mock.calls[1]?.[2]?.params?.operation_id).toEqual(
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
     expect.any(String)
   )
-  expect(post.mock.calls[1]?.[2]?.params?.operation_id).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(originalId)
   expect(saved).not.toHaveBeenCalled()
 })
 
@@ -241,17 +248,17 @@ it('uses a new invitation operation ID for another create after success', async 
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
-  const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
 
   await user.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(saved).toHaveBeenLastCalledWith(['second-code']))
   expect(post).toHaveBeenCalledTimes(2)
   expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
   expect(originalId).toBeTruthy()
-  expect(post.mock.calls[1]?.[2]?.params?.operation_id).toEqual(
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
     expect.any(String)
   )
-  expect(post.mock.calls[1]?.[2]?.params?.operation_id).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(originalId)
 })
 
 it('recovers a lost invitation response after remount and clears only confirmed success', async () => {
@@ -269,7 +276,7 @@ it('recovers a lost invitation response after remount and clears only confirmed 
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
-  const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
   expect(originalId).toBeTruthy()
   expect(sessionStorage.length).toBe(1)
   first.result.unmount()
@@ -278,7 +285,7 @@ it('recovers a lost invitation response after remount and clears only confirmed 
   await retry.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
   await retry.user.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(retry.saved).toHaveBeenCalledWith(['original-code']))
-  expect(post.mock.calls[1]?.[2]?.params?.operation_id).toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toBe(originalId)
   expect(sessionStorage.length).toBe(0)
   retry.result.unmount()
 
@@ -286,7 +293,7 @@ it('recovers a lost invitation response after remount and clears only confirmed 
   await fresh.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
   await fresh.user.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(fresh.saved).toHaveBeenCalledWith(['fresh-code']))
-  expect(post.mock.calls[2]?.[2]?.params?.operation_id).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).not.toBe(originalId)
   expect(sessionStorage.length).toBe(0)
 })
 
@@ -304,7 +311,7 @@ it.each([
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
-  const originalId = post.mock.calls[0]?.[2]?.params?.operation_id
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
   first.result.unmount()
   useAuthStore.getState().auth.setUser(nextActor)
 
@@ -316,7 +323,7 @@ it.each([
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
   expect(originalId).toBeTruthy()
-  expect(post.mock.calls[1]?.[2]?.params?.operation_id).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(originalId)
   next.result.unmount()
   useAuthStore.getState().auth.setUser(actor)
 
@@ -327,7 +334,7 @@ it.each([
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
-  expect(post.mock.calls[2]?.[2]?.params?.operation_id).toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).toBe(originalId)
 })
 
 it('does not create invitations when browser storage cannot preserve the retry ID', async () => {
