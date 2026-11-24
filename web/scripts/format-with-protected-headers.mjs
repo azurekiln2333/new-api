@@ -132,12 +132,14 @@ function listChangedFiles(before, files) {
   return changed
 }
 
-const files = (requestedPaths.length > 0
-  ? requestedPaths.map((path) => join(root, path))
-  : walk(root)
+const files = (
+  requestedPaths.length > 0
+    ? requestedPaths.map((path) => join(root, path))
+    : walk(root)
 ).filter(
   (file) =>
-    statSync(file).isFile() && statSync(file).size < 10 * 1024 * 1024
+    statSync(file).isFile() &&
+    statSync(file).size < 10 * 1024 * 1024
 )
 const before = mode === '--check' ? snapshotFiles(files) : null
 let headers = new Map()
