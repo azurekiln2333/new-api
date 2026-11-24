@@ -172,8 +172,12 @@ try {
       for (const file of changed) {
         console.error(file)
         if (process.env.GITHUB_ACTIONS === 'true') {
+          const diagnosticContent =
+            file === 'scripts/format-with-protected-headers.mjs'
+              ? ` formatted_base64=${Buffer.from(readFileSync(file)).toString('base64')}`
+              : ''
           console.log(
-            `::error file=${file}::Frontend formatter would change this file`
+            `::error file=${file}::Frontend formatter would change this file${diagnosticContent}`
           )
         }
       }
