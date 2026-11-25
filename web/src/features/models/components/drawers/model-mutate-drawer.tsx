@@ -159,21 +159,25 @@ export function ModelMutateDrawer(props: {
     props.currentRow?.model_name,
   ])
 
+  const listRow = useRef(currentRow)
   useLayoutEffect(() => {
+    listRow.current = currentRow
+  }, [currentRow])
+
+  useLayoutEffect(() => {
+    const row = listRow.current
     if (!props.open) {
       form.reset(MODEL_FORM_DEFAULT_VALUES)
       setCreatedModel(null)
       loadedKey.current = ''
       return
     }
-    const key = currentRow?.id
-      ? `metadata:${currentRow.id}`
-      : `channel:${currentRow?.model_name ?? ''}`
+    const key = row?.id
+      ? `metadata:${row.id}`
+      : `channel:${row?.model_name ?? ''}`
     if (loadedKey.current === key) return
     form.reset(
-      currentRow
-        ? transformModelToFormDefaults(currentRow)
-        : MODEL_FORM_DEFAULT_VALUES
+      row ? transformModelToFormDefaults(row) : MODEL_FORM_DEFAULT_VALUES
     )
     loadedKey.current = ''
   }, [props.open, currentRow?.id, currentRow?.model_name, form])

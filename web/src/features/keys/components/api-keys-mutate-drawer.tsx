@@ -223,9 +223,16 @@ export function ApiKeysMutateDrawer({
     defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
   })
 
+  // Keep the latest projection without reseeding dirty forms on a row refresh.
+  const listRow = useRef(currentRow)
+  useLayoutEffect(() => {
+    listRow.current = currentRow
+  }, [currentRow])
+
   // Seed a switched target from its list projection immediately. The detail
   // query below remains authoritative and keeps the form inert until it wins.
   useLayoutEffect(() => {
+    const row = listRow.current
     if (!open) {
       form.reset(
         getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
@@ -233,10 +240,10 @@ export function ApiKeysMutateDrawer({
       setInitializedTarget(null)
       return
     }
-    if (isUpdate && currentRow) {
+    if (row) {
       form.reset(
         transformApiKeyToFormDefaults(
-          currentRow,
+          row,
           availableAutoGroupNames,
           maxAutoGroups
         )

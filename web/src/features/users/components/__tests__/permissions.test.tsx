@@ -122,7 +122,9 @@ afterEach(() => {
 })
 
 it('does not submit until the matching user detail has loaded and ignores a late previous response', async () => {
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: 100 })
   let resolveFirst!: (value: { data: unknown }) => void
   let resolveSecond!: (value: { data: unknown }) => void
   const first = new Promise<{ data: unknown }>((resolve) => {
@@ -142,14 +144,22 @@ it('does not submit until the matching user detail has loaded and ignores a late
     if (url === '/api/user/3') return second
     throw new Error(`Unexpected GET ${url} ${String(config)}`)
   })
-  const put = vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
   const rowA = { ...target, id: 2, username: 'row-a', display_name: 'Row A' }
   const rowB = { ...target, id: 3, username: 'row-b', display_name: 'Row B' }
   const view = render(
     <QueryClientProvider client={client}>
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={rowA} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={rowA}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
@@ -159,24 +169,59 @@ it('does not submit until the matching user detail has loaded and ignores a late
   view.rerender(
     <QueryClientProvider client={client}>
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={rowB} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={rowB}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
   expect(screen.getByDisplayValue('row-b')).toBeInTheDocument()
   expect(screen.queryByDisplayValue('Row A')).not.toBeInTheDocument()
-  resolveFirst({ data: { success: true, data: { ...rowA, username: 'late-a' } } })
-  await waitFor(() => expect(screen.getByDisplayValue('row-b')).toBeInTheDocument())
+  resolveFirst({
+    data: { success: true, data: { ...rowA, username: 'late-a' } },
+  })
+  await waitFor(() =>
+    expect(screen.getByDisplayValue('row-b')).toBeInTheDocument()
+  )
   expect(save).toBeDisabled()
-  resolveSecond({ data: { success: true, data: { ...rowB, username: 'fresh-b' } } })
-  await waitFor(() => expect(screen.getByDisplayValue('fresh-b')).toBeInTheDocument())
+  resolveSecond({
+    data: { success: true, data: { ...rowB, username: 'fresh-b' } },
+  })
+  await waitFor(() =>
+    expect(screen.getByDisplayValue('fresh-b')).toBeInTheDocument()
+  )
   expect(save).toBeEnabled()
+  const displayName = screen.getByLabelText('Display Name')
+  await userEvent.clear(displayName)
+  await userEvent.type(displayName, 'Unsaved user draft')
+  view.rerender(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={{ ...rowB }}
+        />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  expect(displayName).toHaveValue('Unsaved user draft')
   await userEvent.click(save)
-  await waitFor(() => expect(put).toHaveBeenCalledWith('/api/user/', expect.objectContaining({ id: 3 }), {}))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/api/user/',
+      expect.objectContaining({ id: 3, display_name: 'Unsaved user draft' }),
+      {}
+    )
+  )
 })
 
 it('keeps Retry accessible after a failed detail load and enables saving only after retry succeeds', async () => {
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: 100 })
   let detailReads = 0
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/authz/catalog') {
@@ -192,12 +237,18 @@ it('keeps Retry accessible after a failed detail load and enables saving only af
     if (detailReads === 1) {
       return { data: { success: false, message: 'Detail unavailable' } }
     }
-    return { data: { success: true, data: { ...target, username: 'fresh-user' } } }
+    return {
+      data: { success: true, data: { ...target, username: 'fresh-user' } },
+    }
   })
   render(
     <QueryClientProvider client={new QueryClient()}>
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={target} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={target}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
@@ -216,18 +267,28 @@ it('keeps Retry accessible after a failed detail load and enables saving only af
 })
 
 it('applies an edited quota as a delta and refreshes only the matching quota field', async () => {
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: 100 })
   const detail = { ...target, quota: 1_000_000 }
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/authz/catalog') return { data: { success: true, data: { resources: [], roles: [] } } }
-    if (url === '/api/group/') return { data: { success: true, data: ['default'] } }
+    if (url === '/api/authz/catalog')
+      return { data: { success: true, data: { resources: [], roles: [] } } }
+    if (url === '/api/group/')
+      return { data: { success: true, data: ['default'] } }
     return { data: { success: true, data: detail } }
   })
-  const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { success: true } })
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValue({ data: { success: true } })
   render(
     <QueryClientProvider client={new QueryClient()}>
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={detail} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={detail}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
@@ -236,16 +297,27 @@ it('applies an edited quota as a delta and refreshes only the matching quota fie
   await userEvent.clear(quota)
   await userEvent.type(quota, '3')
   await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/user/manage', { id: 2, action: 'add_quota', mode: 'add', value: 500000 }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/user/manage', {
+      id: 2,
+      action: 'add_quota',
+      mode: 'add',
+      value: 500000,
+    })
+  )
 })
 
 it('sends one quota request when Confirm is pressed twice, then reconciles with the server balance', async () => {
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: 100 })
   let serverQuota = 1_000_000
   const detail = () => ({ ...target, quota: serverQuota })
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/authz/catalog') return { data: { success: true, data: { resources: [], roles: [] } } }
-    if (url === '/api/group/') return { data: { success: true, data: ['default'] } }
+    if (url === '/api/authz/catalog')
+      return { data: { success: true, data: { resources: [], roles: [] } } }
+    if (url === '/api/group/')
+      return { data: { success: true, data: ['default'] } }
     return { data: { success: true, data: detail() } }
   })
   let resolveAdjustment!: (value: { data: { success: boolean } }) => void
@@ -260,7 +332,11 @@ it('sends one quota request when Confirm is pressed twice, then reconciles with 
   render(
     <QueryClientProvider client={new QueryClient()}>
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={detail()} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={detail()}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
@@ -272,7 +348,12 @@ it('sends one quota request when Confirm is pressed twice, then reconciles with 
   await userEvent.click(confirm)
   await userEvent.click(confirm)
   expect(post).toHaveBeenCalledTimes(1)
-  expect(post).toHaveBeenCalledWith('/api/user/manage', { id: 2, action: 'add_quota', mode: 'add', value: 500000 })
+  expect(post).toHaveBeenCalledWith('/api/user/manage', {
+    id: 2,
+    action: 'add_quota',
+    mode: 'add',
+    value: 500000,
+  })
   resolveAdjustment({ data: { success: true } })
   // The delta survives concurrent consumption: 1000000 - 100000 + 500000.
   // The displayed form follows that reconciled balance, not the requested 3.
@@ -281,12 +362,16 @@ it('sends one quota request when Confirm is pressed twice, then reconciles with 
   expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled()
 })
 
-it("keeps the delta baseline when the reconciliation read reports a server failure", async () => {
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+it('keeps the delta baseline when the reconciliation read reports a server failure', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: 100 })
   let detailReads = 0
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/authz/catalog') return { data: { success: true, data: { resources: [], roles: [] } } }
-    if (url === '/api/group/') return { data: { success: true, data: ['default'] } }
+    if (url === '/api/authz/catalog')
+      return { data: { success: true, data: { resources: [], roles: [] } } }
+    if (url === '/api/group/')
+      return { data: { success: true, data: ['default'] } }
     if (url === '/api/user/2/rate_limit') {
       return { data: { success: true, data: { enabled: false } } }
     }
@@ -297,11 +382,21 @@ it("keeps the delta baseline when the reconciliation read reports a server failu
     }
     return { data: { success: true, data: { ...target, quota: 1_000_000 } } }
   })
-  const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { success: true } })
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValue({ data: { success: true } })
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={target} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={target}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
@@ -310,7 +405,14 @@ it("keeps the delta baseline when the reconciliation read reports a server failu
   await userEvent.clear(quota)
   await userEvent.type(quota, '3')
   await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
-  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/user/manage', { id: 2, action: 'add_quota', mode: 'add', value: 500000 }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith('/api/user/manage', {
+      id: 2,
+      action: 'add_quota',
+      mode: 'add',
+      value: 500000,
+    })
+  )
   await waitFor(() => expect(detailReads).toBe(2))
   // A failed reconciliation must not replace the committed baseline with zero
   // or leave the same delta available to submit again.
@@ -382,7 +484,9 @@ it.each([undefined, true])(
 )
 
 it('re-reads the fresh detail for a reopened user so the quota baseline is not the stale list value', async () => {
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'operator', role: 100 })
   let serverQuota = 1_000_000
   const detailCalls: string[] = []
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
@@ -398,12 +502,18 @@ it('re-reads the fresh detail for a reopened user so the quota baseline is not t
     detailCalls.push(url)
     return { data: { success: true, data: { ...target, quota: serverQuota } } }
   })
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
   const row = { ...target, quota: 1_000_000 }
   const view = render(
     <QueryClientProvider client={client}>
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={row} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={row}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
@@ -411,7 +521,11 @@ it('re-reads the fresh detail for a reopened user so the quota baseline is not t
   view.rerender(
     <QueryClientProvider client={client}>
       <UsersProvider>
-        <UsersMutateDrawer open={false} onOpenChange={() => undefined} currentRow={row} />
+        <UsersMutateDrawer
+          open={false}
+          onOpenChange={() => undefined}
+          currentRow={row}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
@@ -420,13 +534,19 @@ it('re-reads the fresh detail for a reopened user so the quota baseline is not t
   view.rerender(
     <QueryClientProvider client={client}>
       <UsersProvider>
-        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={row} />
+        <UsersMutateDrawer
+          open
+          onOpenChange={() => undefined}
+          currentRow={row}
+        />
       </UsersProvider>
     </QueryClientProvider>
   )
   expect(detailCalls).toEqual(['/api/user/2', '/api/user/2'])
   await waitFor(() =>
-    expect(screen.getByLabelText(/Remaining Quota/)).toHaveValue(400_000 / 500_000)
+    expect(screen.getByLabelText(/Remaining Quota/)).toHaveValue(
+      400_000 / 500_000
+    )
   )
 })
 
