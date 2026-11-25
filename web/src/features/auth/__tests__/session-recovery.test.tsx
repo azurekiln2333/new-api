@@ -115,26 +115,23 @@ afterEach(() => {
 })
 
 test('a transient protected-route refresh keeps the target and retry restores it', async () => {
-  resolveAuth
-    .mockResolvedValueOnce({
-      kind: 'transient_error',
-      error: new Error('offline'),
-    })
-    .mockImplementationOnce(async (): Promise<RefreshOutcome> => {
-      useAuthStore.getState().auth.setBundle(bundle)
-      return { kind: 'authenticated', bundle }
-    })
+  resolveAuth.mockResolvedValue({
+    kind: 'transient_error',
+    error: new Error('offline'),
+  })
 
   const router = createAuthRouter('/protected?tab=keys')
   render(<RouterProvider router={router} />)
-  await act(() => router.load())
-
+  expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible()
   expect(router.state.location.pathname).toBe('/protected')
   expect(router.state.location.search).toEqual({ tab: 'keys' })
-  expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible()
   expect(screen.queryByText('Protected content')).not.toBeInTheDocument()
   expect(screen.queryByText('Sign-in form')).not.toBeInTheDocument()
 
+  resolveAuth.mockImplementation(async (): Promise<RefreshOutcome> => {
+    useAuthStore.getState().auth.setBundle(bundle)
+    return { kind: 'authenticated', bundle }
+  })
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
 
   expect(await screen.findByText('Protected content')).toBeVisible()
@@ -144,24 +141,23 @@ test('a transient protected-route refresh keeps the target and retry restores it
 })
 
 test('a transient sign-in refresh hides the form until retry restores its destination', async () => {
-  resolveAuth
-    .mockResolvedValueOnce({
-      kind: 'transient_error',
-      error: new Error('offline'),
-    })
-    .mockImplementationOnce(async (): Promise<RefreshOutcome> => {
-      useAuthStore.getState().auth.setBundle(bundle)
-      return { kind: 'authenticated', bundle }
-    })
+  resolveAuth.mockResolvedValue({
+    kind: 'transient_error',
+    error: new Error('offline'),
+  })
 
-  const router = createAuthRouter('/sign-in?redirect=%2Fdashboard%3Ftab%3Dusage')
+  const router = createAuthRouter(
+    '/sign-in?redirect=%2Fdashboard%3Ftab%3Dusage'
+  )
   render(<RouterProvider router={router} />)
-  await act(() => router.load())
-
-  expect(router.state.location.pathname).toBe('/sign-in')
   expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible()
+  expect(router.state.location.pathname).toBe('/sign-in')
   expect(screen.queryByText('Sign-in form')).not.toBeInTheDocument()
 
+  resolveAuth.mockImplementation(async (): Promise<RefreshOutcome> => {
+    useAuthStore.getState().auth.setBundle(bundle)
+    return { kind: 'authenticated', bundle }
+  })
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
 
   expect(await screen.findByText('Dashboard destination')).toBeVisible()
@@ -193,5 +189,7 @@ test('a confirmed anonymous sign-in check still renders the sign-in form', async
   await act(() => router.load())
 
   expect(await screen.findByText('Sign-in form')).toBeVisible()
-  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Retry' })
+  ).not.toBeInTheDocument()
 })
