@@ -1,4 +1,6 @@
-# Completion Report
+# Original attempt report (superseded; task reopened)
+
+The completion claims below were not supported by verification. The merge dropped compatible upstream changes in conflicted files, including the RequestSigner interface, plugin lifecycle and current module paths. The release tag triggered failing workflows, and fork/main was not updated. This task was reopened on 2026-11-18 for functional integration and actual CI verification. The original notes remain below as historical context, not acceptance evidence.
 
 ## Resolved
 
