@@ -337,7 +337,7 @@ func postMultiKeyManage(t *testing.T, userID int, request MultiKeyManageRequest)
 // that the management actions read and write both of them (AC7).
 func TestMultiKeyManageKeepsKeyScopesOnTheirKey(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
-	channel := &model.Channel{Name: "multi-key-scope", Type: 1, Key: "sk-one\nsk-two\nsk-three", Models: "model-a,model-b,model-c", Group: "default",
+	channel := &model.Channel{Name: "multi-key-scope", Type: 1, Key: "sk-one\nsk-two\nsk-three", Models: "manual-model,model-a,model-b,model-c", Group: "default",
 		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModeRandom,
 			MultiKeyModels: map[int][]string{0: {"model-a"}, 1: {"model-b"}, 2: {"model-c"}},
 			MultiKeyUsers:  map[int]int{2: rootID}},
@@ -377,28 +377,37 @@ func TestMultiKeyManageKeepsKeyScopesOnTheirKey(t *testing.T) {
 	assert.Equal(t, rootID, listResult.Data.Keys[1].UserId)
 	assert.Equal(t, "channel-create-review-root", listResult.Data.Keys[1].Username)
 
-	rejected := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_models", KeyIndex: common.GetPointer(0), Models: []string{"model-not-on-channel"}})
-	var rejectedResult struct {
-		Success bool   `json:"success"`
-		Message string `json:"message"`
+	added := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_models", KeyIndex: common.GetPointer(0), Models: []string{"model-a", " model-new ", "model-new", " "}})
+	require.Equal(t, http.StatusOK, added.Code, added.Body.String())
+	var addedResult struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ChannelModels []string `json:"channel_models"`
+		} `json:"data"`
 	}
-	require.NoError(t, common.Unmarshal(rejected.Body.Bytes(), &rejectedResult))
-	assert.False(t, rejectedResult.Success)
-	assert.NotEmpty(t, rejectedResult.Message)
+	require.NoError(t, common.Unmarshal(added.Body.Bytes(), &addedResult))
+	require.True(t, addedResult.Success, added.Body.String())
+	assert.Equal(t, []string{"manual-model", "model-a", "model-b", "model-c", "model-new"}, addedResult.Data.ChannelModels)
+	loaded, err = model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "manual-model,model-a,model-b,model-c,model-new", loaded.Models, "saving one key adds normalized models without deleting or reordering the manual catalog")
+	assert.Equal(t, map[int][]string{0: {"model-a", "model-new"}, 1: {"model-c"}}, loaded.ChannelInfo.MultiKeyModels)
+	assert.Equal(t, map[int]int{1: rootID}, loaded.ChannelInfo.MultiKeyUsers)
 
 	require.True(t, postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_models", KeyIndex: common.GetPointer(1), Models: []string{"model-a", "model-b"}}).Code == http.StatusOK)
 	require.True(t, postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_user", KeyIndex: common.GetPointer(0), UserId: common.GetPointer(rootID)}).Code == http.StatusOK)
 	loaded, err = model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
-	assert.Equal(t, map[int][]string{0: {"model-a"}, 1: {"model-a", "model-b"}}, loaded.ChannelInfo.MultiKeyModels)
+	assert.Equal(t, map[int][]string{0: {"model-a", "model-new"}, 1: {"model-a", "model-b"}}, loaded.ChannelInfo.MultiKeyModels)
 	assert.Equal(t, map[int]int{0: rootID, 1: rootID}, loaded.ChannelInfo.MultiKeyUsers)
 
 	require.True(t, postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_models", KeyIndex: common.GetPointer(1), Models: []string{}}).Code == http.StatusOK)
 	require.True(t, postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_user", KeyIndex: common.GetPointer(1), UserId: common.GetPointer(0)}).Code == http.StatusOK)
 	loaded, err = model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
-	assert.Equal(t, map[int][]string{0: {"model-a"}}, loaded.ChannelInfo.MultiKeyModels)
+	assert.Equal(t, map[int][]string{0: {"model-a", "model-new"}}, loaded.ChannelInfo.MultiKeyModels)
 	assert.Equal(t, map[int]int{0: rootID}, loaded.ChannelInfo.MultiKeyUsers)
+	assert.Equal(t, "manual-model,model-a,model-b,model-c,model-new", loaded.Models, "clearing a key scope never shrinks the channel catalog")
 }
 
 // TestChannelAllocationsIdentityAndBudgetRouting exercises the authoritative
@@ -770,14 +779,23 @@ func TestChannelAllocationsRoutingAliasScope(t *testing.T) {
 
 func TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
-	selected := &model.Channel{Name: "multi-key-three-row-scope", Type: constant.ChannelTypeOpenAI, Key: "scope-one\nscope-two\nscope-three", Models: "model-a,model-b,model-c", Group: "default", Status: common.ChannelStatusEnabled,
-		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModeRandom}}
+	previousCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousCache })
+	selected := &model.Channel{Name: "multi-key-three-row-scope", Type: constant.ChannelTypeOpenAI, Key: "scope-one\nscope-two\nscope-three", Models: "manual-model,model-b,model-a,model-c", Group: "default", Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyModels: map[int][]string{1: {"model-b"}}, MultiKeyUsers: map[int]int{1: rootID},
+			MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled}}}
 	require.NoError(t, selected.Insert())
 	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
 	require.Len(t, selected.KeyEntryIDs, 3)
+	accounts := []model.ChannelBudgetAccount{
+		{ScopeType: model.BudgetScopeKey, ScopeId: selected.KeyEntryIDs[1], ChannelId: selected.Id, Enabled: true, LimitQuota: 100, PeriodUsedQuota: 25, ReservedQuota: 5, ConfigVersion: 2},
+		{ScopeType: model.BudgetScopeKey, ScopeId: selected.KeyEntryIDs[2], ChannelId: selected.Id, Enabled: true, LimitQuota: 250, PeriodUsedQuota: 40, ReservedQuota: 10, ConfigVersion: 3},
+	}
+	require.NoError(t, model.DB.Create(&accounts).Error)
+	model.InitChannelCache()
 
-	// Every row keeps revision 1 after creation, so an edit of the third row with
-	// the revision the list reported must succeed and move only that row.
 	list := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status"})
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	var decoded struct {
@@ -787,40 +805,182 @@ func TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions(t *testing.T) {
 	require.NoError(t, common.Unmarshal(list.Body.Bytes(), &decoded))
 	require.True(t, decoded.Success, list.Body.String())
 	require.Len(t, decoded.Data.Keys, 3)
-	third := decoded.Data.Keys[2]
+	originalList := decoded.Data
+	third := originalList.Keys[2]
 	assert.EqualValues(t, 1, third.Rev)
 
-	allow := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: third.Id, ExpectedRev: &third.Rev, Models: []string{"model-c"}, ScopeMode: common.GetPointer("allowlist")})
+	allow := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: third.Id, ExpectedRev: &third.Rev, ExpectedRevision: &originalList.Revision, Models: []string{"model-c", " model-new-a ", "model-new-z", "model-new-a", " "}, ScopeMode: common.GetPointer("allowlist")})
 	require.Equal(t, http.StatusOK, allow.Code, allow.Body.String())
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Revision      int64    `json:"revision"`
+			ChannelModels []string `json:"channel_models"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(allow.Body.Bytes(), &result))
+	require.True(t, result.Success, allow.Body.String())
+	wantModels := []string{"manual-model", "model-b", "model-a", "model-c", "model-new-a", "model-new-z"}
+	assert.Equal(t, wantModels, result.Data.ChannelModels)
 	loaded, err := model.GetChannelById(selected.Id, true)
 	require.NoError(t, err)
-	assert.Equal(t, map[int][]string{2: {"model-c"}}, loaded.ChannelInfo.MultiKeyModels, "only the third row gains a scope")
+	assert.Equal(t, strings.Join(wantModels, ","), loaded.Models)
+	assert.Equal(t, map[int][]string{1: {"model-b"}, 2: {"model-c", "model-new-a", "model-new-z"}}, loaded.ChannelInfo.MultiKeyModels)
 	assert.Equal(t, "allowlist", loaded.ChannelInfo.MultiKeyScopeModes[2])
+	assert.Equal(t, map[int]int{1: rootID}, loaded.ChannelInfo.MultiKeyUsers)
+	assert.Equal(t, map[int]int{1: common.ChannelStatusManuallyDisabled}, loaded.ChannelInfo.MultiKeyStatusList)
+	assert.Equal(t, selected.KeyEntryIDs, loaded.KeyEntryIDs)
+	assert.Equal(t, []int64{originalList.Keys[0].Rev, originalList.Keys[1].Rev, third.Rev + 1}, loaded.KeyEntryRevisions)
+	assert.Equal(t, originalList.Revision+1, loaded.ChannelInfo.KeyEntryRevision)
+	assert.Equal(t, loaded.ChannelInfo.KeyEntryRevision, result.Data.Revision)
+	assert.True(t, loaded.KeyServesModel(0, "model-new-a"), "an unchanged all-model key inherits the expanded catalog")
+	assert.False(t, loaded.KeyServesModel(1, "model-new-a"), "a sibling allowlist must not expand")
 
-	// The list now reports a newer revision for that row; a replay with the stale
-	// revision conflicts and writes nothing.
+	var entries []model.ChannelKeyEntry
+	require.NoError(t, model.DB.Where("channel_id = ? AND retired_at = 0", selected.Id).Order("position").Find(&entries).Error)
+	require.Len(t, entries, 3)
+	assert.Equal(t, []string{"model-c", "model-new-a", "model-new-z"}, entries[2].KeyModels())
+	var storedAccounts []model.ChannelBudgetAccount
+	require.NoError(t, model.DB.Where("channel_id = ?", selected.Id).Order("scope_id").Find(&storedAccounts).Error)
+	assert.Equal(t, accounts, storedAccounts, "a model scope edit preserves selected and sibling quota state")
+	var abilities []model.Ability
+	require.NoError(t, model.DB.Where("channel_id = ?", selected.Id).Order("model").Find(&abilities).Error)
+	abilityModels := make([]string, len(abilities))
+	for i, ability := range abilities {
+		abilityModels[i] = ability.Model
+		assert.True(t, ability.Enabled)
+		assert.Equal(t, "default", ability.Group)
+	}
+	assert.ElementsMatch(t, wantModels, abilityModels)
+	cached, err := model.CacheGetChannel(selected.Id)
+	require.NoError(t, err)
+	assert.Equal(t, loaded.Models, cached.Models)
+	assert.Equal(t, loaded.ChannelInfo, cached.ChannelInfo)
+	assert.True(t, model.IsChannelEnabledForGroupModel("default", "model-new-a", selected.Id), "the committed catalog must be routable without a full reload")
+
+	var audits []model.AuditEventOutbox
+	require.NoError(t, model.DB.Where("action = ?", "channel.multi_key_manage").Order("id").Find(&audits).Error)
+	require.Len(t, audits, 1, "one successful scope save enqueues exactly one audit")
+	assert.True(t, audits[0].Success)
+	assert.Equal(t, rootID, audits[0].ActorUserId)
+	var auditParams struct {
+		ID       int    `json:"id"`
+		Action   string `json:"action"`
+		EntryID  string `json:"entry_id"`
+		Revision int64  `json:"revision"`
+	}
+	require.NoError(t, common.UnmarshalJsonStr(audits[0].ParamsJson, &auditParams))
+	assert.Equal(t, selected.Id, auditParams.ID)
+	assert.Equal(t, "set_key_models", auditParams.Action)
+	assert.Equal(t, third.Id, auditParams.EntryID)
+	assert.Equal(t, loaded.ChannelInfo.KeyEntryRevision, auditParams.Revision)
+
 	list = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status"})
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	require.NoError(t, common.Unmarshal(list.Body.Bytes(), &decoded))
 	require.True(t, decoded.Success, list.Body.String())
+	require.Len(t, decoded.Data.Keys, 3)
 	fresh := decoded.Data.Keys[2]
-	assert.Greater(t, fresh.Rev, third.Rev)
-	stale := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: third.Id, ExpectedRev: &third.Rev, Models: []string{}, ScopeMode: common.GetPointer("allowlist")})
-	require.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
-	loaded, err = model.GetChannelById(selected.Id, true)
-	require.NoError(t, err)
-	assert.Equal(t, map[int][]string{2: {"model-c"}}, loaded.ChannelInfo.MultiKeyModels)
+	assert.Equal(t, third.Rev+1, fresh.Rev)
+	assert.Equal(t, originalList.Revision+1, decoded.Data.Revision)
 
-	// The fresh revision applies the empty explicit allowlist, which admits no
-	// model for that row while its siblings stay unrestricted.
-	deny := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: fresh.Id, ExpectedRev: &fresh.Rev, Models: []string{}, ScopeMode: common.GetPointer("allowlist")})
+	for _, tc := range []struct {
+		name         string
+		entryRev     int64
+		listRev      int64
+		scope        string
+		failureTable string
+		status       int
+	}{
+		{name: "stale selected key", entryRev: third.Rev, listRev: decoded.Data.Revision, scope: "allowlist", status: http.StatusConflict},
+		{name: "stale channel list", entryRev: fresh.Rev, listRev: originalList.Revision, scope: "allowlist", status: http.StatusConflict},
+		{name: "invalid scope", entryRev: fresh.Rev, listRev: decoded.Data.Revision, scope: "invalid", status: http.StatusOK},
+		{name: "audit enqueue failure", entryRev: fresh.Rev, listRev: decoded.Data.Revision, scope: "allowlist", failureTable: "audit_event_outbox", status: http.StatusOK},
+		{name: "ability write failure", entryRev: fresh.Rev, listRev: decoded.Data.Revision, scope: "allowlist", failureTable: "abilities", status: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			injected := false
+			if tc.failureTable != "" {
+				const callback = "test:key-model-save-failure"
+				database := model.DB
+				require.NoError(t, database.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+					if tx.Statement.Table == tc.failureTable {
+						injected = true
+						_ = tx.AddError(gorm.ErrInvalidDB)
+					}
+				}))
+				t.Cleanup(func() { require.NoError(t, database.Callback().Create().Remove(callback)) })
+			}
+			rejected := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: third.Id, ExpectedRev: &tc.entryRev, ExpectedRevision: &tc.listRev, Models: []string{"model-rejected-addition"}, ScopeMode: &tc.scope})
+			require.Equal(t, tc.status, rejected.Code, rejected.Body.String())
+			var failure struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(rejected.Body.Bytes(), &failure))
+			assert.False(t, failure.Success, rejected.Body.String())
+			assert.Equal(t, tc.failureTable != "", injected, "the requested persistence boundary must reject the write")
+			stored, err := model.GetChannelById(selected.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, loaded.Models, stored.Models, "a rejected save cannot append to the catalog")
+			assert.Equal(t, loaded.ChannelInfo, stored.ChannelInfo)
+			assert.Equal(t, loaded.KeyEntryRevisions, stored.KeyEntryRevisions)
+			var storedEntries []model.ChannelKeyEntry
+			require.NoError(t, model.DB.Where("channel_id = ? AND retired_at = 0", selected.Id).Order("position").Find(&storedEntries).Error)
+			assert.Equal(t, entries, storedEntries)
+			var storedAccounts []model.ChannelBudgetAccount
+			require.NoError(t, model.DB.Where("channel_id = ?", selected.Id).Order("scope_id").Find(&storedAccounts).Error)
+			assert.Equal(t, accounts, storedAccounts)
+			var storedAbilities []model.Ability
+			require.NoError(t, model.DB.Where("channel_id = ?", selected.Id).Order("model").Find(&storedAbilities).Error)
+			assert.Equal(t, abilities, storedAbilities)
+			var storedAudits []model.AuditEventOutbox
+			require.NoError(t, model.DB.Where("action = ?", "channel.multi_key_manage").Order("id").Find(&storedAudits).Error)
+			assert.Equal(t, audits, storedAudits, "rejected writes leave no new successful audit, including after a later ability failure")
+			cached, err := model.CacheGetChannel(selected.Id)
+			require.NoError(t, err)
+			assert.Equal(t, loaded.Models, cached.Models)
+			assert.Equal(t, loaded.ChannelInfo, cached.ChannelInfo)
+			assert.False(t, model.IsChannelEnabledForGroupModel("default", "model-rejected-addition", selected.Id))
+		})
+	}
+
+	deny := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_models", KeyEntryID: fresh.Id, ExpectedRev: &fresh.Rev, ExpectedRevision: &decoded.Data.Revision, Models: []string{}, ScopeMode: common.GetPointer("allowlist")})
 	require.Equal(t, http.StatusOK, deny.Code, deny.Body.String())
-	loaded, err = model.GetChannelById(selected.Id, true)
+	result.Success = false
+	require.NoError(t, common.Unmarshal(deny.Body.Bytes(), &result))
+	require.True(t, result.Success, deny.Body.String())
+	assert.Equal(t, wantModels, result.Data.ChannelModels)
+	stored, err := model.GetChannelById(selected.Id, true)
 	require.NoError(t, err)
-	assert.Equal(t, "allowlist", loaded.ChannelInfo.MultiKeyScopeModes[2])
-	assert.Empty(t, loaded.ChannelInfo.MultiKeyModels[2])
-	assert.True(t, loaded.KeyServesModel(0, "model-a"))
-	assert.False(t, loaded.KeyServesModel(2, "model-a"))
+	assert.Equal(t, loaded.Models, stored.Models, "an empty explicit allowlist must not shrink the catalog")
+	assert.Equal(t, "allowlist", stored.ChannelInfo.MultiKeyScopeModes[2])
+	assert.Empty(t, stored.ChannelInfo.MultiKeyModels[2])
+	assert.True(t, stored.KeyServesModel(0, "model-new-a"))
+	assert.False(t, stored.KeyServesModel(2, "model-new-a"))
+	assert.Equal(t, fresh.Rev+1, stored.KeyEntryRevisions[2])
+	assert.Equal(t, loaded.KeyEntryRevisions[:2], stored.KeyEntryRevisions[:2])
+	assert.Equal(t, loaded.ChannelInfo.MultiKeyUsers, stored.ChannelInfo.MultiKeyUsers)
+	assert.Equal(t, loaded.ChannelInfo.MultiKeyStatusList, stored.ChannelInfo.MultiKeyStatusList)
+	assert.Equal(t, decoded.Data.Revision+1, result.Data.Revision)
+	assert.Equal(t, result.Data.Revision, stored.ChannelInfo.KeyEntryRevision)
+	storedAccounts = nil
+	require.NoError(t, model.DB.Where("channel_id = ?", selected.Id).Order("scope_id").Find(&storedAccounts).Error)
+	assert.Equal(t, accounts, storedAccounts)
+	cached, err = model.CacheGetChannel(selected.Id)
+	require.NoError(t, err)
+	assert.Equal(t, stored.Models, cached.Models)
+	assert.False(t, cached.KeyServesModel(2, "model-new-a"))
+	audits = nil
+	require.NoError(t, model.DB.Where("action = ?", "channel.multi_key_manage").Order("id").Find(&audits).Error)
+	require.Len(t, audits, 2, "only the additive save and empty-allowlist save enqueue audits")
+	for _, audit := range audits {
+		assert.True(t, audit.Success)
+		encoded, err := common.Marshal(audit)
+		require.NoError(t, err)
+		for _, credential := range selected.GetKeys() {
+			assert.NotContains(t, string(encoded), credential)
+		}
+	}
 }
 
 func TestUpdateChannelKeepsCurrentKeyState(t *testing.T) {
