@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -496,6 +497,173 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 				assert.True(t, slices.ContainsFunc(events, func(event service.PolicyEvent) bool { return event.Decision.Reason == tc.wantReason }), "stop reason: %s", tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestChannelCapacityFailover(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		for _, tc := range []struct {
+			name        string
+			unavailable bool
+			allLimited  bool
+			pinned      bool
+			strict      bool
+			goalDenied  bool
+			budget      bool
+			failed      bool
+			avoidFailed bool
+			waitExpired bool
+			keepBusy    bool
+			wantError   bool
+		}{
+			{name: "saturated selects eligible alternate at zero retry budget"},
+			{name: "coordinator unavailable selects unlimited alternate", unavailable: true},
+			{name: "all limited retain coordination error", unavailable: true, allLimited: true, wantError: true},
+			{name: "pin cannot escape coordination failure", unavailable: true, pinned: true, wantError: true},
+			{name: "strict session cannot escape coordination failure", unavailable: true, strict: true, wantError: true},
+			{name: "goal filter still excludes alternate", unavailable: true, goalDenied: true, wantError: true},
+			{name: "budget rejection still excludes alternate", unavailable: true, budget: true, wantError: true},
+			{name: "ordinary failed-channel avoidance still applies", unavailable: true, failed: true, avoidFailed: true, wantError: true},
+			{name: "capacity exclusion is independent of failed-channel switch", unavailable: true, failed: true},
+			{name: "expired queue rechecks released capacity once", waitExpired: true},
+			{name: "expired queue retains original error if still busy", waitExpired: true, keepBusy: true, wantError: true},
+			{name: "expired pinned queue does not reselect", waitExpired: true, pinned: true, wantError: true},
+		} {
+			t.Run(fmt.Sprintf("cache=%t/%s", cached, tc.name), func(t *testing.T) {
+				user, _ := setupResponsesWSRequestTest(t)
+				require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelKeyEntry{}))
+				previousRetries := common.RetryTimes
+				affinity := operation_setting.GetChannelAffinitySetting()
+				previousAffinity := *affinity
+				common.RetryTimes = 0
+				*affinity = operation_setting.ChannelAffinitySetting{RetryAvoidFailedChannels: tc.avoidFailed}
+				t.Cleanup(func() {
+					common.RetryTimes, *affinity = previousRetries, previousAffinity
+					if common.MemoryCacheEnabled {
+						model.InitChannelCache()
+					}
+				})
+				const modelName = "capacity-admission-failover"
+				channels := []model.Channel{
+					{Name: "limited-A", Type: constant.ChannelTypeOpenAI, Key: "capacity-test-A", Status: common.ChannelStatusEnabled, Group: "default", Models: modelName, Priority: common.GetPointer(int64(10)), AutoBan: common.GetPointer(1)},
+					{Name: "alternate-B", Type: constant.ChannelTypeOpenAI, Key: "capacity-test-B", Status: common.ChannelStatusEnabled, Group: "default", Models: modelName, Priority: common.GetPointer(int64(5)), AutoBan: common.GetPointer(1)},
+				}
+				channels[0].SetSetting(kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+				if tc.allLimited || tc.waitExpired {
+					channels[1].SetSetting(kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+				} else if tc.goalDenied {
+					channels[1].SetSetting(kitdto.ChannelSettings{DenyGoal: true})
+				}
+				for i := range channels {
+					require.NoError(t, channels[i].Insert())
+					t.Cleanup(func() {
+						require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.ChannelKeyEntry{}).Error)
+						require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.Ability{}).Error)
+						require.NoError(t, model.DB.Delete(&channels[i]).Error)
+					})
+				}
+				var held *service.ChannelCapacityLease
+				if !tc.unavailable {
+					var apiErr *types.NewAPIError
+					held, apiErr = service.AcquireChannelCapacity(t.Context(), channels[0].Id, channels[0].GetSetting())
+					require.Nil(t, apiErr)
+					t.Cleanup(held.Release)
+				}
+				var expiredWaiter *service.ChannelWaiter
+				if tc.waitExpired {
+					other, apiErr := service.AcquireChannelCapacity(t.Context(), channels[1].Id, channels[1].GetSetting())
+					require.Nil(t, apiErr)
+					t.Cleanup(other.Release)
+					t.Setenv("CHANNEL_WAIT_TIMEOUT_SECONDS", "1")
+					expiredWaiter = service.NewChannelWaiter(t.Context(), user.Id)
+					t.Cleanup(expiredWaiter.Close)
+					// Let the real request-scoped queue expire, without sleeps or
+					// resetting its deadline. A slot released after that expiry can
+					// only be used by the final normal admission recheck.
+					_, waitErr := expiredWaiter.Wait(t.Context(), []service.ChannelWaitCandidate{{ChannelID: channels[0].Id, Settings: channels[0].GetSetting()}})
+					require.NotNil(t, waitErr)
+					require.Equal(t, types.ErrorCodeChannelCapacityWaitTimeout, waitErr.GetErrorCode())
+					if !tc.keepBusy {
+						held.Release()
+					}
+				}
+				common.MemoryCacheEnabled = cached
+				model.InitChannelCache()
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+				c.Set("id", user.Id)
+				common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+				require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channels[0], modelName))
+				state := service.RequestPolicy(c)
+				if tc.waitExpired {
+					state.BeginAttempt(&channels[0], "default")
+					state.SaturatedChannelIDs = []int{channels[0].Id, channels[1].Id}
+					state.CapacityRejectedChannelIDs = []int{channels[0].Id, channels[1].Id}
+					rememberChannelWaitCandidate(c, channels[0].Id, "default")
+					c.Set(channelWaiterContextKey, expiredWaiter)
+				}
+				if tc.pinned {
+					service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: channels[0].Id, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})
+				}
+				if tc.strict {
+					state.SessionMode = "strict"
+				}
+				if tc.goalDenied {
+					service.GetChannelConstraints(c).AddFilter(dto.ChannelFilter{Kind: dto.FilterGoalTurn})
+				}
+				if tc.budget {
+					state.BudgetRejectedChannelIDs = []int{channels[1].Id}
+				}
+				if tc.failed {
+					state.FailedChannelIDs = []int{channels[1].Id}
+				}
+				if tc.unavailable {
+					// Inject loss only at admission, after the normal fixture and
+					// key selection have completed. No local fallback is allowed.
+					common.RedisEnabled, common.RDB = true, nil
+					defer func() { common.RedisEnabled = false }()
+				}
+				info := &relaycommon.RelayInfo{TokenGroup: "default", UsingGroup: "default", UserGroup: "default", OriginModelName: modelName}
+				retry := &service.RetryParam{Ctx: c, TokenGroup: "default", ModelName: modelName, Retry: common.GetPointer(0)}
+				selected, lease, apiErr := getChannelWithCapacity(c, info, retry)
+				if lease != nil {
+					defer lease.Release()
+				}
+				if tc.wantError {
+					require.NotNil(t, apiErr)
+					wantCode := types.ErrorCodeChannelCapacityUnavailable
+					if tc.waitExpired {
+						wantCode = types.ErrorCodeChannelCapacityWaitTimeout
+					}
+					assert.Equal(t, wantCode, apiErr.GetErrorCode(), "exhaustion must retain the admission failure, not get_channel_failed")
+					assert.Nil(t, selected)
+					assert.Nil(t, lease)
+				} else {
+					require.Nil(t, apiErr)
+					require.NotNil(t, selected)
+					require.NotNil(t, lease)
+					wantChannelID := channels[1].Id
+					if tc.waitExpired {
+						wantChannelID = channels[0].Id
+					}
+					assert.Equal(t, wantChannelID, selected.Id)
+					assert.Equal(t, wantChannelID, c.GetInt("channel_id"))
+					assert.Contains(t, state.ChannelSelectionExclusions(), channels[0].Id, "rejected A stays excluded with ordinary failed-channel avoidance off")
+				}
+				assert.Zero(t, retry.GetRetry())
+				if tc.failed {
+					assert.Equal(t, []int{channels[1].Id}, state.FailedChannelIDs)
+				} else {
+					assert.Empty(t, state.FailedChannelIDs, "local refusals never count as upstream failure")
+				}
+				for _, channel := range channels {
+					stored, err := model.GetChannelById(channel.Id, true)
+					require.NoError(t, err)
+					assert.Equal(t, common.ChannelStatusEnabled, stored.Status, "admission failures cannot auto-disable healthy channels")
+				}
+			})
+		}
 	}
 }
 
