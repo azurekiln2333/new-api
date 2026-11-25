@@ -501,6 +501,31 @@ func TestRequestPolicyUpstreamHTTPFailover(t *testing.T) {
 }
 
 func TestChannelCapacityFailover(t *testing.T) {
+	t.Run("preparation retry preserves selected middleware snapshot", func(t *testing.T) {
+		setupResponsesWSRequestTest(t)
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		c.Set("channel_id", 71099)
+		c.Set("channel_type", constant.ChannelTypeOpenAI)
+		c.Set("channel_name", "prepared-channel")
+		common.SetContextKey(c, constant.ContextKeyChannelSetting, kitdto.ChannelSettings{MaxConcurrentRequests: common.GetPointer(1)})
+		state := service.RequestPolicy(c)
+		state.BeginAttempt(&model.Channel{Id: 71099}, "default")
+		// A preparation error can precede InitChannelMeta. No channel table
+		// is needed to reuse the middleware's already selected snapshot.
+		info := &relaycommon.RelayInfo{TokenGroup: "default", UsingGroup: "default", UserGroup: "default", OriginModelName: "preparation-retry"}
+		retry := &service.RetryParam{Ctx: c, TokenGroup: "default", ModelName: info.OriginModelName, Retry: common.GetPointer(1)}
+		channel, lease, apiErr := getChannelWithCapacity(c, info, retry)
+		require.Nil(t, apiErr)
+		require.NotNil(t, lease)
+		defer lease.Release()
+		require.NotNil(t, channel)
+		assert.Equal(t, 71099, channel.Id)
+		assert.Equal(t, "prepared-channel", channel.Name)
+		assert.Nil(t, info.ChannelMeta)
+		assert.Equal(t, 1, retry.GetRetry())
+		assert.Equal(t, 2, state.Attempts)
+	})
 	for _, cached := range []bool{false, true} {
 		for _, tc := range []struct {
 			name        string

@@ -450,9 +450,12 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, recheckCapacity bool) (*model.Channel, *types.NewAPIError) {
 	state := service.RequestPolicy(c)
-	if info.ChannelMeta == nil && state.Attempts == 0 && len(state.SaturatedChannelIDs) == 0 && len(state.CapacityRejectedChannelIDs) == 0 && len(state.UpstreamBusyChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
+	// Preparation can fail before ChannelMeta is initialized. Preserve the
+	// selected middleware snapshot on those retries; only the final capacity
+	// recheck explicitly requires a fresh selection after clearing exclusions.
+	if !recheckCapacity && info.ChannelMeta == nil && len(state.SaturatedChannelIDs) == 0 && len(state.CapacityRejectedChannelIDs) == 0 && len(state.UpstreamBusyChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -506,7 +509,7 @@ func getChannelWithCapacity(c *gin.Context, info *relaycommon.RelayInfo, retry *
 		_, pinned, _ := service.GetChannelConstraints(c).ResolvedPin()
 		fixedChannel := pinned || state.SessionMode == "strict" || service.ShouldSkipRetryAfterChannelAffinityFailure(c)
 		if len(state.UpstreamBusyChannelIDs) == 0 || !fixedChannel {
-			channel, err := getChannel(c, info, retry)
+			channel, err := getChannel(c, info, retry, waitFailure != nil)
 			if err == nil {
 				lease, capacityErr := service.AcquireRequestChannelCapacity(c, channel.Id)
 				if capacityErr == nil {
