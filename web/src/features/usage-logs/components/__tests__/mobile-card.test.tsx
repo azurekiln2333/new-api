@@ -195,6 +195,33 @@ it('shows model mismatch evidence when tapping the mobile model badge', async ()
   expect(within(dialog).getByText('unexpected-model')).toBeVisible()
 })
 
+it('hovering a desktop channel keeps the channel name and retry chain readable', async () => {
+  const user = userEvent.setup()
+  renderLogs({
+    columnId: 'channel',
+    logs: [
+      {
+        ...log,
+        channel: 38,
+        channel_name: 'CNBNew',
+        other: JSON.stringify({
+          admin_info: { use_channel: [118, 82, 38] },
+        }),
+      },
+    ],
+  })
+
+  await user.hover(screen.getByText('CNBNew'))
+
+  const channel = await screen.findByText('CNBNew #38')
+  const tooltip = channel.closest('[data-slot="tooltip-content"]')
+  expect(tooltip).toHaveClass('bg-popover', 'text-popover-foreground')
+  expect(channel).toBeVisible()
+  expect(
+    within(tooltip as HTMLElement).getByText('Chain: 118 → 82 → 38')
+  ).toBeVisible()
+})
+
 it('opens long channel text on tap and copies the complete value', async () => {
   const user = userEvent.setup()
   const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
