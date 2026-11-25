@@ -76,7 +76,7 @@ var consoleForwardStreamingRoutes = map[string]struct{}{
 var consoleForwardProcessLocalRoutes = map[string]struct{}{
 	http.MethodGet + " /api/channel/:id/fingerprint/:job":         {},
 	http.MethodPost + " /api/channel/:id/fingerprint/:job/cancel": {},
-	http.MethodPost + " /api/channel/ollama/pull/stream":           {},
+	http.MethodPost + " /api/channel/ollama/pull/stream":          {},
 }
 
 // ConsoleIngress verifies the internal forwarding envelope before RequestId or

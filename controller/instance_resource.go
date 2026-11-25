@@ -62,4 +62,3 @@ func entryNodeName(entry map[string]any) string {
 	nodeName, _ := entry["node_name"].(string)
 	return nodeName
 }
-

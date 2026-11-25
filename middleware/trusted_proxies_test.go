@@ -626,7 +626,9 @@ func TestConsoleIngressRejectsTamperedRequestBindings(t *testing.T) {
 		{name: "declared content length", mutate: func(r *http.Request) { r.ContentLength++ }},
 		{name: "entry node", mutate: func(r *http.Request) { r.Header.Set(consoleForwardEntryNodeHeader, "other") }},
 		{name: "request id", mutate: func(r *http.Request) { r.Header.Set(consoleForwardRequestIDHeader, "other") }},
-		{name: "duplicate proof", mutate: func(r *http.Request) { r.Header.Add(consoleForwardProofHeader, r.Header.Get(consoleForwardProofHeader)) }},
+		{name: "duplicate proof", mutate: func(r *http.Request) {
+			r.Header.Add(consoleForwardProofHeader, r.Header.Get(consoleForwardProofHeader))
+		}},
 		{name: "missing proof", mutate: func(r *http.Request) { r.Header.Del(consoleForwardProofHeader) }},
 		{name: "oversized entry node", mutate: func(r *http.Request) { r.Header.Set(consoleForwardEntryNodeHeader, strings.Repeat("n", 129)) }},
 	}

@@ -262,8 +262,8 @@ func ListOperationBatches(operationType string, actorUserId, page, pageSize int)
 	summaries := make([]*CodeBatchSummary, 0, len(rows))
 	for _, row := range rows {
 		summary := &CodeBatchSummary{
-			OperationId:     row.OperationId,
-		OperationType: row.OperationType,
+			OperationId:   row.OperationId,
+			OperationType: row.OperationType,
 			ActorUserId:   row.ActorUserId,
 			CreatedAt:     row.CreatedAt,
 		}

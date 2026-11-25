@@ -303,8 +303,8 @@ func TestInstanceResourceSummaryPublicJSONIsAllowlisted(t *testing.T) {
 	// The instance object exposes exactly the approved fields, and so does the
 	// per-resource object.
 	var decoded struct {
-		Instances []map[string]any `json:"instances"`
-		Monitoring string          `json:"monitoring"`
+		Instances  []map[string]any `json:"instances"`
+		Monitoring string           `json:"monitoring"`
 	}
 	require.NoError(t, common.UnmarshalJsonStr(body, &decoded))
 	require.Len(t, decoded.Instances, 1)

@@ -242,8 +242,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 
 	// router/api-router.go: /api/redemption
 	"GET /api/redemption/":           accessTokenScopeRule("redemption:read"),
-	"GET /api/redemption/export":      accessTokenScopeRule("redemption:read"),
-	"GET /api/redemption/batches":     accessTokenScopeRule("redemption:read"),
+	"GET /api/redemption/export":     accessTokenScopeRule("redemption:read"),
+	"GET /api/redemption/batches":    accessTokenScopeRule("redemption:read"),
 	"GET /api/redemption/search":     accessTokenScopeRule("redemption:read"),
 	"GET /api/redemption/:id":        accessTokenScopeRule("redemption:read"),
 	"POST /api/redemption/":          accessTokenScopeRule("redemption:write"),

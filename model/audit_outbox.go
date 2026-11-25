@@ -87,9 +87,9 @@ type AuditEventOutbox struct {
 	NextAttemptAt int64  `gorm:"not null;default:0;index:idx_audit_outbox_pending" json:"next_attempt_at"`
 	// LeaseToken and LeaseUntil serialize the drain across masters: a row is only
 	// claimable when no live lease holds it.
-	LeaseToken    string `gorm:"type:varchar(64);not null;default:''" json:"lease_token"`
-	LeaseUntil    int64  `gorm:"not null;default:0" json:"lease_until"`
-	DeliveredAt   int64  `gorm:"not null;default:0;index:idx_audit_outbox_pending" json:"delivered_at"`
+	LeaseToken  string `gorm:"type:varchar(64);not null;default:''" json:"lease_token"`
+	LeaseUntil  int64  `gorm:"not null;default:0" json:"lease_until"`
+	DeliveredAt int64  `gorm:"not null;default:0;index:idx_audit_outbox_pending" json:"delivered_at"`
 	// LastError holds a safe category rather than raw driver text, so no SQL and
 	// no payload content can leak into the outbox.
 	LastError string `gorm:"type:varchar(64);not null;default:''" json:"last_error"`

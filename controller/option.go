@@ -247,8 +247,8 @@ func validateOptionUpdate(option *OptionUpdateRequest, updates map[string]string
 	case "GitHubOAuthEnabled", "discord.enabled", "oidc.enabled", "LinuxDOOAuthEnabled":
 		providers := map[string][2]string{
 			"GitHubOAuthEnabled":  {"GitHub OAuth", "GitHubClientId"},
-			"discord.enabled":    {"Discord OAuth", "discord.client_id"},
-			"oidc.enabled":       {"OIDC", "oidc.client_id"},
+			"discord.enabled":     {"Discord OAuth", "discord.client_id"},
+			"oidc.enabled":        {"OIDC", "oidc.client_id"},
 			"LinuxDOOAuthEnabled": {"LinuxDO OAuth", "LinuxDOClientId"},
 		}
 		provider := providers[option.Key]
@@ -318,7 +318,7 @@ func validateOptionUpdate(option *OptionUpdateRequest, updates map[string]string
 				}
 			}
 			if err = model.ValidateModelPricing(modelName, model.PricingValues{
-				"billing_setting.billing_expr":         expressions[modelName],
+				"billing_setting.billing_expr":          expressions[modelName],
 				billing_setting.PluginBillingExprOption: variants,
 			}); err != nil {
 				return common.NewMessage("Invalid billing expression for model {{model}}: {{error}}", map[string]any{"model": modelName, "error": err.Error()})

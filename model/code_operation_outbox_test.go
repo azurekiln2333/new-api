@@ -633,7 +633,7 @@ func TestCodeExportContractsAcrossDatabase(t *testing.T) {
 			invitationOperationId := common.GetUUID()
 			encodeResult := func(operationId, key string) string {
 				encoded, err := common.Marshal(CodeBatchResult{OperationId: operationId, Keys: []string{key}})
-					require.NoError(t, err)
+				require.NoError(t, err)
 				return string(encoded)
 			}
 			batches := []ManagementOperationBatch{
@@ -690,7 +690,6 @@ func TestCodeExportContractsAcrossDatabase(t *testing.T) {
 		})
 	}
 }
-
 
 // TestRecordManagementAuditFallsBackWithSameEventIdentity forces the primary
 // outbox insert to fail and verifies the direct sink fallback preserves the exact
