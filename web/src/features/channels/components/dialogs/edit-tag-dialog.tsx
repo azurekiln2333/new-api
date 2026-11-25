@@ -33,6 +33,7 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { handleServerError } from '@/lib/handle-server-error'
+import { compareModelOptions } from '@/lib/model-options'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
@@ -300,10 +301,12 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
 
                 <div className='flex gap-2'>
                   <Combobox
-                    options={availableModels.map((model) => ({
-                      value: model,
-                      label: model,
-                    }))}
+                    options={availableModels
+                      .map((model) => ({
+                        value: model,
+                        label: model,
+                      }))
+                      .sort(compareModelOptions)}
                     onValueChange={(value: string | null) => {
                       if (value !== null && !selectedModels.includes(value)) {
                         setSelectedModels([...selectedModels, value])

@@ -154,11 +154,11 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function renderDialog(keys: KeyStatus[]) {
+async function renderDialog(keys: KeyStatus[], currentChannel = channel) {
   const post = mockKeyStatus(keys)
   render(
     <I18nextProvider i18n={i18n}>
-      <DialogHarness />
+      <DialogHarness channel={currentChannel} />
     </I18nextProvider>
   )
   await screen.findByText('Allowed Models')
@@ -455,15 +455,56 @@ test('each key row shows the masked key preview next to its index', async () => 
   expect(screen.getByText('2. -')).toBeVisible()
 })
 
-test('setting models on a key posts the key index with the selected models', async () => {
-  const post = await renderDialog([keyStatus({ index: 0 })])
+test('setting models sorts dropdown choices but preserves allowlist and catalog order in the key-index save', async () => {
+  const allowedModels = ['z-model', 'model-10', 'selected-only']
+  Object.freeze(allowedModels)
+  const currentChannel = {
+    ...channel,
+    models: 'z-model,model-10,model-2,alpha-model,Alpha-model',
+  }
+  const post = await renderDialog(
+    [keyStatus({ index: 0, scope_mode: 'allowlist', models: allowedModels })],
+    currentChannel
+  )
   const user = userEvent.setup()
 
   await user.click(screen.getByRole('button', { name: 'Set Models' }))
-  await user.click(screen.getByRole('combobox', { name: 'All models' }))
-  await user.click(await screen.findByRole('option', { name: 'model-a' }))
+  const manager = screen.getByRole('dialog', {
+    name: /Multi-Key Management.*multi/,
+  })
+  expect(
+    [...manager.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['z-model', 'model-10', 'selected-only'])
+  await user.click(screen.getByRole('combobox', { name: 'Select models' }))
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual([
+    'Alpha-model',
+    'alpha-model',
+    'model-2',
+    'model-10',
+    'selected-only',
+    'z-model',
+  ])
+  expect(
+    post.mock.calls.some(
+      ([, body]) => (body as { action: string }).action === 'set_key_models'
+    )
+  ).toBe(false)
+  await user.click(screen.getByRole('option', { name: 'model-2' }))
   // The multi-select keeps its popup open; closing it restores the dialog body.
   await user.keyboard('{Escape}')
+  expect(
+    [...manager.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['z-model', 'model-10', 'selected-only', 'model-2'])
+  expect(allowedModels).toEqual(['z-model', 'model-10', 'selected-only'])
+  expect(currentChannel.models).toBe(
+    'z-model,model-10,model-2,alpha-model,Alpha-model'
+  )
   await user.click(screen.getByRole('button', { name: 'Save' }))
 
   await waitFor(() =>
@@ -473,10 +514,15 @@ test('setting models on a key posts the key index with the selected models', asy
         channel_id: 7,
         action: 'set_key_models',
         key_index: 0,
-        models: ['model-a'],
+        scope_mode: 'allowlist',
+        models: ['z-model', 'model-10', 'selected-only', 'model-2'],
       }),
-      expect.anything()
+      expect.objectContaining({ singleUseAuthorization: true })
     )
+  )
+  expect(allowedModels).toEqual(['z-model', 'model-10', 'selected-only'])
+  expect(currentChannel.models).toBe(
+    'z-model,model-10,model-2,alpha-model,Alpha-model'
   )
 })
 

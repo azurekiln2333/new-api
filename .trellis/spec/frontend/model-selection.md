@@ -65,6 +65,15 @@ continues to mean All models; an unfinished blank `modelValues` row is omitted b
 the existing parser and produces `{}`, not an empty named map. Sorting must not
 reorder model-value rows, emitted config, selected chips or dirty-pricing dialogs.
 
+Channel, per-group and per-Key model limits opt into `compareModelOptions` on the
+existing `MultiSelect`. Tag model choices and both mapping autocomplete fields
+sort newly mapped candidates only. Preserve channel catalogs, selected chips,
+group order, mapping row/JSON order and saved allowlists. Per-Key All models and
+explicit empty deny-all remain distinct; sorting must not change stable Key
+identity/revision or discovery preview/apply guards. Existing channel
+configuration, per-Key scope and mapping suites assert display order alongside
+unchanged payload order and frozen input arrays.
+
 ## Playground channel visibility
 
 `canSelectPlaygroundChannel(user)` requires both the administrator role and

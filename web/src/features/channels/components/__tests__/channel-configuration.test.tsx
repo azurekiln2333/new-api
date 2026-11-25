@@ -3714,6 +3714,83 @@ test('multi-key channels keep the conversion flags out of the payload', async ()
   expect(payload.key_mode).toBeUndefined()
 })
 
+test('channel model dropdowns sort display choices without changing the selected or saved model order', async () => {
+  editingChannel = {
+    ...editingChannel,
+    models: 'z-model,model-10,model-2,manual-model',
+    settings: JSON.stringify({
+      group_models: { default: ['z-model', 'model-10', 'model-2'] },
+    }),
+  }
+  pluginOptions = []
+  const availableModels = [
+    { id: 'model-10' },
+    { id: 'z-model' },
+    { id: 'model-2' },
+    { id: 'alpha-model' },
+    { id: 'Alpha-model' },
+  ]
+  Object.freeze(availableModels)
+  const originalGet = vi.mocked(api.get).getMockImplementation()
+  vi.mocked(api.get).mockImplementation(async (url, ...rest) => {
+    if (url === '/api/channel/models') {
+      return { data: { success: true, data: availableModels } }
+    }
+    return originalGet?.(url, ...rest)
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+
+  const modelGroup = screen.getByRole('group', { name: 'Models' })
+  const modelPicker = within(modelGroup).getByRole('combobox', {
+    name: 'Select models or add custom ones',
+  })
+  expect(
+    [...modelGroup.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['z-model', 'model-10', 'model-2', 'manual-model'])
+  await user.click(modelPicker)
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual([
+    'Alpha-model',
+    'alpha-model',
+    'manual-model',
+    'model-2',
+    'model-10',
+    'z-model',
+  ])
+  await user.keyboard('{Escape}')
+
+  const groupPicker = screen.getByRole('combobox', { name: 'All models' })
+  await user.click(groupPicker)
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['manual-model', 'model-2', 'model-10', 'z-model'])
+  await user.keyboard('{Escape}')
+
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const payload = put.mock.calls[0]?.[1] as { models: string; settings: string }
+  expect(payload.models).toBe('z-model,model-10,model-2,manual-model')
+  expect(JSON.parse(payload.settings).group_models).toEqual({
+    default: ['z-model', 'model-10', 'model-2'],
+  })
+  expect(availableModels).toEqual([
+    { id: 'model-10' },
+    { id: 'z-model' },
+    { id: 'model-2' },
+    { id: 'alpha-model' },
+    { id: 'Alpha-model' },
+  ])
+  expect(editingChannel.models).toBe('z-model,model-10,model-2,manual-model')
+})
+
 test('saving drops per-group model visibility entries that no longer match the channel models', async () => {
   editingChannel = {
     ...editingChannel,

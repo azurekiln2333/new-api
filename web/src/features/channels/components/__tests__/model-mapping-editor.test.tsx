@@ -85,32 +85,103 @@ test('language changes preserve draft mappings and explain the same direction in
   )
 })
 
-test('a new row focuses its request field and both fields offer searchable model options', async () => {
+test('a new row focuses naturally sorted searchable choices without reordering catalogs, mapping rows or emitted keys', async () => {
   const user = userEvent.setup()
   const onChange = vi.fn()
+  const sourceModels = [
+    'model-10',
+    'beta-model',
+    'alpha-model',
+    'model-2',
+    'Alpha-model',
+  ]
+  const targetModels = [
+    'upstream-10',
+    'z-upstream',
+    'upstream-2',
+    'alpha-upstream',
+    'Alpha-upstream',
+  ]
+  Object.freeze(sourceModels)
+  Object.freeze(targetModels)
   render(
     <ModelMappingEditor
-      value=''
+      value='{"z-alias":"z-upstream","a-alias":"a-upstream"}'
       onChange={onChange}
-      sourceModelOptions={['alpha-model', 'beta-model']}
-      targetModelOptions={['upstream-a']}
+      sourceModelOptions={sourceModels}
+      targetModelOptions={targetModels}
     />
   )
+  expect(onChange).not.toHaveBeenCalled()
   await user.click(screen.getByRole('button', { name: 'Add Mapping' }))
-  const source = screen.getByRole('combobox', { name: 'Request Model Name' })
+  const source = screen.getAllByRole('combobox', {
+    name: 'Request Model Name',
+  })[2]
   expect(source).toHaveFocus()
   expect(source).toHaveAttribute('aria-expanded', 'true')
-  await user.click(screen.getByRole('option', { name: 'alpha-model' }))
-  expect(source).toHaveValue('alpha-model')
-  expect(onChange).toHaveBeenLastCalledWith('{\n  "alpha-model": ""\n}')
-
-  await user.click(
-    screen.getByRole('combobox', { name: 'Upstream Model Name' })
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual([
+    'Alpha-model',
+    'alpha-model',
+    'beta-model',
+    'model-2',
+    'model-10',
+  ])
+  expect(onChange).toHaveBeenCalledExactlyOnceWith(
+    '{\n  "z-alias": "z-upstream",\n  "a-alias": "a-upstream"\n}'
   )
-  await user.click(screen.getByRole('option', { name: 'upstream-a' }))
+  await user.click(screen.getByRole('option', { name: 'model-2' }))
+  expect(source).toHaveValue('model-2')
   expect(onChange).toHaveBeenLastCalledWith(
-    '{\n  "alpha-model": "upstream-a"\n}'
+    '{\n  "z-alias": "z-upstream",\n  "a-alias": "a-upstream",\n  "model-2": ""\n}'
   )
+
+  const target = screen.getAllByRole('combobox', {
+    name: 'Upstream Model Name',
+  })[2]
+  await user.click(target)
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual([
+    'Alpha-upstream',
+    'alpha-upstream',
+    'upstream-2',
+    'upstream-10',
+    'z-upstream',
+  ])
+  await user.type(target, 'upstream-')
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['upstream-2', 'upstream-10'])
+  await user.click(screen.getByRole('option', { name: 'upstream-10' }))
+  expect(onChange).toHaveBeenLastCalledWith(
+    '{\n  "z-alias": "z-upstream",\n  "a-alias": "a-upstream",\n  "model-2": "upstream-10"\n}'
+  )
+  expect(
+    screen.getAllByRole('combobox', { name: 'Request Model Name' }).map(
+      (input) => (input as HTMLInputElement).value
+    )
+  ).toEqual(['z-alias', 'a-alias', 'model-2'])
+  expect(
+    screen.getAllByRole('combobox', { name: 'Upstream Model Name' }).map(
+      (input) => (input as HTMLInputElement).value
+    )
+  ).toEqual(['z-upstream', 'a-upstream', 'upstream-10'])
+  expect(sourceModels).toEqual([
+    'model-10',
+    'beta-model',
+    'alpha-model',
+    'model-2',
+    'Alpha-model',
+  ])
+  expect(targetModels).toEqual([
+    'upstream-10',
+    'z-upstream',
+    'upstream-2',
+    'alpha-upstream',
+    'Alpha-upstream',
+  ])
 })
 
 test('the row filter appears from six mappings and narrows the visible rows by either name', async () => {

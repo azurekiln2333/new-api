@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { handleServerError } from '@/lib/handle-server-error'
+import { compareModelOptions } from '@/lib/model-options'
 
 import { fetchMultiKeyModels } from '../../api'
 import { isQuotaConflict } from '../../lib/quota-operation'
@@ -165,6 +166,7 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
       </div>
       <MultiSelect
         options={options}
+        compareOptions={compareModelOptions}
         selected={models}
         onChange={(next) => {
           setAllModels(false)
