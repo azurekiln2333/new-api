@@ -2,7 +2,7 @@
 
 Task: `.trellis/tasks/11-24-console-responsiveness-diagnostics`. Sole Git index/commit owner; root `w5D:pG` owns pushes. User authorized immediate REFRESH, all eligible tracked/untracked changes, one requirement per Conventional Commit, no attribution trailers, no rollback/history rewriting. Shared-file intermediate states were staged as Git blobs only: no peer worktree content was overwritten.
 
-**All feature groups committed through `da86af702`.** Only final CI wiring, concrete hosted-error corrections and legitimate Trellis bookkeeping remain. No local tests/builds/lint/typecheck/formatters/database probes were run. Latest integrated SHA is not verified; GitHub Actions is the only verification authority. Root pushed snapshot `e539e8b7d`; run `45609908761` reports actual formatting/lint failures. Peers are reading exact hosted output, not running local checks.
+**All feature groups, CI wiring and legitimate task records are committed.** Root owns index, commits and pushes. Published snapshot `29603d7ef` is under Actions run `45624501411`; backend is green, frontend tests passed but frontend lint/format failed, and integration is pending. Newer corrections need a fresh exact-SHA run. Merge, tag and image publication remain pending. No local tests/builds/lint/typecheck/formatters/database probes were run.
 
 ## Actual first-parent series
 
@@ -30,6 +30,36 @@ Starting HEAD: `9329486b8060ad6c0ae6c68c40a723b65e8c105e`.
 | `6b5eadce5` | `feat(updates): support configurable release repositories` |
 | `575888f8d` | `feat(auth): separate required invitation codes from referral links` |
 | `da86af702` | `feat(logs): add opt-in bounded storage retention` |
+| `9a29d6f7a` | `ci: wire focused console regressions into hosted checks` |
+| `842ac972b` | `ci: expose hosted formatter diffs without masking failures` |
+| `c9691f079` | `test(codes): await durable redemption deletion audits` |
+| `d6cbfe416` | `fix(audit): preserve PAT and deferred role audit expectations` |
+| `d33ea765d` | `style(go): apply hosted formatter corrections` |
+| `ab8693c41` | `test(channels): initialize sync tasks in management fixtures` |
+| `98076fe0d` | `test(settings): reject upserts in failed policy save regression` |
+| `0b6691f78` | `test(channels): await the rendered budget card before assertions` |
+| `afe3c87db` | `fix(dashboard): align API panel regressions with status responses` |
+| `b1e85cfa0` | `style(rankings): apply hosted layout formatting` |
+| `5fd282fc4` | `test(codes): provide export context for redemption deletion` |
+| `480b952c8` | `test(settings): exercise editable API entries and row actions` |
+| `e99163bd6` | `style(audit): align actor fields after token reference cleanup` |
+| `53c7ee9c3` | `test(users): isolate detail requests from rate limit queries` |
+| `857a17277` | `test(updates): await repository observer transitions` |
+| `a060e50ae` | `fix(settings): isolate rate limit dialog submission` |
+| `d648fa433` | `test(channels): isolate external channel creation fixtures` |
+| `812eef7cd` | `test(dashboard): scope node assertions to the open detail` |
+| `860aa7d2d` | `fix(drawers): preserve drafts across same-record refreshes` |
+| `4a510b645` | `fix(settings): simplify labels and guard saved option values` |
+| `cc5f9dbc6` | `style(updates): apply hosted regression formatting` |
+| `4511dda22` | `ci: run independent checks after earlier validation failures` |
+| `faf40987f` | `ci: keep formatter annotations below the hosted message limit` |
+| `29603d7ef` | `style(console): apply complete hosted formatter corrections` |
+| `58c04e4b8` | `style(settings): complete truncated hosted formatter corrections` |
+| `8839916cf` | `docs(spec): record bounded log retention contracts` |
+| `7e270c230` | `docs(trellis): retain reopened workspace integration records` |
+| `9cf1dee91` | `docs(console): record forwarding contracts and node rollout` |
+| `d3c68948b` | `docs(trellis): preserve feature handoffs and pending hosted validation` |
+| `b058a952f` | `style(settings): add required braces to multiline conditions` |
 
 Capacity hotfix: remote `fork/main` was `271b89fcf`. All eleven source/test/catalog files exactly matched that released tip. Commit `92a083168` has parents `8cc97faf8` and `271b89fcf`, retaining the existing hotfix ancestry without replaying or reverting it.
 

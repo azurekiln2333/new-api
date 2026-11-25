@@ -28,7 +28,9 @@ Release order: forwarding first (user priority), together with whatever else is 
 | pi-drawers | w4C:p1E | user-chosen | Finish R15 (+ sibling drawers) and R13 |
 | pi-web-review | w4C:p1F | user-chosen | Static pre-CI review of web/ diff |
 | pi-commit-plan | w4C:p1G | user-chosen | Commit grouping plan in research/commit-plan.md |
+Historical note: pi-ui (w4C:p12) moved to the production `channel.capacity_unavailable` bug (`service/channel_capacity.go`, `common/redis.go`).
+
 ## Frozen integration ownership — 2026-11-25 snapshot
 
-This supersedes the prior p2/p4/p6 assignments above for final integration and clean-worktree handoff: **root alone owns the Git index and all staging/commits/pushes; p2 owns formatting follow-up; p4 owns CI workflow/failure wiring; p6 owns frontend failure triage.** Do not stage, commit, push or alter another owner's source. Historical worker reports remain as authored; the parent integration report records the later CI snapshot. The moved generated artifacts remain outside the repository with `move-manifest.json`; the incident report remains preserved and unresolved. No further SSO/Passkey investigation is part of this handoff.
+This supersedes the prior p2/p4/p6 assignments above for final integration and clean-worktree handoff: **root alone owns the Git index and all staging/commits/pushes; p2 completed PR review; p4 monitors backend/integration CI; p6 monitors frontend CI; p5 completed bookkeeping review. Workers are source-frozen until root assigns an exact hosted failure.** Do not stage, commit, push or alter another owner's source. Historical worker reports remain as authored; the parent integration report records the later CI snapshot. The moved generated artifacts remain outside the repository with `move-manifest.json`; the incident report remains preserved and unresolved. No further SSO/Passkey investigation is part of this handoff.
 
