@@ -515,6 +515,12 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: go test -p 1 -count=1 -v ./setting/system_setting -run 'TestUpdateSource|TestValidateUpdateSourceRepository'
 
+      - name: Verify linked update-source build default
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        env:
+          TEST_UPDATE_SOURCE_BUILD_REPOSITORY: ${{ github.repository }}
+        run: go test -p 1 -count=1 -v -ldflags "-X 'github.com/QuantumNous/new-api/setting/system_setting.UpdateSourceBuildDefaultRepository=$TEST_UPDATE_SOURCE_BUILD_REPOSITORY'" ./setting/system_setting -run '^TestUpdateSourceRepositoryLinkedBuildDefault$'
+
       - name: Verify session admission, refresh recovery and login avatars on SQLite, MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
