@@ -118,8 +118,16 @@ export function PricingSection({ defaultValues }: PricingSectionProps) {
       onSubmit: async (_data, changedFields) => {
         await updateOption.mutateAsync(
           Object.entries(changedFields).flatMap(([key, value]) => {
-            if (value === undefined || value === null || typeof value === 'object') return []
-            const serialized = typeof value === 'number' && !Number.isFinite(value) ? '0' : String(value)
+            if (
+              value === undefined ||
+              value === null ||
+              typeof value === 'object'
+            )
+              return []
+            const serialized =
+              typeof value === 'number' && !Number.isFinite(value)
+                ? '0'
+                : String(value)
             return [{ key, value: serialized }]
           })
         )
@@ -228,9 +236,7 @@ export function PricingSection({ defaultValues }: PricingSectionProps) {
                     <FormLabel>
                       {displayType === 'CNY'
                         ? t('CNY per USD')
-                        : displayType === 'USD'
-                          ? t('USD Exchange Rate')
-                          : t('USD Exchange Rate')}
+                        : t('USD Exchange Rate')}
                     </FormLabel>
                     <FormControl>
                       <Input

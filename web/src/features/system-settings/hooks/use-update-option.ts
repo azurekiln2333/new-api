@@ -100,21 +100,30 @@ const SPECIALIZED_OPTION_KEYS = new Set([
 ])
 
 function isSpecializedOption(key: string): boolean {
-  return SPECIALIZED_OPTION_KEYS.has(key) || key.startsWith('channel_affinity_setting.')
+  return (
+    SPECIALIZED_OPTION_KEYS.has(key) ||
+    key.startsWith('channel_affinity_setting.')
+  )
 }
 
 export function useUpdateOption() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (request: UpdateOptionRequest | UpdateOptionRequest[]) => {
+    mutationFn: async (
+      request: UpdateOptionRequest | UpdateOptionRequest[]
+    ) => {
       if (!Array.isArray(request)) {
         return requireServerSuccess(await updateSystemOption(request))
       }
-      const ordinary = request.filter((option) => !isSpecializedOption(option.key))
+      const ordinary = request.filter(
+        (option) => !isSpecializedOption(option.key)
+      )
       // Domain/pricing/policy saves are deliberately not part of the ordinary
       // transaction. Their existing preview/confirmation and validation remain.
-      for (const option of request.filter((option) => isSpecializedOption(option.key))) {
+      for (const option of request.filter((option) =>
+        isSpecializedOption(option.key)
+      )) {
         requireServerSuccess(await updateSystemOption(option))
       }
       if (ordinary.length === 0) return { success: true, message: '' }
@@ -128,18 +137,26 @@ export function useUpdateOption() {
             .filter((option) => !isSpecializedOption(option.key))
             .map((option) => [option.key, String(option.value)])
         )
-        queryClient.setQueryData<SystemOptionsResponse>(['system-options'], (previous) => {
-          if (!previous?.data) return previous
-          return {
-            ...previous,
-            data: previous.data.map((option) =>
-              saved.has(option.key) ? { ...option, value: saved.get(option.key)! } : option
-            ),
+        queryClient.setQueryData<SystemOptionsResponse>(
+          ['system-options'],
+          (previous) => {
+            if (!previous?.data) return previous
+            return {
+              ...previous,
+              data: previous.data.map((option) => {
+                const value = saved.get(option.key)
+                return value === undefined ? option : { ...option, value }
+              }),
+            }
           }
-        })
+        )
         void queryClient.invalidateQueries({
           queryKey: ['system-options'],
-          refetchType: variables.some((option) => isSpecializedOption(option.key)) ? 'active' : 'none',
+          refetchType: variables.some((option) =>
+            isSpecializedOption(option.key)
+          )
+            ? 'active'
+            : 'none',
         })
         if (variables.some((option) => STATUS_RELATED_KEYS.has(option.key))) {
           void queryClient.invalidateQueries({ queryKey: ['status'] })
@@ -193,14 +210,19 @@ export function useUpdateOption() {
       }
     },
     onError: (error: Error, variables) => {
-      if (Array.isArray(variables) && variables.some((option) => isSpecializedOption(option.key))) {
+      if (
+        Array.isArray(variables) &&
+        variables.some((option) => isSpecializedOption(option.key))
+      ) {
         // An earlier specialized save may have committed before another path
         // failed. Reconcile normalized results without pretending atomicity
         // across the separate security/pricing/policy workflows.
         void queryClient.invalidateQueries({ queryKey: ['system-options'] })
         void queryClient.invalidateQueries({ queryKey: ['status'] })
       }
-      const failure = getServerErrorSources(error).find((source) => typeof source.key === 'string')
+      const failure = getServerErrorSources(error).find(
+        (source) => typeof source.key === 'string'
+      )
       if (typeof failure?.key === 'string') {
         handleServerError(error, undefined, {
           title: i18next.t('Could not save {{key}}: {{error}}', {
