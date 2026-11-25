@@ -291,7 +291,7 @@ func TestSecurityLoginSessionLimitPolicy(t *testing.T) {
 			{name: "issuance limit", issuanceLimit: 1, sessions: 1, status: http.StatusTooManyRequests, code: "AUTH_SESSION_ISSUANCE_LIMIT"},
 		} {
 			t.Run(fmt.Sprintf("verified=%t/%s", verified, test.name), func(t *testing.T) {
-				user, _ := setupSecurityEnrollmentTest(t)
+				user, identity := setupSecurityEnrollmentTest(t)
 				previousActive, previousIssuance := common.UserSessionActiveLimit, common.UserSessionIssuanceLimit
 				previousPassword := common.PasswordLoginEnabled
 				common.UserSessionActiveLimit, common.UserSessionIssuanceLimit = test.activeLimit, test.issuanceLimit
@@ -367,6 +367,20 @@ func TestSecurityLoginSessionLimitPolicy(t *testing.T) {
 				} else {
 					assert.Equal(t, 1, activeCountQueries)
 				}
+				if test.name == "positive cap ignores unusable sessions" {
+					var bundle service.AuthBundle
+					require.NoError(t, common.Unmarshal(decodeSecurityEnrollmentResponse(t, response).Data, &bundle))
+					for _, currentSID := range []string{"", "session-policy-03"} {
+						sessions, err := model.ListActiveUserSessions(user.Id, currentSID, time.Now().Unix())
+						require.NoError(t, err)
+						require.Len(t, sessions, 2, "listing must exclude unusable rows, including a revoked current-session shortcut")
+						sids := make([]string, 0, len(sessions))
+						for _, session := range sessions {
+							sids = append(sids, session.SID)
+						}
+						assert.ElementsMatch(t, []string{identity.SessionID, bundle.Session.SID}, sids)
+					}
+				}
 				var count int64
 				require.NoError(t, model.DB.Model(&model.UserSession{}).Count(&count).Error)
 				expectedCount := test.sessions
@@ -376,7 +390,7 @@ func TestSecurityLoginSessionLimitPolicy(t *testing.T) {
 				} else {
 					assert.Empty(t, response.Header().Values("Set-Cookie"))
 				}
-				assert.EqualValues(t, expectedCount, count)
+				assert.EqualValues(t, expectedCount, count, "admission and listing must preserve historical session rows")
 				var revoked int64
 				require.NoError(t, model.DB.Model(&model.UserSession{}).Where("status <> ?", model.UserSessionStatusActive).Count(&revoked).Error)
 				expectedRevoked := 0
