@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,6 +65,110 @@ func TestAuthLogoutRejectsRefreshCookieSessionMismatch(t *testing.T) {
 		stored, err := model.GetUserSessionBySID(sid)
 		require.NoError(t, err)
 		assert.Equal(t, model.UserSessionStatusActive, stored.Status)
+	}
+}
+
+func TestRefreshAuthRetainsCookieAfterTemporarySessionLookupFailure(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "refresh-transient-agent")
+	require.NoError(t, err)
+
+	const callbackName = "test:refresh_session_lookup_failure"
+	require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "user_sessions" {
+			tx.AddError(errors.New("temporary database unavailable"))
+		}
+	}))
+	callbackInstalled := true
+	t.Cleanup(func() {
+		if callbackInstalled {
+			require.NoError(t, model.DB.Callback().Query().Remove(callbackName))
+		}
+	})
+
+	failedRecorder := httptest.NewRecorder()
+	failedContext, _ := gin.CreateTestContext(failedRecorder)
+	failedContext.Request = httptest.NewRequest(http.MethodPost, "/api/user/auth/refresh", nil)
+	failedContext.Request.AddCookie(&http.Cookie{Name: service.RefreshCookieName, Value: bundle.RefreshToken})
+	RefreshAuth(failedContext)
+	require.NoError(t, model.DB.Callback().Query().Remove(callbackName))
+	callbackInstalled = false
+
+	assert.Equal(t, http.StatusInternalServerError, failedRecorder.Code)
+	assert.Empty(t, failedRecorder.Result().Cookies(), "a temporary storage failure must not clear the browser's refresh cookie")
+	var failure struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code"`
+	}
+	require.NoError(t, common.Unmarshal(failedRecorder.Body.Bytes(), &failure))
+	assert.False(t, failure.Success)
+	assert.Equal(t, "AUTH_INTERNAL_ERROR", failure.Code)
+
+	stored, err := model.GetUserSessionBySID(bundle.Session.SID)
+	require.NoError(t, err)
+	assert.Equal(t, model.UserSessionStatusActive, stored.Status)
+
+	retryRecorder := httptest.NewRecorder()
+	retryContext, _ := gin.CreateTestContext(retryRecorder)
+	retryContext.Request = httptest.NewRequest(http.MethodPost, "/api/user/auth/refresh", nil)
+	retryContext.Request.AddCookie(&http.Cookie{Name: service.RefreshCookieName, Value: bundle.RefreshToken})
+	RefreshAuth(retryContext)
+
+	assert.Equal(t, http.StatusOK, retryRecorder.Code)
+	var retry struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Session struct {
+				SID string `json:"sid"`
+			} `json:"session"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(retryRecorder.Body.Bytes(), &retry))
+	assert.True(t, retry.Success)
+	assert.Equal(t, bundle.Session.SID, retry.Data.Session.SID, "retrying the original cookie must refresh the same database session")
+}
+
+func TestRefreshAuthClearsMissingRevokedAndExpiredSessionCookies(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	missingBundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "missing-agent")
+	require.NoError(t, err)
+	revokedBundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "revoked-agent")
+	require.NoError(t, err)
+	expiredBundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "expired-agent")
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Delete(&model.UserSession{}, "sid = ?", missingBundle.Session.SID).Error)
+	revoked, err := model.RevokeUserSession(user.Id, revokedBundle.Session.SID, "test-revoked")
+	require.NoError(t, err)
+	require.True(t, revoked)
+	require.NoError(t, model.DB.Model(&model.UserSession{}).Where("sid = ?", expiredBundle.Session.SID).Update("expires_at", time.Now().Add(-time.Minute).Unix()).Error)
+
+	for _, test := range []struct {
+		name         string
+		refreshToken string
+	}{
+		{name: "missing session", refreshToken: missingBundle.RefreshToken},
+		{name: "revoked session", refreshToken: revokedBundle.RefreshToken},
+		{name: "expired session", refreshToken: expiredBundle.RefreshToken},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/user/auth/refresh", nil)
+			c.Request.AddCookie(&http.Cookie{Name: service.RefreshCookieName, Value: test.refreshToken})
+			RefreshAuth(c)
+
+			assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+			var clearedCookie *http.Cookie
+			for _, cookie := range recorder.Result().Cookies() {
+				if cookie.Name == service.RefreshCookieName {
+					clearedCookie = cookie
+					break
+				}
+			}
+			require.NotNil(t, clearedCookie, "confirmed invalid sessions must clear their refresh cookie")
+			assert.Empty(t, clearedCookie.Value)
+			assert.Less(t, clearedCookie.MaxAge, 0)
+		})
 	}
 }
 
