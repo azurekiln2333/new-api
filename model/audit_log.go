@@ -74,6 +74,50 @@ func AccessTokenFingerprint(token string) string {
 // RecordAuditLog captures safe request metadata only; raw URLs, query strings,
 // credentials and response/request bodies must never enter this table.
 func RecordAuditLog(c *gin.Context, entry AuditLog) {
+	ctx, entry := snapshotAuditLog(c, entry)
+	if entry.Username == "" {
+		entry.Username, _ = GetUsernameById(entry.UserId, false)
+	}
+	if LOG_DB == nil {
+		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): log database unavailable", entry.RequestId))
+		return
+	}
+	if err := WriteAuditLogEntry(ctx, entry); err != nil {
+		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
+	}
+}
+
+// RecordAuditLogDurable snapshots a middleware event before returning from the
+// request and persists its obligation in the primary outbox. It never looks up
+// an actor name or waits for normal log delivery. The bounded direct fallback
+// retains the same event if enqueue fails; both failures are returned to the
+// caller. This post-handler path retains the documented post-commit crash gap.
+func RecordAuditLogDurable(c *gin.Context, entry AuditLog) error {
+	ctx, entry := snapshotAuditLog(c, entry)
+	_, err := RecordManagementAuditDurable(ctx, AuditEventDraft{
+		EventId:       entry.EventId,
+		Category:      entry.Category,
+		Action:        entry.Action,
+		ActorUserId:   entry.UserId,
+		ActorUsername: entry.Username,
+		ActorRole:     entry.ActorRole,
+		AuthMethod:    entry.AuthMethod,
+		TokenRef:      entry.TokenRef,
+		Ip:            entry.Ip,
+		UserAgent:     entry.UserAgent,
+		Method:        entry.Method,
+		Route:         entry.Route,
+		Status:        entry.Status,
+		Success:       entry.Success,
+		RequestId:     entry.RequestId,
+		Content:       entry.Content,
+		Other:         &entry.Other,
+		CreatedAt:     entry.CreatedAt,
+	})
+	return err
+}
+
+func snapshotAuditLog(c *gin.Context, entry AuditLog) (context.Context, AuditLog) {
 	ctx := context.Background()
 	if c != nil && c.Request != nil {
 		ctx = c.Request.Context()
@@ -82,6 +126,9 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 		entry.UserAgent = c.Request.UserAgent()
 		entry.Method = c.Request.Method
 		entry.Route = c.FullPath()
+		if entry.Username == "" && entry.UserId == c.GetInt("id") {
+			entry.Username = c.GetString("username")
+		}
 		if entry.Status == 0 {
 			entry.Status = c.Writer.Status()
 		}
@@ -107,20 +154,11 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 		logger.LogError(ctx, common.LogText("audit actor role unavailable (request_id=%s, actor_role=%d)", entry.RequestId, entry.ActorRole))
 		entry.ActorRole = 0 // Unknown actors remain visible to root only.
 	}
-	if entry.Username == "" {
-		entry.Username, _ = GetUsernameById(entry.UserId, false)
-	}
 	ua := []rune(entry.UserAgent)
 	if len(ua) > 512 {
 		entry.UserAgent = string(ua[:512])
 	}
-	if LOG_DB == nil {
-		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): log database unavailable", entry.RequestId))
-		return
-	}
-	if err := WriteAuditLogEntry(ctx, entry); err != nil {
-		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
-	}
+	return ctx, entry
 }
 
 // WriteAuditLogEntry persists one prepared audit row. Callers own the actor

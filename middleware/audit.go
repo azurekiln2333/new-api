@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +21,8 @@ type auditResponseWriter struct {
 	gin.ResponseWriter
 	body    *bytes.Buffer
 	maxSize int
+	// Set only by beginAdminAudit, before the handler can change request identity.
+	adminEntry model.AuditLog
 }
 
 func (w *auditResponseWriter) Write(b []byte) (int, error) {
@@ -114,6 +117,11 @@ func beginAdminAudit(c *gin.Context) *auditResponseWriter {
 		ResponseWriter: c.Writer,
 		body:           bytes.NewBuffer(nil),
 		maxSize:        64 * 1024,
+		adminEntry: model.AuditLog{
+			EventId: common.NewRequestId(), CreatedAt: common.GetTimestamp(),
+			UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
+			AuthMethod: auditAuthMethod(c), TokenRef: c.GetString("access_token_ref"),
+		},
 	}
 	c.Writer = writer
 	return writer
@@ -132,9 +140,9 @@ func finishAdminAudit(c *gin.Context, writer *auditResponseWriter) {
 		return
 	}
 
-	operatorId := c.GetInt("id")
-	operatorName := c.GetString("username")
-	operatorRole := c.GetInt("role")
+	operatorId := writer.adminEntry.UserId
+	operatorName := writer.adminEntry.Username
+	operatorRole := writer.adminEntry.ActorRole
 	ip := c.ClientIP()
 	status := writer.Status()
 	success := auditResponseSuccess(status, writer.body.Bytes())
@@ -164,7 +172,7 @@ func finishAdminAudit(c *gin.Context, writer *auditResponseWriter) {
 		AdminID:       operatorId,
 		AdminUsername: operatorName,
 		AdminRole:     operatorRole,
-		AuthMethod:    auditAuthMethod(c),
+		AuthMethod:    writer.adminEntry.AuthMethod,
 	}
 	auditInfo := &model.AuditRequestInfo{
 		Method:  method,
@@ -175,7 +183,20 @@ func finishAdminAudit(c *gin.Context, writer *auditResponseWriter) {
 		Params:  routeParams,
 	}
 
-	model.RecordOperationAuditLog(operatorId, operatorRole, content, ip, action, opParams, adminInfo, auditInfo, c)
+	if err := model.RecordAuditLogDurable(c, model.AuditLog{
+		EventId: writer.adminEntry.EventId, CreatedAt: writer.adminEntry.CreatedAt,
+		AuthMethod: writer.adminEntry.AuthMethod, TokenRef: writer.adminEntry.TokenRef,
+		UserId: operatorId, Username: operatorName, ActorRole: operatorRole,
+		Category: model.AuditCategoryOperation, Action: action, Content: content,
+		Ip: ip, Status: status, Success: success,
+		Other: model.AuditOther{
+			Op:        &model.AuditOperation{Action: action, Params: opParams},
+			AdminInfo: adminInfo,
+			AuditInfo: auditInfo,
+		},
+	}); err != nil {
+		common.SysError(common.LogText("failed to persist audit event for action %s", action))
+	}
 }
 
 func auditAuthMethod(c *gin.Context) string {
@@ -239,6 +260,8 @@ func TokenOperationAudit() gin.HandlerFunc {
 		}
 		common.SetContextKey(c, constant.ContextKeyTokenAuditParams, params)
 		entry := model.AuditLog{
+			EventId: common.NewRequestId(), CreatedAt: common.GetTimestamp(),
+			AuthMethod: auditAuthMethod(c), TokenRef: c.GetString("access_token_ref"),
 			UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
 			Category: model.AuditCategorySecurity, Action: action, Content: content,
 			Other: model.AuditOther{Op: &model.AuditOperation{Action: action, Params: params}},
@@ -253,7 +276,19 @@ func TokenOperationAudit() gin.HandlerFunc {
 			// supplies the result without retaining an unbounded response body.
 			entry.Success = entry.Status < 400 && common.GetContextKeyBool(c, constant.ContextKeyTokenAuditSucceeded)
 		}
-		model.RecordAuditLog(c, entry)
+		// Carry the request metadata explicitly: the outbox now stores the prepared
+		// event verbatim, so an omitted AuditInfo would be delivered as an empty
+		// request record instead of the route, method, and final outcome.
+		entry.Other.AuditInfo = &model.AuditRequestInfo{
+			Method:  c.Request.Method,
+			Route:   c.FullPath(),
+			Path:    c.FullPath(),
+			Status:  entry.Status,
+			Success: entry.Success,
+		}
+		if err := model.RecordAuditLogDurable(c, entry); err != nil {
+			common.SysError(common.LogText("failed to persist audit event for action %s", action))
+		}
 	}
 }
 
@@ -317,5 +352,22 @@ func finishAccessTokenAudit(c *gin.Context) {
 	}
 	audit.entry.Status = audit.writer.Status()
 	audit.entry.Success = auditResponseSuccess(audit.entry.Status, audit.writer.body.Bytes())
-	model.RecordAuditLog(c, audit.entry)
+	// Preserve the request record for the deferred write. Without this the outbox
+	// row would deliver an empty audit_info, losing the route and outcome that the
+	// synchronous path used to include.
+	audit.entry.Other.AuditInfo = &model.AuditRequestInfo{
+		Method:  c.Request.Method,
+		Route:   c.FullPath(),
+		Path:    c.FullPath(),
+		Status:  audit.entry.Status,
+		Success: audit.entry.Success,
+	}
+	switch c.Request.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		if err := model.RecordAuditLogDurable(c, audit.entry); err != nil {
+			common.SysError(common.LogText("failed to persist access token request audit for action %s", audit.entry.Action))
+		}
+	default:
+		model.RecordAuditLog(c, audit.entry)
+	}
 }

@@ -1163,7 +1163,7 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				db, _ := newAuditTestDatabase(t, database.name, dsn)
 				model.DB = db
 				common.SetDatabaseTypes(database.typ, database.typ)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}, &model.AuthFlow{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{}))
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}, &model.AuthFlow{}, &model.UserAccessToken{}, &model.TwoFA{}, &model.PasskeyCredential{}, &model.AuditEventOutbox{}))
 				// Initialize production column quoting as well as the existing audit table.
 				require.NoError(t, model.InitLogDB())
 				if separateLog {
@@ -1309,12 +1309,20 @@ func verifyAPITokenAudit(t *testing.T) {
 			if strings.Contains(tc.name, "exceeds audit buffer") {
 				assert.Greater(t, response.Body.Len(), 64*1024)
 			}
-			var events []model.AuditLog
-			require.NoError(t, model.LOG_DB.Where("request_id = ?", response.Header().Get(common.RequestIdKey)).Find(&events).Error)
+			requestId := response.Header().Get(common.RequestIdKey)
 			expectedEvents := 1
 			if tc.usePAT {
 				expectedEvents = 2
 			}
+			var queued []model.AuditEventOutbox
+			require.NoError(t, model.DB.Where("request_id = ? AND delivered_at = 0", requestId).Find(&queued).Error)
+			require.Len(t, queued, expectedEvents, "events must persist in the primary outbox, not pass through a missing-table fallback")
+			var beforeDrain int64
+			require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("request_id = ?", requestId).Count(&beforeDrain).Error)
+			require.Zero(t, beforeDrain)
+			drainControllerAuditOutbox(t)
+			var events []model.AuditLog
+			require.NoError(t, model.LOG_DB.Where("request_id = ?", requestId).Find(&events).Error)
 			require.Len(t, events, expectedEvents)
 			var operation *model.AuditLog
 			for i := range events {

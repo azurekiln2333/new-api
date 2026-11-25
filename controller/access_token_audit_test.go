@@ -545,6 +545,18 @@ func TestAccessTokenAuditsResultsAndExcludesBrowserSessions(t *testing.T) {
 	for _, tc := range cases {
 		response := auditRequest(router, tc.method, tc.path, pat)
 		require.Equal(t, tc.status, response.Code)
+		// Read methods keep the synchronous write. Write methods enqueue into the
+		// durable outbox and must be asserted there first: a read of audit_logs
+		// before the drain would either fail or silently prove the wrong path.
+		if tc.method == "POST" || tc.method == "PUT" || tc.method == "PATCH" || tc.method == "DELETE" {
+			var queued int64
+			requestId := response.Header().Get(common.RequestIdKey)
+			require.NoError(t, model.DB.Model(&model.AuditEventOutbox{}).
+				Where("request_id = ? AND category = ? AND delivered_at = 0", requestId, model.AuditCategoryAccessToken).
+				Count(&queued).Error)
+			require.EqualValues(t, 1, queued, "write audit must be persisted in the outbox before the response is reused")
+			continue
+		}
 		var access model.AuditLog
 		require.NoError(t, model.LOG_DB.Where("request_id = ? AND category = ?", response.Header().Get(common.RequestIdKey), model.AuditCategoryAccessToken).First(&access).Error)
 		assert.Equal(t, tc.success, access.Success)
@@ -555,6 +567,21 @@ func TestAccessTokenAuditsResultsAndExcludesBrowserSessions(t *testing.T) {
 		assert.NotContains(t, access.Route, "sensitive-id")
 	}
 	drainControllerAuditOutbox(t)
+	// After the drain the queued write events must be complete, not just present:
+	// outcome, route, and actor survive the deferred delivery.
+	for _, tc := range cases {
+		if tc.method != "POST" {
+			continue
+		}
+		var delivered model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("category = ? AND method = ? AND route = ? AND status = ?", model.AuditCategoryAccessToken, tc.method, tc.path, tc.status).First(&delivered).Error)
+		assert.Equal(t, tc.success, delivered.Success)
+		assert.Equal(t, user.Id, delivered.UserId)
+		assert.Equal(t, "192.0.2.8", delivered.Ip)
+		require.NotNil(t, delivered.Other.AuditInfo, "deferred delivery must keep the request record")
+		assert.Equal(t, tc.status, delivered.Other.AuditInfo.Status)
+		assert.Equal(t, tc.success, delivered.Other.AuditInfo.Success)
+	}
 	var operationCount int64
 	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("category = ?", model.AuditCategoryOperation).Count(&operationCount).Error)
 	assert.EqualValues(t, 2, operationCount, "manual operation must not be duplicated by fallback")
@@ -733,6 +760,233 @@ func TestAuditRoleSnapshotSurvivesActorChanges(t *testing.T) {
 	for _, entry := range entries {
 		assert.Equal(t, common.RoleRootUser, entry.ActorRole)
 	}
+}
+
+// TestManagementAuditPersistsDurablyBeforeDelivery pins the latency contract of the
+// shared management audit path: every admin, API-token and personal-access-token
+// write is durable in the primary outbox before the response is inspected, and the
+// drain then reconstructs a complete audit row. It deliberately reads the outbox
+// BEFORE any drain so the old synchronous behaviour cannot satisfy it, and it never
+// removes the outbox table: a missing table would push the helper into its direct
+// fallback and produce a false pass.
+func TestManagementAuditPersistsDurablyBeforeDelivery(t *testing.T) {
+	user, pat := setupAccessTokenAudit(t)
+
+	router := gin.New()
+	router.Use(middleware.RequestId(), middleware.AccessTokenAudit())
+	api := router.Group("/api")
+	api.POST("/admin-only", middleware.AdminAuth(), func(c *gin.Context) {
+		c.JSON(200, gin.H{"success": true, "data": "ok"})
+	})
+	api.POST("/admin-rejected", middleware.AdminAuth(), func(c *gin.Context) {
+		c.JSON(200, gin.H{"success": false, "message": "secret-business-reason"})
+	})
+	tokenRoute := api.Group("/token")
+	tokenRoute.Use(middleware.UserAuth(), middleware.TokenOperationAudit())
+	tokenRoute.POST("", func(c *gin.Context) { c.JSON(200, gin.H{"success": true}) })
+	tokenRoute.DELETE("/:id", func(c *gin.Context) { c.JSON(200, gin.H{"success": true}) })
+
+	t.Run("admin write is queued before the response and delivered after the drain", func(t *testing.T) {
+		response := auditRequest(router, "POST", "/api/admin-only", pat)
+		require.Equal(t, 200, response.Code)
+		requestId := response.Header().Get(common.RequestIdKey)
+
+		var queued model.AuditEventOutbox
+		require.NoError(t, model.DB.Where("request_id = ? AND category = ?", requestId, model.AuditCategoryOperation).First(&queued).Error,
+			"the admin audit obligation must be durable before the response is reused")
+		var accessQueued model.AuditEventOutbox
+		require.NoError(t, model.DB.Where("request_id = ? AND category = ?", requestId, model.AuditCategoryAccessToken).First(&accessQueued).Error)
+		assert.NotEmpty(t, accessQueued.EventId)
+		assert.NotEqual(t, queued.EventId, accessQueued.EventId, "PAT access and business events stay separate")
+		assert.Equal(t, model.AccessTokenFingerprint(pat), accessQueued.TokenRef)
+		assert.Zero(t, accessQueued.DeliveredAt)
+		assert.Equal(t, "generic", queued.Action)
+		assert.Equal(t, 200, queued.Status)
+		assert.True(t, queued.Success)
+		assert.Equal(t, user.Id, queued.ActorUserId)
+		assert.Equal(t, user.Username, queued.ActorUsername, "the actor name must be snapshotted, not looked up during delivery")
+		assert.Equal(t, user.Role, queued.ActorRole)
+		assert.Equal(t, "POST", queued.Method)
+		assert.Equal(t, "/api/admin-only", queued.Route)
+		assert.Equal(t, "192.0.2.8", queued.Ip)
+		assert.Equal(t, "audit-test-client", queued.UserAgent)
+		assert.Positive(t, queued.CreatedAt, "the mutation time must be recorded, not the delivery time")
+		assert.Zero(t, queued.DeliveredAt)
+		assert.Contains(t, queued.ParamsJson, "audit_other_v1", "the prepared event must travel in a versioned envelope")
+
+		// Nothing may reach the log store before the drain. AccessTokenAudit also
+		// queues its own row for a write request, so scope the count to this event.
+		var beforeDrain int64
+		require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).
+			Where("request_id = ? AND category = ?", requestId, model.AuditCategoryOperation).
+			Count(&beforeDrain).Error)
+		assert.Zero(t, beforeDrain, "the request must not wait on the log database")
+
+		drainControllerAuditOutbox(t)
+
+		var delivered model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("request_id = ? AND category = ?", requestId, model.AuditCategoryOperation).First(&delivered).Error)
+		require.Equal(t, queued.EventId, delivered.EventId, "the delivered row must keep the queued event identity")
+		assert.Equal(t, model.AuditCategoryOperation, delivered.Category)
+		assert.Equal(t, "generic", delivered.Action)
+		assert.Equal(t, 200, delivered.Status)
+		assert.True(t, delivered.Success)
+		assert.Equal(t, user.Id, delivered.UserId)
+		assert.Equal(t, user.Username, delivered.Username)
+		assert.Equal(t, user.Role, delivered.ActorRole)
+		assert.Equal(t, queued.CreatedAt, delivered.CreatedAt, "delivery must report the mutation time")
+		require.NotNil(t, delivered.Other.AdminInfo)
+		assert.Equal(t, user.Id, delivered.Other.AdminInfo.AdminID)
+		assert.Equal(t, user.Username, delivered.Other.AdminInfo.AdminUsername)
+		require.NotNil(t, delivered.Other.Op)
+		assert.Equal(t, "generic", delivered.Other.Op.Action)
+		paramsJSON, err := common.Marshal(delivered.Other.Op.Params)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"method":"POST","route":"/api/admin-only"}`, string(paramsJSON))
+		require.NotNil(t, delivered.Other.AuditInfo)
+		assert.Equal(t, 200, delivered.Other.AuditInfo.Status)
+		assert.True(t, delivered.Other.AuditInfo.Success)
+		assert.Equal(t, "/api/admin-only", delivered.Other.AuditInfo.Route)
+		var accessDelivered model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("event_id = ?", accessQueued.EventId).First(&accessDelivered).Error)
+		assert.Equal(t, model.AuditCategoryAccessToken, accessDelivered.Category)
+		assert.Equal(t, accessQueued.TokenRef, accessDelivered.TokenRef)
+		assert.Equal(t, accessQueued.CreatedAt, accessDelivered.CreatedAt)
+		assert.True(t, accessDelivered.Success)
+		assert.Equal(t, 200, accessDelivered.Status)
+
+		var afterDrain int64
+		require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).
+			Where("request_id = ? AND category = ?", requestId, model.AuditCategoryOperation).
+			Count(&afterDrain).Error)
+		assert.EqualValues(t, 1, afterDrain, "delivery must be exactly once for the relational sink")
+	})
+
+	t.Run("a rejected admin write keeps its outcome and hides the reason", func(t *testing.T) {
+		response := auditRequest(router, "POST", "/api/admin-rejected", pat)
+		require.Equal(t, 200, response.Code)
+		requestId := response.Header().Get(common.RequestIdKey)
+
+		var queued model.AuditEventOutbox
+		require.NoError(t, model.DB.Where("request_id = ? AND category = ?", requestId, model.AuditCategoryOperation).First(&queued).Error)
+		assert.False(t, queued.Success, "a business rejection must be recorded as unsuccessful")
+
+		drainControllerAuditOutbox(t)
+
+		var delivered model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("request_id = ? AND category = ?", requestId, model.AuditCategoryOperation).First(&delivered).Error)
+		assert.False(t, delivered.Success)
+		assert.Equal(t, 200, delivered.Status)
+		require.NotNil(t, delivered.Other.AuditInfo)
+		assert.False(t, delivered.Other.AuditInfo.Success)
+		encoded, err := common.Marshal(delivered)
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), "secret-business-reason")
+	})
+
+	t.Run("expired PAT write preserves its separate rejection event", func(t *testing.T) {
+		expired, token := createScopedAccessToken(t, user.Id, time.Now().Unix()-60, "api_key:write")
+		response := auditRequest(router, "DELETE", "/api/token/42", expired)
+		require.Equal(t, http.StatusUnauthorized, response.Code)
+		requestId := response.Header().Get(common.RequestIdKey)
+		var queued []model.AuditEventOutbox
+		require.NoError(t, model.DB.Where("request_id = ?", requestId).Find(&queued).Error)
+		require.Len(t, queued, 1, "a rejected credential must not reach the token operation handler")
+		assert.Equal(t, model.AuditCategoryAccessToken, queued[0].Category)
+		assert.False(t, queued[0].Success)
+		assert.Equal(t, token.TokenHash, queued[0].TokenRef)
+		var beforeDrain int64
+		require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("request_id = ?", requestId).Count(&beforeDrain).Error)
+		require.Zero(t, beforeDrain)
+		drainControllerAuditOutbox(t)
+		var delivered model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("event_id = ?", queued[0].EventId).First(&delivered).Error)
+		assert.Equal(t, http.StatusUnauthorized, delivered.Status)
+		assert.False(t, delivered.Success)
+		require.NotNil(t, delivered.Other.Op)
+		paramsJSON, err := common.Marshal(delivered.Other.Op.Params)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"failure_reason":"expired"}`, string(paramsJSON))
+		encoded, err := common.Marshal(delivered)
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), expired)
+	})
+
+	t.Run("api token operation audit is queued with its action and outcome", func(t *testing.T) {
+		response := auditRequest(router, "DELETE", "/api/token/42", pat)
+		require.Equal(t, 200, response.Code)
+		requestId := response.Header().Get(common.RequestIdKey)
+
+		var queued model.AuditEventOutbox
+		require.NoError(t, model.DB.Where("request_id = ? AND category = ?", requestId, model.AuditCategorySecurity).First(&queued).Error,
+			"the token security event must be durable before the response is reused")
+		assert.Equal(t, "token.delete", queued.Action)
+		assert.Equal(t, "DELETE", queued.Method)
+		assert.Equal(t, "/api/token/:id", queued.Route)
+		assert.True(t, queued.Success)
+		assert.Equal(t, user.Id, queued.ActorUserId)
+		assert.Equal(t, user.Username, queued.ActorUsername)
+
+		drainControllerAuditOutbox(t)
+
+		var delivered model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("request_id = ? AND action = ?", requestId, "token.delete").First(&delivered).Error)
+		assert.Equal(t, model.AuditCategorySecurity, delivered.Category)
+		assert.True(t, delivered.Success)
+		assert.Equal(t, 200, delivered.Status)
+		require.NotNil(t, delivered.Other.Op)
+		paramsJSON, err := common.Marshal(delivered.Other.Op.Params)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"id":42}`, string(paramsJSON))
+		// The request record must survive deferred delivery instead of arriving empty.
+		require.NotNil(t, delivered.Other.AuditInfo)
+		assert.Equal(t, 200, delivered.Other.AuditInfo.Status)
+		assert.True(t, delivered.Other.AuditInfo.Success)
+		assert.Equal(t, "/api/token/:id", delivered.Other.AuditInfo.Route)
+	})
+}
+
+// TestAuditOutboxLegacyEnvelopeStaysReadable proves the versioned envelope is
+// additive: a row written by the older params-only draft keeps delivering the
+// same operation payload and still gains a request record.
+func TestAuditOutboxLegacyEnvelopeStaysReadable(t *testing.T) {
+	user, _ := setupAccessTokenAudit(t)
+	requestId := "legacy-envelope-request"
+
+	// A legacy draft carries no Other, so the stored JSON is params-only.
+	_, err := model.RecordManagementAuditDurable(context.Background(), model.AuditEventDraft{
+		EventId:       "legacy-envelope-event",
+		Category:      model.AuditCategoryOperation,
+		Action:        "option.update",
+		ActorUserId:   user.Id,
+		ActorUsername: user.Username,
+		ActorRole:     user.Role,
+		Method:        "POST",
+		Route:         "/api/option/",
+		Status:        200,
+		Success:       true,
+		RequestId:     requestId,
+		Content:       "POST /api/option/",
+		ParamsJson:    `{"key":"legacy-setting"}`,
+	})
+	require.NoError(t, err)
+
+	var queued model.AuditEventOutbox
+	require.NoError(t, model.DB.Where("request_id = ?", requestId).First(&queued).Error)
+	assert.NotContains(t, queued.ParamsJson, "_audit_outbox_format", "a legacy draft must keep the params-only shape")
+
+	drainControllerAuditOutbox(t)
+
+	var delivered model.AuditLog
+	require.NoError(t, model.LOG_DB.Where("request_id = ?", requestId).First(&delivered).Error)
+	require.NotNil(t, delivered.Other.Op)
+	assert.Equal(t, "option.update", delivered.Other.Op.Action)
+	paramsJSON, err := common.Marshal(delivered.Other.Op.Params)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"key":"legacy-setting"}`, string(paramsJSON))
+	require.NotNil(t, delivered.Other.AuditInfo, "a legacy row still gains the request record on delivery")
+	assert.Equal(t, "/api/option/", delivered.Other.AuditInfo.Route)
+	assert.Equal(t, 200, delivered.Other.AuditInfo.Status)
 }
 
 func TestSecurityAndOperationEventsUseAuditTable(t *testing.T) {

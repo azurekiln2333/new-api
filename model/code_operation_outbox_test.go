@@ -503,7 +503,7 @@ func TestAuditOutboxClickHouseDelivery(t *testing.T) {
 		LOG_DB = previousLogDB
 		common.SetLogDatabaseType(previousLogType)
 	})
-	require.NoError(t, migrateClickHouseLogDB())
+	require.NoError(t, MigrateAuditLogs())
 	var deliveryErr error
 	require.NoError(t, logDB.Callback().Create().After("gorm:commit_or_rollback_transaction").Register("test:capture_audit_delivery_error", func(tx *gorm.DB) {
 		if tx.Error != nil {
@@ -520,6 +520,7 @@ func TestAuditOutboxClickHouseDelivery(t *testing.T) {
 			Action:      "redemption.create",
 			ActorUserId: 41,
 			ActorRole:   common.RoleAdminUser,
+			RequestId:   eventId,
 		}, eventTime)
 		return err
 	}))
@@ -528,10 +529,15 @@ func TestAuditOutboxClickHouseDelivery(t *testing.T) {
 	require.NoError(t, db.Where("event_id = ?", eventId).First(&outbox).Error)
 	require.Equal(t, 1, delivered, "outbox last_error=%q; insert error=%v", outbox.LastError, sanitizeDBError(deliveryErr))
 
-	var stored AuditLog
-	require.NoError(t, logDB.Table("audit_logs").Where("event_id = ?", eventId).First(&stored).Error)
-	assert.Equal(t, eventTime, stored.CreatedAt)
-	assert.Equal(t, "redemption.create", stored.Action)
+	stored, total, err := GetAuditLogs(AuditLogFilter{RequestId: eventId}, 0, 10, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, stored, 1)
+	assert.Equal(t, eventId, stored[0].EventId)
+	assert.Equal(t, eventTime, stored[0].CreatedAt)
+	assert.Equal(t, "redemption.create", stored[0].Action)
+	require.NotNil(t, stored[0].Other.Op)
+	assert.Equal(t, "redemption.create", stored[0].Other.Op.Action)
 }
 
 func TestAuditOutboxBackoffIsBounded(t *testing.T) {

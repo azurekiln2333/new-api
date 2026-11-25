@@ -22,7 +22,13 @@ import (
 // business transaction. It returns the event id so the caller can surface a
 // failure instead of pretending the audit was accepted.
 func RecordManagementAuditDurable(ctx context.Context, draft AuditEventDraft) (string, error) {
-	eventTime := common.GetTimestamp()
+	if err := draft.encodeMetadata(); err != nil {
+		return "", err
+	}
+	eventTime := draft.CreatedAt
+	if eventTime <= 0 {
+		eventTime = common.GetTimestamp()
+	}
 	// Enqueue on its own bounded context: the request context may be canceled by
 	// the client while the audit obligation must still be recorded.
 	enqueueCtx, cancel := context.WithTimeout(context.Background(), AuditDeliveryTimeout)

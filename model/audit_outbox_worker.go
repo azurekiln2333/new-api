@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -148,7 +149,31 @@ func deliverAuditEvent(ctx context.Context, event *AuditEventOutbox) error {
 	}
 	var params AuditFields
 	if event.ParamsJson != "" {
+		// A row whose params are not decodable is delivered without operation
+		// params instead of staying permanently undeliverable: the action, actor
+		// and request columns still identify the event, and one malformed row must
+		// not block the drain of every later audit event.
+		var payload map[string]json.RawMessage
+		if err := common.UnmarshalJsonStr(event.ParamsJson, &payload); err != nil {
+			logger.LogError(ctx, common.LogText("audit outbox %s parameters unreadable, delivering without them: %s", event.EventId, err))
+			payload = nil
+		}
+		if _, versioned := payload["_audit_outbox_format"]; versioned {
+			var metadata auditOutboxMetadata
+			if err := common.UnmarshalJsonStr(event.ParamsJson, &metadata); err != nil || metadata.Format != auditOutboxMetadataFormat || metadata.Other == nil {
+				return errors.New("audit outbox metadata unavailable")
+			}
+			entry.Other = *metadata.Other
+			// A prepared event carries its own request record. Fall back to the
+			// row columns only when the producer omitted it, so legacy behaviour is
+			// preserved without overwriting a richer prepared payload.
+			if entry.Other.AuditInfo == nil {
+				entry.Other.AuditInfo = auditRequestInfoFromEvent(event)
+			}
+			return WriteAuditLogEntry(ctx, entry)
+		}
 		if err := common.UnmarshalJsonStr(event.ParamsJson, &params); err != nil {
+			logger.LogError(ctx, common.LogText("audit outbox %s parameters unreadable, delivering without them: %s", event.EventId, err))
 			params = AuditFields{}
 		}
 	}
@@ -161,19 +186,25 @@ func deliverAuditEvent(ctx context.Context, event *AuditEventOutbox) error {
 			AuthMethod:    event.AuthMethod,
 		}
 	}
-	entry.Other.AuditInfo = &AuditRequestInfo{
+	entry.Other.AuditInfo = auditRequestInfoFromEvent(event)
+	return WriteAuditLogEntry(ctx, entry)
+}
+
+// auditRequestInfoFromEvent reconstructs the request record for a row enqueued
+// with params-only JSON. Prepared events carry their own copy and do not use this.
+func auditRequestInfoFromEvent(event *AuditEventOutbox) *AuditRequestInfo {
+	return &AuditRequestInfo{
 		Method:  event.Method,
 		Route:   event.Route,
 		Path:    event.Route,
 		Status:  event.Status,
 		Success: event.Success,
 	}
-	return WriteAuditLogEntry(ctx, entry)
 }
 
 // StartAuditOutboxDrain runs the delivery loop for as long as ctx is alive. It is
-// meant for the master node: every master may drain, and the per-row lease keeps
-// concurrent drains from double-delivering their own claims.
+// started on every node; the per-row lease keeps concurrent drains from
+// double-delivering their own claims.
 func StartAuditOutboxDrain(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(AuditOutboxDrainIntervalSeconds * time.Second)

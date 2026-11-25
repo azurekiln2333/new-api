@@ -32,6 +32,30 @@ type AuditEventDraft struct {
 	RequestId     string
 	Content       string
 	ParamsJson    string
+	// Other and CreatedAt preserve prepared middleware events without adding
+	// columns. Legacy controller drafts continue to store params-only JSON.
+	Other     *AuditOther
+	CreatedAt int64
+}
+
+type auditOutboxMetadata struct {
+	Format string      `json:"_audit_outbox_format"`
+	Other  *AuditOther `json:"other"`
+}
+
+const auditOutboxMetadataFormat = "audit_other_v1"
+
+func (draft *AuditEventDraft) encodeMetadata() error {
+	if draft.Other == nil {
+		return nil
+	}
+	encoded, err := common.Marshal(auditOutboxMetadata{Format: auditOutboxMetadataFormat, Other: draft.Other})
+	if err != nil {
+		return err
+	}
+	draft.ParamsJson = string(encoded)
+	draft.Other = nil
+	return nil
 }
 
 // AuditEventOutbox is the durable audit delivery queue. Rows are never deleted:
@@ -102,6 +126,9 @@ func EnqueueAuditEventTx(tx *gorm.DB, draft AuditEventDraft, eventTime ...int64)
 	if draft.EventId == "" {
 		return "", nil
 	}
+	if err := draft.encodeMetadata(); err != nil {
+		return "", err
+	}
 	if len(draft.UserAgent) > 0 {
 		// Truncate by rune, matching RecordAuditLog. Cutting by byte length can
 		// split a multi-byte character and produce invalid UTF-8, which the
@@ -111,7 +138,10 @@ func EnqueueAuditEventTx(tx *gorm.DB, draft AuditEventDraft, eventTime ...int64)
 			draft.UserAgent = string(runes[:512])
 		}
 	}
-	eventTimeValue := common.GetTimestamp()
+	eventTimeValue := draft.CreatedAt
+	if eventTimeValue <= 0 {
+		eventTimeValue = common.GetTimestamp()
+	}
 	if len(eventTime) > 0 && eventTime[0] > 0 {
 		eventTimeValue = eventTime[0]
 	}
