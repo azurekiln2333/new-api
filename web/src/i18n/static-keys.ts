@@ -19,11 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
-  // Release-source validation errors returned by the backend.
-  'Enter the repository as owner/repo, for example owner/new-api.',
-  // Console forwarding errors returned by the backend.
+  // Console forwarding and release-source errors returned by the backend.
   'console master unavailable',
   'invalid console forwarding envelope',
+  'Enter the repository as owner/repo, for example owner/new-api.',
+  // Storage retention validation errors returned by the backend.
+  'Retention must be a whole number of days between 0 and 36500',
+  'Request content limit must be between 256 and 134217728 bytes',
   // Channel capability labels and validation messages passed to t() dynamically.
   'Inherit existing routing',
   'Chat Completions only',

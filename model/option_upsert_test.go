@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,6 +86,27 @@ func TestUpdateOptionPersistsAcrossDialects(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			db := optionTestDB(t, dialect)
+			settings := operation_setting.GetLogSetting()
+			previousSettings := *settings
+			t.Cleanup(func() {
+				common.OptionMapRWMutex.Lock()
+				*settings = previousSettings
+				common.OptionMapRWMutex.Unlock()
+			})
+			for _, option := range []Option{
+				{Key: "log_setting.retention_days", Value: "0"},
+				{Key: "log_setting.request_content_retention_days", Value: "7"},
+				{Key: "log_setting.request_content_enabled", Value: "false"},
+				{Key: "log_setting.request_content_max_bytes", Value: "256"},
+			} {
+				require.NoError(t, UpdateOption(option.Key, option.Value))
+				var persisted Option
+				require.NoError(t, db.Where(&Option{Key: option.Key}).First(&persisted).Error)
+				assert.Equal(t, option.Value, persisted.Value)
+			}
+			usageDays, contentDays := operation_setting.LogRetentionDays()
+			assert.Zero(t, usageDays)
+			assert.Equal(t, 7, contentDays)
 			const key = "TestUpsertKey"
 
 			require.NoError(t, UpdateOption(key, "first"))
@@ -234,6 +257,10 @@ func TestOrdinaryOptionsBatchValidationDoesNotPublish(t *testing.T) {
 	for _, invalid := range []Option{
 		{Key: "GroupLevels", Value: `{"vip":null}`},
 		{Key: "Chats", Value: "not-json"},
+		{Key: "log_setting.retention_days", Value: "-1"},
+		{Key: "log_setting.request_content_retention_days", Value: "36501"},
+		{Key: "log_setting.request_content_enabled", Value: "yes"},
+		{Key: "log_setting.request_content_max_bytes", Value: "255"},
 		{Key: "InviteRegisterEnabled", Value: "invalid"},
 		{Key: "passkey.rp_id", Value: "example.com"},
 		{Key: "ServerAddress", Value: "https://example.com"},
@@ -241,6 +268,9 @@ func TestOrdinaryOptionsBatchValidationDoesNotPublish(t *testing.T) {
 		{Key: "RetryTimes", Value: "2"},
 	} {
 		t.Run(invalid.Key, func(t *testing.T) {
+			if strings.HasPrefix(invalid.Key, "log_setting.") {
+				require.Error(t, UpdateOption(invalid.Key, invalid.Value), "single and batch APIs enforce the same storage bounds")
+			}
 			err := UpdateOrdinaryOptionsBatch(context.Background(), []Option{{Key: "TestUnpublished", Value: "draft"}, invalid}, AuditEventDraft{})
 			var keyError *OptionUpdateError
 			require.ErrorAs(t, err, &keyError)

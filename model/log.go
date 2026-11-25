@@ -978,7 +978,17 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		return total, nil
 	}
 
-	result := LOG_DB.WithContext(ctx).Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
+	// DELETE LIMIT is ignored by PostgreSQL. Materialize only one bounded page
+	// of IDs first; this also avoids MySQL's LIMIT-in-IN-subquery restriction.
+	var ids []int
+	if err := LOG_DB.WithContext(ctx).Model(&Log{}).
+		Where("created_at < ?", targetTimestamp).Order("created_at, id").Limit(min(limit, 100)).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := LOG_DB.WithContext(ctx).Where("id IN ? AND created_at < ?", ids, targetTimestamp).Delete(&Log{})
 	if nil != result.Error {
 		return 0, result.Error
 	}

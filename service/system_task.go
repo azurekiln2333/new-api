@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 )
@@ -73,11 +74,24 @@ func registeredSystemTaskHandlers() []SystemTaskHandler {
 	return handlers
 }
 
-// logCleanupHandler wraps the existing on-demand log cleanup task as a
-// registered (non-scheduled) handler. It is created via StartLogCleanupTask.
+// logCleanupHandler shares one leased task type for manual and scheduled
+// cleanup. Retention is opt-in; zero never schedules historical deletion.
 type logCleanupHandler struct{}
 
 func (logCleanupHandler) Type() string { return model.SystemTaskTypeLogCleanup }
+func (logCleanupHandler) Enabled() bool {
+	days, _ := operation_setting.LogRetentionDays()
+	return common.IsMasterNode && days > 0
+}
+func (logCleanupHandler) Interval() time.Duration { return 24 * time.Hour }
+func (logCleanupHandler) NewPayload() any {
+	days, _ := operation_setting.LogRetentionDays()
+	return LogCleanupPayload{TargetTimestamp: logRetentionCutoff(days), BatchSize: logCleanupBatchSize, Scheduled: true}
+}
+
+func logRetentionCutoff(days int) int64 {
+	return max(common.GetTimestamp()-int64(days)*86400, 1)
+}
 
 func (logCleanupHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
 	runLogCleanupTask(ctx, task, runnerID)
@@ -90,6 +104,7 @@ func init() {
 type LogCleanupPayload struct {
 	TargetTimestamp int64 `json:"target_timestamp"`
 	BatchSize       int   `json:"batch_size"`
+	Scheduled       bool  `json:"scheduled,omitempty"`
 }
 
 type LogCleanupState struct {
@@ -346,7 +361,7 @@ func runLogCleanupTask(ctx context.Context, task *model.SystemTask, runnerID str
 		failSystemTask(task, runnerID, errors.New("target timestamp is required"))
 		return
 	}
-	if payload.BatchSize <= 0 {
+	if payload.BatchSize <= 0 || payload.BatchSize > logCleanupBatchSize {
 		payload.BatchSize = logCleanupBatchSize
 	}
 
@@ -356,7 +371,19 @@ func runLogCleanupTask(ctx context.Context, task *model.SystemTask, runnerID str
 		return
 	}
 
+cleanupPasses:
 	for {
+		if payload.Scheduled {
+			days, _ := operation_setting.LogRetentionDays()
+			if !common.IsMasterNode || days <= 0 {
+				if err := model.FinishSystemTask(task.TaskID, runnerID, model.SystemTaskStatusSucceeded, LogCleanupResult{DeletedCount: state.Processed}, ""); err != nil {
+					logSystemTaskLockError(ctx, task, err)
+				}
+				return
+			}
+			// A more conservative policy takes effect before the next batch.
+			payload.TargetTimestamp = min(payload.TargetTimestamp, logRetentionCutoff(days))
+		}
 		remaining, err := model.CountOldLog(ctx, payload.TargetTimestamp)
 		if err != nil {
 			failSystemTask(task, runnerID, err)
@@ -377,6 +404,17 @@ func runLogCleanupTask(ctx context.Context, task *model.SystemTask, runnerID str
 		// rows cannot be removed and we fail instead of busy-looping.
 		progressed := false
 		for state.Remaining > 0 {
+			if payload.Scheduled {
+				days, _ := operation_setting.LogRetentionDays()
+				if !common.IsMasterNode || days <= 0 {
+					continue cleanupPasses
+				}
+				cutoff := min(payload.TargetTimestamp, logRetentionCutoff(days))
+				if cutoff != payload.TargetTimestamp {
+					payload.TargetTimestamp = cutoff
+					continue cleanupPasses // recount against the newly conservative policy
+				}
+			}
 			rowsAffected, err := model.DeleteOldLogBatch(ctx, payload.TargetTimestamp, payload.BatchSize)
 			if err != nil {
 				failSystemTask(task, runnerID, err)

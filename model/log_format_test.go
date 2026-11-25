@@ -221,6 +221,115 @@ func TestLogRequestDetailStorageDatabaseMatrix(t *testing.T) {
 	})
 }
 
+func TestLogRequestDetailRetentionDatabaseMatrix(t *testing.T) {
+	runRequestLogStorageMatrix(t, func(t *testing.T, db *gorm.DB, upgrade bool) {
+		require.NoError(t, DB.AutoMigrate(&Task{}))
+		legacy := Log{UserId: logFilterTestUser, RequestId: common.NewRequestId(), CreatedAt: 1002, Type: LogTypeConsume, Other: `{"admin_info":{"legacy":true}}`}
+		if upgrade {
+			// Same unchanged Log schema as the existing released-upgrade
+			// fixture; seed it before initializing request-content storage.
+			if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+				require.NoError(t, db.Exec(clickHouseLogCreateTableSQL(0)).Error)
+			} else {
+				require.NoError(t, db.AutoMigrate(&Log{}))
+			}
+			require.NoError(t, db.Create(&legacy).Error)
+		}
+		require.NoError(t, migrateLOGDB())
+		require.NoError(t, migrateLOGDB())
+		var version string
+		query := "SELECT version()"
+		if common.UsingLogDatabase(common.DatabaseTypeSQLite) {
+			query = "SELECT sqlite_version()"
+		}
+		require.NoError(t, db.Raw(query).Scan(&version).Error)
+		t.Logf("retention log store: %s %s, upgrade=%t", common.LogDatabaseType(), version, upgrade)
+		if upgrade {
+			var retained []Log
+			require.NoError(t, db.Where("request_id = ?", legacy.RequestId).Find(&retained).Error)
+			require.Len(t, retained, 1)
+			assert.Equal(t, legacy.Other, retained[0].Other)
+		}
+		for _, guard := range []string{"none", "writer", "task", "pending"} {
+			t.Run(guard, func(t *testing.T) {
+				snapshot := &common.RequestContentSnapshot{
+					Ref: common.GetUUID(), RequestID: common.NewRequestId(), UserID: logFilterTestUser,
+					CreatedAt: 1000, Status: common.RequestContentStatusRecorded, Payload: []byte(`{"prompt":"retained original"}`),
+				}
+				require.NoError(t, WithLogRequestDetail(t.Context(), snapshot, func(logDB *gorm.DB, detailErr error) error {
+					if detailErr != nil {
+						return detailErr
+					}
+					linkID, _ := logDB.Statement.Context.Value(requestContentLinkKey{}).(string)
+					other := NewLogOther()
+					other.SetAdmin("request_content", requestContentLogLink{RequestContentMetadata: common.RequestContentMetadata{Ref: snapshot.Ref, Status: snapshot.Status}, LinkID: linkID})
+					return logDB.Create(&Log{UserId: snapshot.UserID, RequestId: snapshot.RequestID, CreatedAt: 1001, Type: LogTypeConsume, Other: other.JSONString()}).Error
+				}))
+				switch guard {
+				case "writer":
+					require.NoError(t, DB.Model(&LogRequestContentProtection{}).Where("ref = ?", snapshot.Ref).Update("writer_until", common.GetTimestamp()+300).Error)
+				case "task":
+					taskID := common.GetUUID()
+					require.NoError(t, DB.Create(&Task{TaskID: taskID, UserId: snapshot.UserID, Platform: "retention", Status: TaskStatusSubmitted,
+						PrivateData: TaskPrivateData{RequestContent: &TaskRequestContent{Ref: snapshot.Ref, RequestID: snapshot.RequestID}}}).Error)
+					require.NoError(t, DB.Model(&LogRequestContentProtection{}).Where("ref = ?", snapshot.Ref).Updates(map[string]any{"task_id": taskID, "task_platform": "retention"}).Error)
+				case "pending":
+					require.NoError(t, DB.Model(&LogRequestContentProtection{}).Where("ref = ?", snapshot.Ref).Updates(map[string]any{"phase": requestContentPhaseLinkPending, "holder_id": "uncertain-link", "lease_until": 0}).Error)
+				}
+				require.NoError(t, ExpireLogRequestDetails(t.Context(), 1000, 1), "cutoff is exclusive")
+				_, err := GetLogRequestDetail(t.Context(), snapshot.Ref)
+				require.NoError(t, err)
+				require.NoError(t, ExpireLogRequestDetails(t.Context(), 2000, 1))
+				var logs, contents int64
+				require.NoError(t, db.Model(&Log{}).Where("request_id = ?", snapshot.RequestID).Count(&logs).Error)
+				require.NoError(t, db.Model(&LogRequestDetail{}).Where("ref = ?", snapshot.Ref).Count(&contents).Error)
+				assert.EqualValues(t, 1, logs, "content retention must preserve the usage log")
+				if guard != "none" {
+					assert.EqualValues(t, 1, contents, "live writers, active tasks and uncertain operations pin content")
+					return
+				}
+				assert.Zero(t, contents)
+				_, err = GetLogRequestDetail(t.Context(), snapshot.Ref)
+				assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+				require.NoError(t, ExpireLogRequestDetails(t.Context(), 2000, 1), "expiry is idempotent")
+				require.NoError(t, WithLogRequestDetail(t.Context(), snapshot, func(_ *gorm.DB, detailErr error) error {
+					assert.Error(t, detailErr, "a delayed snapshot cannot resurrect expired content")
+					return nil
+				}))
+			})
+		}
+		// Relational DELETE must respect its bound on PostgreSQL as well as
+		// MySQL/SQLite; ClickHouse deliberately uses one time-cutoff mutation.
+		for range 5 {
+			require.NoError(t, db.Create(&Log{UserId: logFilterTestUser, RequestId: common.NewRequestId(), CreatedAt: 500, Type: LogTypeError}).Error)
+		}
+		deletedTotal := int64(0)
+		for range 6 {
+			deleted, err := DeleteOldLogBatch(t.Context(), 600, 2)
+			require.NoError(t, err)
+			deletedTotal += deleted
+			if deleted == 0 {
+				break
+			}
+			if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+				assert.LessOrEqual(t, deleted, int64(2))
+			}
+		}
+		assert.EqualValues(t, 5, deletedTotal)
+		remaining, err := CountOldLog(t.Context(), 600)
+		require.NoError(t, err)
+		assert.Zero(t, remaining, "repeated bounded batches leave no old rows behind")
+		for _, table := range GetLogStorageTables(t.Context()) {
+			if common.UsingLogDatabase(common.DatabaseTypeSQLite) {
+				assert.Nil(t, table.Bytes, "SQLite without cheap per-table metadata reports unknown")
+			} else if table.Name != "log_request_content_protections" {
+				require.NotNil(t, table.Bytes, "metadata must be available with fixture privileges")
+				assert.GreaterOrEqual(t, *table.Bytes, int64(0))
+			}
+		}
+	})
+}
+
 func TestLogRequestDetailConfiguredSQLiteAlias(t *testing.T) {
 	// LOG_SQL_DSN=local selects SQLitePath just like SQL_DSN=local. The two
 	// configurations must not compete for the same file's writer lock.

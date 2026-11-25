@@ -612,6 +612,32 @@ func TestAdminChannelSurfaceAdmitsOnlyAuthorizedAdmins(t *testing.T) {
 	}
 }
 
+func TestPersonalAccessTokenLogStorageScope(t *testing.T) {
+	fixture := setupAdminChannelSurfaceFixture(t)
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	readPAT := createAdminSurfacePAT(t, fixture.adminId, authz.Permission{Resource: "option", Action: authz.ActionRead})
+	writePAT := createAdminSurfacePAT(t, fixture.adminId, authz.Permission{Resource: "option", Action: authz.ActionWrite})
+	for _, credential := range []string{writePAT, fixture.ordinarySession, ""} {
+		response := fixture.request(http.MethodGet, "/api/option/log_storage", credential, "")
+		if credential == "" {
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+		} else {
+			assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		}
+		assert.NotContains(t, response.Body.String(), "capture_enabled")
+	}
+	response := fixture.request(http.MethodGet, "/api/option/log_storage", readPAT, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"capture_enabled"`)
+	assert.Contains(t, response.Body.String(), `"bytes":null`, "SQLite reports unknown, not a full scan")
+	assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleAdminUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	response = fixture.request(http.MethodGet, "/api/option/log_storage", readPAT, "")
+	assert.Equal(t, http.StatusForbidden, response.Code, "option:read never grants the root role")
+}
+
 // TestOptionBatchAccessTokenScopes exercises the real route chain: root role
 // and option:write are both required, just like the compatibility single PUT.
 func TestOptionBatchAccessTokenScopes(t *testing.T) {

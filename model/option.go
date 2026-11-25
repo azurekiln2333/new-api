@@ -304,6 +304,9 @@ func validateOptionValueWithUpdates(key string, value string, updates map[string
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
+	if err := operation_setting.ValidateLogStorageOption(key, value); err != nil {
+		return err
+	}
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
 	}

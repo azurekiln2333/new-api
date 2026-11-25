@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 const (
@@ -40,6 +41,13 @@ func cleanupLogRequestContent() {
 	// uncertain operation stays protected instead of being guessed complete.
 	if err := model.RecoverLogRequestContentOperations(ctx, logRequestContentCleanupBatch); err != nil {
 		common.SysError(common.LogText("failed to recover original request content operations: %s", err.Error()))
+	}
+	_, contentDays := operation_setting.LogRetentionDays()
+	if common.IsMasterNode && contentDays > 0 {
+		cutoff := common.GetTimestamp() - int64(contentDays)*86400
+		if err := model.ExpireLogRequestDetails(ctx, cutoff, logRequestContentCleanupBatch); err != nil {
+			common.SysError(common.LogText("failed to reclaim original request content: %s", err.Error()))
+		}
 	}
 	if err := model.CleanupLogRequestDetails(ctx, common.GetTimestamp(), logRequestContentCleanupBatch); err != nil {
 		common.SysError(common.LogText("failed to reclaim original request content: %s", err.Error()))
