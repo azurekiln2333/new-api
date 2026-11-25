@@ -22,7 +22,8 @@
     "11-24-channel-loading-save-performance",
     "11-24-management-mutations-code-batches",
     "11-24-channel-diagnostics-log-presentation",
-    "11-24-dashboard-node-ranking-details"
+    "11-24-dashboard-node-ranking-details",
+    "11-25-console-forward-to-master"
   ],
   "parent": null,
   "relatedFiles": [],

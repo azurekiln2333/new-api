@@ -1,4 +1,8 @@
-# pi-keys report — 11-24-channel-loading-save-performance (FROZEN, source-only)
+# pi-keys report — 11-24-channel-loading-save-performance (source-only)
+
+## R14 implementation checkpoint — IN PROGRESS
+
+Root clarified R14: wallet quota spent redeeming subscriptions with balance, NOT `amount_used`. The old design note below is superseded. Current owned WIP: `GetSubscriptionBalanceUsedQuota` reads recorded `charged_quota` payloads and `UserListItem` is wired to both list handlers. The changed `BuildUserListItems(ctx, users)` signature is now passed `c.Request.Context()` at both controller call sites; a repo-wide source search found no other callers. Remaining: strict parsing and safe totals, existing-test matrix, independent frontend column/types/locales, and final source review. No local executable validation or Git publication has run. Do not treat this checkpoint as completion.
 
 Validation banned locally: nothing here was built, tested, vetted, linted, typechecked, formatted or run.
 Cloud GitHub Actions is the only validator. Nothing is staged, committed or pushed.
@@ -50,8 +54,11 @@ Cloud GitHub Actions is the only validator. Nothing is staged, committed or push
 7. `publishUserBoundChannelIndex` remains used by the two full-reload branches only.
 8. **`page_size` cap is 100 for both `/api/channel/search` and `/api/channel/options`**, and `GetAllChannels` inherits the same 100 from `common.GetPageQuery`. A client that previously requested more than 100 rows from search will now get 100 plus a truthful `total`, so it must page.
 
-## CI selectors (already wired by root)
+## Step 1 checkpoint — targeted ManageMultiKeys publication
 
-`TestChannelSearch|TestGetChannelOptions|TestChannelCreate|TestChannelUpdate|TestChannelCacheReload|TestChannelBoundIndex`
+Completed source-only. The remaining allocation mutation path no longer calls `InitChannelCache()` after `MutateChannelKeyEntries`; that model helper now publishes its committed channel through `publishChannelSnapshot`, preserving local routing/bound-index updates while avoiding a full reload. The `sync_key_models` apply branch also no longer re-reads the channel or rebuilds abilities after the mutation, because the mutation transaction already updates abilities and the targeted publication now runs before return. Existing direct `ManageMultiKeys` paths continue through `RefreshChannelRouting` after their committed channel edits. Added `TestManagedKeyAllocationPublishesOnlyChangedChannel` to `controller/channel_multi_key_test.go`, alongside the existing managed-status publication regression, covering cache-enabled and cache-disabled modes and asserting no unbounded channel read callback. No local tests/builds/vet/lint/gofmt/typecheck/DB probes were run.
 
-New names this pass: `TestChannelSearchTagModePagesInSQL`, `TestChannelSearchPageSizeIsCapped`, `TestChannelBoundIndexNoCacheReloadRejectsStaleSnapshot`.
+## Step 2 checkpoint — R14 design note
+
+Completed source-only design note at `research/r14-subscription-usage.md`. It records `UserSubscription.AmountUsed` and the pre-consume/settlement/reset paths, explains why no per-user lifetime counter exists, proposes a computed grouped projection rather than a migration or billing change, lists fresh/upgrade SQLite/MySQL/PostgreSQL verification, and identifies the separate frontend column and i18n ownership. Stopped for root review as requested; no R14 production code was changed.
+
