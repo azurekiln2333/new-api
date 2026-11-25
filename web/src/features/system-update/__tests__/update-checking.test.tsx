@@ -71,7 +71,9 @@ function UpdateSourceSettingsFixture(props: { repository: string }) {
     <>
       <div ref={setContainer} />
       <SettingsPageProvider actionsContainer={container}>
-        <UpdateCheckerSection defaultValues={{ repository: props.repository }} />
+        <UpdateCheckerSection
+          defaultValues={{ repository: props.repository }}
+        />
       </SettingsPageProvider>
     </>
   )
@@ -452,7 +454,9 @@ describe('update source settings', () => {
       expect(input).toHaveValue(repository)
       await user.clear(input)
       if (next) await user.type(input, next)
-      await user.click(screen.getByRole('button', { name: 'Save update source' }))
+      await user.click(
+        screen.getByRole('button', { name: 'Save update source' })
+      )
       await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
       expect(put).toHaveBeenCalledWith('/api/option/', {
         key: 'system_update_setting.repository',
@@ -464,7 +468,9 @@ describe('update source settings', () => {
         ).toBeEnabled()
       )
       expect(input).toHaveValue(next)
-      await user.click(screen.getByRole('button', { name: 'Save update source' }))
+      await user.click(
+        screen.getByRole('button', { name: 'Save update source' })
+      )
       expect(put).toHaveBeenCalledTimes(1)
     }
   )
@@ -746,7 +752,9 @@ describe('update cache and scheduling', () => {
     )
     expect(hook.result.current.release).toBeNull()
     expect(hook.result.current.hasUpdate).toBe(false)
-    expect(hook.result.current.snapshot?.repository).toBe('azurekiln2333/new-api')
+    expect(hook.result.current.snapshot?.repository).toBe(
+      'azurekiln2333/new-api'
+    )
     act(() =>
       client.setQueryData(STATUS_QUERY_KEY, { version: 'v1.0.0-rc.35' })
     )
@@ -784,7 +792,9 @@ describe('update cache and scheduling', () => {
     fetchMock.mockImplementation(async () => new Response('[]'))
     const hook = renderHook(useSystemUpdate, { wrapper: Wrapper })
     await waitFor(() =>
-      expect(hook.result.current.snapshot?.repository).toBe('azurekiln2333/new-api')
+      expect(hook.result.current.snapshot?.repository).toBe(
+        'azurekiln2333/new-api'
+      )
     )
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(hook.result.current.release).toBeNull()
