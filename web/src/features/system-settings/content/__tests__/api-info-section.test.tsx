@@ -255,8 +255,11 @@ describe('ApiInfoSection', () => {
       within(twoRow as HTMLElement).getByRole('button', { name: 'Delete' })
     )
     // Confirm in the alert dialog, which also uses "Delete" as its action.
-    const confirmButtons = screen.getAllByRole('button', { name: 'Delete' })
-    await userEvent.click(confirmButtons[confirmButtons.length - 1])
+    await userEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Delete',
+      })
+    )
 
     await userEvent.click(
       screen.getByRole('button', { name: 'Save Settings' })

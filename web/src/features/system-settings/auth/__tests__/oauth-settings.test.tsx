@@ -138,9 +138,8 @@ describe('OAuth settings saves', () => {
       await user.click(screen.getByRole('button', { name: 'Save Changes' }))
 
       await waitFor(() =>
-        expect(api.put).toHaveBeenCalledWith('/api/option/', {
-          key: 'GitHubClientId',
-          value: 'github-client',
+        expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+          options: [{ key: 'GitHubClientId', value: 'github-client' }],
         })
       )
       expect(api.put).toHaveBeenCalledTimes(1)
@@ -179,9 +178,8 @@ describe('OAuth settings saves', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith('/api/option/', {
-        key: 'oidc.enabled',
-        value: false,
+      expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+        options: [{ key: 'oidc.enabled', value: false }],
       })
     )
     expect(api.put).toHaveBeenCalledTimes(1)
@@ -261,18 +259,14 @@ describe('OAuth settings saves', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled()
     )
-    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(4))
-    expect(api.put).toHaveBeenCalledWith('/api/option/', {
-      key: 'oidc.authorization_endpoint',
-      value: response.data.authorization_endpoint,
-    })
-    expect(api.put).toHaveBeenCalledWith('/api/option/', {
-      key: 'oidc.token_endpoint',
-      value: response.data.token_endpoint,
-    })
-    expect(api.put).toHaveBeenCalledWith('/api/option/', {
-      key: 'oidc.user_info_endpoint',
-      value: response.data.userinfo_endpoint,
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+    expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+      options: expect.arrayContaining([
+        { key: 'oidc.well_known', value: 'https://provider.example.com/discovery' },
+        { key: 'oidc.authorization_endpoint', value: response.data.authorization_endpoint },
+        { key: 'oidc.token_endpoint', value: response.data.token_endpoint },
+        { key: 'oidc.user_info_endpoint', value: response.data.userinfo_endpoint },
+      ]),
     })
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
@@ -330,9 +324,8 @@ describe('OAuth settings saves', () => {
     get.mockResolvedValue({ data: {} })
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith('/api/option/', {
-        key: 'oidc.well_known',
-        value: 'https://provider.example.com/discovery',
+      expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+        options: [{ key: 'oidc.well_known', value: 'https://provider.example.com/discovery' }],
       })
     )
   })

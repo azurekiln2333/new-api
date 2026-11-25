@@ -449,10 +449,9 @@ export function RatioSettingsCard({
         (key) => normalized[key] !== groupNormalizedDefaults.current[key]
       )
 
-      for (const key of updates) {
-        const apiKey = apiKeyMap[key] || key
-        await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
-      }
+      await updateOption.mutateAsync(
+        updates.map((key) => ({ key: apiKeyMap[key] || key, value: normalized[key] }))
+      )
 
       groupNormalizedDefaults.current = normalized
     },

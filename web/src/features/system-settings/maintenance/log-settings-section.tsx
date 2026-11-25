@@ -113,10 +113,11 @@ export function LogSettingsSection(props: LogSettingsSectionProps) {
         values.system_task_setting.retention_days,
       ],
     ] as const
-    for (const [key, value] of changes) {
-      if (value === props.defaultValues[key]) continue
-      await updateOption.mutateAsync({ key, value })
-    }
+    await updateOption.mutateAsync(
+      changes
+        .filter(([key, value]) => value !== props.defaultValues[key])
+        .map(([key, value]) => ({ key, value }))
+    )
   }
 
   return (

@@ -89,9 +89,9 @@ export function DashboardSection({ defaultValues }: DashboardSectionProps) {
         value !== defaultValues[key as keyof DataDashboardFormValues]
     )
 
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value })
-    }
+    await updateOption.mutateAsync(
+      updates.map(([key, value]) => ({ key, value }))
+    )
   }
 
   const isEnabled = form.watch('DataExportEnabled')

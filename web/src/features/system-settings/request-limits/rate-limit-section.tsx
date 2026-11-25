@@ -115,9 +115,9 @@ export function RateLimitSection({ defaultValues }: RateLimitSectionProps) {
     )
 
     try {
-      for (const [key, value] of updates) {
-        await updateOption.mutateAsync({ key, value: value ?? '' })
-      }
+      await updateOption.mutateAsync(
+        updates.map(([key, value]) => ({ key, value: value ?? '' }))
+      )
     } catch {
       // The mutation reports the error; no overrides change after a failed save.
       return

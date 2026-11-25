@@ -155,18 +155,14 @@ describe('Epay signature type', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save all settings' }))
 
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(3))
-    expect(request.mock.calls.map((call) => call[1])).toEqual([
-      {
-        key: 'payment_setting.epay_merchant_private_key',
-        value: 'merchant-private-key',
-      },
-      {
-        key: 'payment_setting.epay_platform_public_key',
-        value: 'platform-public-key',
-      },
-      { key: 'payment_setting.epay_sign_type', value: 'RSA' },
-    ])
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    expect(request).toHaveBeenCalledWith('/api/option/batch', {
+      options: [
+        { key: 'payment_setting.epay_merchant_private_key', value: 'merchant-private-key' },
+        { key: 'payment_setting.epay_platform_public_key', value: 'platform-public-key' },
+        { key: 'payment_setting.epay_sign_type', value: 'RSA' },
+      ],
+    })
   })
 
   it('keeps saved RSA keys when switching back to MD5 with blank key fields', async () => {
@@ -189,9 +185,8 @@ describe('Epay signature type', () => {
     await user.click(screen.getByRole('button', { name: 'Save all settings' }))
 
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('/api/option/', {
-        key: 'payment_setting.epay_sign_type',
-        value: 'MD5',
+      expect(request).toHaveBeenCalledWith('/api/option/batch', {
+        options: [{ key: 'payment_setting.epay_sign_type', value: 'MD5' }],
       })
     )
     expect(request).toHaveBeenCalledTimes(1)

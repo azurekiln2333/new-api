@@ -37,6 +37,9 @@ export type UpdateOptionRequest = {
 export type UpdateOptionResponse = {
   success: boolean
   message: string
+  key?: string
+  message_key?: string
+  message_params?: Record<string, unknown>
 }
 
 export interface PasskeyDomainChange {

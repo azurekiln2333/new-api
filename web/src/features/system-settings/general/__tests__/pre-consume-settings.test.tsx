@@ -97,9 +97,8 @@ test.each(['0.5', '1.5', '2.5', '0.0001'])(
     expect(input).toBeValid()
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
-      expect(api.put).toHaveBeenCalledWith('/api/option/', {
-        key: 'quota_setting.pre_consume_multiplier',
-        value: Number(value),
+      expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+        options: [{ key: 'quota_setting.pre_consume_multiplier', value: Number(value) }],
       })
     )
   }
@@ -125,9 +124,8 @@ test('zero threshold disables bypass and saves as zero', async () => {
   fireEvent.change(input, { target: { value: '0' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
   await waitFor(() =>
-    expect(api.put).toHaveBeenCalledWith('/api/option/', {
-      key: 'quota_setting.trust_quota_usd',
-      value: 0,
+    expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+      options: [{ key: 'quota_setting.trust_quota_usd', value: 0 }],
     })
   )
 })

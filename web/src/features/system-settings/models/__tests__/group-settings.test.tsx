@@ -464,9 +464,11 @@ it('preserves manual drafts after saving levels and receiving unchanged group de
   ).toHaveLength(2)
   await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() =>
-    expect(api.put).toHaveBeenCalledWith('/api/option/', {
-      key: 'group_ratio_setting.group_special_usable_group',
-      value: '{"vip":{"+:default":"Draft access"}}',
+    expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+      options: [{
+        key: 'group_ratio_setting.group_special_usable_group',
+        value: '{"vip":{"+:default":"Draft access"}}',
+      }],
     })
   )
 

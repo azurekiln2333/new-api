@@ -214,18 +214,16 @@ export function EmailSettingsSection({
       })
     }
 
-    // Save credentials first. A failed configuration write must not activate
-    // the new provider; only the final selector write changes delivery.
+    // Credentials and the provider selector commit atomically. A failed member
+    // must leave both the previous credentials and delivery method unchanged.
     if (values.EmailProvider !== defaultValues.EmailProvider) {
       updates.push({ key: 'EmailProvider', value: values.EmailProvider })
     }
 
     try {
-      for (const update of updates) {
-        await updateOption.mutateAsync(update)
-        if (update.key === 'ResendApiKey') {
-          form.setValue('ResendKeyConfigured', true)
-        }
+      await updateOption.mutateAsync(updates)
+      if (updates.some((update) => update.key === 'ResendApiKey')) {
+        form.setValue('ResendKeyConfigured', true)
       }
       form.setValue('ResendApiKey', '')
     } catch (error) {

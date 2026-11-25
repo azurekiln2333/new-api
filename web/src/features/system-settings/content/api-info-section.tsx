@@ -444,7 +444,7 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
                     size='icon'
                     className='size-7'
                     aria-label={t('Move up')}
-                    disabled={apiInfoList[0]?.id === apiInfo.id}
+                    disabled={apiInfoList.at(0)?.id === apiInfo.id}
                     onClick={() => handleMove(apiInfo.id, -1)}
                   >
                     <ChevronUp className='size-4' />
@@ -455,9 +455,7 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
                     size='icon'
                     className='size-7'
                     aria-label={t('Move down')}
-                    disabled={
-                      apiInfoList[apiInfoList.length - 1]?.id === apiInfo.id
-                    }
+                    disabled={apiInfoList.at(-1)?.id === apiInfo.id}
                     onClick={() => handleMove(apiInfo.id, 1)}
                   >
                     <ChevronDown className='size-4' />

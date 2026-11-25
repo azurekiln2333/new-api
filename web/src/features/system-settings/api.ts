@@ -44,6 +44,13 @@ export async function updateSystemOption(request: UpdateOptionRequest) {
   return res.data
 }
 
+export async function updateSystemOptionsBatch(options: UpdateOptionRequest[]) {
+  const res = await api.put<UpdateOptionResponse>('/api/option/batch', {
+    options,
+  })
+  return res.data
+}
+
 export async function updatePasskeyDomains(
   request: UpdatePasskeyDomainsRequest
 ) {

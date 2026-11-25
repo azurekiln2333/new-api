@@ -169,14 +169,12 @@ test('saving sends only the log export settings that changed', async () => {
   fireEvent.change(days, { target: { value: '90' } })
   await user.click(screen.getByRole('button', { name: 'Save log settings' }))
 
-  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2))
-  expect(api.put).toHaveBeenCalledWith('/api/option/', {
-    key: 'log_setting.user_export_enabled',
-    value: false,
-  })
-  expect(api.put).toHaveBeenCalledWith('/api/option/', {
-    key: 'log_setting.max_range_days',
-    value: 90,
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+  expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+    options: [
+      { key: 'log_setting.user_export_enabled', value: false },
+      { key: 'log_setting.max_range_days', value: 90 },
+    ],
   })
 })
 
@@ -207,8 +205,7 @@ test('the task retention saves whole days and rejects less than one day', async 
   fireEvent.change(retention, { target: { value: '7' } })
   await user.click(save)
   await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
-  expect(api.put).toHaveBeenCalledWith('/api/option/', {
-    key: 'system_task_setting.retention_days',
-    value: 7,
+  expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+    options: [{ key: 'system_task_setting.retention_days', value: 7 }],
   })
 })
