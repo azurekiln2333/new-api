@@ -121,6 +121,109 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
+it('does not submit until the matching user detail has loaded and ignores a late previous response', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  let resolveFirst!: (value: { data: unknown }) => void
+  let resolveSecond!: (value: { data: unknown }) => void
+  const first = new Promise<{ data: unknown }>((resolve) => {
+    resolveFirst = resolve
+  })
+  const second = new Promise<{ data: unknown }>((resolve) => {
+    resolveSecond = resolve
+  })
+  vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+    if (url === '/api/authz/catalog') {
+      return { data: { success: true, data: { resources: [], roles: [] } } }
+    }
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default'] } }
+    }
+    if (url === '/api/user/2') return first
+    if (url === '/api/user/3') return second
+    throw new Error(`Unexpected GET ${url} ${String(config)}`)
+  })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const rowA = { ...target, id: 2, username: 'row-a', display_name: 'Row A' }
+  const rowB = { ...target, id: 3, username: 'row-b', display_name: 'Row B' }
+  const view = render(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={rowA} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  const save = screen.getByRole('button', { name: 'Save changes' })
+  expect(save).toBeDisabled()
+  expect(screen.getByDisplayValue('row-a')).toBeInTheDocument()
+  view.rerender(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={rowB} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  expect(screen.getByDisplayValue('row-b')).toBeInTheDocument()
+  expect(screen.queryByDisplayValue('Row A')).not.toBeInTheDocument()
+  resolveFirst({ data: { success: true, data: { ...rowA, username: 'late-a' } } })
+  await waitFor(() => expect(screen.getByDisplayValue('row-b')).toBeInTheDocument())
+  expect(save).toBeDisabled()
+  resolveSecond({ data: { success: true, data: { ...rowB, username: 'fresh-b' } } })
+  await waitFor(() => expect(screen.getByDisplayValue('fresh-b')).toBeInTheDocument())
+  expect(save).toBeEnabled()
+  await userEvent.click(save)
+  await waitFor(() => expect(put).toHaveBeenCalledWith('/api/user/', expect.objectContaining({ id: 3 }), {}))
+})
+
+it('keeps Retry accessible after a failed detail load and enables saving only after retry succeeds', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  let detailReads = 0
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/authz/catalog') {
+      return { data: { success: true, data: { resources: [], roles: [] } } }
+    }
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default'] } }
+    }
+    detailReads += 1
+    if (detailReads === 1) {
+      return { data: { success: false, message: 'Detail unavailable' } }
+    }
+    return { data: { success: true, data: { ...target, username: 'fresh-user' } } }
+  })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={target} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  const retry = await screen.findByRole('button', { name: 'Retry' })
+  expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  expect(retry.closest('[inert]')).toBeNull()
+  retry.focus()
+  expect(retry).toHaveFocus()
+
+  await userEvent.click(retry)
+
+  await screen.findByDisplayValue('fresh-user')
+  expect(detailReads).toBe(2)
+  expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+})
+
+it('treats a saved matrix as changed when the loaded baseline came from a user that was replaced', async () => {
+  // The baseline must come from the fetched detail, never from a previous row:
+  // comparing against the wrong matrix drops a real permission change silently.
+  const first = vi.spyOn(api, 'get')
+  renderPermissions(100, true)
+  await screen.findByDisplayValue('Managed admin')
+  const detail = first.mock.calls
+    .map(([url]) => url)
+    .filter((url) => url?.startsWith('/api/user/'))
+  expect(detail).toEqual(['/api/user/2'])
+})
+
 it.each([undefined, true])(
   'root can save an audit grant or revocation after step-up verification (previous=%s)',
   async (allowed) => {
@@ -169,6 +272,52 @@ it.each([undefined, true])(
     )
   }
 )
+
+it('re-reads the fresh detail for a reopened user so the quota baseline is not the stale list value', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  let serverQuota = 1_000_000
+  const detailCalls: string[] = []
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/authz/catalog') {
+      return { data: { success: true, data: { resources: [], roles: [] } } }
+    }
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default'] } }
+    }
+    detailCalls.push(url)
+    return { data: { success: true, data: { ...target, quota: serverQuota } } }
+  })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const row = { ...target, quota: 1_000_000 }
+  const view = render(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={row} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  await screen.findByDisplayValue('Managed admin')
+  view.rerender(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <UsersMutateDrawer open={false} onOpenChange={() => undefined} currentRow={row} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  // The user spent quota while the drawer was closed.
+  serverQuota = 400_000
+  view.rerender(
+    <QueryClientProvider client={client}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={row} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  expect(detailCalls).toEqual(['/api/user/2', '/api/user/2'])
+  await waitFor(() =>
+    expect(screen.getByLabelText(/Remaining Quota/)).toHaveValue(400_000 / 500_000)
+  )
+})
 
 it('root saving an administrator without changing permissions or password does not verify', async () => {
   const put = vi

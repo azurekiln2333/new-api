@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, KeyRound, Settings2, WalletCards } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -223,6 +223,36 @@ export function ApiKeysMutateDrawer({
     defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
   })
 
+  // Seed a switched target from its list projection immediately. The detail
+  // query below remains authoritative and keeps the form inert until it wins.
+  useLayoutEffect(() => {
+    if (!open) {
+      form.reset(
+        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
+      )
+      setInitializedTarget(null)
+      return
+    }
+    if (isUpdate && currentRow) {
+      form.reset(
+        transformApiKeyToFormDefaults(
+          currentRow,
+          availableAutoGroupNames,
+          maxAutoGroups
+        )
+      )
+      setInitializedTarget(null)
+    }
+  }, [
+    open,
+    currentRowId,
+    form,
+    defaultUseAutoGroup,
+    backendHasAuto,
+    availableAutoGroupNames,
+    maxAutoGroups,
+  ])
+
   // Load existing data when updating
   useEffect(() => {
     if (!open) {
@@ -246,7 +276,7 @@ export function ApiKeysMutateDrawer({
     const target = isUpdate && currentRow ? `update:${currentRow.id}` : 'create'
     if (initializedTarget === target) return
     if (isUpdate && currentRow) {
-      if (apiKeyData?.success && apiKeyData.data) {
+      if (apiKeyData?.success && apiKeyData.data?.id === currentRow.id) {
         form.reset(
           transformApiKeyToFormDefaults(
             apiKeyData.data,

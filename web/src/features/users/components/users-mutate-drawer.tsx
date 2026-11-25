@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { Pencil } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -31,6 +31,8 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { PasswordInput } from '@/components/password-input'
 import { PasswordStrength } from '@/components/password-strength'
 import { PermissionMatrix } from '@/components/permission-matrix'
@@ -122,6 +124,12 @@ export function UsersMutateDrawer({
   // Matrix as loaded from the server; an unchanged matrix is not resubmitted so
   // routine edits of an administrator do not require step-up verification.
   const loadedPermissions = useRef<AdminPermissionMatrix | undefined>(undefined)
+  const activeUserId = useRef<number | undefined>(undefined)
+  const [userLoadState, setUserLoadState] = useState<{
+    id: number | undefined
+    status: 'idle' | 'loading' | 'ready' | 'error'
+  }>({ id: undefined, status: 'idle' })
+  const [reloadUser, setReloadUser] = useState(0)
 
   // Fetch groups
   const { data: groupsData } = useQuery({
@@ -144,25 +152,60 @@ export function UsersMutateDrawer({
     defaultValues: USER_FORM_DEFAULT_VALUES,
   })
 
-  // Load existing data when updating
-  useEffect(() => {
-    if (open && isUpdate && currentRow) {
-      // For update, fetch fresh data
-      getUser(currentRow.id)
-        .then((result) => {
-          if (result.success && result.data) {
-            loadedPermissions.current = result.data.admin_permissions
-            form.reset(transformUserToFormDefaults(result.data))
-          } else {
-            handleServerError(result, t('Failed to load'))
-          }
-        })
-        .catch((error) => handleServerError(error, t('Failed to load')))
-    } else if (open && !isUpdate) {
-      // For create, reset to defaults
+  // Replace the visible form synchronously when its identity changes. The
+  // cleanup fences late detail responses from prior users and close/reopen.
+  useLayoutEffect(() => {
+    let active = true
+    const targetId = currentRow?.id
+    activeUserId.current = open ? targetId : undefined
+
+    if (!open) {
       form.reset(USER_FORM_DEFAULT_VALUES)
+      loadedPermissions.current = undefined
+      setUserLoadState({ id: undefined, status: 'idle' })
+      return () => {
+        active = false
+      }
     }
-  }, [open, isUpdate, currentRow, form, t])
+
+    if (!isUpdate || !currentRow) {
+      form.reset(USER_FORM_DEFAULT_VALUES)
+      loadedPermissions.current = undefined
+      setUserLoadState({ id: undefined, status: 'ready' })
+      return () => {
+        active = false
+      }
+    }
+
+    form.reset(transformUserToFormDefaults(currentRow))
+    loadedPermissions.current = undefined
+    setUserLoadState({ id: targetId, status: 'loading' })
+
+    void getUser(currentRow.id)
+      .then((result) => {
+        if (!active) return
+        if (!result.success || !result.data || result.data.id !== targetId) {
+          setUserLoadState({ id: targetId, status: 'error' })
+          handleServerError(result, t('Failed to load'))
+          return
+        }
+
+        // The baseline comes from this detail response, never from the list
+        // row: an unchanged matrix must compare against what the server holds.
+        loadedPermissions.current = result.data.admin_permissions
+        form.reset(transformUserToFormDefaults(result.data))
+        setUserLoadState({ id: targetId, status: 'ready' })
+      })
+      .catch((error: unknown) => {
+        if (!active) return
+        setUserLoadState({ id: targetId, status: 'error' })
+        handleServerError(error, t('Failed to load'))
+      })
+
+    return () => {
+      active = false
+    }
+  }, [open, isUpdate, currentRow?.id, form, t, reloadUser])
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
@@ -170,10 +213,24 @@ export function UsersMutateDrawer({
 
   const currentQuotaRaw = form.watch('quota_dollars') || 0
   const selectedRole = form.watch('role')
+  const isUserReady =
+    !isUpdate ||
+    (userLoadState.id === currentRow?.id && userLoadState.status === 'ready')
+  const isUserLoading =
+    isUpdate &&
+    userLoadState.id === currentRow?.id &&
+    userLoadState.status === 'loading'
+  const isUserLoadError =
+    isUpdate &&
+    userLoadState.id === currentRow?.id &&
+    userLoadState.status === 'error'
   const canEditAdminPermissions = currentUser?.role === ROLE.SUPER_ADMIN
   const targetIsAdmin = (selectedRole ?? currentRow?.role ?? 0) >= ROLE.ADMIN
 
   const onSubmit = async (data: UserFormValues) => {
+    const targetId = currentRow?.id
+    if (!isUserReady || (isUpdate && targetId === undefined)) return
+
     if (!isUpdate || data.password) {
       if (!accountPasswordSchema.safeParse(data.password ?? '').success) {
         form.setError('password', {
@@ -186,11 +243,7 @@ export function UsersMutateDrawer({
 
     setIsSubmitting(true)
     try {
-      const payload = transformFormDataToPayload(
-        data,
-        currentRow?.id,
-        permissionCatalog
-      )
+      const payload = transformFormDataToPayload(data, targetId, permissionCatalog)
       if (
         isUpdate &&
         payload.admin_permissions &&
@@ -233,6 +286,12 @@ export function UsersMutateDrawer({
         if (!proof) return
         proofToken = proof.proof_token
       }
+      if (
+        isUpdate &&
+        (!open || activeUserId.current !== targetId || !isUserReady)
+      ) {
+        return
+      }
       const result = isUpdate
         ? await updateUser(
             payload as typeof payload & { id: number },
@@ -262,10 +321,11 @@ export function UsersMutateDrawer({
   }
 
   const refreshUserData = async () => {
-    if (!currentRow) return
+    const targetId = currentRow?.id
+    if (targetId === undefined || !isUserReady) return
     try {
-      const result = requireServerSuccess(await getUser(currentRow.id))
-      if (result.success && result.data) {
+      const result = requireServerSuccess(await getUser(targetId))
+      if (result.data?.id === targetId && activeUserId.current === targetId) {
         loadedPermissions.current = result.data.admin_permissions
         form.reset(transformUserToFormDefaults(result.data))
       }
@@ -282,7 +342,10 @@ export function UsersMutateDrawer({
         onOpenChange={(v) => {
           onOpenChange(v)
           if (!v) {
-            form.reset()
+            activeUserId.current = undefined
+            loadedPermissions.current = undefined
+            setUserLoadState({ id: undefined, status: 'idle' })
+            form.reset(USER_FORM_DEFAULT_VALUES)
           }
         }}
       >
@@ -300,9 +363,21 @@ export function UsersMutateDrawer({
             </SheetDescription>
           </SheetHeader>
           <Form {...form}>
+            {isUserLoading && (
+              <LoadingState inline message={t('Loading...')} />
+            )}
+            {isUserLoadError && (
+              <ErrorState
+                title={t('Failed to load')}
+                onRetry={() => setReloadUser((value) => value + 1)}
+                className='min-h-0'
+              />
+            )}
             <form
               id='user-form'
               onSubmit={form.handleSubmit(onSubmit)}
+              aria-busy={isUserLoading}
+              inert={!isUserReady || isSubmitting ? true : undefined}
               className={sideDrawerFormClassName()}
             >
               {/* Basic Information */}
@@ -478,6 +553,7 @@ export function UsersMutateDrawer({
                           <Button
                             type='button'
                             variant='outline'
+                            disabled={!isUserReady}
                             onClick={() => setQuotaDialogOpen(true)}
                           >
                             <Pencil className='mr-1 h-4 w-4' />
@@ -608,7 +684,11 @@ export function UsersMutateDrawer({
             <SheetClose render={<Button variant='outline' />}>
               {t('Close')}
             </SheetClose>
-            <Button form='user-form' type='submit' disabled={isSubmitting}>
+            <Button
+              form='user-form'
+              type='submit'
+              disabled={isSubmitting || !isUserReady}
+            >
               {isSubmitting ? t('Saving...') : t('Save changes')}
             </Button>
           </SheetFooter>
@@ -616,7 +696,7 @@ export function UsersMutateDrawer({
       </Sheet>
 
       {/* Adjust Quota Dialog */}
-      {currentRow && (
+      {currentRow && isUserReady && (
         <UserQuotaDialog
           open={quotaDialogOpen}
           onOpenChange={setQuotaDialogOpen}
