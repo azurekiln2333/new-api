@@ -73,6 +73,13 @@ defaults or rewrites overrides. Empty build strings preserve unbound behavior.
 All Linux amd64/arm64, macOS arm64 and Windows release binaries receive the same
 binding. Additional packaging paths require their own audit.
 
+The update-source settings form keeps a blank stored override blank. Its
+placeholder may show a validated, trimmed effective repository from `/api/status`,
+otherwise a translated deployment-default hint. Placeholder refreshes must not
+replace saved values or reset unsaved edits. Blank guidance describes environment,
+build and protected upstream fallback precedence; it must not promise upstream
+selection regardless of deployment settings.
+
 ### 4. Validation and error matrix
 
 | Input | Result |
@@ -99,6 +106,11 @@ effective resolution with blank stored/environment values and no stored mutation
 The dedicated hosted step passes both the expected environment value and `-X`;
 ordinary runs skip only this linkage-specific case. No missing-test run proves
 the release build binding.
+The existing frontend update-checking suite covers unchanged saves, explicit and
+blank overrides, invalid effective-source hints and preserved drafts while status
+updates. Mounted query-cache updates must await the observable placeholder/render
+before checking draft preservation; synchronous `setQueryData` alone does not
+flush observer notifications.
 
 ### 7. Wrong vs correct
 

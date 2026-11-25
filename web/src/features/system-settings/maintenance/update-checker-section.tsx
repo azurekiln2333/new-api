@@ -72,6 +72,12 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
     ? formatTimestamp(props.startTime)
     : t('Unknown')
   const version = status?.version || props.currentVersion || t('Unknown')
+  const effectiveRepository = status?.update_source_repository
+  const repositoryPlaceholder =
+    typeof effectiveRepository === 'string' &&
+    isUpdateSourceRepository(effectiveRepository)
+      ? effectiveRepository.trim()
+      : t('Deployment default')
   const formDefaults = useMemo<UpdateSourceFormValues>(
     () => ({ repository: props.defaultValues?.repository ?? '' }),
     [props.defaultValues?.repository]
@@ -129,12 +135,18 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
                     <Input
                       {...field}
                       autoComplete='off'
-                      placeholder={DEFAULT_UPDATE_SOURCE_REPOSITORY}
+                      placeholder={repositoryPlaceholder}
                     />
                   </FormControl>
                   <FormDescription>
                     {t('Enter the repository as owner/repo.')}{' '}
-                    {t('Leave blank to follow the official release channel.')}
+                    {t(
+                      'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.',
+                      {
+                        repository: DEFAULT_UPDATE_SOURCE_REPOSITORY,
+                        interpolation: { escapeValue: false },
+                      }
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
