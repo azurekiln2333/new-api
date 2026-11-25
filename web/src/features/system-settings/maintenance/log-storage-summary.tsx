@@ -27,7 +27,12 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 type LogStorageSummaryData = {
-  tables: { name: string; database: string; bytes: number | null; estimated: boolean }[]
+  tables: {
+    name: string
+    database: string
+    bytes: number | null
+    estimated: boolean
+  }[]
   capture_enabled: boolean
   capture_max_bytes: number
   capture_enabled_override: boolean
@@ -41,7 +46,10 @@ export function LogStorageSummary() {
   const summary = useQuery({
     queryKey: ['log-storage-summary', userId],
     queryFn: async () => {
-      const response = await api.get<{ success: boolean; data: LogStorageSummaryData }>('/api/option/log_storage')
+      const response = await api.get<{
+        success: boolean
+        data: LogStorageSummaryData
+      }>('/api/option/log_storage')
       return requireServerSuccess(response.data).data
     },
     staleTime: 30000,
@@ -50,24 +58,56 @@ export function LogStorageSummary() {
   })
 
   return (
-    <div className='text-muted-foreground flex min-w-0 flex-col gap-2 text-sm' aria-live='polite'>
+    <div
+      className='text-muted-foreground flex min-w-0 flex-col gap-2 text-sm'
+      aria-live='polite'
+    >
       {summary.isPending && <LoadingState inline message={t('Loading...')} />}
-      {!summary.isPending && !summary.data && <p>{t('Storage metadata unavailable')}</p>}
+      {!summary.isPending && !summary.data && (
+        <p>{t('Storage metadata unavailable')}</p>
+      )}
       {summary.data && (
         <>
-          <p>{t('Effective capture on this node: {{enabled}}, limit {{limit}}', { enabled: summary.data.capture_enabled ? t('Enabled') : t('Disabled'), limit: formatBytes(summary.data.capture_max_bytes, locale) })}</p>
-          {(summary.data.capture_enabled_override || summary.data.capture_max_bytes_override) && <p>{t('Environment overrides are active on this node. Saved capture settings apply only where no override is configured.')}</p>}
+          <p>
+            {t('Effective capture on this node: {{enabled}}, limit {{limit}}', {
+              enabled: summary.data.capture_enabled
+                ? t('Enabled')
+                : t('Disabled'),
+              limit: formatBytes(summary.data.capture_max_bytes, locale),
+            })}
+          </p>
+          {(summary.data.capture_enabled_override ||
+            summary.data.capture_max_bytes_override) && (
+            <p>
+              {t(
+                'Environment overrides are active on this node. Saved capture settings apply only where no override is configured.'
+              )}
+            </p>
+          )}
           <dl className='grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1'>
             {summary.data.tables.map((table) => (
               <div key={table.name} className='contents'>
-                <dt className='break-all'>{table.name} ({table.database})</dt>
-                <dd>{table.bytes == null ? t('Unknown') : formatBytes(table.bytes, locale)}{table.estimated && table.bytes != null ? ` (${t('Estimated')})` : ''}</dd>
+                <dt className='break-all'>
+                  {table.name} ({table.database})
+                </dt>
+                <dd>
+                  {table.bytes == null
+                    ? t('Unknown')
+                    : formatBytes(table.bytes, locale)}
+                  {table.estimated && table.bytes != null
+                    ? ` (${t('Estimated')})`
+                    : ''}
+                </dd>
               </div>
             ))}
           </dl>
         </>
       )}
-      <p>{t('Storage sizes may be unavailable or estimated. PostgreSQL deletion makes space reusable; returning it to the OS requires a separate VACUUM FULL or pg_repack operation, never run automatically.')}</p>
+      <p>
+        {t(
+          'Storage sizes may be unavailable or estimated. PostgreSQL deletion makes space reusable; returning it to the OS requires a separate VACUUM FULL or pg_repack operation, never run automatically.'
+        )}
+      </p>
     </div>
   )
 }

@@ -34,7 +34,9 @@ import { api } from '@/lib/api'
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { LogSettingsSection } from '../log-settings-section'
 
-type LogSettingsDefaults = ComponentProps<typeof LogSettingsSection>['defaultValues']
+type LogSettingsDefaults = ComponentProps<
+  typeof LogSettingsSection
+>['defaultValues']
 
 function Fixture(props: { defaultValues?: Partial<LogSettingsDefaults> }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
@@ -201,49 +203,77 @@ test('a time range under one day shows a field error and is not saved', async ()
 test('retention defaults keep forever and changed content settings save in one batch', async () => {
   const user = userEvent.setup()
   await renderSettings()
-  const usage = screen.getByRole('spinbutton', { name: 'Usage log retention (days)' })
-  const content = screen.getByRole('spinbutton', { name: 'Request content retention (days)' })
-  const bytes = screen.getByRole('spinbutton', { name: 'Request content limit (bytes)' })
+  const usage = screen.getByRole('spinbutton', {
+    name: 'Usage log retention (days)',
+  })
+  const content = screen.getByRole('spinbutton', {
+    name: 'Request content retention (days)',
+  })
+  const bytes = screen.getByRole('spinbutton', {
+    name: 'Request content limit (bytes)',
+  })
   expect(usage).toHaveValue(0)
   expect(content).toHaveValue(0)
   expect(bytes).toHaveValue(262144)
-  expect(screen.getByRole('switch', { name: 'Capture request content' })).toBeChecked()
+  expect(
+    screen.getByRole('switch', { name: 'Capture request content' })
+  ).toBeChecked()
   fireEvent.change(usage, { target: { value: '30' } })
   fireEvent.change(content, { target: { value: '7' } })
   fireEvent.change(bytes, { target: { value: '4096' } })
-  await user.click(screen.getByRole('switch', { name: 'Capture request content' }))
-  await user.click(screen.getByRole('button', { name: 'Save log settings' }))
-  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
-  expect(api.put).toHaveBeenCalledWith('/api/option/batch', { options: [
-    { key: 'log_setting.retention_days', value: 30 },
-    { key: 'log_setting.request_content_retention_days', value: 7 },
-    { key: 'log_setting.request_content_enabled', value: false },
-    { key: 'log_setting.request_content_max_bytes', value: 4096 },
-  ] })
-})
-
-test.each([256, 134217728])('saving zero retention and a capture limit of %i preserves explicit boundary values', async (limit) => {
-  const user = userEvent.setup()
-  await renderSettings({
-    'log_setting.retention_days': 30,
-    'log_setting.request_content_retention_days': 7,
-    'log_setting.request_content_enabled': false,
-  })
-  fireEvent.change(screen.getByRole('spinbutton', { name: 'Usage log retention (days)' }), { target: { value: '0' } })
-  fireEvent.change(screen.getByRole('spinbutton', { name: 'Request content retention (days)' }), { target: { value: '0' } })
-  fireEvent.change(screen.getByRole('spinbutton', { name: 'Request content limit (bytes)' }), { target: { value: String(limit) } })
-  await user.click(screen.getByRole('switch', { name: 'Capture request content' }))
+  await user.click(
+    screen.getByRole('switch', { name: 'Capture request content' })
+  )
   await user.click(screen.getByRole('button', { name: 'Save log settings' }))
   await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
   expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
     options: [
-      { key: 'log_setting.retention_days', value: 0 },
-      { key: 'log_setting.request_content_retention_days', value: 0 },
-      { key: 'log_setting.request_content_enabled', value: true },
-      { key: 'log_setting.request_content_max_bytes', value: limit },
+      { key: 'log_setting.retention_days', value: 30 },
+      { key: 'log_setting.request_content_retention_days', value: 7 },
+      { key: 'log_setting.request_content_enabled', value: false },
+      { key: 'log_setting.request_content_max_bytes', value: 4096 },
     ],
   })
 })
+
+test.each([256, 134217728])(
+  'saving zero retention and a capture limit of %i preserves explicit boundary values',
+  async (limit) => {
+    const user = userEvent.setup()
+    await renderSettings({
+      'log_setting.retention_days': 30,
+      'log_setting.request_content_retention_days': 7,
+      'log_setting.request_content_enabled': false,
+    })
+    fireEvent.change(
+      screen.getByRole('spinbutton', { name: 'Usage log retention (days)' }),
+      { target: { value: '0' } }
+    )
+    fireEvent.change(
+      screen.getByRole('spinbutton', {
+        name: 'Request content retention (days)',
+      }),
+      { target: { value: '0' } }
+    )
+    fireEvent.change(
+      screen.getByRole('spinbutton', { name: 'Request content limit (bytes)' }),
+      { target: { value: String(limit) } }
+    )
+    await user.click(
+      screen.getByRole('switch', { name: 'Capture request content' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Save log settings' }))
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+    expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+      options: [
+        { key: 'log_setting.retention_days', value: 0 },
+        { key: 'log_setting.request_content_retention_days', value: 0 },
+        { key: 'log_setting.request_content_enabled', value: true },
+        { key: 'log_setting.request_content_max_bytes', value: limit },
+      ],
+    })
+  }
+)
 
 test.each([
   ['negative usage retention', 'Usage log retention (days)', '-1'],
@@ -279,9 +309,24 @@ test('pending storage metadata does not block saving and later shows known, zero
           success: true,
           data: {
             tables: [
-              { name: 'logs', database: 'postgres', bytes: 2600000000, estimated: false },
-              { name: 'log_request_details', database: 'postgres', bytes: 0, estimated: false },
-              { name: 'log_request_content_protections', database: 'mysql', bytes: 1500, estimated: true },
+              {
+                name: 'logs',
+                database: 'postgres',
+                bytes: 2600000000,
+                estimated: false,
+              },
+              {
+                name: 'log_request_details',
+                database: 'postgres',
+                bytes: 0,
+                estimated: false,
+              },
+              {
+                name: 'log_request_content_protections',
+                database: 'mysql',
+                bytes: 1500,
+                estimated: true,
+              },
             ],
             capture_enabled: true,
             capture_max_bytes: 4096,
@@ -296,16 +341,27 @@ test('pending storage metadata does not block saving and later shows known, zero
   await renderSettings()
   const storage = screen.getByRole('group', { name: 'Storage retention' })
   expect(within(storage).getByText('Loading...')).toBeVisible()
-  expect(within(storage).queryByText('Storage metadata unavailable')).not.toBeInTheDocument()
+  expect(
+    within(storage).queryByText('Storage metadata unavailable')
+  ).not.toBeInTheDocument()
   expect(within(storage).queryByText('0 B')).not.toBeInTheDocument()
 
-  fireEvent.change(within(storage).getByRole('spinbutton', { name: 'Usage log retention (days)' }), { target: { value: '14' } })
+  fireEvent.change(
+    within(storage).getByRole('spinbutton', {
+      name: 'Usage log retention (days)',
+    }),
+    { target: { value: '14' } }
+  )
   await user.click(screen.getByRole('button', { name: 'Save log settings' }))
   await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
   expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
     options: [{ key: 'log_setting.retention_days', value: 14 }],
   })
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Save log settings' })).toBeEnabled())
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Save log settings' })
+    ).toBeEnabled()
+  )
   expect(within(storage).getByText('Loading...')).toBeVisible()
 
   await act(async () => releaseMetadata())
@@ -313,20 +369,51 @@ test('pending storage metadata does not block saving and later shows known, zero
   expect(within(storage).getByText('0 B')).toBeVisible()
   expect(within(storage).getByText('1.5 KB (Estimated)')).toBeVisible()
   expect(within(storage).queryByText('Loading...')).not.toBeInTheDocument()
-  expect(within(storage).queryByText('Environment overrides are active on this node. Saved capture settings apply only where no override is configured.')).not.toBeInTheDocument()
-  expect(within(storage).getByText('Storage sizes may be unavailable or estimated. PostgreSQL deletion makes space reusable; returning it to the OS requires a separate VACUUM FULL or pg_repack operation, never run automatically.')).toBeVisible()
+  expect(
+    within(storage).queryByText(
+      'Environment overrides are active on this node. Saved capture settings apply only where no override is configured.'
+    )
+  ).not.toBeInTheDocument()
+  expect(
+    within(storage).getByText(
+      'Storage sizes may be unavailable or estimated. PostgreSQL deletion makes space reusable; returning it to the OS requires a separate VACUUM FULL or pg_repack operation, never run automatically.'
+    )
+  ).toBeVisible()
 })
 
 test('storage metadata shows unknown bytes and environment override without inventing zero', async () => {
-  vi.mocked(api.get).mockImplementation(async (url) => ({ data: { success: true, data: url === '/api/option/log_storage' ? {
-    tables: [{ name: 'logs', database: 'sqlite', bytes: null, estimated: false }],
-    capture_enabled: false, capture_max_bytes: 4096,
-    capture_enabled_override: true, capture_max_bytes_override: false,
-  } : null } }))
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/option/log_storage'
+          ? {
+              tables: [
+                {
+                  name: 'logs',
+                  database: 'sqlite',
+                  bytes: null,
+                  estimated: false,
+                },
+              ],
+              capture_enabled: false,
+              capture_max_bytes: 4096,
+              capture_enabled_override: true,
+              capture_max_bytes_override: false,
+            }
+          : null,
+    },
+  }))
   await renderSettings()
   expect(await screen.findByText('Unknown')).toBeVisible()
-  expect(screen.getByText('Environment overrides are active on this node. Saved capture settings apply only where no override is configured.')).toBeVisible()
-  expect(screen.getByText('Effective capture on this node: Disabled, limit 4.1 KB')).toBeVisible()
+  expect(
+    screen.getByText(
+      'Environment overrides are active on this node. Saved capture settings apply only where no override is configured.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByText('Effective capture on this node: Disabled, limit 4.1 KB')
+  ).toBeVisible()
 })
 
 test('failed storage metadata remains unknown and does not block settings', async () => {
@@ -336,7 +423,9 @@ test('failed storage metadata remains unknown and does not block settings', asyn
   })
   await renderSettings()
   expect(await screen.findByText('Storage metadata unavailable')).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Save log settings' })).toBeEnabled()
+  expect(
+    screen.getByRole('button', { name: 'Save log settings' })
+  ).toBeEnabled()
 })
 
 test('the task retention saves whole days and rejects less than one day', async () => {

@@ -47,8 +47,8 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import { HistoryLogCleanup } from './history-log-cleanup'
-import { ServerLogFiles } from './server-log-files'
 import { LogStorageSummary } from './log-storage-summary'
+import { ServerLogFiles } from './server-log-files'
 
 const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
@@ -96,9 +96,12 @@ export function LogSettingsSection(props: LogSettingsSectionProps) {
           props.defaultValues['log_setting.user_export_enabled'],
         max_range_days: props.defaultValues['log_setting.max_range_days'],
         retention_days: props.defaultValues['log_setting.retention_days'],
-        request_content_retention_days: props.defaultValues['log_setting.request_content_retention_days'],
-        request_content_enabled: props.defaultValues['log_setting.request_content_enabled'],
-        request_content_max_bytes: props.defaultValues['log_setting.request_content_max_bytes'],
+        request_content_retention_days:
+          props.defaultValues['log_setting.request_content_retention_days'],
+        request_content_enabled:
+          props.defaultValues['log_setting.request_content_enabled'],
+        request_content_max_bytes:
+          props.defaultValues['log_setting.request_content_max_bytes'],
       },
       system_task_setting: {
         retention_days:
@@ -125,9 +128,18 @@ export function LogSettingsSection(props: LogSettingsSectionProps) {
       ],
       ['log_setting.max_range_days', values.log_setting.max_range_days],
       ['log_setting.retention_days', values.log_setting.retention_days],
-      ['log_setting.request_content_retention_days', values.log_setting.request_content_retention_days],
-      ['log_setting.request_content_enabled', values.log_setting.request_content_enabled],
-      ['log_setting.request_content_max_bytes', values.log_setting.request_content_max_bytes],
+      [
+        'log_setting.request_content_retention_days',
+        values.log_setting.request_content_retention_days,
+      ],
+      [
+        'log_setting.request_content_enabled',
+        values.log_setting.request_content_enabled,
+      ],
+      [
+        'log_setting.request_content_max_bytes',
+        values.log_setting.request_content_max_bytes,
+      ],
       [
         'system_task_setting.retention_days',
         values.system_task_setting.retention_days,
@@ -245,38 +257,97 @@ export function LogSettingsSection(props: LogSettingsSectionProps) {
 
           <Separator />
 
-          <div role='group' aria-labelledby={retentionTitleId} className='flex min-w-0 flex-col gap-4'>
-            <h4 id={retentionTitleId} className='font-medium'>{t('Storage retention')}</h4>
-            <p className='text-muted-foreground text-sm'>{t('Zero keeps data forever. Request content expires independently; usage logs remain. Active tasks keep their content until finished. Shorter retention permanently deletes older data.')}</p>
+          <div
+            role='group'
+            aria-labelledby={retentionTitleId}
+            className='flex min-w-0 flex-col gap-4'
+          >
+            <h4 id={retentionTitleId} className='font-medium'>
+              {t('Storage retention')}
+            </h4>
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Zero keeps data forever. Request content expires independently; usage logs remain. Active tasks keep their content until finished. Shorter retention permanently deletes older data.'
+              )}
+            </p>
             <SettingsFormGrid>
-              <FormField control={form.control} name='log_setting.retention_days' render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Usage log retention (days)')}</FormLabel>
-                  <FormControl><Input type='number' min={0} max={36500} step={1} {...safeNumberFieldProps(field)} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={form.control} name='log_setting.request_content_retention_days' render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Request content retention (days)')}</FormLabel>
-                  <FormControl><Input type='number' min={0} max={36500} step={1} {...safeNumberFieldProps(field)} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={form.control} name='log_setting.request_content_enabled' render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent><FormLabel>{t('Capture request content')}</FormLabel></SettingsSwitchContent>
-                  <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} /></FormControl>
-                  <FormMessage />
-                </SettingsSwitchItem>
-              )} />
-              <FormField control={form.control} name='log_setting.request_content_max_bytes' render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Request content limit (bytes)')}</FormLabel>
-                  <FormControl><Input type='number' min={256} max={134217728} step={1} {...safeNumberFieldProps(field)} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+              <FormField
+                control={form.control}
+                name='log_setting.retention_days'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Usage log retention (days)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={0}
+                        max={36500}
+                        step={1}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='log_setting.request_content_retention_days'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {t('Request content retention (days)')}
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={0}
+                        max={36500}
+                        step={1}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='log_setting.request_content_enabled'
+                render={({ field }) => (
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('Capture request content')}</FormLabel>
+                    </SettingsSwitchContent>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </SettingsSwitchItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='log_setting.request_content_max_bytes'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Request content limit (bytes)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={256}
+                        max={134217728}
+                        step={1}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </SettingsFormGrid>
             <LogStorageSummary />
           </div>

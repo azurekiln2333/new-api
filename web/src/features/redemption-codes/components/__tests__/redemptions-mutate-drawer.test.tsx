@@ -35,9 +35,8 @@ const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { Toaster, toast } = await import('sonner')
 const { api } = await import('@/lib/api')
 const { useSystemConfigStore } = await import('@/stores/system-config-store')
-const { CodeExportProvider } = await import(
-  '@/components/code-export/code-export-provider'
-)
+const { CodeExportProvider } =
+  await import('@/components/code-export/code-export-provider')
 const { RedemptionsProvider } = await import('../redemptions-provider')
 const { RedemptionsMutateDrawer } = await import('../redemptions-mutate-drawer')
 
@@ -75,9 +74,8 @@ const originalConsoleLog = Reflect.get(console, 'log')
 let renderedDrawer: RenderedDrawer | null = null
 
 function operationIdFromRequestConfig(config: unknown) {
-  return (
-    config as { params?: { operation_id?: string } } | undefined
-  )?.params?.operation_id
+  return (config as { params?: { operation_id?: string } } | undefined)?.params
+    ?.operation_id
 }
 
 beforeEach(() => {
@@ -269,84 +267,78 @@ describe('redemption drawer', () => {
     }
   )
 
-  test(
-    'uses a new redemption operation ID when a failed create payload changes',
-    async () => {
-      const post = vi.spyOn(api, 'post').mockResolvedValue({
-        data: { success: false, message: 'Database temporarily unavailable' },
+  test('uses a new redemption operation ID when a failed create payload changes', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { success: false, message: 'Database temporarily unavailable' },
+    })
+    await renderDrawer()
+    await waitForLoadedForm()
+    changeInput(getControlByLabel('Name'), 'Launch')
+    submitForm()
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitForLoadedForm()
+    const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
+
+    changeInput(getControlByLabel('Name'), 'Partners')
+    submitForm()
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+    await waitForLoadedForm()
+    expect(originalId).toBeTruthy()
+    expect(post.mock.calls[1]?.[1]).toEqual(
+      expect.objectContaining({ name: 'Partners' })
+    )
+    expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
+      expect.any(String)
+    )
+    expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+      originalId
+    )
+  })
+
+  test('uses a new redemption operation ID for another create after success', async () => {
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: ['first-code'],
+          operation_id: 'first-operation',
+        },
       })
-      await renderDrawer()
-      await waitForLoadedForm()
-      changeInput(getControlByLabel('Name'), 'Launch')
-      submitForm()
-      await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-      await waitForLoadedForm()
-      const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: ['second-code'],
+          operation_id: 'second-operation',
+        },
+      })
+    await renderDrawer()
+    await waitForLoadedForm()
+    changeInput(getControlByLabel('Name'), 'Launch')
+    submitForm()
+    await screen.findByRole('dialog', { name: 'Export codes' })
+    const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
 
-      changeInput(getControlByLabel('Name'), 'Partners')
-      submitForm()
-      await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
-      await waitForLoadedForm()
-      expect(originalId).toBeTruthy()
-      expect(post.mock.calls[1]?.[1]).toEqual(
-        expect.objectContaining({ name: 'Partners' })
-      )
-      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
-        expect.any(String)
-      )
-      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
-        originalId
-      )
-    }
-  )
-
-  test(
-    'uses a new redemption operation ID for another create after success',
-    async () => {
-      const post = vi
-        .spyOn(api, 'post')
-        .mockResolvedValueOnce({
-          data: {
-            success: true,
-            data: ['first-code'],
-            operation_id: 'first-operation',
-          },
-        })
-        .mockResolvedValueOnce({
-          data: {
-            success: true,
-            data: ['second-code'],
-            operation_id: 'second-operation',
-          },
-        })
-      await renderDrawer()
-      await waitForLoadedForm()
-      changeInput(getControlByLabel('Name'), 'Launch')
-      submitForm()
-      await screen.findByRole('dialog', { name: 'Export codes' })
-      const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
-
-      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-      await rerenderDrawer(undefined, false)
-      await waitFor(() =>
-        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-      )
-      await rerenderDrawer()
-      await waitForLoadedForm()
-      changeInput(getControlByLabel('Name'), 'Launch')
-      submitForm()
-      await screen.findByRole('dialog', { name: 'Export codes' })
-      expect(post).toHaveBeenCalledTimes(2)
-      expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
-      expect(originalId).toBeTruthy()
-      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
-        expect.any(String)
-      )
-      expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
-        originalId
-      )
-    }
-  )
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await rerenderDrawer(undefined, false)
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    await rerenderDrawer()
+    await waitForLoadedForm()
+    changeInput(getControlByLabel('Name'), 'Launch')
+    submitForm()
+    await screen.findByRole('dialog', { name: 'Export codes' })
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
+    expect(originalId).toBeTruthy()
+    expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
+      expect.any(String)
+    )
+    expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+      originalId
+    )
+  })
 
   test('keeps redemption keys and replay metadata in the create API response', async () => {
     const input = {

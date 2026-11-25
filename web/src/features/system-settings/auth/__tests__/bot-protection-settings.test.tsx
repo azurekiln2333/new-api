@@ -23,20 +23,26 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance, type i18n } from 'i18next'
 import { useState } from 'react'
 import { I18nextProvider } from 'react-i18next'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
-import type { SystemOptionsResponse, UpdateOptionRequest } from '../../types'
 import { useUpdateOption } from '../../hooks/use-update-option'
+import type { SystemOptionsResponse, UpdateOptionRequest } from '../../types'
 import { BotProtectionSection } from '../bot-protection-section'
 
 const defaults = {
@@ -88,7 +94,9 @@ beforeEach(async () => {
 
 describe('settings section batch mutation', () => {
   it('patches all committed keys without refetching the options payload', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    })
     client.setQueryData<SystemOptionsResponse>(['system-options'], {
       success: true,
       message: '',
@@ -100,7 +108,11 @@ describe('settings section batch mutation', () => {
     })
     const invalidate = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHook(() => useUpdateOption(), {
-      wrapper: (props) => <QueryClientProvider client={client}>{props.children}</QueryClientProvider>,
+      wrapper: (props) => (
+        <QueryClientProvider client={client}>
+          {props.children}
+        </QueryClientProvider>
+      ),
     })
     await act(async () => {
       await result.current.mutateAsync([
@@ -109,38 +121,69 @@ describe('settings section batch mutation', () => {
       ])
     })
     expect(api.put).toHaveBeenCalledTimes(1)
-    expect(client.getQueryData<SystemOptionsResponse>(['system-options'])?.data).toEqual([
+    expect(
+      client.getQueryData<SystemOptionsResponse>(['system-options'])?.data
+    ).toEqual([
       { key: 'TurnstileSiteKey', value: 'new-site' },
       { key: 'TurnstileCheckEnabled', value: 'true' },
       { key: 'Unchanged', value: 'keep' },
     ])
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['system-options'], refetchType: 'none' })
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ['system-options'],
+      refetchType: 'none',
+    })
   })
 
   it('keeps cached values unchanged and names the failing key on rejected batch', async () => {
-    vi.mocked(api.put).mockResolvedValue({ data: {
-      success: false, key: 'TurnstileSiteKey', message: 'Configuration rejected',
-    } })
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
-    const initial: SystemOptionsResponse = { success: true, message: '', data: [{ key: 'TurnstileSiteKey', value: 'old-site' }] }
+    vi.mocked(api.put).mockResolvedValue({
+      data: {
+        success: false,
+        key: 'TurnstileSiteKey',
+        message: 'Configuration rejected',
+      },
+    })
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    })
+    const initial: SystemOptionsResponse = {
+      success: true,
+      message: '',
+      data: [{ key: 'TurnstileSiteKey', value: 'old-site' }],
+    }
     client.setQueryData(['system-options'], initial)
     const success = vi.spyOn(toast, 'success')
     const error = vi.spyOn(toast, 'error')
     const { result } = renderHook(() => useUpdateOption(), {
-      wrapper: (props) => <QueryClientProvider client={client}>{props.children}</QueryClientProvider>,
+      wrapper: (props) => (
+        <QueryClientProvider client={client}>
+          {props.children}
+        </QueryClientProvider>
+      ),
     })
     await act(async () => {
-      await expect(result.current.mutateAsync([{ key: 'TurnstileSiteKey', value: 'draft' }])).rejects.toThrow()
+      await expect(
+        result.current.mutateAsync([
+          { key: 'TurnstileSiteKey', value: 'draft' },
+        ])
+      ).rejects.toThrow()
     })
     expect(client.getQueryData(['system-options'])).toEqual(initial)
     expect(success).not.toHaveBeenCalled()
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('TurnstileSiteKey'))
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('TurnstileSiteKey')
+    )
   })
 
   it('keeps specialized keys on single PUT and batches only ordinary keys', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    })
     const { result } = renderHook(() => useUpdateOption(), {
-      wrapper: (props) => <QueryClientProvider client={client}>{props.children}</QueryClientProvider>,
+      wrapper: (props) => (
+        <QueryClientProvider client={client}>
+          {props.children}
+        </QueryClientProvider>
+      ),
     })
     await act(async () => {
       await result.current.mutateAsync([
@@ -151,10 +194,21 @@ describe('settings section batch mutation', () => {
       ])
     })
     expect(api.put).toHaveBeenCalledTimes(4)
-    expect(api.put).toHaveBeenCalledWith('/api/option/', { key: 'ServerAddress', value: 'https://gateway.example.com' })
-    expect(api.put).toHaveBeenCalledWith('/api/option/', { key: 'RetryTimes', value: 2 })
-    expect(api.put).toHaveBeenCalledWith('/api/option/', { key: 'ModelRatio', value: '{}' })
-    expect(api.put).toHaveBeenCalledWith('/api/option/batch', { options: [{ key: 'TestOrdinary', value: 0 }] })
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'ServerAddress',
+      value: 'https://gateway.example.com',
+    })
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'RetryTimes',
+      value: 2,
+    })
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'ModelRatio',
+      value: '{}',
+    })
+    expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
+      options: [{ key: 'TestOrdinary', value: 0 }],
+    })
   })
 })
 
