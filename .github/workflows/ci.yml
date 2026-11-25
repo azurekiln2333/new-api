@@ -61,7 +61,8 @@ jobs:
           if [ -n "$FILES" ]; then
             while IFS= read -r FILE; do
               printf '::error file=%s::Go file requires gofmt\n' "$FILE"
-              FORMAT_DIFF=$(gofmt -d "$FILE")
+              # The check has already failed; collect any diff before exiting.
+              FORMAT_DIFF=$(gofmt -d "$FILE") || true
               if [ "${#FORMAT_DIFF}" -gt 5000 ]; then
                 FORMAT_DIFF="${FORMAT_DIFF:0:5000}"$'\n[Formatter diff truncated after 5000 characters]'
               fi
@@ -405,11 +406,16 @@ jobs:
           go test -p 1 -count=1 -v ./model
           -run '^(TestManagementMutationOutboxDatabaseMatrix|TestConcurrentCodeBatchSubmitCollapsesToOneBatch|TestAuditOutboxReplayAfterLostAcknowledgement|TestAuditOutboxClickHouseDelivery|TestCodeOperationRecoveryRequiresAuthorization|TestCodeRequestDigestIsUnambiguous|TestCodeExportContractsAcrossDatabase|TestRecordManagementAuditFallsBackWithSameEventIdentity)$'
 
-      - name: Verify code creation replay and audit contracts on SQLite, MySQL and PostgreSQL
+      - name: Verify invitation registration and code replay on SQLite, MySQL and PostgreSQL
         run: |
           for DIALECT in sqlite mysql postgres; do
-            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestManagementCodeCreateReplaySurvivesExpiry|TestInvitationCreationValidationAndSafeAudit|TestRedemptionBatch'
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestInvitation|TestManagementCodeCreateReplaySurvivesExpiry|TestRedemptionBatch'
           done
+
+      - name: Check invitation registration races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 -v ./controller -run 'TestInvitationAtomicRegistration|TestInvitationAffiliate'
 
       - name: Check management operation and audit delivery races
         env:
@@ -421,8 +427,29 @@ jobs:
       - name: Verify allocation identity and quota management on MySQL and PostgreSQL
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^(TestChannelAllocations|TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions)'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^(TestChannelAllocations|TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions|TestManagedKeyAllocation)'
           done
+
+      - name: Verify option batch writes and management settings on SQLite, MySQL and PostgreSQL
+        run: |
+          go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch'
+          for DIALECT in sqlite mysql postgres; do
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestUpdateOptionRejectsNegativeClaudeDefaultMaxTokens|TestUpdateOptionRejectsInvalidGeminiSafetyThreshold|TestUpdateOptionsBatch'
+          done
+
+      - name: Verify recorded subscription balance spending on SQLite, MySQL and PostgreSQL
+        run: go test -p 1 -count=1 -v ./model -run '^(TestSubscriptionBalanceChargedQuota|TestSubscriptionBalanceUsedQuotaDatabaseMatrix)$'
+
+      - name: Verify channel priority transactions and local routing on SQLite, MySQL and PostgreSQL
+        run: go test -p 1 -count=1 -v ./model -run '^TestChannelPriorityDatabaseMatrix$'
+
+      - name: Verify log retention across relational and ClickHouse log stores
+        run: go test -p 1 -count=1 -v ./model -run '^TestLogRequestDetailRetentionDatabaseMatrix$'
+
+      - name: Check request-content settings, retention scheduling and storage access races
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 -v ./common ./service ./router -run 'TestRequestContentCapture|TestSystemTaskLogRetention|TestPersonalAccessTokenLogStorageScope'
 
       - name: Check budget accounting and request log storage races
         env:
@@ -437,7 +464,15 @@ jobs:
       - name: Check declared text endpoints and administrator channel boundaries
         env:
           CGO_ENABLED: '1'
-        run: go test -race -p 1 -count=1 ./relay ./router -run 'TestChannelSupportedEndpoints|TestChannelEndpoint|TestMessagesEndpoint|TestAdminChannel|TestRankingModelUsage|TestStatusInstances'
+        run: go test -race -p 1 -count=1 ./relay ./router -run 'TestChannelSupportedEndpoints|TestChannelEndpoint|TestMessagesEndpoint|TestAdminChannel|TestRankingModelUsage|TestStatusInstances|TestOptionBatch|TestAccessTokenRouteRules'
+
+      - name: Check console forwarding, ingress proof and origin guards
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 ./middleware ./service/passkey ./router -run 'TestConfigureTrustedProxies|TestLoadConsoleForwardConfig|TestVerifiedConsoleIngress|TestEffectiveRequestScheme|TestConsoleIngress|TestConsoleForwarder|TestSessionCookieOriginGuard|TestPasskeyOrigin'
+
+      - name: Verify update-source repository configuration
+        run: go test -p 1 -count=1 -v ./setting/system_setting -run 'TestUpdateSource|TestValidateUpdateSourceRepository'
 
       - name: Verify login avatar updates on MySQL and PostgreSQL
         run: |
@@ -451,16 +486,16 @@ jobs:
             TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestNormalizeCustomTokenKey|TestRotateTokenKey|TestAddToken.*CustomKey|TestTokenKeyUniquenessErrorsStayValueFree'
           done
 
-      - name: Verify per-turn goal routing and channel waiting on MySQL and PostgreSQL
+      - name: Verify per-turn goal routing and channel waiting on SQLite, MySQL and PostgreSQL
         run: |
-          for RESPONSES_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_RESPONSES_SQL_DSN="$RESPONSES_TEST_DSN" TEST_RESPONSES_LOG_SQL_DSN="$RESPONSES_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestResponsesWebSocketGoalPolicyIsPerTurn|TestGoalTurnPolicyRouting|TestRequestPolicyUpstreamHTTPFailover|TestChannelWaitRouting|TestChannelBudget'
+          for RESPONSES_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_RESPONSES_SQL_DSN="$RESPONSES_TEST_DSN" TEST_RESPONSES_LOG_SQL_DSN="$RESPONSES_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestResponsesWebSocketGoalPolicyIsPerTurn|TestGoalTurnPolicyRouting|TestRequestPolicyUpstreamHTTPFailover|TestChannelWaitRouting|TestChannelCapacityFailover|TestChannelBudget'
           done
 
       - name: Check admission, waiting, streaming and timeout races
         env:
           CGO_ENABLED: '1'
-        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'ChannelCapacity|ChannelWait|ChannelBudget|LedgerTaskSubmission|LegacyTaskSubmission|TaskSubmissionCommits|RelayKeepAliveDuringImagePreparation|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|MultiKeyModel|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
+        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'RetryAvoidsFailedChannelsAcrossPrioritiesAndGroups|ChannelCapacity|ChannelWait|ChannelBudget|LedgerTaskSubmission|LegacyTaskSubmission|TaskSubmissionCommits|RelayKeepAliveDuringImagePreparation|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|MultiKeyModel|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
 
   frontend:
     name: Frontend typecheck, test, and build
@@ -552,6 +587,7 @@ jobs:
           src/features/channels/components/__tests__/channel-balance-cell.test.tsx
           src/features/channels/components/__tests__/channel-test-dialog-endpoints.test.tsx
           src/features/channels/components/__tests__/channel-configuration.test.tsx
+          src/features/channels/components/__tests__/plugin-login-dialog.test.tsx
           src/features/channels/components/__tests__/channel-test-key-selection.test.tsx
           src/features/channels/components/__tests__/table-refresh.test.tsx
           src/features/channels/components/channel-usage-context.tsx
@@ -610,6 +646,18 @@ jobs:
           src/features/users/components/user-quota-cell.tsx
           src/features/users/components/users-columns.tsx
           src/features/users/components/__tests__/quota-display.test.tsx
+          src/features/users/components/__tests__/permissions.test.tsx
+          src/hooks/__tests__/use-notifications.test.tsx
+          src/components/ui/__tests__/tooltip-contrast.test.tsx
+          src/features/system-info/__tests__/system-instances-panel.test.tsx
+          src/features/system-settings/auth/__tests__/basic-auth-settings.test.tsx
+          src/features/system-update/store.ts
+          src/features/system-update/__tests__/releases.test.ts
+          src/features/system-update/__tests__/update-checking.test.tsx
+          src/features/system-settings/maintenance/update-checker-section.tsx
+          src/features/system-settings/maintenance/log-settings-section.tsx
+          src/features/system-settings/maintenance/log-storage-summary.tsx
+          src/features/system-settings/maintenance/__tests__/log-settings.test.tsx
 
       - name: Test
         if: ${{ !cancelled() }}
