@@ -263,7 +263,9 @@ it('keeps Retry accessible after a failed detail load and enables saving only af
   await screen.findByDisplayValue('fresh-user')
   expect(detailReads).toBe(2)
   expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
-  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Retry' })
+  ).not.toBeInTheDocument()
 })
 
 it('applies an edited quota as a delta and refreshes only the matching quota field', async () => {

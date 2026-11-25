@@ -435,9 +435,7 @@ export function UsersMutateDrawer({
         }
       }}
     >
-      <SheetContent
-        className={sideDrawerContentClassName('sm:max-w-[600px]')}
-      >
+      <SheetContent className={sideDrawerContentClassName('sm:max-w-[600px]')}>
         <SheetHeader className={sideDrawerHeaderClassName()}>
           <SheetTitle>
             {isUpdate ? t('Update') : t('Create')} {t('User')}
@@ -538,10 +536,7 @@ export function UsersMutateDrawer({
                   <FormItem>
                     <FormLabel>{t('Display Name')}</FormLabel>
                     <FormControl>
-                      <Input
-                        {...field}
-                        placeholder={t('Enter display name')}
-                      />
+                      <Input {...field} placeholder={t('Enter display name')} />
                     </FormControl>
                     <FormDescription>
                       {t('Leave empty to use username')}
@@ -731,9 +726,7 @@ export function UsersMutateDrawer({
                         ADMIN_PERMISSION_RESOURCES.CHANNEL,
                         ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
                       )
-                        ? t(
-                            'Your account can edit sensitive channel settings.'
-                          )
+                        ? t('Your account can edit sensitive channel settings.')
                         : t(
                             'Your account cannot edit sensitive channel settings.'
                           )}
