@@ -63,7 +63,7 @@ export function CommonLogMobileRow<TData>(props: {
   const config = getLogTypeConfig(log.type)
 
   const showTime = props.cells.has('created_at')
-  const showModel = displayable && props.cells.has('model_name') && !!model.name
+  const showModel = displayable && props.cells.has('model_name')
   const showCost = displayable && props.cells.has('quota')
   const showTokens = displayable && props.cells.has('prompt_tokens')
   const showUseTime = timing && props.cells.has('use_time')
@@ -127,7 +127,7 @@ export function CommonLogMobileRow<TData>(props: {
           />
           {showModel && (
             <span className='text-foreground min-w-0 flex-1 truncate text-[13px] font-medium'>
-              {model.name}
+              {model.name || '-'}
             </span>
           )}
           {!showModel && <span className='flex-1' />}
