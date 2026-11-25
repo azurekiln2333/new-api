@@ -71,6 +71,16 @@ continues to mean All models; an unfinished blank `modelValues` row is omitted b
 the existing parser and produces `{}`, not an empty named map. Sorting must not
 reorder model-value rows, emitted config, selected chips or dirty-pricing dialogs.
 
+In forms with both group and model pickers, scope chip assertions to each
+picker's own `combobox-chips` ancestor. A dialog-wide chip count cannot identify
+which selection was preserved. Before a real Save click, an unresolved submit
+regression may assert selected scope radios, exact group/model chips, displayed
+configuration, visible errors and the associated native form's validity. Keep
+the exactly-once callback and full ordered payload assertion; diagnostic
+assertions do not establish the failure's cause or prove it fixed. Compare the
+complete optional saved config object instead of dereferencing an optional map
+or adding a non-null assertion solely to satisfy TypeScript.
+
 Channel, per-group and per-Key model limits opt into `compareModelOptions` on the
 existing `MultiSelect`. Tag model choices and both mapping autocomplete fields
 sort newly mapped candidates only. Preserve channel catalogs, selected chips,

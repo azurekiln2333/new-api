@@ -199,10 +199,9 @@ test('sorting suggestions preserves saved row order and a custom model missing f
   expect(within(secondRow).getByRole('combobox', { name: 'Model' })).toHaveValue(
     'retired-model'
   )
-  expect(Object.keys(savedConfig().regions as Record<string, string>)).toEqual([
-    'gpt-5',
-    'retired-model',
-  ])
+  expect(savedConfig()).toEqual({
+    regions: { 'gpt-5': 'us-east-1', 'retired-model': 'eu-west-1' },
+  })
 
   await user.click(
     screen.getByRole('button', { name: 'Delete Region per model 1' })

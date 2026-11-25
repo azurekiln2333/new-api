@@ -242,12 +242,21 @@ test('chosen model options sort naturally including saved custom models without 
       .map((item) => item.textContent)
   ).toEqual(['gpt-10', 'custom-3'])
 
-  await user.click(
-    within(dialog).getByRole('combobox', { name: 'Select groups' })
-  )
+  const groupPicker = within(dialog).getByRole('combobox', {
+    name: 'Select groups',
+  })
+  await user.click(groupPicker)
   expect(
     (await screen.findAllByRole('option')).map((item) => item.textContent)
   ).toEqual(['zeta-group', 'alpha-group'])
+  expect(screen.getByRole('option', { name: 'zeta-group' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(screen.getByRole('option', { name: 'alpha-group' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
   await user.keyboard('{Escape}')
 
   const modelPicker = within(dialog).getByRole('combobox', {
@@ -272,7 +281,41 @@ test('chosen model options sort naturally including saved custom models without 
   ).toEqual(['GPT-2', 'gpt-2'])
   await user.click(screen.getByRole('option', { name: 'gpt-2' }))
   await user.keyboard('{Escape}')
-  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(
+    [
+      ...(modelPicker
+        .closest('[data-slot="combobox-chips"]')
+        ?.querySelectorAll('[data-slot="combobox-chip"]') ?? []),
+    ].map((chip) => chip.textContent)
+  ).toEqual(['gpt-10', 'custom-3', 'gpt-2'])
+  expect(
+    [
+      ...(groupPicker
+        .closest('[data-slot="combobox-chips"]')
+        ?.querySelectorAll('[data-slot="combobox-chip"]') ?? []),
+    ].map((chip) => chip.textContent)
+  ).toEqual(['zeta-group', 'alpha-group'])
+  expect(
+    within(dialog).getByRole('radio', { name: /Chosen groups/ })
+  ).toBeChecked()
+  expect(
+    within(dialog).getByRole('radio', { name: /Chosen models/ })
+  ).toBeChecked()
+  expect(
+    within(dialog).getByRole('combobox', { name: 'Mode' })
+  ).toHaveTextContent('Lossless')
+  expect(
+    within(dialog).getByRole('spinbutton', { name: 'Minimum image size' })
+  ).toHaveValue(512)
+  expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+  const save = within(dialog).getByRole<HTMLButtonElement>('button', {
+    name: 'Save',
+  })
+  expect(save).toBeEnabled()
+  expect(save.form).not.toBeNull()
+  expect(save.form).toBeValid()
+  await user.click(save)
+  expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
 
   expect(onSave).toHaveBeenCalledExactlyOnceWith({
     ...instance,
