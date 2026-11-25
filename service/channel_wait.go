@@ -489,6 +489,7 @@ func (c *channelWaitCoordinator) dispatchRedisLocked() {
 		// whole pipeline unexecuted; no per-waiter recovery round trips.
 		commands[i] = pipe.Eval(ctx, channelWaitAcquireLua, keys, args...)
 	}
+	acquireStarted := time.Now()
 	_, _ = pipe.Exec(ctx)
 	remaining := make([]*channelWaitEntry, 0, len(c.entries))
 	cleanup := c.client.Pipeline()
@@ -514,9 +515,11 @@ func (c *channelWaitCoordinator) dispatchRedisLocked() {
 			channelID := entry.candidates[int(result[0])-1].ChannelID
 			lease := newChannelCapacityLease(entry.leaseCtx, channelID)
 			lease.client, lease.key, lease.owner, lease.done = c.client, channelCapacityKey(channelID), owners[i], make(chan struct{})
+			lease.leaseExpiry.Store(acquireStarted.Add(channelCapacityLeaseTTL).UnixNano())
 			lease.waitCoordinator = c
 			if result[1] == 1 {
 				lease.waitProbeOwner = lease.owner
+				lease.probeExpiry.Store(acquireStarted.Add(channelCapacityLeaseTTL).UnixNano())
 			}
 			go lease.maintain()
 			grant = &ChannelWaitGrant{ChannelID: channelID, Lease: lease}
@@ -653,6 +656,8 @@ var channelWaitProbeRenewScript = redis.NewScript(`
 if redis.call('HGET',KEYS[1],'probe') ~= ARGV[1] then return 0 end
 local clock = redis.call('TIME')
 local now = clock[1]*1000 + math.floor(clock[2]/1000)
+local expiry = tonumber(redis.call('HGET',KEYS[1],'probe_until')) or 0
+if expiry <= now then return 0 end
 redis.call('HSET',KEYS[1],'probe_until',now+tonumber(ARGV[2]))
 redis.call('PEXPIRE',KEYS[1],600000)
 return 1

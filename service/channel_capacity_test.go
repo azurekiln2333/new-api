@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -172,17 +173,30 @@ func TestChannelCapacityAdmissionRestrictions(t *testing.T) {
 			c.Request = c.Request.WithContext(ctx)
 		}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-			if tc.setup != nil {
-				tc.setup(c)
-			}
-			assert.Equal(t, tc.want, RetryChannelAdmission(c, 71004, channelCapacityError(types.ErrorCodeChannelCapacitySaturated), nil))
-			assert.False(t, RetryChannelAdmission(c, 71004, channelCapacityError(types.ErrorCodeChannelCapacitySaturated), nil), "a candidate is not traversed twice")
-			assert.Empty(t, RequestPolicy(c).FailedChannelIDs)
-			assert.False(t, RetryChannelAdmission(c, 71005, channelCapacityError(types.ErrorCodeChannelCapacityUnavailable), nil))
-		})
+		for _, code := range []types.ErrorCode{
+			types.ErrorCodeChannelCapacitySaturated,
+			types.ErrorCodeChannelCapacityUnavailable,
+			types.ErrorCodeChannelCapacityQueueFull,
+			types.ErrorCodeChannelCapacityWaitTimeout,
+		} {
+			t.Run(tc.name+"/"+string(code), func(t *testing.T) {
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+				if tc.setup != nil {
+					tc.setup(c)
+				}
+				retry := &RetryParam{Ctx: c, Retry: common.GetPointer(2)}
+				assert.Equal(t, tc.want, RetryChannelAdmission(c, 71004, channelCapacityError(code), retry))
+				assert.False(t, RetryChannelAdmission(c, 71004, channelCapacityError(code), retry), "a candidate is not traversed twice")
+				assert.Equal(t, 2, retry.GetRetry(), "local admission leaves the upstream retry budget untouched")
+				assert.Empty(t, RequestPolicy(c).FailedChannelIDs)
+				if tc.want {
+					assert.Contains(t, RequestPolicy(c).ChannelSelectionExclusions(), 71004)
+				} else {
+					assert.Empty(t, RequestPolicy(c).CapacityRejectedChannelIDs)
+				}
+			})
+		}
 	}
 }
 
@@ -281,6 +295,35 @@ func TestChannelCapacityUnlimitedDetachedContinuationKeepsCounting(t *testing.T)
 	assert.Equal(t, 0, *samples[limitedChannel].Current)
 }
 
+// capacityRedisFaultHook injects a lost command or lost reply without timing
+// sleeps. Real Redis still owns every successful slot and renewal.
+type capacityRedisFaultHook struct {
+	before atomic.Bool
+	after  atomic.Bool
+}
+
+func (h *capacityRedisFaultHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	if h.before.Load() && (cmd.Name() == "eval" || cmd.Name() == "evalsha") {
+		return ctx, context.DeadlineExceeded
+	}
+	return ctx, nil
+}
+
+func (h *capacityRedisFaultHook) AfterProcess(_ context.Context, cmd redis.Cmder) error {
+	if h.after.Load() && (cmd.Name() == "eval" || cmd.Name() == "evalsha") {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+func (*capacityRedisFaultHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*capacityRedisFaultHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
+}
+
 func TestChannelCapacityRedis(t *testing.T) {
 	address := os.Getenv("TEST_REDIS_ADDR")
 	if address == "" {
@@ -359,6 +402,69 @@ func TestChannelCapacityRedis(t *testing.T) {
 		_, apiErr = acquireRedisChannelCapacity(ctx, isolated, channelID+1, 1)
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	})
+	t.Run("transient and ambiguous renewal preserve confirmed ownership only", func(t *testing.T) {
+		isolated := redis.NewClient(&redis.Options{Addr: address, MaxRetries: -1})
+		t.Cleanup(func() { _ = isolated.Close() })
+		fault := &capacityRedisFaultHook{}
+		isolated.AddHook(fault)
+		key, owner := channelCapacityKey(channelID), t.Name()
+		started := time.Now()
+		admitted, err := channelCapacityAcquireScript.Run(ctx, isolated, []string{key, channelWaitQueueKey(channelID), channelWaitGlobalKey}, 1, owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+		require.NoError(t, err)
+		require.Equal(t, 1, admitted)
+		// Manual maintenance makes the deadline transitions deterministic; no
+		// background timer races the fault injections.
+		lease := newChannelCapacityLease(ctx, channelID)
+		lease.client, lease.key, lease.owner, lease.done = isolated, key, owner, make(chan struct{})
+		close(lease.done)
+		lease.leaseExpiry.Store(started.Add(channelCapacityLeaseTTL).UnixNano())
+		t.Cleanup(lease.Release)
+		confirmed := lease.leaseExpiry.Load()
+		fault.before.Store(true)
+		require.True(t, lease.renew(), "a transient failure inside the confirmed TTL can retry")
+		assert.NoError(t, lease.Context().Err())
+		assert.Equal(t, confirmed, lease.leaseExpiry.Load())
+		fault.before.Store(false)
+		fault.after.Store(true)
+		require.True(t, lease.renew(), "a successful write with a lost reply remains ambiguous")
+		assert.Equal(t, confirmed, lease.leaseExpiry.Load(), "a lost reply cannot extend the confirmed deadline")
+		fault.after.Store(false)
+		require.True(t, lease.renew(), "a confirmed recovery keeps the same admitted attempt alive")
+		assert.NoError(t, lease.Context().Err())
+		assert.GreaterOrEqual(t, lease.leaseExpiry.Load(), confirmed)
+		lease.leaseExpiry.Store(time.Now().Add(channelCapacityRenewalSafetyMargin / 2).UnixNano())
+		fault.before.Store(true)
+		assert.False(t, lease.renew(), "unknown renewal must stop before another gateway can reuse its slot")
+		require.NotNil(t, lease.Err())
+		assert.Equal(t, types.ErrorCodeChannelCapacityUnavailable, lease.Err().GetErrorCode())
+		fault.before.Store(false)
+		lease.Release()
+		successor, apiErr := acquireRedisChannelCapacity(ctx, peer, channelID, 1)
+		require.Nil(t, apiErr)
+		defer successor.Release()
+		lease.Release()
+		assert.EqualValues(t, 1, peer.ZCard(ctx, key).Val(), "stale cleanup cannot remove a successor")
+	})
+	t.Run("expired probe cannot renew or admit overlapping work", func(t *testing.T) {
+		key, owner := channelCapacityKey(channelID), t.Name()
+		admitted, err := channelCapacityAcquireScript.Run(ctx, client, []string{key, channelWaitQueueKey(channelID), channelWaitGlobalKey}, 1, owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+		require.NoError(t, err)
+		require.Equal(t, 1, admitted)
+		lease := newChannelCapacityLease(ctx, channelID)
+		lease.client, lease.key, lease.owner, lease.done = client, key, owner, make(chan struct{})
+		close(lease.done)
+		lease.leaseExpiry.Store(time.Now().Add(channelCapacityLeaseTTL).UnixNano())
+		lease.waitCoordinator, lease.waitProbeOwner = newChannelWaitCoordinator(client), owner
+		lease.probeExpiry.Store(time.Now().Add(channelCapacityRenewalSafetyMargin / 2).UnixNano())
+		t.Cleanup(lease.Release)
+		require.NoError(t, client.HSet(ctx, channelWaitBusyKey(channelID), "probe", owner, "probe_until", 0).Err())
+		t.Cleanup(func() { require.NoError(t, client.Del(ctx, channelWaitBusyKey(channelID)).Err()) })
+		assert.False(t, lease.renew(), "probe ownership bounds renewal even when capacity TTL remains")
+		require.NotNil(t, lease.Err())
+		renewed, err := channelWaitProbeRenewScript.Run(ctx, client, []string{channelWaitBusyKey(channelID)}, owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+		require.NoError(t, err)
+		assert.Zero(t, renewed, "an expired Redis probe owner must not be resurrected")
 	})
 	t.Run("unlimited counting with shared coordinator", func(t *testing.T) {
 		previousRedis, previousClient := common.RedisEnabled, common.RDB

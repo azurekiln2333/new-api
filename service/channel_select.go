@@ -433,7 +433,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	var channel *model.Channel
 	var selectGroup string
 	state := RequestPolicy(c)
-	if retry.GetRetry() == 0 && len(state.FailedChannelIDs) == 0 && len(state.SaturatedChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
+	if retry.GetRetry() == 0 && len(state.FailedChannelIDs) == 0 && len(state.SaturatedChannelIDs) == 0 && len(state.CapacityRejectedChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
 		// A key bound to the requesting user routes the first attempt to the
 		// channel carrying it, before session affinity. Retries keep the
 		// ordinary group routing so a failing bound channel can fail over.

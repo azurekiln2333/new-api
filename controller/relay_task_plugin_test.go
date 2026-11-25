@@ -24,8 +24,10 @@ import (
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
@@ -1029,6 +1031,58 @@ func (tx *submissionCommitTx) Commit() error {
 	return errors.New("fixture: commit acknowledgement lost")
 }
 
+// ledgerRefundCacheCompletion observes this fixture's two positive refund
+// deltas, not unrelated workers in the process-wide default pool. The cache is
+// deliberately empty: the real Lua scripts finish with the ordinary cache-miss
+// result, while the real SQL balances remain the accounting authority.
+type ledgerRefundCacheCompletion struct {
+	userKey   string
+	tokenKey  string
+	quota     int64
+	userDone  atomic.Bool
+	tokenDone atomic.Bool
+}
+
+func (*ledgerRefundCacheCompletion) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (h *ledgerRefundCacheCompletion) AfterProcess(_ context.Context, cmd redis.Cmder) error {
+	args := cmd.Args()
+	if cmd.Err() != nil || cmd.Name() != "eval" || len(args) < 5 || args[4] != h.quota {
+		return nil
+	}
+	switch args[3] {
+	case h.userKey:
+		h.userDone.Store(true)
+	case h.tokenKey:
+		h.tokenDone.Store(true)
+	}
+	return nil
+}
+
+func (*ledgerRefundCacheCompletion) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*ledgerRefundCacheCompletion) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
+}
+
+func (h *ledgerRefundCacheCompletion) wait(t *testing.T, fixture *ledgerSubmissionFixture) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		if !h.userDone.Load() || !h.tokenDone.Load() {
+			return false
+		}
+		var user model.User
+		var token model.Token
+		return fixture.db.First(&user, fixture.user.Id).Error == nil &&
+			fixture.db.First(&token, fixture.token.Id).Error == nil &&
+			user.Quota == fixture.user.Quota && token.RemainQuota == fixture.token.RemainQuota
+	}, 3*time.Second, time.Millisecond, "this submission's refund and nested quota-cache work must finish before teardown")
+}
+
 func TestLedgerTaskSubmissionCommitOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
@@ -1069,7 +1123,31 @@ func TestLedgerTaskSubmissionCommitOutcomes(t *testing.T) {
 				}))
 				t.Cleanup(func() { require.NoError(t, fixture.db.Callback().Query().Remove(readFailure)) })
 			}
+			var refundCompletion *ledgerRefundCacheCompletion
+			if tc.rollback {
+				// Pre-consumption above used the real database with Redis off.
+				// Observe only the ensuing refund's cache-miss completions so
+				// fixture globals cannot be restored while those tasks read them.
+				server := miniredis.RunT(t)
+				client := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
+				refundCompletion = &ledgerRefundCacheCompletion{
+					userKey:  fmt.Sprintf("user:%d", fixture.user.Id),
+					tokenKey: "token:" + common.GenerateHMAC(fixture.token.Key),
+					quota:    300,
+				}
+				client.AddHook(refundCompletion)
+				oldClient := common.RDB
+				common.RDB, common.RedisEnabled = client, true
+				t.Cleanup(func() {
+					refundCompletion.wait(t, fixture)
+					common.RDB, common.RedisEnabled = oldClient, false
+					require.NoError(t, client.Close())
+				})
+			}
 			outcome, taskErr := fixture.submitAccepted(t, 900)
+			if refundCompletion != nil {
+				refundCompletion.wait(t, fixture)
+			}
 			require.True(t, pool.finished.Load(), "the real SQL commit/rollback boundary was exercised")
 			if tc.rollback || tc.unreadable {
 				require.Nil(t, outcome)
@@ -1094,10 +1172,9 @@ func TestLedgerTaskSubmissionCommitOutcomes(t *testing.T) {
 				view, viewErr := model.ReadChannelBudget(t.Context(), model.BudgetScopeChannel, int64(fixture.channel.Id))
 				require.NoError(t, viewErr)
 				assert.Zero(t, view.ReservedQuota)
-				require.Eventually(t, func() bool {
-					user, token := fixture.reload(t)
-					return user.Quota == 100000 && token.RemainQuota == 100000
-				}, 3*time.Second, 10*time.Millisecond)
+				user, token := fixture.reload(t)
+				assert.Equal(t, 100000, user.Quota)
+				assert.Equal(t, 100000, token.RemainQuota)
 				return
 			}
 			require.Len(t, tasks, 1)

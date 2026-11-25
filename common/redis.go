@@ -36,7 +36,11 @@ func InitRedisClient() (err error) {
 	if err != nil {
 		FatalLog(LogText("failed to parse Redis connection string: %s", err.Error()))
 	}
-	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 10)
+	// Keep explicit URL/env sizing; otherwise use go-redis's CPU-scaled pool,
+	// not a shared ten-connection cap for relay, renewal and console traffic.
+	if os.Getenv("REDIS_POOL_SIZE") != "" {
+		opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", opt.PoolSize)
+	}
 	RDB = redis.NewClient(opt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
