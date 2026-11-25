@@ -41,15 +41,18 @@ export function Rankings() {
   const search = useSearch({ from: '/rankings/' })
   const navigate = useNavigate()
 
-  const period: RankingPeriod = VALID_PERIODS.has(search.period as RankingPeriod)
+  const period: RankingPeriod = VALID_PERIODS.has(
+    search.period as RankingPeriod
+  )
     ? (search.period as RankingPeriod)
     : 'week'
 
   const rankingsQuery = useRankings(period)
   const snapshot = rankingsQuery.data?.data
   const [selectedModel, setSelectedModel] = useState<
-    (Pick<ModelRanking, 'model_name'> &
-      Partial<Pick<ModelRanking, 'vendor' | 'vendor_icon'>>) | null
+    | (Pick<ModelRanking, 'model_name'> &
+        Partial<Pick<ModelRanking, 'vendor' | 'vendor_icon'>>)
+    | null
   >(null)
 
   // Clicking a model name opens the usage drawer instead of navigating to the
