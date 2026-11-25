@@ -85,9 +85,9 @@ export function BotProtectionSection({
         ]
       : updates
 
-    for (const [key, value] of orderedUpdates) {
-      await updateOption.mutateAsync({ key, value: value ?? '' })
-    }
+    await updateOption.mutateAsync(
+      orderedUpdates.map(([key, value]) => ({ key, value: value ?? '' }))
+    )
   }
 
   return (

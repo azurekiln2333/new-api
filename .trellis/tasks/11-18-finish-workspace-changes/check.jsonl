@@ -1,0 +1,4 @@
+{"file": "AGENTS.md", "reason": "Repository compatibility and validation rules."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Preserve both parent contracts across layers."}
+{"file": ".agents/rules/billing.md", "reason": "Billing gate before relay lifecycle review."}
+{"file": "docs/plugin-api/v1.md", "reason": "Preserve upstream plugin runtime contract."}

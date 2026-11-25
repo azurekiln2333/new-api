@@ -190,13 +190,15 @@ export function SSRFSection({ defaultValues }: SSRFSectionProps) {
       return
     }
 
-    for (const key of updates) {
-      const value = normalized[key]
-      await updateOption.mutateAsync({
-        key,
-        value: Array.isArray(value) ? JSON.stringify(value) : value,
+    await updateOption.mutateAsync(
+      updates.map((key) => {
+        const value = normalized[key]
+        return {
+          key,
+          value: Array.isArray(value) ? JSON.stringify(value) : value,
+        }
       })
-    }
+    )
 
     baselineRef.current = normalized
   }

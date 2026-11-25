@@ -28,26 +28,47 @@ type EntityLinkBaseProps = {
 type ModelLinkProps = EntityLinkBaseProps & {
   /** model_name as it appears in the pricing API. Used as the route param. */
   modelName: string
+  /**
+   * When provided, the model name is a button that opens the model usage
+   * drawer instead of navigating to the pricing page.
+   */
+  onOpenModel?: (modelName: string) => void
 }
 
 /**
- * Link wrapping a model name. Navigates to the existing model details
- * page (`/pricing/{modelName}`). Renders the model name itself by
- * default; pass `children` to wrap arbitrary content.
+ * Model name affordance on the rankings page.
+ *
+ * When `onOpenModel` is supplied the name opens the model usage drawer; the
+ * ranking page never navigates the reader to pricing. Without a handler it
+ * still links to the model details page for other call sites.
  *
  * A subtle persistent underline acts as the link affordance (so
  * clickability is obvious in lists with dozens of entries) and brightens
  * on hover.
  */
 export function ModelLink(props: ModelLinkProps) {
+  const className = cn(
+    'decoration-foreground/30 hover:decoration-foreground underline decoration-1 underline-offset-4 transition-colors',
+    props.className
+  )
+
+  if (props.onOpenModel) {
+    return (
+      <button
+        type='button'
+        onClick={() => props.onOpenModel?.(props.modelName)}
+        className={cn(className, 'cursor-pointer text-left')}
+      >
+        {props.children ?? props.modelName}
+      </button>
+    )
+  }
+
   return (
     <Link
       to='/pricing/$modelId'
       params={{ modelId: props.modelName }}
-      className={cn(
-        'decoration-foreground/30 hover:decoration-foreground underline decoration-1 underline-offset-4 transition-colors',
-        props.className
-      )}
+      className={className}
     >
       {props.children ?? props.modelName}
     </Link>

@@ -37,6 +37,9 @@ export type UpdateOptionRequest = {
 export type UpdateOptionResponse = {
   success: boolean
   message: string
+  key?: string
+  message_key?: string
+  message_params?: Record<string, unknown>
 }
 
 export interface PasskeyDomainChange {
@@ -163,6 +166,7 @@ export type AuthSettings = {
   EmailVerificationEnabled: boolean
   RegisterEnabled: boolean
   InviteRegisterEnabled: boolean
+  RegisterAffiliateLinkEnabled: boolean
   LoginVerificationRequiredEnabled: boolean
   EmailDomainRestrictionEnabled: boolean
   EmailAliasRestrictionEnabled: boolean
@@ -388,6 +392,10 @@ export type OperationsSettings = {
   LogConsumeEnabled: boolean
   'log_setting.user_export_enabled': boolean
   'log_setting.max_range_days': number
+  'log_setting.retention_days': number
+  'log_setting.request_content_retention_days': number
+  'log_setting.request_content_enabled': boolean
+  'log_setting.request_content_max_bytes': number
   'system_task_setting.retention_days': number
   'performance_setting.disk_cache_enabled': boolean
   'performance_setting.disk_cache_threshold_mb': number
@@ -401,6 +409,7 @@ export type OperationsSettings = {
   'perf_metrics_setting.flush_interval': number
   'perf_metrics_setting.bucket_time': 'hour' | 'minute' | '5min'
   'perf_metrics_setting.retention_days': number
+  'system_update_setting.repository': string
 }
 
 export type SecuritySettings = {

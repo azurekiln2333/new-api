@@ -113,12 +113,18 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
           balance_updated_time: now,
           balance_detail: response.balance_detail ?? currentRow.balance_detail,
         })
+        setRawResponse(null)
 
-        // Invalidate queries to refresh the table
-        await queryClient.invalidateQueries({
+        // The authoritative response is already applied above, so the caller no
+        // longer waits on the list refresh. Release the busy state before the
+        // background refetch and let it run detached: a slow list must not look
+        // like a failed balance query, and errors here cannot undo the applied
+        // balance because the refetch is not treated as the query result.
+        setIsQuerying(false)
+        void queryClient.invalidateQueries({
           queryKey: channelsQueryKeys.lists(),
         })
-        setRawResponse(null)
+        return
       } else if (response.success && response.raw_response !== undefined) {
         setRawResponse(response.raw_response)
       } else {

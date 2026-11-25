@@ -425,6 +425,16 @@ describe('metadata editing', () => {
           'Existing vendor'
         )
       )
+      fireEvent.change(screen.getByLabelText('Description'), {
+        target: { value: 'Unsaved metadata draft' },
+      })
+      view.rerender(tree({ ...model }, true))
+      expect(screen.getByLabelText('Description')).toHaveValue(
+        'Unsaved metadata draft'
+      )
+      fireEvent.change(screen.getByLabelText('Description'), {
+        target: { value: model.description ?? '' },
+      })
       fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
       expect(close).toHaveBeenCalledWith(false)
       view.rerender(tree(model, false))

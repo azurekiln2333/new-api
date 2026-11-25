@@ -27,6 +27,14 @@ export interface FingerprintProbe {
   prompt_tokens: number
   output_tokens: number
   max_tokens: number
+  /** Actual challenge text sent for this probe. */
+  prompt?: string
+  /** True when the retained prompt was cut at the memory cap. */
+  prompt_truncated?: boolean
+  /** Actual model reply for this probe. */
+  output?: string
+  /** True when the retained reply was cut at the memory cap. */
+  output_truncated?: boolean
   error?: string
 }
 

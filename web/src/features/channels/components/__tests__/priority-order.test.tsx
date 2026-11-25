@@ -68,6 +68,8 @@ const applied: PriorityOrder = {
 let current: PriorityOrder
 let requests: PriorityMove[]
 let failSave: boolean
+let listRefresh: Promise<void> | undefined
+let releaseListRefresh: (() => void) | undefined
 const pointerMethods = [
   'setPointerCapture',
   'releasePointerCapture',
@@ -81,6 +83,7 @@ const originalPointerMethods = pointerMethods.map(
     ] as const
 )
 afterEach(() => {
+  releaseListRefresh?.()
   vi.unstubAllGlobals()
   for (const [name, descriptor] of originalPointerMethods) {
     if (descriptor) {
@@ -111,6 +114,8 @@ beforeEach(() => {
   current = initial
   requests = []
   failSave = false
+  listRefresh = undefined
+  releaseListRefresh = undefined
   localStorage.clear()
   for (const key of Object.values(CHANNEL_PRIORITY_GUIDE_KEYS)) {
     localStorage.setItem(key, 'seen')
@@ -138,6 +143,7 @@ beforeEach(() => {
                 (Number(b[field as keyof Channel]) || 0)) *
                 (desc ? -1 : 1) || b.id - a.id
           )
+        await listRefresh
         return {
           data: {
             success: true,
@@ -309,6 +315,9 @@ test('switching sort exits reorder mode without automatically reopening it', asy
 test('failed save restores the visible order and does not offer undo', async () => {
   failSave = true
   await mount()
+  listRefresh = new Promise<void>((resolve) => {
+    releaseListRefresh = resolve
+  })
   fireEvent.keyDown(screen.getByRole('button', { name: 'Reorder channel 3' }), {
     key: 'ArrowUp',
   })
@@ -320,6 +329,45 @@ test('failed save restores the visible order and does not offer undo', async () 
   )
   expect(orderInView()).toEqual(['channel:1', 'channel:2', 'channel:3'])
   expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+})
+
+test('saved priority and undo remain usable while list refetches are pending', async () => {
+  const { client } = await mount()
+  const user = userEvent.setup()
+  listRefresh = new Promise<void>((resolve) => {
+    releaseListRefresh = resolve
+  })
+  fireEvent.keyDown(screen.getByRole('button', { name: 'Reorder channel 3' }), {
+    key: 'ArrowUp',
+  })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled()
+  )
+  expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBeGreaterThan(
+    0
+  )
+  expect(orderInView()).toEqual(['channel:1', 'channel:3', 'channel:2'])
+  expect(
+    screen.getByRole('button', { name: 'Reorder channel 3' })
+  ).toBeEnabled()
+
+  await user.click(screen.getByRole('button', { name: 'Undo' }))
+  await waitFor(() =>
+    expect(orderInView()).toEqual(['channel:1', 'channel:2', 'channel:3'])
+  )
+  expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+  expect(requests.at(-1)).toEqual({
+    revision: 'applied',
+    restore: [{ id: 3, previous: 90, priority: 0 }],
+  })
+  expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBeGreaterThan(
+    0
+  )
+  releaseListRefresh?.()
+  await waitFor(() =>
+    expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBe(0)
+  )
+  expect(orderInView()).toEqual(['channel:1', 'channel:2', 'channel:3'])
 })
 
 test('card and table views share the saved order', async () => {

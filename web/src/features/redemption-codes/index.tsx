@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { CodeExportProvider } from '@/components/code-export/code-export-provider'
 import { SectionPageLayout } from '@/components/layout'
 
 import { RedemptionsDialogs } from './components/redemptions-dialogs'
@@ -29,19 +30,21 @@ export function Redemptions() {
   const { t } = useTranslation()
   return (
     <RedemptionsProvider>
-      <SectionPageLayout fixedContent>
-        <SectionPageLayout.Title>
-          {t('Redemption Codes')}
-        </SectionPageLayout.Title>
-        <SectionPageLayout.Actions>
-          <RedemptionsPrimaryButtons />
-        </SectionPageLayout.Actions>
-        <SectionPageLayout.Content>
-          <RedemptionsTable />
-        </SectionPageLayout.Content>
-      </SectionPageLayout>
+      <CodeExportProvider scope='redemption'>
+        <SectionPageLayout fixedContent>
+          <SectionPageLayout.Title>
+            {t('Redemption Codes')}
+          </SectionPageLayout.Title>
+          <SectionPageLayout.Actions>
+            <RedemptionsPrimaryButtons />
+          </SectionPageLayout.Actions>
+          <SectionPageLayout.Content>
+            <RedemptionsTable />
+          </SectionPageLayout.Content>
+        </SectionPageLayout>
 
-      <RedemptionsDialogs />
+        <RedemptionsDialogs />
+      </CodeExportProvider>
     </RedemptionsProvider>
   )
 }

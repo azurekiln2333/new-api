@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -140,7 +140,9 @@ export function ModelMutateDrawer(props: {
     },
     enabled: props.open && isEditing,
   })
-  const savedModel = modelQuery.data ?? currentRow
+  const matchingModel =
+    modelQuery.data?.id === currentRow?.id ? modelQuery.data : undefined
+  const savedModel = isEditing ? matchingModel : currentRow
 
   useEffect(() => {
     if (!props.open) return
@@ -157,32 +159,66 @@ export function ModelMutateDrawer(props: {
     props.currentRow?.model_name,
   ])
 
-  useEffect(() => {
+  const listRow = useRef(currentRow)
+  useLayoutEffect(() => {
+    listRow.current = currentRow
+  }, [currentRow])
+
+  useLayoutEffect(() => {
+    const row = listRow.current
     if (!props.open) {
       form.reset(MODEL_FORM_DEFAULT_VALUES)
       setCreatedModel(null)
       loadedKey.current = ''
       return
     }
+    const key = row?.id
+      ? `metadata:${row.id}`
+      : `channel:${row?.model_name ?? ''}`
+    if (loadedKey.current === key) return
+    form.reset(
+      row ? transformModelToFormDefaults(row) : MODEL_FORM_DEFAULT_VALUES
+    )
+    loadedKey.current = ''
+  }, [props.open, currentRow?.id, currentRow?.model_name, form])
+
+  useEffect(() => {
+    if (!props.open) return
     const key = currentRow?.id
       ? `metadata:${currentRow.id}`
       : `channel:${currentRow?.model_name ?? ''}`
-    if (loadedKey.current === key || (isEditing && !modelQuery.data)) return
+    if (
+      loadedKey.current === key ||
+      (isEditing && modelQuery.data?.id !== currentRow?.id)
+    ) {
+      return
+    }
     form.reset(
-      isEditing && modelQuery.data
-        ? transformModelToFormDefaults(modelQuery.data)
+      isEditing && matchingModel
+        ? transformModelToFormDefaults(matchingModel)
         : {
             ...MODEL_FORM_DEFAULT_VALUES,
             model_name: currentRow?.model_name ?? '',
           }
     )
     loadedKey.current = key
-  }, [props.open, currentRow, isEditing, modelQuery.data, form])
+  }, [
+    props.open,
+    currentRow?.id,
+    currentRow?.model_name,
+    isEditing,
+    modelQuery.data,
+    matchingModel,
+    form,
+  ])
 
   const save = useMutation({
     meta: { errorToast: false },
     onMutate: () => form.clearErrors('root.server'),
     mutationFn: async (values: ModelFormValues) => {
+      if (currentRow?.id && matchingModel?.id !== currentRow.id) {
+        throw new Error(t('Failed to load model'))
+      }
       if (pricingDirty && values.model_name !== currentRow?.model_name) {
         throw new Error(
           t('Save or discard pricing changes before renaming metadata.')
@@ -208,11 +244,12 @@ export function ModelMutateDrawer(props: {
           response.data
         )
       }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: modelsQueryKeys.all }),
-        queryClient.invalidateQueries({ queryKey: ['pricing'] }),
-        queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.all }),
-      ])
+      // Refresh list projections after the committed save without holding the
+      // drawer open while they resolve. A dirty pricing section still keeps the
+      // drawer open for its own separate save.
+      void queryClient.invalidateQueries({ queryKey: modelsQueryKeys.all })
+      void queryClient.invalidateQueries({ queryKey: ['pricing'] })
+      void queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.all })
       toast.success(t('Model metadata saved'))
       if (!pricingDirty) props.onOpenChange(false)
     },
@@ -296,8 +333,10 @@ export function ModelMutateDrawer(props: {
                   onRetry={() => void modelQuery.refetch()}
                 />
               ) : null}
-              {isEditing && modelQuery.isPending && <LoadingState />}
-              {!modelQuery.isError && !(isEditing && modelQuery.isPending) && (
+              {isEditing && !matchingModel && !modelQuery.isError && (
+                <LoadingState />
+              )}
+              {!modelQuery.isError && (!isEditing || matchingModel) && (
                 <Form {...form}>
                   <form
                     id='model-form'
@@ -612,7 +651,7 @@ export function ModelMutateDrawer(props: {
                   disabled={
                     isSubmitting ||
                     modelQuery.isError ||
-                    (isEditing && modelQuery.isPending)
+                    (isEditing && !matchingModel)
                   }
                 >
                   {isSubmitting ? t('Saving...') : t('Save metadata')}

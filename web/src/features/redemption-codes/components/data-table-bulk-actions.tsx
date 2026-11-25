@@ -18,11 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Download } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { useCodeExport } from '@/components/code-export/code-export-provider'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
@@ -46,6 +47,7 @@ type DataTableBulkActionsProps = {
 export function DataTableBulkActions(props: DataTableBulkActionsProps) {
   const { t } = useTranslation()
   const { triggerRefresh } = useRedemptions()
+  const { exportIds } = useCodeExport()
   const [deleteTargets, setDeleteTargets] = useState<Redemption[] | null>(null)
   const selectedRows = props.table.getFilteredSelectedRowModel().rows
 
@@ -99,6 +101,26 @@ export function DataTableBulkActions(props: DataTableBulkActionsProps) {
           successTooltip={t('Codes copied!')}
           aria-label={t('Copy selected codes')}
         />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='outline'
+                size='icon'
+                className='size-8'
+                aria-label={t('Export selected redemption codes')}
+                onClick={() =>
+                  exportIds(selectedRows.map((row) => row.original.id))
+                }
+              />
+            }
+          >
+            <Download aria-hidden='true' />
+          </TooltipTrigger>
+          <TooltipContent>
+            {t('Export selected redemption codes')}
+          </TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={

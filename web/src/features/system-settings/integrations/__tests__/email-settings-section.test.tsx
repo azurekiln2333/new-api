@@ -83,9 +83,8 @@ describe('email delivery settings', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
-      expect(request).toHaveBeenCalledWith('/api/option/', {
-        key: 'QuotaRemindEnabled',
-        value: false,
+      expect(request).toHaveBeenCalledWith('/api/option/batch', {
+        options: [{ key: 'QuotaRemindEnabled', value: false }],
       })
     )
     expect(request).toHaveBeenCalledTimes(1)
@@ -132,7 +131,7 @@ describe('email delivery settings', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('saves Resend credentials before activating it and ignores invalid inactive SMTP fields', async () => {
+  it('saves Resend credentials and activation atomically and ignores invalid inactive SMTP fields', async () => {
     const request = vi
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
@@ -151,12 +150,14 @@ describe('email delivery settings', () => {
     )
     await user.type(screen.getByLabelText('Resend API key'), 'test-key')
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(3))
-    expect(request.mock.calls.map((call) => call[1])).toEqual([
-      { key: 'ResendFrom', value: '"New API" <mail@example.com>' },
-      { key: 'ResendApiKey', value: 'test-key' },
-      { key: 'EmailProvider', value: 'resend' },
-    ])
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    expect(request).toHaveBeenCalledWith('/api/option/batch', {
+      options: [
+        { key: 'ResendFrom', value: '"New API" <mail@example.com>' },
+        { key: 'ResendApiKey', value: 'test-key' },
+        { key: 'EmailProvider', value: 'resend' },
+      ],
+    })
     await waitFor(() =>
       expect(screen.getByLabelText('Resend API key')).toHaveValue('')
     )
@@ -172,9 +173,8 @@ describe('email delivery settings', () => {
     await user.type(from, 'changed@example.com')
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
-    expect(request).toHaveBeenCalledWith('/api/option/', {
-      key: 'ResendFrom',
-      value: 'changed@example.com',
+    expect(request).toHaveBeenCalledWith('/api/option/batch', {
+      options: [{ key: 'ResendFrom', value: 'changed@example.com' }],
     })
   })
 
@@ -208,9 +208,8 @@ describe('email delivery settings', () => {
     await user.click(screen.getByRole('radio', { name: 'SMTP' }))
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
-    expect(request).toHaveBeenCalledWith('/api/option/', {
-      key: 'EmailProvider',
-      value: 'smtp',
+    expect(request).toHaveBeenCalledWith('/api/option/batch', {
+      options: [{ key: 'EmailProvider', value: 'smtp' }],
     })
   })
 
@@ -226,9 +225,13 @@ describe('email delivery settings', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
     )
-    expect(request.mock.calls.map((call) => call[1])).toEqual([
-      { key: 'ResendApiKey', value: 'test-key' },
-    ])
+    expect(request).toHaveBeenCalledWith('/api/option/batch', {
+      options: [
+        { key: 'ResendApiKey', value: 'test-key' },
+        { key: 'EmailProvider', value: 'resend' },
+      ],
+    })
+    expect(screen.getByLabelText('Resend API key')).toHaveValue('test-key')
   })
 
   it('rejects an empty Resend sender without submitting settings', async () => {
@@ -285,17 +288,20 @@ describe('email delivery settings', () => {
     await user.type(name, 'New API, "Support"')
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
-      expect(request).toHaveBeenLastCalledWith('/api/option/', {
-        key: 'ResendFrom',
-        value: '"New API, \\"Support\\"" <notify@example.com>',
+      expect(request).toHaveBeenLastCalledWith('/api/option/batch', {
+        options: [
+          {
+            key: 'ResendFrom',
+            value: '"New API, \\"Support\\"" <notify@example.com>',
+          },
+        ],
       })
     )
     await user.clear(name)
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
-      expect(request).toHaveBeenLastCalledWith('/api/option/', {
-        key: 'ResendFrom',
-        value: 'notify@example.com',
+      expect(request).toHaveBeenLastCalledWith('/api/option/batch', {
+        options: [{ key: 'ResendFrom', value: 'notify@example.com' }],
       })
     )
   })

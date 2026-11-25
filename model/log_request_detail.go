@@ -23,6 +23,7 @@ const (
 	requestContentPhaseWritePending  = "write_pending"
 	requestContentPhaseLinkPending   = "link_pending"
 	requestContentPhaseDeletePending = "delete_pending"
+	requestContentPhaseExpirePending = "expire_pending"
 	requestContentPhaseRetired       = "retired"
 
 	requestContentLeaseSeconds  = 300
@@ -572,6 +573,19 @@ func GetLogRequestDetail(ctx context.Context, ref string) (*LogRequestDetail, er
 	}
 	ctx, cancel := context.WithTimeout(ctx, requestContentReadTimeout)
 	defer cancel()
+	if DB == nil {
+		return nil, errRequestContentNoStore
+	}
+	var protection LogRequestContentProtection
+	if err := requestContentStore(DB, ctx).Select("phase").Where("ref = ?", ref).Take(&protection).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return nil, errRequestContentStorage
+	}
+	if protection.Phase == requestContentPhaseExpirePending || protection.Phase == requestContentPhaseRetired {
+		return nil, gorm.ErrRecordNotFound
+	}
 	db := requestContentStore(LOG_DB, ctx)
 	var detail LogRequestDetail
 	if err := findRequestContentDetail(db, ref).Take(&detail).Error; err != nil {
@@ -638,6 +652,33 @@ func CleanupLogRequestDetails(ctx context.Context, cutoff int64, limit int) erro
 	return sweepRequestContent(ctx, candidates, false)
 }
 
+// ExpireLogRequestDetails removes old request payloads independently of their
+// usage-log lifetime. The existing writer/task locks still protect live work.
+func ExpireLogRequestDetails(ctx context.Context, cutoff int64, limit int) error {
+	if DB == nil || LOG_DB == nil {
+		return errRequestContentNoStore
+	}
+	if cutoff <= 0 {
+		return nil
+	}
+	var candidates []LogRequestContentProtection
+	if err := requestContentStore(DB, ctx).
+		Where("phase = ? AND writer_until <= ? AND created_at < ?", requestContentPhaseReady, common.GetTimestamp(), cutoff).
+		Order("checked_at, ref").Limit(requestContentSweepLimit(limit)).Find(&candidates).Error; err != nil {
+		return errRequestContentStorage
+	}
+	var errs []error
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		if err := reclaimRequestContent(ctx, &candidate, false, cutoff); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // RecoverLogRequestContentOperations rechecks abandoned operations under the
 // same lock and fence as writers. A lease is an eligibility check, not proof
 // that an uncertain write or delete has completed.
@@ -647,7 +688,7 @@ func RecoverLogRequestContentOperations(ctx context.Context, limit int) error {
 	}
 	var candidates []LogRequestContentProtection
 	if err := requestContentStore(DB, ctx).
-		Where("phase IN ? AND lease_until < ? AND writer_until <= ?", []string{requestContentPhaseWritePending, requestContentPhaseLinkPending, requestContentPhaseDeletePending}, common.GetTimestamp()-requestContentRecoveryGrace, common.GetTimestamp()).
+		Where("phase IN ? AND lease_until < ? AND writer_until <= ?", []string{requestContentPhaseWritePending, requestContentPhaseLinkPending, requestContentPhaseDeletePending, requestContentPhaseExpirePending}, common.GetTimestamp()-requestContentRecoveryGrace, common.GetTimestamp()).
 		Order("checked_at, ref").Limit(requestContentSweepLimit(limit)).Find(&candidates).Error; err != nil {
 		return errRequestContentStorage
 	}
@@ -674,7 +715,7 @@ func sweepRequestContent(ctx context.Context, candidates []LogRequestContentProt
 	return errors.Join(errs...)
 }
 
-func reclaimRequestContent(ctx context.Context, candidate *LogRequestContentProtection, recovering bool) error {
+func reclaimRequestContent(ctx context.Context, candidate *LogRequestContentProtection, recovering bool, expiresBefore ...int64) error {
 	ctx, cancel := context.WithTimeout(ctx, requestContentReadTimeout)
 	defer cancel()
 	primary := requestContentStore(DB, ctx)
@@ -702,9 +743,14 @@ func reclaimRequestContent(ctx context.Context, candidate *LogRequestContentProt
 		if locked.Phase == requestContentPhaseLinkPending {
 			linkID = locked.HolderID
 		}
-		linked, err := hasLogRequestDetailReference(logs, locked.Ref, locked.RequestID, locked.UserID, linkID)
-		if err != nil {
-			return err
+		expiring := locked.Phase == requestContentPhaseExpirePending || locked.Phase == requestContentPhaseRetired ||
+			(len(expiresBefore) > 0 && locked.Phase == requestContentPhaseReady && locked.CreatedAt < expiresBefore[0])
+		linked := false
+		if !expiring {
+			linked, err = hasLogRequestDetailReference(logs, locked.Ref, locked.RequestID, locked.UserID, linkID)
+			if err != nil {
+				return err
+			}
 		}
 		if linkID != "" && !linked {
 			// Neither absence nor an earlier retry's surviving log proves a
@@ -730,6 +776,14 @@ func reclaimRequestContent(ctx context.Context, candidate *LogRequestContentProt
 			if err := deleteRequestContentDetail(logs, locked.Ref); err != nil {
 				return err
 			}
+			if expiring {
+				// Keep a value-free tombstone: a delayed snapshot cannot recreate
+				// content whose independent retention window has elapsed.
+				return tx.Model(locked).Updates(map[string]any{
+					"phase": requestContentPhaseRetired, "holder_id": "", "lease_until": 0,
+					"checked_at": time.Now().UnixNano(),
+				}).Error
+			}
 			return tx.Delete(locked).Error
 		}
 		if locked.Phase == requestContentPhaseRetired {
@@ -747,7 +801,11 @@ func reclaimRequestContent(ctx context.Context, candidate *LogRequestContentProt
 			}
 			return tx.Model(locked).Update("checked_at", time.Now().UnixNano()).Error
 		}
-		if err := markRequestContentPending(tx, locked, requestContentPhaseDeletePending); err != nil {
+		phase := requestContentPhaseDeletePending
+		if expiring {
+			phase = requestContentPhaseExpirePending
+		}
+		if err := markRequestContentPending(tx, locked, phase); err != nil {
 			return err
 		}
 		pending = locked
@@ -766,7 +824,7 @@ func reclaimRequestContent(ctx context.Context, candidate *LogRequestContentProt
 		if err := deleteRequestContentDetail(requestContentStore(LOG_DB, ctx), locked.Ref); err != nil {
 			return err
 		}
-		if !recovering {
+		if !recovering && locked.Phase != requestContentPhaseExpirePending {
 			return tx.Delete(locked).Error
 		}
 		// Do not permit reinsertion after an uncertain cross-store delete:

@@ -75,9 +75,9 @@ export function DrawingSettingsSection({
       ([key, value]) => value !== defaultValues[key as keyof DrawingFormValues]
     )
 
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value })
-    }
+    await updateOption.mutateAsync(
+      updates.map(([key, value]) => ({ key, value }))
+    )
   }
 
   const switches: Array<{

@@ -175,9 +175,9 @@ function expandDotPaths<T extends FieldValues>(
  *   resolver: zodResolver(schema),
  *   defaultValues,
  *   onSubmit: async (data, changed) => {
- *     for (const [key, value] of Object.entries(changed)) {
- *       await updateOption.mutateAsync({ key, value })
- *     }
+ *     await updateOption.mutateAsync(
+ *       Object.entries(changed).map(([key, value]) => ({ key, value }))
+ *     )
  *   }
  * })
  * ```

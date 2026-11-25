@@ -34,6 +34,16 @@ interface ApiInfoItemProps {
   item: ApiInfoItem
   status: PingStatus
   onTest: (url: string) => void
+  /** Approved CPU/memory/storage percentages; null means unknown. */
+  resources?: {
+    cpu_percent: number | null
+    memory_percent: number | null
+    storage_percent: number | null
+  } | null
+  /** Coarse monitoring state for this entry's instance. */
+  instanceStatus?: 'healthy' | 'stale' | 'unknown' | 'disabled' | null
+  /** Opens the filtered node detail for this API entry. */
+  onOpenDetail?: () => void
 }
 
 export function ApiInfoItemComponent(props: ApiInfoItemProps) {
@@ -49,32 +59,40 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
   }
 
   return (
-    <div className='group hover:bg-muted/40 flex items-center justify-between gap-2 px-3 py-2.5 transition-colors sm:gap-3 sm:px-5 sm:py-3'>
-      <div className='flex min-w-0 flex-1 items-center gap-2 sm:gap-3'>
-        <span
-          className={cn(
-            'inline-block size-2 shrink-0 rounded-full',
-            getBgColorClass(item.color)
-          )}
-        />
+    // One card per API entry. The identity row opens the filtered node detail;
+    // resources and controls sit on their own wrapping row so nothing is
+    // dropped on narrow screens.
+    <div className='group hover:bg-muted/40 flex flex-col gap-2 px-3 py-2.5 transition-colors sm:px-5 sm:py-3'>
+      <div className='flex items-center justify-between gap-2 sm:gap-3'>
+        <div className='flex min-w-0 flex-1 items-center gap-2 sm:gap-3'>
+          <span
+            className={cn(
+              'inline-block size-2 shrink-0 rounded-full',
+              getBgColorClass(item.color)
+            )}
+          />
 
-        <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
-          <div className='flex items-baseline gap-2'>
-            <span className='font-mono text-sm font-semibold'>
-              {item.route}
-            </span>
-            <span className='text-muted-foreground/60 hidden truncate text-xs md:inline'>
-              {item.description}
+          <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
+            <div className='flex items-baseline gap-2'>
+              <Button
+                type='button'
+                variant='link'
+                onClick={props.onOpenDetail}
+                className='h-auto min-w-0 cursor-pointer justify-start truncate p-0 text-left font-mono text-sm font-semibold underline decoration-1 underline-offset-4'
+              >
+                {item.route}
+              </Button>
+              <span className='text-muted-foreground/60 hidden truncate text-xs md:inline'>
+                {item.description}
+              </span>
+            </div>
+            <span className='text-muted-foreground/40 truncate font-mono text-xs'>
+              {item.url}
             </span>
           </div>
-          <span className='text-muted-foreground/40 truncate font-mono text-xs'>
-            {item.url}
-          </span>
         </div>
-      </div>
 
-      <div className='flex shrink-0 items-center gap-2'>
-        <div className='flex items-center'>
+        <div className='flex shrink-0 items-center justify-end gap-2'>
           {status.testing && (
             <StatusBadge
               label={t('Testing...')}
@@ -102,6 +120,13 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
             />
           )}
         </div>
+      </div>
+
+      <div className='flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pl-4'>
+        <ResourceMeters
+          resources={props.resources ?? null}
+          status={props.instanceStatus ?? null}
+        />
 
         <div className='flex items-center gap-0.5'>
           <Button
@@ -148,6 +173,68 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
           </Button>
         </div>
       </div>
+    </div>
+  )
+}
+
+const RESOURCE_KEYS = ['cpu', 'memory', 'storage'] as const
+
+const RESOURCE_LABELS: Record<(typeof RESOURCE_KEYS)[number], string> = {
+  cpu: 'CPU',
+  memory: 'Memory',
+  storage: 'Storage',
+}
+
+/**
+ * CPU/memory/storage meters for one API instance.
+ *
+ * Values are the approved public percentages; `null` renders an explicit
+ * "Unknown" state so a missing sample is never shown as 0%. The coarse
+ * instance state (stale/disabled) is surfaced as a short label.
+ */
+function ResourceMeters(props: {
+  resources: {
+    cpu_percent: number | null
+    memory_percent: number | null
+    storage_percent: number | null
+  } | null
+  status: 'healthy' | 'stale' | 'unknown' | 'disabled' | null
+}) {
+  const { t } = useTranslation()
+  const values = [
+    props.resources?.cpu_percent ?? null,
+    props.resources?.memory_percent ?? null,
+    props.resources?.storage_percent ?? null,
+  ]
+
+  let stateLabel: string | null = null
+  if (props.status === 'stale') {
+    stateLabel = t('Stale')
+  } else if (props.status === 'disabled') {
+    stateLabel = t('Disabled')
+  } else if (props.status === 'unknown' || !props.resources) {
+    stateLabel = t('Unknown')
+  }
+
+  return (
+    // Required information, so it wraps onto its own line on narrow screens
+    // instead of being hidden there.
+    <div className='flex flex-wrap items-center justify-end gap-x-2 gap-y-1'>
+      {RESOURCE_KEYS.map((key, index) => (
+        <div key={key} className='flex items-center gap-1'>
+          <span className='text-muted-foreground/60 text-[10px] font-medium tracking-wide uppercase'>
+            {t(RESOURCE_LABELS[key])}
+          </span>
+          <span className='font-mono text-[11px] tabular-nums'>
+            {values[index] === null
+              ? t('Unknown')
+              : `${values[index]?.toFixed(0)}%`}
+          </span>
+        </div>
+      ))}
+      {stateLabel && (
+        <StatusBadge variant='neutral' label={stateLabel} copyable={false} />
+      )}
     </div>
   )
 }

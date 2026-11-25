@@ -59,13 +59,29 @@ func requestBrowserOrigin(request *http.Request) (string, bool) {
 	return origin, err == nil
 }
 
-func isAllowedSessionOrigin(request *http.Request, origin string) bool {
-	requestScheme := "http"
-	if request.TLS != nil {
-		requestScheme = "https"
+// effectiveRequestOrigin derives the public browser origin a request actually
+// reached. A verified console forwarding envelope is the only source allowed to
+// override the transport scheme and host; raw X-Forwarded-Proto/Host headers are
+// never trusted, so spoofed proxy headers cannot widen this origin check.
+func effectiveRequestOrigin(request *http.Request) string {
+	scheme := common.EffectiveRequestScheme(request)
+	host := ""
+	if request != nil {
+		host = request.Host
 	}
-	requestOrigin, err := common.NormalizeOrigin(requestScheme + "://" + request.Host)
-	if err == nil && subtle.ConstantTimeCompare([]byte(origin), []byte(requestOrigin)) == 1 {
+	if identity, ok := common.VerifiedConsoleIngress(request); ok && identity.Forwarded {
+		host = identity.Host
+	}
+	origin, err := common.NormalizeOrigin(scheme + "://" + host)
+	if err != nil {
+		return ""
+	}
+	return origin
+}
+
+func isAllowedSessionOrigin(request *http.Request, origin string) bool {
+	requestOrigin := effectiveRequestOrigin(request)
+	if requestOrigin != "" && subtle.ConstantTimeCompare([]byte(origin), []byte(requestOrigin)) == 1 {
 		return true
 	}
 	for _, trustedOrigin := range common.SessionCookieTrustedURLs {

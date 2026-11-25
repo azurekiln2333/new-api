@@ -49,6 +49,8 @@ type ModelsSectionProps = {
   rows: ModelRanking[]
   period: RankingPeriod
   totals: RankingTokenTotals
+  /** Opens the model usage drawer for a clicked model name. */
+  onOpenModel?: (modelName: string) => void
 }
 
 /**
@@ -240,7 +242,10 @@ export function ModelsSection(props: ModelsSectionProps) {
           </div>
         ) : (
           <div className='px-5 pt-1 pb-4'>
-            <ModelLeaderboard rows={props.rows} />
+            <ModelLeaderboard
+              rows={props.rows}
+              onOpenModel={props.onOpenModel}
+            />
           </div>
         )}
       </div>

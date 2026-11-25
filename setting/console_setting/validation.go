@@ -156,11 +156,54 @@ func validateApiInfo(apiInfoStr string) error {
 		if err := checkDangerousContent(route, i+1, apiInfoMessages); err != nil {
 			return err
 		}
+
+		// node_name binds this API entry to a system instance. It is optional,
+		// never rendered publicly, and one instance may serve many entries.
+		if nodeName, ok := apiInfo["node_name"]; ok {
+			nodeNameStr, isString := nodeName.(string)
+			if !isString {
+				return common.NewMessage("API info #{{index}} node name must be a string", map[string]any{"index": i + 1})
+			}
+			if exceedsMaxCharacters(nodeNameStr, 128) {
+				return common.NewMessage("API info #{{index}} node name cannot exceed 128 characters", map[string]any{"index": i + 1})
+			}
+		}
 	}
 	return nil
 }
 
 func GetApiInfo() []map[string]any {
+	return getJSONList(GetConsoleSetting().ApiInfo)
+}
+
+// GetPublicApiInfo returns the API info entries as served to the public status
+// endpoint. It strips the instance binding (node_name), which is console
+// management data and must not reach untrusted viewers; a node name often
+// defaults to the hostname, so leaking it would expose internal identity.
+func GetPublicApiInfo() []map[string]any {
+	list := getJSONList(GetConsoleSetting().ApiInfo)
+	if len(list) == 0 {
+		return list
+	}
+	projected := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		entry := make(map[string]any, len(item))
+		for key, value := range item {
+			if key == "node_name" {
+				continue
+			}
+			entry[key] = value
+		}
+		projected = append(projected, entry)
+	}
+	return projected
+}
+
+// ApiInfoBindings returns the configured API-to-instance bindings used by the
+// instance resource summary. Each binding carries the entry id, the bound
+// node_name, the route label and the display name; node_name never leaves the
+// server through the public summary.
+func ApiInfoBindings() []map[string]any {
 	return getJSONList(GetConsoleSetting().ApiInfo)
 }
 

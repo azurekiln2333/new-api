@@ -12,12 +12,22 @@ Keep explicit name/detail buttons usable. Regression coverage in
 opening details, focused card Enter/Space opens details, and explicit name
 activation still works.
 
-Card metrics have two wrapping columns: used/remaining balance and used tokens
-on the left; response time, the full last-tested date/time and shared concurrency
-on the right. Priority and weight share a separate bottom row. Use description
-lists with direct dt/dd pairs inside metric groups. Narrow cards may stack the
-columns and split the date from the time, but must not truncate either. Retain
-the priority event target and accessible card/name actions.
+Keep the channel name and ID on their existing two lines. Place the shared
+concurrency `current / limit` display and status/action icons next, then used
+Tokens, remaining/total quota, response time and last test. Priority and weight
+share the final row. The last-test value uses the existing relative-time
+formatter (for example, minutes or days ago); the exact timestamp may remain
+in its tooltip, but is not the inline value. This supersedes the earlier full
+inline timestamp requirement by the user decision of 2026-11-24. Use direct
+dt/dd pairs for metrics and preserve keyboard activation and responsive wrapping.
+
+An enabled local channel budget occupies the existing remaining/total quota
+region, using server `remaining_quota` and `limit_quota` with the shared quota
+formatter. Do not add a separate local-budget row or combine upstream balance
+with local usage to invent a total. Actual used Tokens still come from the
+channel usage aggregation. Keep ledger-inactive, loading and unavailable states
+distinct from unlimited capacity, preserve privacy masking, and retain the
+budget details for used/reserved amounts and the upstream balance details.
 
 `ChannelUsedTokens` uses `compact` only in card layout: call the shared
 `formatCompactNumber` with a normalized Intl locale to display Chinese 万/亿
@@ -28,7 +38,7 @@ formatter defaults or add one polling request per card; reuse usage and
 concurrency contexts, including privacy masking and aggregate rows.
 
 Extend the existing card-entry and channel-usage tests when changing this
-contract: exact/compact values for card versus table, full timestamp text,
+contract: exact/compact values for card versus table, relative last-test text,
 privacy placeholders and nested control activation remain observable behavior.
 
 This formatting contract is scoped to channel metrics. Usage-log table cells

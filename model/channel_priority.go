@@ -66,6 +66,10 @@ func GetChannelPriorityOrder() (ChannelPriorityOrder, error) {
 // abilities. A snapshot check also protects preview/commit and undo from stale
 // clients; row locks serialize concurrent reorders on MySQL and PostgreSQL.
 func ReorderChannelPriority(move ChannelPriorityMove) (ChannelPriorityOrder, error) {
+	// Keep the committed priorities and local routing publication ordered with
+	// other management writes; a later commit must not publish before this one.
+	channelPublicationLock.Lock()
+	defer channelPublicationLock.Unlock()
 	result := ChannelPriorityOrder{Items: []ChannelPriority{}, Changes: []ChannelPriorityChange{}}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		query := tx.Model(&Channel{}).Select("id", "priority").Order("id")
@@ -102,10 +106,49 @@ func ReorderChannelPriority(move ChannelPriorityMove) (ChannelPriorityOrder, err
 		result.Revision = channelPriorityRevision(result.Items)
 		return nil
 	})
-	if err == nil && !move.Preview {
+	if err == nil && !move.Preview && len(result.Changes) > 0 {
+		// Reorder changes the routing order of the affected channels. Re-publish
+		// only those channels locally instead of reloading the whole table: the
+		// committed rows are read back and installed by the same targeted path a
+		// configuration save uses.
+		publishChannelPriorityOrder(result.Changes)
 		BumpSyncTopic(SyncTopicChannels)
 	}
 	return result, err
+}
+
+// publishChannelPriorityOrder re-publishes the routing entry of every channel a
+// priority move changed, so local routing order matches the committed rows
+// before the request returns. Channels the reload has not cached yet are skipped;
+// the durable sync task still reloads the full snapshot.
+func publishChannelPriorityOrder(changes []ChannelPriorityChange) {
+	if !common.MemoryCacheEnabled {
+		BumpTaskAliasChannelRevision()
+		InvalidatePricingCache()
+		return
+	}
+	channelSyncLock.Lock()
+	for _, change := range changes {
+		cached, ok := channelsIDM[change.ID]
+		if !ok {
+			continue
+		}
+		// publishChannelLocked re-sorts the routing slices from channelsIDM, so the
+		// stored priority must be in the map before it rebuilds them.
+		updated := *cached
+		priority := change.Priority
+		if priority == nil {
+			// A channel with no stored priority sorts as 0, matching value().
+			zero := int64(0)
+			priority = &zero
+		}
+		updated.Priority = priority
+		publishChannelLocked(&updated)
+	}
+	BumpChannelCacheGeneration()
+	channelSyncLock.Unlock()
+	BumpTaskAliasChannelRevision()
+	InvalidatePricingCache()
 }
 
 // Equal-priority channels remain together. Opening a slot shifts the shorter

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
@@ -18,6 +19,49 @@ type RankingQuotaBucket struct {
 	ModelName string `json:"model_name"`
 	Bucket    int64  `json:"bucket"`
 	Tokens    int64  `json:"tokens"`
+}
+
+// GetModelUserUsageRanking aggregates one model's usage per user over a time
+// range, ordered by token volume with a stable user id tiebreak. It groups by
+// user id alone so a renamed account cannot appear twice and no historical
+// username is carried here; the caller resolves display names separately and
+// only for viewers allowed to see them.
+func GetModelUserUsageRanking(ctx context.Context, modelName string, startTime int64, endTime int64, limit int) ([]UserRankingRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	var rows []UserRankingRow
+	query := DB.WithContext(ctx).Table("quota_data").
+		Select("user_id, sum(count) as requests, sum(token_used) as tokens, sum(quota) as quota").
+		Where("model_name = ?", modelName).
+		Group("user_id").
+		Having("sum(token_used) > 0").
+		Order("tokens DESC").
+		Order("user_id ASC").
+		Limit(limit)
+	query = applyRankingQuotaTimeRange(query, startTime, endTime)
+	err := query.Find(&rows).Error
+	return rows, err
+}
+
+// ModelUsageTotals is a model's aggregate usage over a time range.
+type ModelUsageTotals struct {
+	Requests int64 `json:"requests"`
+	Tokens   int64 `json:"tokens"`
+	Quota    int64 `json:"quota"`
+}
+
+// GetModelUsageTotals aggregates one model's usage over ALL users in the time
+// range, independent of any leaderboard limit, so displayed totals are not
+// undercounted by a bounded top-N list.
+func GetModelUsageTotals(ctx context.Context, modelName string, startTime int64, endTime int64) (ModelUsageTotals, error) {
+	var totals ModelUsageTotals
+	query := DB.WithContext(ctx).Table("quota_data").
+		Select("coalesce(sum(count), 0) as requests, coalesce(sum(token_used), 0) as tokens, coalesce(sum(quota), 0) as quota").
+		Where("model_name = ?", modelName)
+	query = applyRankingQuotaTimeRange(query, startTime, endTime)
+	err := query.Scan(&totals).Error
+	return totals, err
 }
 
 func GetRankingQuotaTotals(startTime int64, endTime int64) ([]RankingQuotaTotal, error) {

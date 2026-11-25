@@ -133,7 +133,8 @@ afterEach(() => {
  */
 async function renderChannelsPage(
   usage: { total_tokens: number } | null = { total_tokens: CONSUMED_TOKENS },
-  items: Channel[] = [channel]
+  items: Channel[] = [channel],
+  budget: { enabled: boolean } = { enabled: false }
 ) {
   const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/channel') {
@@ -154,11 +155,12 @@ async function renderChannelsPage(
               scope_id: String(item.id),
               channel_id: item.id,
               ledger_enabled: true,
-              enabled: false,
-              limit_quota: 0,
+              enabled: budget.enabled,
+              limit_quota: budget.enabled ? 5_000_000 : 0,
               period_used_quota: 120,
               lifetime_used_quota: 250,
               reserved_quota: 10,
+              remaining_quota: budget.enabled ? 4_000_000 : null,
               config_version: 1,
               reset_epoch: 0,
               accounting_started_at: 1,
@@ -250,12 +252,22 @@ async function renderCardView(usage?: { total_tokens: number } | null) {
   return card as HTMLElement
 }
 
+/** Opens the card view with an enabled local budget. */
+async function renderCardViewWithEnabledBudget() {
+  localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'card')
+  await renderChannelsPage(undefined, [channel], { enabled: true })
+  const card = document.querySelector(CARD_SELECTOR)
+  expect(card).not.toBeNull()
+  return card as HTMLElement
+}
+
 it('loads both local budgets from one page request, separately from upstream balance', async () => {
   localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'card')
-  const get = await renderChannelsPage(null, [
-    channel,
-    { ...channel, id: 9, name: 'stage' },
-  ])
+  const get = await renderChannelsPage(
+    null,
+    [channel, { ...channel, id: 9, name: 'stage' }],
+    { enabled: true }
+  )
   const budgets = await screen.findAllByRole('button', { name: 'Local Budget' })
   expect(budgets).toHaveLength(2)
   expect(
@@ -442,15 +454,15 @@ it('lays the card metrics out in two columns above a separate priority/weight ro
     }
   }
 
-  // Left column: used amount above used tokens.
+  // Left column: used tokens above the shared quota region.
   expect(
     [...columns[0].querySelectorAll('dt')].map((label) => label.textContent)
-  ).toEqual(['Used / Remaining', 'Local Budget', 'Used tokens'])
+  ).toEqual(['Used tokens', 'Remaining / Total'])
 
-  // Right column: response, last tested and live concurrency.
+  // Right column: response and last tested. Concurrency stays by the name.
   expect(
     [...columns[1].querySelectorAll('dt')].map((label) => label.textContent)
-  ).toEqual(['Response', 'Last Tested', 'Concurrency'])
+  ).toEqual(['Response', 'Last Tested'])
 
   // Priority and weight own a separate row below, side by side.
   const priorityRow = card.querySelector<HTMLElement>(
@@ -490,14 +502,6 @@ it('lets the metric columns wrap instead of overflowing a narrow card', async ()
   )
   expect(priorityRow?.className).toContain('flex-wrap')
   expect(priorityRow?.className).toContain('min-w-0')
-})
-
-it('shows the complete last-tested date and time without truncation', async () => {
-  const card = await renderCardView()
-  const [date, time] = formatTimestampToDate(TEST_TIME).split(' ')
-
-  expect(await within(card).findByText(date)).toBeVisible()
-  expect(within(card).getByText(time)).toBeVisible()
 })
 
 it('keeps the channel group out of the card and leaves it to the details', async () => {
@@ -567,4 +571,127 @@ it('reuses the card sample when the same channel details are opened', async () =
   // The open drawer joins the existing visible set, so the key is unchanged and
   // the drawer renders the same sample without another coordinator round trip.
   expect(after).toBe(before)
+})
+
+it('orders the card metrics as tokens, quota, response and last test', async () => {
+  const card = await renderCardView()
+
+  // User-visible order: used Tokens first, then the quota region, then the
+  // response and last-test readings. Concurrency sits in the name row instead.
+  const usedTokens = await within(card).findByText('Used tokens')
+  const quota = within(card).getByText('Remaining / Total')
+  const response = within(card).getByText('Response')
+  const lastTested = within(card).getByText('Last Tested')
+
+  // Document order is the reading order for these labels.
+  const labels = [usedTokens, quota, response, lastTested]
+  for (let index = 1; index < labels.length; index++) {
+    expect(
+      labels[index - 1].compareDocumentPosition(labels[index]) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  }
+  // Tokens come before the quota region, and the quota region lives in the
+  // same metric column as the token count.
+  expect(usedTokens.closest('[data-card-metric-column]')).toBe(
+    quota.closest('[data-card-metric-column]')
+  )
+  // Priority/weight keep their own trailing row.
+  expect(within(card).getByText('Priority')).toBeVisible()
+  expect(
+    quota.compareDocumentPosition(within(card).getByText('Priority')) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+})
+
+it('renders the last test as relative time, not the full timestamp', async () => {
+  const card = await renderCardView()
+
+  // The card reuses the existing test_time cell: relative text inline, exact
+  // timestamp only in the tooltip.
+  const label = await within(card).findByText('Last Tested')
+  const value = label.nextElementSibling as HTMLElement
+  expect(value.textContent).toMatch(/ago$/)
+  expect(
+    within(card).queryByText(formatTimestampToDate(TEST_TIME) as never)
+  ).toBeNull()
+})
+
+it('fills the quota region with the enabled local budget remaining and limit', async () => {
+  const card = await renderCardViewWithEnabledBudget()
+
+  // `remaining / limit` comes from the server quota projection only, formatted
+  // with the shared quota formatter.
+  const label = await within(card).findByText('Remaining / Total')
+  const value = label.nextElementSibling as HTMLElement
+  await waitFor(() => expect(value.textContent).toContain('/'))
+  expect(value.textContent).not.toContain('Unlimited')
+  expect(value.textContent).toMatch(/\d/)
+})
+
+it('shows unavailable instead of the upstream balance when the local budget is unknown', async () => {
+  localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'card')
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/channel') {
+      return {
+        data: {
+          success: true,
+          data: { items: [channel], total: 1, type_counts: {} },
+        },
+      }
+    }
+    // No quota entry for this channel: the local budget state is unknown.
+    if (url === '/api/channel/quota') {
+      return { data: { success: true, data: { items: [] } } }
+    }
+    if (url === '/api/channel/usage') {
+      return {
+        data: {
+          success: true,
+          data: { items: [] },
+        },
+      }
+    }
+    return { data: { success: true, data: [] } }
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const root = createRootRoute()
+  const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
+  const channelsRoute = createRoute({
+    getParentRoute: () => auth,
+    path: 'channels/',
+    component: () => (
+      <ChannelsProvider>
+        <ChannelsTable />
+        <DialogProbe />
+        <DetailsProbe />
+      </ChannelsProvider>
+    ),
+  })
+  const router = createRouter({
+    routeTree: root.addChildren([auth.addChildren([channelsRoute])]),
+    history: createMemoryHistory({ initialEntries: ['/channels/'] }),
+  })
+  await router.load()
+  render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+  await waitFor(() =>
+    expect(document.querySelector(CARD_SELECTOR)).not.toBeNull()
+  )
+  const card = document.querySelector(CARD_SELECTOR) as HTMLElement
+
+  // The quota region must not present the upstream balance as the local budget.
+  const label = await within(card).findByText('Remaining / Total')
+  const value = label.nextElementSibling as HTMLElement
+  await waitFor(() =>
+    expect(value.textContent).toMatch(/Unavailable|Loading\.\.\./)
+  )
 })

@@ -19,17 +19,20 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
+import { Download, History } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  CodeExportProvider,
+  useCodeExport,
+} from '@/components/code-export/code-export-provider'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { CopyButton } from '@/components/copy-button'
 import {
   DataTableBulkActions,
   DataTablePage,
   useDataTable,
 } from '@/components/data-table'
-import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { MaskedValueDisplay } from '@/components/masked-value-display'
@@ -49,11 +52,20 @@ import { InvitationEditor } from './components/invitation-editor'
 const route = getRouteApi('/_authenticated/invitation-codes/')
 
 export function InvitationCodes() {
+  return (
+    <CodeExportProvider scope='invitation'>
+      <InvitationCodesContent />
+    </CodeExportProvider>
+  )
+}
+
+function InvitationCodesContent() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const { exportIds, exportBatch, exportFiltered, openHistory } =
+    useCodeExport()
   const [editor, setEditor] = useState<Invitation | 'new' | null>(null)
   const [remove, setRemove] = useState<number[] | 'invalid' | null>(null)
-  const [exportKeys, setExportKeys] = useState<string[]>([])
   const state = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
@@ -79,16 +91,84 @@ export function InvitationCodes() {
   })
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: ['invitations'] })
+  // Patch every cached page from the committed values, filtered the same way the
+  // server would, so a row that no longer matches the active filter leaves the
+  // page instead of lingering. Only rows the page already holds are counted;
+  // the background refetch supplies cross-page totals.
+  const patchInvitation = (changed: {
+    id: number
+    name?: string
+    expired_time?: number
+    status?: number
+  }) => {
+    for (const [queryKey, previous] of queryClient.getQueriesData<
+      Awaited<ReturnType<typeof listInvitations>>
+    >({ queryKey: ['invitations'] })) {
+      if (!previous) continue
+      const filter = queryKey[3]
+      let removed = 0
+      const items = previous.items.flatMap((item) => {
+        if (item.id !== changed.id) return [item]
+        const updated = { ...item, ...changed }
+        const expired =
+          updated.expired_time > 0 && updated.expired_time <= Date.now() / 1000
+        let matches = true
+        if (filter === '1') matches = updated.status === 1 && !expired
+        else if (filter === 'expired') {
+          matches = updated.status === 1 && expired
+        } else if (filter === '2' || filter === '3') {
+          matches = updated.status === Number(filter)
+        }
+        if (matches) return [updated]
+        removed++
+        return []
+      })
+      queryClient.setQueryData(queryKey, {
+        ...previous,
+        items,
+        total: Math.max(0, previous.total - removed),
+      })
+    }
+  }
   const update = useMutation({
     mutationFn: updateInvitation,
-    onSuccess: refresh,
+    onSuccess: (_, changed) => {
+      void queryClient.cancelQueries({ queryKey: ['invitations'] })
+      patchInvitation(changed)
+      void refresh()
+    },
   })
   const deletion = useMutation({
     mutationFn: deleteInvitations,
-    onSuccess: async () => {
+    onSuccess: (_, deleted) => {
+      void queryClient.cancelQueries({ queryKey: ['invitations'] })
+      queryClient.setQueriesData<Awaited<ReturnType<typeof listInvitations>>>(
+        { queryKey: ['invitations'] },
+        (previous) => {
+          if (!previous) return previous
+          const items = previous.items.filter((item) => {
+            if (deleted !== 'invalid') return !deleted.includes(item.id)
+            return (
+              item.status !== 2 &&
+              item.status !== 3 &&
+              (item.expired_time === 0 || item.expired_time > Date.now() / 1000)
+            )
+          })
+          // Only adjust for rows this cached page proves were removed. The
+          // refetch supplies cross-page totals and fills any resulting gaps.
+          return {
+            ...previous,
+            items,
+            total: Math.max(
+              0,
+              previous.total - (previous.items.length - items.length)
+            ),
+          }
+        }
+      )
       setRemove(null)
       table.resetRowSelection()
-      await refresh()
+      void refresh()
     },
   })
   const columns: ColumnDef<Invitation>[] = [
@@ -203,6 +283,13 @@ export function InvitationCodes() {
           <Button
             variant='ghost'
             size='sm'
+            onClick={() => exportIds([row.original.id])}
+          >
+            {t('Download')}
+          </Button>
+          <Button
+            variant='ghost'
+            size='sm'
             onClick={() => setRemove([row.original.id])}
           >
             {t('Delete')}
@@ -242,11 +329,27 @@ export function InvitationCodes() {
             <Button variant='outline' onClick={() => setRemove('invalid')}>
               {t('Clean invalid codes')}
             </Button>
+            <Button variant='outline' onClick={openHistory}>
+              <History className='h-4 w-4' />
+              {t('Create history')}
+            </Button>
+            <Button
+              variant='outline'
+              onClick={() =>
+                exportFiltered({
+                  keyword: state.globalFilter ?? '',
+                  status,
+                })
+              }
+            >
+              <Download className='h-4 w-4' />
+              {t('Export filtered')}
+            </Button>
             <Button
               variant='outline'
               disabled={!query.data?.items.length}
               onClick={() =>
-                setExportKeys((query.data?.items ?? []).map((row) => row.key))
+                exportIds((query.data?.items ?? []).map((row) => row.id))
               }
             >
               {t('Export current page')}
@@ -292,9 +395,7 @@ export function InvitationCodes() {
                 >
                   <Button
                     variant='outline'
-                    onClick={() =>
-                      setExportKeys(selected.map((row) => row.key))
-                    }
+                    onClick={() => exportIds(selected.map((row) => row.id))}
                   >
                     {t('Export')}
                   </Button>
@@ -314,10 +415,23 @@ export function InvitationCodes() {
         <InvitationEditor
           invitation={editor === 'new' ? undefined : editor}
           onClose={() => setEditor(null)}
-          onSaved={(keys) => {
+          onUpdated={(saved) => {
+            // Patch the cached rows with the committed name/expiry immediately.
+            // The single list refresh happens in onSaved, which also closes the
+            // dialog, so an edit triggers exactly one invalidation and no second
+            // PUT.
+            patchInvitation(saved)
+          }}
+          onSaved={(result) => {
             setEditor(null)
-            setExportKeys(keys)
             void refresh()
+            // Route the committed batch through the shared dialog so a fresh
+            // create and a recovered replay download through one path. The batch
+            // identity is what the server re-reads under the actor binding, which
+            // keeps key exposure limited to the operator who committed it.
+            if (editor === 'new' && result.operationId) {
+              exportBatch(result.operationId)
+            }
           }}
         />
       )}
@@ -334,41 +448,6 @@ export function InvitationCodes() {
           if (remove) deletion.mutate(remove)
         }}
       />
-      <Dialog
-        open={exportKeys.length > 0}
-        onOpenChange={(open) => {
-          if (!open) setExportKeys([])
-        }}
-        title={t('Export invitation codes')}
-        contentHeight='auto'
-        footer={
-          <>
-            <CopyButton value={exportKeys.join('\n')} size='default'>
-              {t('Copy')}
-            </CopyButton>
-            <Button
-              onClick={() => {
-                const url = URL.createObjectURL(
-                  new Blob([`${exportKeys.join('\n')}\n`], {
-                    type: 'text/plain;charset=utf-8',
-                  })
-                )
-                const link = document.createElement('a')
-                link.href = url
-                link.download = 'invitation-codes.txt'
-                link.click()
-                URL.revokeObjectURL(url)
-              }}
-            >
-              {t('Download')}
-            </Button>
-          </>
-        }
-      >
-        <pre className='max-h-72 overflow-auto text-xs break-all whitespace-pre-wrap'>
-          {exportKeys.join('\n')}
-        </pre>
-      </Dialog>
     </>
   )
 }

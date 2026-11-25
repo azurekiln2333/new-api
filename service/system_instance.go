@@ -55,10 +55,21 @@ type SystemInstanceResources struct {
 	CPU     SystemInstanceResourceUsage  `json:"cpu"`
 	Memory  SystemInstanceResourceUsage  `json:"memory"`
 	Storage SystemInstanceStorageMetrics `json:"storage"`
+	// Monitoring records whether the CPU/memory monitor was enabled on the
+	// sampling node when this record was written. It is a pointer so an older
+	// payload that omits the key is distinguishable from an explicit false, and
+	// it is never derived from the reading process's own configuration.
+	Monitoring *bool `json:"monitoring,omitempty"`
 }
 
+// SystemInstanceResourceUsage is one sampled percentage plus whether the
+// sampling node actually measured it. Available is additive and optional so
+// older payloads (which omit it) still decode; a false/absent Available means
+// the percentage carries no meaning and readers must render it as unknown
+// rather than as 0% usage.
 type SystemInstanceResourceUsage struct {
 	UsagePercent float64 `json:"usage_percent"`
+	Available    bool    `json:"available"`
 }
 
 type SystemInstanceStorageMetrics struct {
@@ -66,6 +77,10 @@ type SystemInstanceStorageMetrics struct {
 	UsedBytes   uint64  `json:"used_bytes"`
 	FreeBytes   uint64  `json:"free_bytes"`
 	UsedPercent float64 `json:"used_percent"`
+	// Available reports whether the disk figures above were measured. Disk is
+	// sampled independently of the CPU/memory monitor, so this can be true
+	// while CPU and memory are unavailable.
+	Available bool `json:"available"`
 }
 
 func StartSystemInstanceReporter() {
@@ -98,6 +113,15 @@ func ReportCurrentSystemInstance() error {
 	}
 	systemStatus := common.GetSystemStatus()
 	diskInfo := common.GetDiskSpaceInfo()
+	var monitoring *bool
+	if !systemStatus.SampledAt.IsZero() {
+		monitoring = &systemStatus.SampledEnabled
+	}
+	// Availability comes from the sample itself, never from this process's
+	// current configuration: a remote node may run with different settings, and
+	// re-enabling a monitor must not turn an old disabled zero sample into a
+	// fabricated "0% in use". Legacy payloads omit the flags and fall back to a
+	// conservative positive-only reading.
 	info := SystemInstanceInfo{
 		SchemaVersion: 1,
 		Node:          identity,
@@ -116,16 +140,22 @@ func ReportCurrentSystemInstance() error {
 		Resources: SystemInstanceResources{
 			CPU: SystemInstanceResourceUsage{
 				UsagePercent: systemStatus.CPUUsage,
+				Available:    systemStatus.CPUValid(),
 			},
 			Memory: SystemInstanceResourceUsage{
 				UsagePercent: systemStatus.MemoryUsage,
+				Available:    systemStatus.MemoryValid(),
 			},
 			Storage: SystemInstanceStorageMetrics{
 				TotalBytes:  diskInfo.Total,
 				UsedBytes:   diskInfo.Used,
 				FreeBytes:   diskInfo.Free,
 				UsedPercent: diskInfo.UsedPercent,
+				// Disk is sampled independently of the CPU/memory monitor; a
+				// successful read of a positive total is the validity condition.
+				Available: diskInfo.Total > 0,
 			},
+			Monitoring: monitoring,
 		},
 		Sync: NodeSyncStates(),
 	}

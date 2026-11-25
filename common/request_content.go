@@ -5,7 +5,9 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -60,8 +62,27 @@ type RequestContentMetadata struct {
 }
 
 func requestContentCaptureConfig() (enabled bool, maxBytes int) {
-	enabled = GetEnvOrDefaultBool(requestContentEnabledEnv, true)
-	maxBytes = GetEnvOrDefault(requestContentMaxBytesEnv, RequestContentDefaultMaxBytes)
+	enabled = true
+	maxBytes = RequestContentDefaultMaxBytes
+	OptionMapRWMutex.RLock()
+	if value, exists := OptionMap["log_setting.request_content_enabled"]; exists {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			enabled = parsed
+		}
+	}
+	if value, exists := OptionMap["log_setting.request_content_max_bytes"]; exists {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			maxBytes = parsed
+		}
+	}
+	OptionMapRWMutex.RUnlock()
+	// Explicit process configuration wins over the persisted cluster default.
+	if _, exists := os.LookupEnv(requestContentEnabledEnv); exists {
+		enabled = GetEnvOrDefaultBool(requestContentEnabledEnv, enabled)
+	}
+	if _, exists := os.LookupEnv(requestContentMaxBytesEnv); exists {
+		maxBytes = GetEnvOrDefault(requestContentMaxBytesEnv, maxBytes)
+	}
 	if maxBytes < RequestContentMinMaxBytes {
 		maxBytes = RequestContentMinMaxBytes
 	}
@@ -71,6 +92,15 @@ func requestContentCaptureConfig() (enabled bool, maxBytes int) {
 		upper = mb << 20
 	}
 	return enabled, min(maxBytes, upper)
+}
+
+// RequestContentCaptureSettings is root-visible operational metadata, not a
+// payload. It makes local environment overrides honest in the settings UI.
+func RequestContentCaptureSettings() (enabled bool, maxBytes int, enabledOverride bool, maxBytesOverride bool) {
+	enabled, maxBytes = requestContentCaptureConfig()
+	_, enabledOverride = os.LookupEnv(requestContentEnabledEnv)
+	_, maxBytesOverride = os.LookupEnv(requestContentMaxBytesEnv)
+	return
 }
 
 type requestContentCapture struct {

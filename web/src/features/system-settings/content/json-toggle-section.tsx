@@ -156,9 +156,7 @@ export function JsonToggleSection({
       updates.push({ key: optionKey, value: normalized })
     }
 
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
+    await updateOption.mutateAsync(updates)
   }
 
   return (

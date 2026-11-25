@@ -86,8 +86,8 @@ export function CommonLogMobileCard<TData>(props: {
   const fields: Record<FieldName, LogField> = {
     model: {
       label: t('Model'),
-      value: model.name,
-      visible: displayable && props.cells.has('model_name') && !!model.name,
+      value: model.name || '-',
+      visible: displayable && props.cells.has('model_name'),
     },
     cost: {
       label: t('Cost'),
@@ -107,7 +107,10 @@ export function CommonLogMobileCard<TData>(props: {
     },
     channel: {
       label: t('Channel'),
-      value: [log.channel_name, `#${log.channel}`].filter(Boolean).join(' '),
+      value:
+        log.channel > 0
+          ? [log.channel_name, `#${log.channel}`].filter(Boolean).join(' ')
+          : '-',
       visible: displayable && props.cells.has('channel'),
       sensitive: true,
     },
@@ -159,13 +162,22 @@ export function CommonLogMobileCard<TData>(props: {
       <div className='flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2'>
         {fields.model.visible && (
           <div className='min-w-0 flex-[1_1_10rem]'>
-            <ModelBadge
-              modelName={model.name}
-              actualModel={model.actualModel}
-              responseModel={model.responseModel}
-              wrapText
-              onInspect={() => setSelectedField('model')}
-            />
+            {model.name ? (
+              <ModelBadge
+                modelName={model.name}
+                actualModel={model.actualModel}
+                responseModel={model.responseModel}
+                wrapText
+                onInspect={() => setSelectedField('model')}
+              />
+            ) : (
+              <span
+                aria-label={`${fields.model.label}: ${fields.model.value}`}
+                className='text-muted-foreground/60 text-xs'
+              >
+                {fields.model.value}
+              </span>
+            )}
           </div>
         )}
         {fields.cost.visible && costCell && (
@@ -234,6 +246,8 @@ export function CommonLogMobileCard<TData>(props: {
         <div className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-0.5'>
           {visibleMetadata.map((id) => {
             const field = fields[id]
+            const canInspect =
+              context.sensitiveVisible && (id !== 'channel' || log.channel > 0)
             let fieldContent = <span className='truncate'>{field.value}</span>
             if (id === 'group') {
               fieldContent = (
@@ -275,7 +289,7 @@ export function CommonLogMobileCard<TData>(props: {
                     field.label
                   )}
                 </span>
-                {context.sensitiveVisible ? (
+                {canInspect ? (
                   <Button
                     variant='ghost'
                     aria-label={`${field.label}: ${field.value}`}
@@ -286,7 +300,9 @@ export function CommonLogMobileCard<TData>(props: {
                     {fieldContent}
                   </Button>
                 ) : (
-                  <span className='min-w-0 py-1.5'>••••</span>
+                  <span className='min-w-0 py-1.5'>
+                    {context.sensitiveVisible ? fieldContent : '••••'}
+                  </span>
                 )}
               </div>
             )

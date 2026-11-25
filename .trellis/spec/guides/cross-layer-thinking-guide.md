@@ -104,6 +104,8 @@ Rendering code may format fields, but it must not redefine the payload contract.
 
 ## Checklist for Cross-Layer Features
 
+For upstream integration, compare every conflict against both parents, then trace the combined behavior through callers. A conflict-free tree or frontend bundle cannot prove backend or release integration. Use the [merge and release contract](../backend/merge-release-contract.md) before publishing.
+
 Before implementation:
 
 - [ ] Mapped the complete data flow

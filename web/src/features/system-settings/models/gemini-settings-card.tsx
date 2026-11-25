@@ -220,12 +220,9 @@ export function GeminiSettingsCard({ defaultValues }: GeminiSettingsCardProps) {
       return
     }
 
-    for (const key of updates) {
-      await updateOption.mutateAsync({
-        key,
-        value: normalized[key],
-      })
-    }
+    await updateOption.mutateAsync(
+      updates.map((key) => ({ key, value: normalized[key] }))
+    )
   }
 
   const imaginePlaceholder = useMemo(

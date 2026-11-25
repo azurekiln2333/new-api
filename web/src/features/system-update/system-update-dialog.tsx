@@ -26,7 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestampToDate } from '@/lib/format'
 
-import { getSystemReleaseUrl, parseSystemVersion } from './releases'
+import { getSystemReleaseUrl, isPrereleaseBuild } from './releases'
 import {
   getUpdateErrorMessage,
   type useSystemUpdate,
@@ -50,11 +50,11 @@ export function SystemUpdateDialog(props: SystemUpdateDialogProps) {
   const update = props.update
   const release = update.release
   const snapshot = update.snapshot
-  const releaseUrl = release ? getSystemReleaseUrl(release) : null
+  const releaseUrl = release
+    ? getSystemReleaseUrl(release, update.repository)
+    : null
   const isPrerelease =
-    release &&
-    (release.prerelease ||
-      (parseSystemVersion(release.tag_name)?.stage ?? 3) < 3)
+    release && (release.prerelease || isPrereleaseBuild(release.tag_name))
   const canIgnore = release && (update.hasUpdate || update.comparison === null)
   let statusText = t('Updates have not been checked yet.')
   if (update.checking) {

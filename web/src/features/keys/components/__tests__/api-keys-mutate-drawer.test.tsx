@@ -344,6 +344,9 @@ describe('API key expiry across editing sessions', () => {
         expect(findButton('Save changes', true)).toBeEnabled()
       )
       await waitFor(() => expect(screen.getByLabelText('Time')).toBeEnabled())
+      changeInput(getControlByLabel('Name'), 'unsaved-key-name')
+      view.rerender(tree({ ...first }, true))
+      expect(getControlByLabel('Name')).toHaveValue('unsaved-key-name')
 
       if (finish === 'save') {
         fireEvent.click(findButton('Save changes', true))

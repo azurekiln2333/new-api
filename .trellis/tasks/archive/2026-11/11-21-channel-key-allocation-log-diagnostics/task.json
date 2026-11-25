@@ -1,0 +1,60 @@
+{
+  "id": "channel-key-allocation-log-diagnostics",
+  "name": "channel-key-allocation-log-diagnostics",
+  "title": "Channel key allocations and request log diagnostics",
+  "description": "Support duplicate key allocations with limits and reset, manual channel quota, bound model visibility, and prompt/messages/node log diagnostics",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "lcy",
+  "assignee": "lcy",
+  "createdAt": "2026-11-21",
+  "completedAt": "2026-11-24",
+  "branch": "merge/upstream",
+  "base_branch": "merge/upstream",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-21-key-allocation-quotas",
+    "11-21-channel-manual-balance",
+    "11-21-request-log-body-node",
+    "11-21-channel-allocation-console"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "pi_dispatch": {
+      "mode": "herdr",
+      "workspace": "w4C",
+      "workers": [
+        {
+          "name": "pi-keys",
+          "child": "11-21-key-allocation-quotas",
+          "pane": "w4C:p9"
+        },
+        {
+          "name": "pi-billing",
+          "child": "11-21-channel-manual-balance",
+          "pane": "w4C:pJ"
+        },
+        {
+          "name": "pi-logs",
+          "child": "11-21-request-log-body-node",
+          "pane": "w4C:p11"
+        },
+        {
+          "name": "pi-ui",
+          "child": "11-21-channel-allocation-console",
+          "pane": "w4C:p12"
+        }
+      ],
+      "runtime_file": "pi-runtime.json",
+      "redispatched_at": "2026-11-21T22:04:15.1837482+08:00"
+    }
+  }
+}

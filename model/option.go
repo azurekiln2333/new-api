@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"maps"
 	"strconv"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 )
 
 type Option struct {
@@ -54,6 +57,7 @@ func InitOptionMap() {
 	common.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(common.TurnstileCheckEnabled)
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["InviteRegisterEnabled"] = strconv.FormatBool(common.InviteRegisterEnabled)
+	common.OptionMap["RegisterAffiliateLinkEnabled"] = strconv.FormatBool(common.RegisterAffiliateLinkEnabled)
 	common.OptionMap["LoginVerificationRequiredEnabled"] = strconv.FormatBool(common.LoginVerificationRequiredEnabled)
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
@@ -255,8 +259,36 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
-	if key == requestPolicyRetryDefaultsMigrationKey {
+	return validateOptionValueWithUpdates(key, value, nil)
+}
+
+func validateOptionValueWithUpdates(key string, value string, updates map[string]string) error {
+	if key == requestPolicyRetryDefaultsMigrationKey || IsLoginVerificationUserOption(key) {
 		return common.NewMessage("Invalid parameters")
+	}
+	if (key == "InviteRegisterEnabled" || key == "RegisterAffiliateLinkEnabled" || key == "LoginVerificationRequiredEnabled") && value != "true" && value != "false" {
+		return common.NewMessage("Invalid parameters")
+	}
+	// Match the parsers used during local publication without changing live
+	// values. A malformed member must fail before any batch write commits.
+	switch key {
+	case "Chats", "PayMethods":
+		var parsed []map[string]string
+		return common.UnmarshalJsonStr(value, &parsed)
+	case "AutoGroups":
+		var parsed []string
+		return common.UnmarshalJsonStr(value, &parsed)
+	case "UserUsableGroups":
+		var parsed map[string]string
+		return common.UnmarshalJsonStr(value, &parsed)
+	case "TopupGroupRatio", "GroupRatio":
+		var parsed map[string]float64
+		return common.UnmarshalJsonStr(value, &parsed)
+	case "GroupGroupRatio":
+		var parsed map[string]map[string]float64
+		return common.UnmarshalJsonStr(value, &parsed)
+	case "ModelRequestRateLimitGroup":
+		return setting.CheckModelRequestRateLimitGroup(value)
 	}
 	if key == "GroupLevels" {
 		_, err := setting.ParseGroupLevels(value)
@@ -266,13 +298,19 @@ func validateOptionValue(key string, value string) error {
 		_, err := system_setting.ParseOAuthAllowedOrigins(value)
 		return err
 	}
+	if key == system_setting.UpdateSourceRepositoryOption {
+		return system_setting.ValidateUpdateSourceRepository(value)
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
+	}
+	if err := operation_setting.ValidateLogStorageOption(key, value); err != nil {
+		return err
 	}
 	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
 		return err
 	}
-	if err := operation_setting.ValidateEpaySignOption(key, value); err != nil {
+	if err := operation_setting.ValidateEpaySignOptionWithUpdates(key, value, updates); err != nil {
 		return err
 	}
 	if key == "EmailProvider" || key == "ResendApiKey" || key == "ResendFrom" {
@@ -286,6 +324,11 @@ func validateOptionValue(key string, value string) error {
 			"ResendFrom":    common.OptionMap["ResendFrom"],
 		}
 		common.OptionMapRWMutex.RUnlock()
+		for proposedKey, proposedValue := range updates {
+			if _, relevant := settings[proposedKey]; relevant {
+				settings[proposedKey] = proposedValue
+			}
+		}
 		settings[key] = value
 		// While Resend is the active method, a change must keep settings it can
 		// send with. Inactive drafts are checked when Resend is turned on.
@@ -343,7 +386,7 @@ func validateThemeSettings(value string) error {
 }
 
 func UpdateOption(key string, value string) error {
-	if key == "InviteRegisterEnabled" || key == "LoginVerificationRequiredEnabled" {
+	if key == "InviteRegisterEnabled" || key == "RegisterAffiliateLinkEnabled" || key == "LoginVerificationRequiredEnabled" {
 		if value != "true" && value != "false" {
 			return common.NewMessage("Invalid parameters")
 		}
@@ -369,19 +412,20 @@ func UpdateOption(key string, value string) error {
 	if err := validateOptionValue(key, value); err != nil {
 		return err
 	}
-	// Save to database first
-	option := Option{
-		Key: key,
+	// Persist with checked errors. The previous code ignored both the
+	// FirstOrCreate and Save results, then announced the new value in the local
+	// map and bumped the sync topic, so a failed write was reported as a success
+	// and the console showed a value the database never stored. One portable
+	// upsert statement keeps this to a single round trip: insert the row, and on
+	// a primary-key conflict update only the value column.
+	if err := DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value"}),
+	}).Create(&Option{Key: key, Value: value}).Error; err != nil {
+		return err
 	}
-	// https://gorm.io/docs/update.html#Save-All-Fields
-	DB.FirstOrCreate(&option, Option{Key: key})
-	option.Value = value
-	// Save is a combination function.
-	// If save value does not contain primary key, it will execute Create,
-	// otherwise it will execute Update (with all fields).
-	DB.Save(&option)
 	BumpSyncTopic(SyncTopicOptions)
-	// Update OptionMap
+	// Update OptionMap only after the write succeeded.
 	return updateOptionMap(key, value)
 }
 
@@ -401,7 +445,7 @@ func UpdateOptionsBulk(values map[string]string) error {
 		}
 	}
 	for key, value := range values {
-		if err := validateOptionValue(key, value); err != nil {
+		if err := validateOptionValueWithUpdates(key, value, values); err != nil {
 			return err
 		}
 	}
@@ -427,12 +471,12 @@ func UpdateOptionsBulk(values map[string]string) error {
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
-			option := Option{Key: k}
-			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
-				return err
-			}
-			option.Value = v
-			if err := tx.Save(&option).Error; err != nil {
+			// Same portable checked upsert as UpdateOption: a failed write aborts
+			// the transaction instead of being silently ignored.
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "key"}},
+				DoUpdates: clause.AssignmentColumns([]string{"value"}),
+			}).Create(&Option{Key: k, Value: v}).Error; err != nil {
 				return err
 			}
 		}
@@ -453,15 +497,94 @@ func UpdateOptionsBulk(values map[string]string) error {
 	return nil
 }
 
-func updateOptionMap(key string, value string) (err error) {
-	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
-		common.OptionMapRWMutex.Lock()
-		delete(common.OptionMap, key)
-		common.OptionMapRWMutex.Unlock()
+// OptionUpdateError identifies a rejected key without returning SQL or a secret
+// value from a failed write. Validation errors retain their translatable message.
+type OptionUpdateError struct {
+	Key string
+	Err error
+}
+
+func (e *OptionUpdateError) Error() string { return e.Err.Error() }
+func (e *OptionUpdateError) Unwrap() error { return e.Err }
+
+// UpdateOrdinaryOptionsBatch keeps the ordinary section, its sync obligation and
+// its one secret-free audit event in the same transaction. Specialized settings
+// must use their existing APIs, even when called outside the HTTP controller.
+func UpdateOrdinaryOptionsBatch(ctx context.Context, options []Option, audit AuditEventDraft) error {
+	if len(options) == 0 {
 		return nil
+	}
+	values := make(map[string]string, len(options))
+	for _, option := range options {
+		if option.Key == "" || IsPasskeyDomainOption(option.Key) || IsModelPricingOption(option.Key) || IsRequestPolicyOption(option.Key) {
+			return &OptionUpdateError{Key: option.Key, Err: common.NewMessage("Invalid parameters")}
+		}
+		if _, duplicate := values[option.Key]; duplicate {
+			return &OptionUpdateError{Key: option.Key, Err: common.NewMessage("Invalid parameters")}
+		}
+		values[option.Key] = option.Value
+	}
+	for _, option := range options {
+		if err := validateOptionValueWithUpdates(option.Key, option.Value, values); err != nil {
+			return &OptionUpdateError{Key: option.Key, Err: err}
+		}
+	}
+	if audit.EventId == "" {
+		return common.NewMessage("Failed to update settings")
+	}
+	// Options can carry credentials; neither SQL debug logs nor driver errors
+	// may expose their bound values.
+	if err := DB.WithContext(ctx).Session(&gorm.Session{Logger: logger.Discard}).Transaction(func(tx *gorm.DB) error {
+		for _, option := range options {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "key"}},
+				DoUpdates: clause.AssignmentColumns([]string{"value"}),
+			}).Create(&Option{Key: option.Key, Value: option.Value}).Error; err != nil {
+				return &OptionUpdateError{Key: option.Key, Err: common.NewMessage("Failed to update setting")}
+			}
+		}
+		if err := addSyncTask(tx, SyncTopicOptions); err != nil {
+			return common.NewMessage("Failed to update settings")
+		}
+		if _, err := EnqueueAuditEventTx(tx, audit); err != nil {
+			return common.NewMessage("Failed to update settings")
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	for _, option := range options {
+		// The write is already committed, so a publication failure cannot be
+		// reported as a failed update: the caller would retry a change that
+		// persisted. The sync task enqueued in the same transaction reloads every
+		// option from the database, so a logged failure here self-heals.
+		//
+		// Publication is expected to succeed for every key the validation above
+		// accepted: validateOptionValueWithUpdates parses the same shapes with the
+		// same parsers where the shape is non-trivial, and a key without a
+		// validator is a plain map assignment or a parser that cannot reject the
+		// already-committed text differently on a second run. The lock stays held
+		// across the loop so readers cannot observe half of the saved section.
+		if err := updateOptionMapLocked(option.Key, option.Value); err != nil {
+			common.SysLog(common.LogText("failed to publish saved option %s: %s", option.Key, err.Error()))
+		}
+	}
+	return nil
+}
+
+func updateOptionMap(key string, value string) error {
+	common.OptionMapRWMutex.Lock()
+	defer common.OptionMapRWMutex.Unlock()
+	return updateOptionMapLocked(key, value)
+}
+
+func updateOptionMapLocked(key string, value string) (err error) {
+	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
+		delete(common.OptionMap, key)
+		return nil
+	}
 	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
@@ -506,6 +629,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.RegisterEnabled = boolValue
 		case "InviteRegisterEnabled":
 			common.InviteRegisterEnabled = boolValue
+		case "RegisterAffiliateLinkEnabled":
+			common.RegisterAffiliateLinkEnabled = boolValue
 		case "LoginVerificationRequiredEnabled":
 			common.LoginVerificationRequiredEnabled = boolValue
 		case "EmailDomainRestrictionEnabled":

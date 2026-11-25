@@ -108,6 +108,14 @@ const OPERATIONS_SECTIONS = [
             settings['log_setting.user_export_enabled'] ?? true,
           'log_setting.max_range_days':
             settings['log_setting.max_range_days'] ?? 365,
+          'log_setting.retention_days':
+            settings['log_setting.retention_days'] ?? 0,
+          'log_setting.request_content_retention_days':
+            settings['log_setting.request_content_retention_days'] ?? 0,
+          'log_setting.request_content_enabled':
+            settings['log_setting.request_content_enabled'] ?? true,
+          'log_setting.request_content_max_bytes':
+            settings['log_setting.request_content_max_bytes'] ?? 262144,
           'system_task_setting.retention_days':
             settings['system_task_setting.retention_days'] ?? 30,
         }}
@@ -144,13 +152,16 @@ const OPERATIONS_SECTIONS = [
     id: 'update-checker',
     titleKey: 'System maintenance',
     build: (
-      _settings: OperationsSettings,
+      settings: OperationsSettings,
       currentVersion?: string | null,
       startTime?: number | null
     ) => (
       <UpdateCheckerSection
         currentVersion={currentVersion}
         startTime={startTime}
+        defaultValues={{
+          repository: settings['system_update_setting.repository'] ?? '',
+        }}
       />
     ),
   },

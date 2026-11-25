@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useContext } from 'react'
+import { useContext, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 
+import type { ChannelBudgetView } from '../types'
 import { ChannelBudgetContext } from './channel-budget-context'
 import { useChannels } from './channels-provider'
 
@@ -31,11 +32,10 @@ export function ChannelBudgetCell(props: {
   channelId: number
   aggregate?: boolean
 }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const { byChannel, loading } = useContext(ChannelBudgetContext)
   const view = byChannel[props.channelId]
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   if (props.aggregate) return <span className='text-muted-foreground'>-</span>
   if (!sensitiveVisible) return <span>••••</span>
   if (loading) {
@@ -47,6 +47,56 @@ export function ChannelBudgetCell(props: {
   if (!view.ledger_enabled) {
     return <span className='text-muted-foreground'>{t('Not enabled')}</span>
   }
+  return <ChannelBudgetViewDisplay view={view} variant='remaining' />
+}
+
+/**
+ * The card quota region. The local budget fills it only when a local budget is
+ * known and enabled. A known-but-disabled budget keeps the upstream balance,
+ * which is then the authoritative figure. A loading read or a missing/failed
+ * projection is *not* known to be disabled, so it renders an explicit
+ * Loading/Unavailable state instead of passing the upstream balance off as the
+ * local budget.
+ */
+export function ChannelQuotaCell(props: {
+  channelId: number
+  aggregate?: boolean
+  fallback: ReactNode
+}) {
+  const { t } = useTranslation()
+  const { sensitiveVisible } = useChannels()
+  const { byChannel, loading } = useContext(ChannelBudgetContext)
+  const view = byChannel[props.channelId]
+  if (props.aggregate) {
+    return <span className='text-muted-foreground'>-</span>
+  }
+  if (!sensitiveVisible) return <span>••••</span>
+  if (loading) {
+    return <span className='text-muted-foreground'>{t('Loading...')}</span>
+  }
+  if (!view) {
+    return <span className='text-muted-foreground'>{t('Unavailable')}</span>
+  }
+  if (!view.ledger_enabled) {
+    return <span className='text-muted-foreground'>{t('Not enabled')}</span>
+  }
+  // Known and enabled: the local budget is the authoritative figure.
+  if (view.enabled) {
+    return <ChannelBudgetViewDisplay view={view} variant='quota' />
+  }
+  // Known and explicitly disabled: the upstream balance is authoritative.
+  return props.fallback
+}
+
+function ChannelBudgetViewDisplay({
+  view,
+  variant,
+}: {
+  view: ChannelBudgetView
+  variant: 'remaining' | 'quota'
+}) {
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const format = (value: number | null | undefined) =>
     value == null
       ? '-'
@@ -56,6 +106,7 @@ export function ChannelBudgetCell(props: {
           locale,
         })
   const remaining = view.enabled ? format(view.remaining_quota) : t('Unlimited')
+  const limit = view.enabled ? format(view.limit_quota) : t('Unlimited')
   return (
     <QuotaDetailsPopover
       title={t('Local Budget')}
@@ -75,7 +126,7 @@ export function ChannelBudgetCell(props: {
       )}
     >
       <span className={view.exhausted ? 'text-destructive' : 'tabular-nums'}>
-        {remaining}
+        {variant === 'quota' ? `${remaining} / ${limit}` : remaining}
       </span>
     </QuotaDetailsPopover>
   )

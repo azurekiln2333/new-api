@@ -172,6 +172,45 @@ test('an offline node or one that reports no sync shows a dash', async () => {
   expect(cells['node-e']).toHaveTextContent(/^-$/)
 })
 
+test('hovering storage shows used, free and total on the shared readable surface', async () => {
+  const node = instance('storage-node', 'online', false)
+  node.info = {
+    resources: {
+      storage: {
+        used_percent: 75,
+        used_bytes: 3 * 1024 ** 3,
+        free_bytes: 1024 ** 3,
+        total_bytes: 4 * 1024 ** 3,
+      },
+    },
+  }
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url === '/api/system-info/instances') {
+      return { data: { success: true, message: '', data: [node] } }
+    }
+    if (url === '/api/system-info/sync') {
+      return { data: { success: true, message: '', data: sync } }
+    }
+    throw new Error(`Unexpected GET ${url}`)
+  })
+  const user = userEvent.setup()
+  renderPanel()
+
+  await user.hover(await screen.findByRole('button', { name: '75%' }))
+
+  const storageLabel = await screen.findByText('Used')
+  const tooltip = storageLabel.closest('[data-slot="tooltip-content"]')
+  expect(tooltip).toHaveClass('bg-popover', 'text-popover-foreground')
+  for (const [label, value] of [
+    ['Used', '3 GB'],
+    ['Free', '1 GB'],
+    ['Total', '4 GB'],
+  ]) {
+    expect(within(tooltip as HTMLElement).getByText(label)).toBeVisible()
+    expect(within(tooltip as HTMLElement).getByText(value)).toBeVisible()
+  }
+})
+
 test('hovering a node lists each topic with its state and failures', async () => {
   const user = userEvent.setup()
   renderPanel()

@@ -573,12 +573,15 @@ func isSelfTaskMediaURL(c *gin.Context, target *url.URL) bool {
 	if targetHost == "" {
 		return true
 	}
-	scheme := strings.TrimSpace(strings.Split(c.Request.Header.Get("X-Forwarded-Proto"), ",")[0])
+	scheme := ""
+	if identity, ok := common.VerifiedConsoleIngress(c.Request); ok && identity.Forwarded {
+		scheme = identity.Scheme
+	}
 	if scheme == "" {
-		scheme = "http"
-		if c.Request.TLS != nil {
-			scheme = "https"
-		}
+		scheme = strings.TrimSpace(strings.Split(c.Request.Header.Get("X-Forwarded-Proto"), ",")[0])
+	}
+	if scheme == "" {
+		scheme = common.EffectiveRequestScheme(c.Request)
 	}
 	hosts := []string{c.Request.Host}
 	if forwardedHost := strings.TrimSpace(strings.Split(c.Request.Header.Get("X-Forwarded-Host"), ",")[0]); forwardedHost != "" {

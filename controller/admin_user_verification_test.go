@@ -274,6 +274,7 @@ func TestAdminUserProofIsBoundToTargetAndActionAndConsumedOnce(t *testing.T) {
 	stored, err := model.GetUserById(target.Id, false)
 	require.NoError(t, err)
 	assert.Equal(t, common.UserStatusDisabled, stored.Status)
+	drainControllerAuditOutbox(t)
 	var audit model.AuditLog
 	require.NoError(t, model.LOG_DB.Where("action = ?", "user.manage").Last(&audit).Error)
 	require.NotNil(t, audit.Other.Op)
@@ -314,6 +315,7 @@ func TestAdminUserBindingProofDistinguishesBuiltInAndCustomBindings(t *testing.T
 	bindings, err := model.GetUserOAuthBindingsByUserId(target.Id)
 	require.NoError(t, err)
 	assert.Empty(t, bindings)
+	drainControllerAuditOutbox(t)
 	var audit model.AuditLog
 	require.NoError(t, model.LOG_DB.Where("action = ?", "user.binding_clear").Last(&audit).Error)
 	require.NotNil(t, audit.Other.Op)
@@ -367,6 +369,7 @@ func TestAdminUserVerificationPolicy(t *testing.T) {
 		require.True(t, body.Success, body.Message)
 		_, err := model.GetUserById(target.Id, true)
 		assert.Error(t, err)
+		drainControllerAuditOutbox(t)
 		var audit model.AuditLog
 		require.NoError(t, model.LOG_DB.Where("action = ?", "user.delete").Last(&audit).Error)
 		assert.Equal(t, "access_token", audit.AuthMethod)

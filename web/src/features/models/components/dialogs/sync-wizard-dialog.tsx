@@ -128,13 +128,14 @@ export function SyncWizardDialog(props: {
       }
       return response.data
     },
-    onSuccess: async () => {
-      await Promise.all(
-        ['models', 'vendors', 'pricing'].map((key) =>
-          queryClient.invalidateQueries({ queryKey: [key] })
-        )
-      )
+    onSuccess: () => {
+      // The apply result is committed; advance the wizard now and refresh the
+      // affected surfaces in the background instead of blocking the step change
+      // on three queries resolving.
       setStep(3)
+      for (const key of ['models', 'vendors', 'pricing']) {
+        void queryClient.invalidateQueries({ queryKey: [key] })
+      }
     },
     onError: (error) => handleServerError(error),
   })

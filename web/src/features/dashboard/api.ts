@@ -20,6 +20,7 @@ import { api } from '@/lib/api'
 
 import type {
   FlowQuotaDataItem,
+  InstanceResourceSummaryResponse,
   QuotaDataItem,
   UptimeGroupResult,
 } from './types'
@@ -89,5 +90,19 @@ export async function getUptimeStatus() {
   const res = await api.get<{ success: boolean; data: UptimeGroupResult[] }>(
     '/api/uptime/status'
   )
+  return res.data
+}
+
+/**
+ * Viewer-safe CPU/memory/storage summary for the API instances bound in the
+ * console settings. Available to every signed-in user; it exposes only
+ * approved resource and state fields.
+ */
+export async function getInstanceResourceSummary(signal?: AbortSignal) {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data: InstanceResourceSummaryResponse
+  }>('/api/status/instances', { signal })
   return res.data
 }

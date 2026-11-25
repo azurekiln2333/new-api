@@ -33,6 +33,8 @@ import { ModelLink, VendorLink } from './entity-links'
 type PulseSectionProps = {
   movers: RankingMover[]
   droppers: RankingMover[]
+  /** Opens the model usage drawer for a clicked model name. */
+  onOpenModel?: (modelName: string) => void
 }
 
 /**
@@ -53,7 +55,12 @@ export function PulseSection(props: PulseSectionProps) {
         ) : (
           <ul>
             {props.movers.map((row) => (
-              <MoverRow key={row.model_name} row={row} intent='up' />
+              <MoverRow
+                key={row.model_name}
+                row={row}
+                intent='up'
+                onOpenModel={props.onOpenModel}
+              />
             ))}
           </ul>
         )}
@@ -69,7 +76,12 @@ export function PulseSection(props: PulseSectionProps) {
         ) : (
           <ul>
             {props.droppers.map((row) => (
-              <MoverRow key={row.model_name} row={row} intent='down' />
+              <MoverRow
+                key={row.model_name}
+                row={row}
+                intent='down'
+                onOpenModel={props.onOpenModel}
+              />
             ))}
           </ul>
         )}
@@ -108,13 +120,18 @@ function PulseEmpty(props: { label: string }) {
   )
 }
 
-function MoverRow(props: { row: RankingMover; intent: 'up' | 'down' }) {
+function MoverRow(props: {
+  row: RankingMover
+  intent: 'up' | 'down'
+  onOpenModel?: (modelName: string) => void
+}) {
   return (
     <li className='flex items-center gap-3 px-4 py-2'>
       <span className='shrink-0'>{getLobeIcon(props.row.vendor_icon, 20)}</span>
       <div className='min-w-0 flex-1'>
         <ModelLink
           modelName={props.row.model_name}
+          onOpenModel={props.onOpenModel}
           className='text-foreground block truncate font-mono text-xs font-medium'
         >
           {props.row.model_name}

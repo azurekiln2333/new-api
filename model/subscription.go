@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -259,6 +260,71 @@ func GetSubscriptionOrderByTradeNo(tradeNo string) *SubscriptionOrder {
 		return nil
 	}
 	return &order
+}
+
+// GetSubscriptionBalanceUsedQuota aggregates the recorded wallet quota charged
+// for successful balance-method subscription orders belonging to the listed
+// users. It intentionally parses ProviderPayload in Go: the payload is a
+// provider-facing text field, and the recorded quota must not be reconstructed
+// from Money after pricing rules may have changed. Malformed payloads are
+// skipped and counted for the caller's diagnostics.
+func GetSubscriptionBalanceUsedQuota(ctx context.Context, userIDs []int) (map[int]int64, int, error) {
+	used := make(map[int]int64, len(userIDs))
+	ids := make([]int, 0, len(userIDs))
+	seen := make(map[int]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		if userID <= 0 {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		ids = append(ids, userID)
+	}
+	if len(ids) == 0 {
+		return used, 0, nil
+	}
+
+	var orders []struct {
+		UserId          int
+		ProviderPayload string
+	}
+	if err := DB.WithContext(ctx).Model(&SubscriptionOrder{}).
+		Select("user_id, provider_payload").
+		Where("user_id IN ? AND payment_method = ? AND payment_provider = ? AND status = ?", ids, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess).
+		Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+
+	malformed := 0
+	for _, order := range orders {
+		value, ok := parseSubscriptionBalanceChargedQuota(order.ProviderPayload)
+		if !ok {
+			malformed++
+			continue
+		}
+		charge := int64(value)
+		maxInt64 := int64(^uint64(0) >> 1)
+		if used[order.UserId] > maxInt64-charge {
+			malformed++
+			continue
+		}
+		used[order.UserId] += charge
+	}
+	return used, malformed, nil
+}
+
+func parseSubscriptionBalanceChargedQuota(payload string) (int, bool) {
+	value, ok := strings.CutPrefix(strings.TrimSpace(payload), "charged_quota=")
+	if !ok || value == "" {
+		return 0, false
+	}
+	quota, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || quota < 0 || quota > int64(common.MaxWalletQuota) {
+		return 0, false
+	}
+	return int(quota), true
 }
 
 // User subscription instance

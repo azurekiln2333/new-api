@@ -38,12 +38,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { searchChannels } from '@/features/channels/api'
+import { getChannelOptions } from '@/features/channels/api'
+import { useDebounce } from '@/hooks/use-debounce'
 import { toIntlLocale } from '@/i18n/languages'
 import { hasPermission } from '@/lib/admin-permissions'
 import { formatNumber } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
-import { getServerErrorMessage } from '@/lib/server-error-message'
+import {
+  getServerErrorMessage,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -81,6 +85,7 @@ const KNOWN_REPLY_REASON =
   'Consecutive numbers change differently from the language-model replies in the reference bank. Program-generated, sorted or shuffled numbers often do this. No ranking was produced.'
 
 const STATE_TONES: Record<string, StatusVariant> = {
+  complete: 'success',
   completed: 'success',
   running: 'info',
   inconclusive: 'warning',
@@ -181,13 +186,7 @@ function translateRunMessage(
   return message
 }
 
-// Channel model fields are comma separated; blank entries are not candidates.
-function parseChannelModels(models: string | undefined): string[] {
-  return (models ?? '')
-    .split(',')
-    .map((name) => name.trim())
-    .filter(Boolean)
-}
+const PROBE_SLOT_COUNT = 3
 
 // A fingerprint check needs channel operate rights. Reading the live identity
 // here means a demotion, a permission edit or an account switch never keeps an
@@ -226,61 +225,85 @@ function FingerprintConsole({ identity }: { identity: string }) {
   // Set when a poll fails: the run may have expired or been cancelled elsewhere,
   // so this page stops polling it and allows a new run to start.
   const [pollStopped, setPollStopped] = useState(false)
-  const [channelKeyword, setChannelKeyword] = useState('')
-  const [debouncedKeyword, setDebouncedKeyword] = useState('')
+  const [page, setPage] = useState(1)
+  const [keyword, setKeyword] = useState('')
+  const debouncedKeyword = useDebounce(keyword, 300)
+  const searchPending = keyword !== debouncedKeyword
   // Bumped by the retry button so a stopped poll starts again.
   const [pollAttempt, setPollAttempt] = useState(0)
 
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => setDebouncedKeyword(channelKeyword.trim()),
-      300
-    )
-    return () => window.clearTimeout(timer)
-  }, [channelKeyword])
-
-  const changeChannelKeyword = (value: string) => {
-    setChannelKeyword(value)
-    // A filtered list may not contain the current channel any more, so the
-    // selection is cleared instead of pointing at an option that is gone.
-    setChannelId('')
-    setModel('')
-  }
-
   const channelsQuery = useQuery({
-    // Search uses the existing channel search endpoint, so a deployment with
-    // more channels than one page still allows selecting any of them. The
-    // identity and permission are part of the key so a demotion or account switch
-    // cannot read another identity's cached channel names or models.
-    queryKey: ['fingerprint-channels', identity, debouncedKeyword],
-    queryFn: ({ signal }) =>
-      searchChannels(
-        { keyword: debouncedKeyword, p: 1, page_size: 30 },
-        signal
+    // The dropdown is populated from the lightweight channel options endpoint,
+    // which never returns every channel: it filters by keyword and pages, and
+    // the current selection is passed back through `ids` so a chosen channel
+    // outside the page still resolves with its models. The identity is part of
+    // the key so a demotion or account switch cannot read another identity's
+    // cached channel names.
+    queryKey: [
+      'fingerprint-channels',
+      identity,
+      channelId,
+      debouncedKeyword,
+      page,
+    ],
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(
+        await getChannelOptions(
+          {
+            p: page,
+            page_size: 30,
+            ...(debouncedKeyword.trim()
+              ? { keyword: debouncedKeyword.trim() }
+              : {}),
+            ...(channelId ? { ids: channelId } : {}),
+          },
+          signal
+        )
       ),
+    enabled: !searchPending,
+    // Keep the current options visible while the next page loads, but never
+    // reuse channel names across authorized identities.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === identity ? previousData : undefined,
     staleTime: 60_000,
     meta: { errorToast: false },
   })
-  const channels = channelsQuery.data?.data?.items ?? []
+  const optionsPage = channelsQuery.data?.data
+  const channels = optionsPage?.items ?? []
+  const hasMore = optionsPage?.has_more ?? false
   const selectedChannel = channels.find(
     (channel) => String(channel.id) === channelId
   )
-  // A search reload can drop the chosen channel from the current page. Only the
+  const selectedChannelUnavailable =
+    !!channelId &&
+    !searchPending &&
+    channelsQuery.isSuccess &&
+    !channelsQuery.isFetching &&
+    !channelsQuery.isPlaceholderData &&
+    !selectedChannel
+  // A page change can drop the chosen channel from the visible list. Only the
   // channel chosen by id is remembered, so a valid model survives that reload;
-  // a keyword edit still clears it because the channel itself may be gone.
+  // changing channel still clears it because the channel itself is different.
   const [chosenModels, setChosenModels] = useState<string[]>([])
   useEffect(() => {
+    if (selectedChannelUnavailable) {
+      setChosenModels([])
+      return
+    }
     if (!selectedChannel) return
-    setChosenModels(parseChannelModels(selectedChannel.models))
-  }, [selectedChannel])
+    setChosenModels(selectedChannel.models ?? [])
+  }, [selectedChannel, selectedChannelUnavailable])
   const channelModels = useMemo(() => {
+    // A settled hydration response is authoritative. Do not keep offering
+    // remembered models after the selected channel has been removed.
+    if (selectedChannelUnavailable) return []
     const names = selectedChannel
-      ? parseChannelModels(selectedChannel.models)
+      ? (selectedChannel.models ?? [])
       : chosenModels
-    // Channel model lists can repeat an alias; the shared selector needs unique
-    // values, and the alias text itself must stay exactly as configured.
+    // A repeated alias must not appear twice, and the alias text itself must
+    // stay exactly as configured.
     return [...new Set(names)].map((name) => ({ label: name, value: name }))
-  }, [chosenModels, selectedChannel])
+  }, [chosenModels, selectedChannel, selectedChannelUnavailable])
   // A channel switch replaces the candidates, so a model the new channel does
   // not serve must not stay selected and be submitted against it.
   useEffect(() => {
@@ -400,15 +423,6 @@ function FingerprintConsole({ identity }: { identity: string }) {
               <div className='grid gap-4 sm:grid-cols-2'>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-channel'>{t('Channel')}</Label>
-                  <Input
-                    aria-label={t('Search channels')}
-                    value={channelKeyword}
-                    placeholder={t('Search channels')}
-                    onChange={(event) =>
-                      changeChannelKeyword(event.target.value)
-                    }
-                    disabled={controlsDisabled}
-                  />
                   <Select
                     value={channelId}
                     onValueChange={(value) => {
@@ -429,6 +443,51 @@ function FingerprintConsole({ identity }: { identity: string }) {
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedChannelUnavailable && (
+                    <p role='status' className='text-destructive text-xs'>
+                      {t('Unavailable')}
+                    </p>
+                  )}
+                  {/* The endpoint returns one bounded page per keyword, so the
+                    search box narrows the result set and paging walks it. */}
+                  <Input
+                    id='fingerprint-channel-search'
+                    value={keyword}
+                    onChange={(event) => {
+                      setKeyword(event.target.value)
+                      setPage(1)
+                    }}
+                    placeholder={t('Search channels')}
+                    disabled={controlsDisabled}
+                  />
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() =>
+                        setPage((current) => Math.max(1, current - 1))
+                      }
+                      disabled={controlsDisabled || searchPending || page <= 1}
+                    >
+                      {t('Previous')}
+                    </Button>
+                    <span className='text-muted-foreground text-xs tabular-nums'>
+                      {page}
+                    </span>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={() => setPage((current) => current + 1)}
+                      disabled={
+                        controlsDisabled ||
+                        searchPending ||
+                        !hasMore ||
+                        channelsQuery.isFetching
+                      }
+                    >
+                      {t('Next')}
+                    </Button>
+                  </div>
                 </div>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-model'>{t('Model')}</Label>
@@ -438,18 +497,24 @@ function FingerprintConsole({ identity }: { identity: string }) {
                     selectedModel={model}
                     models={channelModels}
                     onModelChange={setModel}
-                    disabled={controlsDisabled || !channelId}
+                    disabled={
+                      controlsDisabled ||
+                      !channelId ||
+                      selectedChannelUnavailable
+                    }
                   />
                   {!channelId && (
                     <p className='text-muted-foreground text-xs'>
                       {t('Choose a channel to list its models')}
                     </p>
                   )}
-                  {!!channelId && !channelModels.length && (
-                    <p className='text-muted-foreground text-xs'>
-                      {t('This channel declares no models')}
-                    </p>
-                  )}
+                  {!!channelId &&
+                    !selectedChannelUnavailable &&
+                    !channelModels.length && (
+                      <p className='text-muted-foreground text-xs'>
+                        {t('This channel declares no models')}
+                      </p>
+                    )}
                 </div>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-endpoint'>{t('Endpoint')}</Label>
@@ -606,22 +671,86 @@ function FingerprintConsole({ identity }: { identity: string }) {
                     {translateRunMessage(job.analysis.Reason, t)}
                   </p>
                 )}
-                <ul className='divide-border divide-y'>
-                  {job.probes.map((probe, index) => (
-                    <li
-                      key={probe.id || index}
-                      className='flex flex-wrap items-center justify-between gap-2 py-2 text-sm'
-                    >
-                      <span className='min-w-0 break-words'>
-                        {t('Challenge {{index}}', { index: index + 1 })}
-                      </span>
-                      <span className='text-muted-foreground text-xs'>
-                        {t(STATE_LABELS[probe.state] ?? 'Unknown')}
-                        {probeSummary(probe, t, locale)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                {/* One card per requested challenge. The slots are fixed at the
+                  maximum challenge count, so a run that used fewer probes
+                  still shows every slot with an explicit "not run" state and
+                  never implies a probe that did not happen. */}
+                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
+                  {Array.from({ length: PROBE_SLOT_COUNT }, (_, index) => {
+                    const probe = job.probes[index]
+                    if (!probe) {
+                      return (
+                        <Card
+                          key={`probe-slot-${index}`}
+                          data-probe-slot='unused'
+                        >
+                          <CardHeader className='pb-2'>
+                            <CardTitle className='text-sm'>
+                              {t('Challenge {{index}}', { index: index + 1 })}
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className='text-muted-foreground text-xs'>
+                              {t('Not run')}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      )
+                    }
+                    return (
+                      <Card
+                        key={probe.id || `probe-slot-${index}`}
+                        data-probe-slot='probe'
+                      >
+                        <CardHeader className='pb-2'>
+                          <CardTitle className='text-sm'>
+                            {t('Challenge {{index}}', { index: index + 1 })}
+                          </CardTitle>
+                          <div className='flex items-center gap-2'>
+                            <StatusBadge
+                              label={t(STATE_LABELS[probe.state] ?? 'Unknown')}
+                              variant={STATE_TONES[probe.state] ?? 'info'}
+                              size='sm'
+                              copyable={false}
+                            />
+                          </div>
+                        </CardHeader>
+                        <CardContent className='space-y-3'>
+                          <div className='space-y-1'>
+                            <p className='text-muted-foreground text-xs font-medium'>
+                              {t('Prompt')}
+                            </p>
+                            <p className='max-h-32 overflow-y-auto text-xs break-words whitespace-pre-wrap'>
+                              {probe.prompt || '-'}
+                            </p>
+                            {probe.prompt_truncated && (
+                              <p className='text-muted-foreground text-xs'>
+                                {t('Truncated')}
+                              </p>
+                            )}
+                          </div>
+                          <div className='space-y-1'>
+                            <p className='text-muted-foreground text-xs font-medium'>
+                              {t('Output')}
+                            </p>
+                            <p className='max-h-32 overflow-y-auto text-xs break-words whitespace-pre-wrap'>
+                              {probe.output || '-'}
+                            </p>
+                            {probe.output_truncated && (
+                              <p className='text-muted-foreground text-xs'>
+                                {t('Truncated')}
+                              </p>
+                            )}
+                          </div>
+                          <p className='text-muted-foreground text-xs'>
+                            {t(STATE_LABELS[probe.state] ?? 'Unknown')}
+                            {probeSummary(probe, t, locale)}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                </div>
                 {job.analysis && !!job.analysis.Results?.length && (
                   <div className='space-y-2'>
                     <h3 className='text-sm font-medium'>
@@ -700,6 +829,7 @@ function FingerprintConsole({ identity }: { identity: string }) {
           {channelsQuery.isError && (
             <ErrorState
               description={getServerErrorMessage(channelsQuery.error)}
+              onRetry={() => void channelsQuery.refetch()}
             />
           )}
         </div>

@@ -32,15 +32,27 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import {
+  completeCodeCreateOperation,
+  getCodeCreateOperation,
+} from '@/lib/code-create-operation'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { Invitation } from '../api'
 import { InvitationEditor } from '../components/invitation-editor'
 import { InvitationCodes } from '../index'
 
 const clients: QueryClient[] = []
+const actor = { id: 1, username: 'admin', role: 100 }
+
+function operationIdFromRequestConfig(config: unknown) {
+  return (config as { params?: { operation_id?: string } } | undefined)?.params
+    ?.operation_id
+}
+
 const item: Invitation = {
   id: 7,
   key: 'private-invitation-code',
@@ -51,12 +63,18 @@ const item: Invitation = {
   used_user_id: 0,
   used_time: 0,
 }
+beforeEach(() => {
+  sessionStorage.clear()
+  useAuthStore.getState().auth.setUser(actor)
+})
 afterEach(() => {
   cleanup()
   clients.forEach((client) => client.clear())
   clients.length = 0
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  sessionStorage.clear()
+  useAuthStore.getState().auth.setUser(null)
 })
 
 function queryClient() {
@@ -105,27 +123,339 @@ async function renderManager(items: Invitation[], failure = false) {
   }
 }
 
-it('generates a batch and returns the codes for export', async () => {
-  const post = vi
-    .spyOn(api, 'post')
-    .mockResolvedValue({ data: { success: true, data: ['code-a', 'code-b'] } })
+function renderCreateEditor() {
   const saved = vi.fn()
-  render(
+  const result = render(
     <QueryClientProvider client={queryClient()}>
       <InvitationEditor onClose={vi.fn()} onSaved={saved} />
     </QueryClientProvider>
   )
-  const user = userEvent.setup()
+  return { saved, user: userEvent.setup(), result }
+}
+
+it('generates a batch and returns the codes for export', async () => {
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: ['code-a', 'code-b'],
+      operation_id: 'replayed-operation',
+      replayed: true,
+      batch_id: '',
+    },
+  })
+  const { saved, user } = renderCreateEditor()
   await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
   await user.clear(screen.getByRole('spinbutton', { name: 'Count' }))
   await user.type(screen.getByRole('spinbutton', { name: 'Count' }), '2')
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(saved).toHaveBeenCalledWith(['code-a', 'code-b']))
-  expect(post).toHaveBeenCalledWith('/api/invitation/', {
-    name: 'Launch',
-    count: 2,
+  await waitFor(() =>
+    expect(saved).toHaveBeenCalledWith({
+      keys: ['code-a', 'code-b'],
+      operationId: 'replayed-operation',
+      creationBatchId: '',
+      replayed: true,
+    })
+  )
+  expect(post).toHaveBeenCalledWith(
+    '/api/invitation/',
+    { name: 'Launch', count: 2, expired_time: 0 },
+    { params: { operation_id: expect.any(String) } }
+  )
+})
+
+it.each(['lost response', 'server rejection'])(
+  'reuses the invitation operation ID after %s for the same normalized payload',
+  async (failure) => {
+    const post = vi.spyOn(api, 'post')
+    if (failure === 'lost response') {
+      post.mockRejectedValueOnce(new Error('response lost'))
+    } else {
+      post.mockResolvedValueOnce({
+        data: { success: false, message: 'Database temporarily unavailable' },
+      })
+    }
+    post.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: ['original-code'],
+        replayed: true,
+        batch_id: '',
+      },
+    })
+    const { saved, user } = renderCreateEditor()
+    const name = screen.getByRole('textbox', { name: 'Name' })
+    await user.type(name, ' Launch ')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+    )
+    expect(saved).not.toHaveBeenCalled()
+    expect(operationIdFromRequestConfig(post.mock.calls[0]?.[2])).toBeTruthy()
+
+    await user.clear(name)
+    await user.type(name, 'Launch')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({
+        keys: ['original-code'],
+        operationId: '',
+        creationBatchId: '',
+        replayed: true,
+      })
+    )
+    expect(post).toHaveBeenNthCalledWith(
+      2,
+      '/api/invitation/',
+      { name: 'Launch', count: 1, expired_time: 0 },
+      post.mock.calls[0]?.[2]
+    )
+  }
+)
+
+it('uses a new invitation operation ID when a failed create payload changes', async () => {
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: false, message: 'Database temporarily unavailable' },
+  })
+  const { saved, user } = renderCreateEditor()
+  const name = screen.getByRole('textbox', { name: 'Name' })
+  await user.type(name, 'Launch')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
+
+  await user.clear(name)
+  await user.type(name, 'Partners')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  expect(originalId).toBeTruthy()
+  expect(post.mock.calls[1]?.[1]).toEqual({
+    name: 'Partners',
+    count: 1,
     expired_time: 0,
   })
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
+    expect.any(String)
+  )
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+    originalId
+  )
+  expect(saved).not.toHaveBeenCalled()
+})
+
+it('uses a new invitation operation ID for another create after success', async () => {
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValueOnce({ data: { success: true, data: ['first-code'] } })
+    .mockResolvedValueOnce({ data: { success: true, data: ['second-code'] } })
+  const { saved, user } = renderCreateEditor()
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(saved).toHaveBeenCalledWith({
+      keys: ['first-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
+
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(saved).toHaveBeenLastCalledWith({
+      keys: ['second-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
+  expect(post).toHaveBeenCalledTimes(2)
+  expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
+  expect(originalId).toBeTruthy()
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
+    expect.any(String)
+  )
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+    originalId
+  )
+})
+
+it('recovers a lost invitation response after remount and clears only confirmed success', async () => {
+  const post = vi
+    .spyOn(api, 'post')
+    .mockRejectedValueOnce(new Error('response lost'))
+    .mockResolvedValueOnce({
+      data: { success: true, data: ['original-code'], replayed: true },
+    })
+    .mockResolvedValueOnce({ data: { success: true, data: ['fresh-code'] } })
+  const first = renderCreateEditor()
+  await first.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await first.user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
+  expect(originalId).toBeTruthy()
+  expect(sessionStorage.length).toBe(1)
+  first.result.unmount()
+
+  const retry = renderCreateEditor()
+  await retry.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await retry.user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(retry.saved).toHaveBeenCalledWith({
+      keys: ['original-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: true,
+    })
+  )
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toBe(originalId)
+  expect(sessionStorage.length).toBe(0)
+  retry.result.unmount()
+
+  const fresh = renderCreateEditor()
+  await fresh.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await fresh.user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(fresh.saved).toHaveBeenCalledWith({
+      keys: ['fresh-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
+  expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).not.toBe(
+    originalId
+  )
+  expect(sessionStorage.length).toBe(0)
+})
+
+it.each([
+  { label: 'another user', nextActor: { id: 2, username: 'other', role: 100 } },
+  { label: 'another role', nextActor: { ...actor, role: 10 } },
+])('isolates pending invitation creates for $label', async ({ nextActor }) => {
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: false, message: 'Database temporarily unavailable' },
+  })
+  const first = renderCreateEditor()
+  await first.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await first.user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
+  first.result.unmount()
+  useAuthStore.getState().auth.setUser(nextActor)
+
+  const next = renderCreateEditor()
+  await next.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await next.user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  expect(originalId).toBeTruthy()
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+    originalId
+  )
+  next.result.unmount()
+  useAuthStore.getState().auth.setUser(actor)
+
+  const retry = renderCreateEditor()
+  await retry.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await retry.user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(3))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).toBe(originalId)
+})
+
+it('does not create invitations when browser storage cannot preserve the retry ID', async () => {
+  const post = vi.spyOn(api, 'post')
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new Error('storage blocked')
+  })
+  const client = queryClient()
+  const reportedError = vi.fn()
+  client.setDefaultOptions({
+    mutations: { retry: false, onError: reportedError },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InvitationEditor onClose={vi.fn()} onSaved={vi.fn()} />
+    </QueryClientProvider>
+  )
+  const user = userEvent.setup()
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(reportedError).toHaveBeenCalled())
+  expect(post).not.toHaveBeenCalled()
+  expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Launch')
+})
+
+it('keeps code types independent and never persists keys or auth data', () => {
+  const input = {
+    name: 'Launch',
+    count: 1,
+    expired_time: 0,
+    quota: 500000,
+    limit_per_user: true,
+    key: 'generated-secret-code',
+    access_token: 'private-auth-token',
+  }
+  const invitation = getCodeCreateOperation(actor, 'invitation', input)
+  const redemption = getCodeCreateOperation(actor, 'redemption', input)
+  expect(redemption.id).not.toBe(invitation.id)
+  expect(getCodeCreateOperation(actor, 'invitation', input).id).toBe(
+    invitation.id
+  )
+  expect(getCodeCreateOperation(actor, 'redemption', input).id).toBe(
+    redemption.id
+  )
+  for (let index = 0; index < sessionStorage.length; index += 1) {
+    const stored = sessionStorage.getItem(sessionStorage.key(index) ?? '')
+    expect(stored).not.toContain(input.key)
+    expect(stored).not.toContain(input.access_token)
+  }
+})
+
+it('keeps a newer pending payload when an older create confirms success', () => {
+  const input = { name: 'Launch', count: 1, expired_time: 0 }
+  const first = getCodeCreateOperation(actor, 'invitation', input)
+  const changedInput = { ...input, name: 'Partners' }
+  const second = getCodeCreateOperation(actor, 'invitation', changedInput)
+  completeCodeCreateOperation(first)
+  expect(getCodeCreateOperation(actor, 'invitation', changedInput).id).toBe(
+    second.id
+  )
+  completeCodeCreateOperation(second)
+  expect(getCodeCreateOperation(actor, 'invitation', changedInput).id).not.toBe(
+    second.id
+  )
+})
+
+it('does not replay a confirmed invitation when storage cleanup fails', () => {
+  const input = { name: 'Launch', count: 1, expired_time: 0 }
+  const original = getCodeCreateOperation(actor, 'invitation', input)
+  vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => undefined)
+  completeCodeCreateOperation(original)
+  const next = getCodeCreateOperation(actor, 'invitation', input)
+  expect(next.id).not.toBe(original.id)
+  expect(getCodeCreateOperation(actor, 'invitation', input).id).toBe(next.id)
 })
 
 it('keeps editing available after a rejected save and persists a successful retry', async () => {
@@ -152,7 +482,14 @@ it('keeps editing available after a rejected save and persists a successful retr
   expect(saved).not.toHaveBeenCalled()
   expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Renamed')
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(saved).toHaveBeenCalledWith([]))
+  await waitFor(() =>
+    expect(saved).toHaveBeenCalledWith({
+      keys: [],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
   expect(put).toHaveBeenLastCalledWith('/api/invitation/', {
     id: 7,
     name: 'Renamed',
@@ -172,7 +509,28 @@ it('shows a retry action on load failure and the empty state after recovery', as
 })
 
 it('exports the current page and requires confirmation before deleting a code', async () => {
-  const { removeItem } = await renderManager([item])
+  const downloads: { filename: string; blob: Blob }[] = []
+  let currentBlob: Blob
+  vi.stubGlobal(
+    'URL',
+    Object.assign(class extends URL {}, {
+      createObjectURL: vi.fn((blob: Blob) => {
+        currentBlob = blob
+        return 'blob:invitation-export'
+      }),
+      revokeObjectURL: vi.fn(),
+    })
+  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement
+  ) {
+    downloads.push({ filename: this.download, blob: currentBlob })
+  })
+  const exportedText = 'Launch invitations\tprivate-invitation-code\n'
+  const exportedFile = new Blob([exportedText], {
+    type: 'text/plain;charset=utf-8',
+  })
+  const { get, removeItem } = await renderManager([item])
   const post = vi.spyOn(api, 'post').mockImplementation(async () => {
     removeItem()
     return { data: { success: true } }
@@ -180,11 +538,37 @@ it('exports the current page and requires confirmation before deleting a code', 
   const user = userEvent.setup()
   await screen.findByText(item.name)
   await user.click(screen.getByRole('button', { name: 'Export current page' }))
-  const dialog = await screen.findByRole('dialog')
-  expect(within(dialog).getByText(item.key)).toBeVisible()
-  expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeEnabled()
+  const dialog = await screen.findByRole('dialog', { name: 'Export codes' })
+  expect(dialog).toHaveTextContent('1 selected codes')
+  expect(dialog).not.toHaveTextContent(item.key)
+  expect(
+    within(dialog).getByRole('checkbox', { name: 'Include name' })
+  ).toBeChecked()
   expect(within(dialog).getByRole('button', { name: 'Download' })).toBeEnabled()
-  await user.keyboard('{Escape}')
+  get.mockResolvedValueOnce({
+    data: exportedFile,
+    headers: { 'content-type': 'text/plain;charset=utf-8' },
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Download' }))
+  await waitFor(() => expect(downloads).toHaveLength(1))
+  expect(get).toHaveBeenCalledWith(
+    '/api/invitation/export?ids=7&format=txt&include_quota=false',
+    { responseType: 'blob' }
+  )
+  expect(downloads[0]?.filename).toMatch(/^invitation-codes-\d+\.txt$/)
+  const downloadedText = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result)), {
+      once: true,
+    })
+    reader.addEventListener('error', () => reject(reader.error), { once: true })
+    reader.readAsText(downloads[0].blob)
+  })
+  expect(downloadedText).toBe(exportedText)
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:invitation-export')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Export codes' })).toBeNull()
+  )
   await user.click(screen.getByRole('button', { name: 'Delete' }))
   const confirm = await screen.findByRole('alertdialog')
   expect(post).not.toHaveBeenCalled()

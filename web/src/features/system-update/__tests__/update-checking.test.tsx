@@ -32,10 +32,11 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
+import { SettingsPageProvider } from '@/features/system-settings/components/settings-page-context'
 import { UpdateCheckerSection } from '@/features/system-settings/maintenance/update-checker-section'
 import { api } from '@/lib/api'
 import { createAppQueryClient } from '@/lib/query-client'
@@ -43,6 +44,7 @@ import { ROLE } from '@/lib/roles'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { DEFAULT_UPDATE_SOURCE_REPOSITORY } from '../releases'
 import { useSystemUpdatePreferencesStore, useSystemUpdateStore } from '../store'
 import { SystemUpdateAction } from '../system-update-action'
 import { SYSTEM_UPDATE_INTERVAL, useSystemUpdate } from '../use-system-update'
@@ -60,6 +62,20 @@ let client: QueryClient
 function Wrapper(props: { children: ReactNode }) {
   return (
     <QueryClientProvider client={client}>{props.children}</QueryClientProvider>
+  )
+}
+
+function UpdateSourceSettingsFixture(props: { repository: string }) {
+  const [container, setContainer] = useState<HTMLDivElement | null>(null)
+  return (
+    <>
+      <div ref={setContainer} />
+      <SettingsPageProvider actionsContainer={container}>
+        <UpdateCheckerSection
+          defaultValues={{ repository: props.repository }}
+        />
+      </SettingsPageProvider>
+    </>
   )
 }
 
@@ -197,6 +213,54 @@ describe('administrator update entry', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     )
     expect(buttons[0]).toHaveFocus()
+  })
+
+  test('uses the configured update source repository and its release link', async () => {
+    const user = userEvent.setup()
+    client.setQueryData(STATUS_QUERY_KEY, {
+      version: 'custom-20261124-53a71f8',
+      update_source_repository: 'azurekiln2333/new-api',
+    })
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify([
+            {
+              ...release,
+              tag_name: 'custom-20261125-abcdef1',
+              prerelease: false,
+              published_at: '2026-11-25T10:00:00Z',
+            },
+          ])
+        )
+    )
+    render(<SystemUpdateAction />, { wrapper: Wrapper })
+    const trigger = await screen.findByRole('button', {
+      name: 'New version available: custom-20261125-abcdef1',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      'https://api.github.com/repos/azurekiln2333/new-api/releases?per_page=100'
+    )
+    await user.click(trigger)
+    expect(screen.getByRole('link', { name: 'Go to GitHub' })).toHaveAttribute(
+      'href',
+      'https://github.com/azurekiln2333/new-api/releases/tag/custom-20261125-abcdef1'
+    )
+  })
+
+  test('does not report an update when a fork build is newer than the latest upstream release', async () => {
+    client.setQueryData(STATUS_QUERY_KEY, {
+      version: 'custom-20261124-53a71f8',
+      update_source_repository: 'azurekiln2333/new-api',
+    })
+    respondWithRelease('v1.0.0-rc.51')
+    render(<SystemUpdateAction presentation='version' />, { wrapper: Wrapper })
+    const trigger = screen.getByRole('button', {
+      name: /System updates, current version: custom-20261124-53a71f8/,
+    })
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-busy', 'false'))
+    expect(trigger).not.toHaveAccessibleName(/New version available/)
   })
 
   test('does not suggest a downgrade and updates every entry after a manual recheck', async () => {
@@ -337,6 +401,7 @@ describe('administrator update entry', () => {
     const user = userEvent.setup()
     const oldCheck = Date.now() - SYSTEM_UPDATE_INTERVAL - 1
     useSystemUpdateStore.getState().setSnapshot({
+      repository: DEFAULT_UPDATE_SOURCE_REPOSITORY,
       release,
       lastCheckedAt: oldCheck,
       lastAttemptAt: oldCheck,
@@ -366,6 +431,63 @@ describe('administrator update entry', () => {
       screen.getByText('GitHub rate limit reached. Try again later.')
     ).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('update source settings', () => {
+  test.each([
+    ['', 'azurekiln2333/new-api'],
+    ['azurekiln2333/new-api', ''],
+  ])(
+    'saves repository override %s as %s through the existing option API',
+    async (repository, next) => {
+      const user = userEvent.setup()
+      const put = vi.spyOn(api, 'put').mockResolvedValue({
+        data: { success: true },
+      })
+      render(<UpdateSourceSettingsFixture repository={repository} />, {
+        wrapper: Wrapper,
+      })
+      const input = screen.getByRole('textbox', {
+        name: 'Update source repository',
+      })
+      expect(input).toHaveValue(repository)
+      await user.clear(input)
+      if (next) await user.type(input, next)
+      await user.click(
+        screen.getByRole('button', { name: 'Save update source' })
+      )
+      await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+      expect(put).toHaveBeenCalledWith('/api/option/', {
+        key: 'system_update_setting.repository',
+        value: next,
+      })
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: 'Save update source' })
+        ).toBeEnabled()
+      )
+      expect(input).toHaveValue(next)
+      await user.click(
+        screen.getByRole('button', { name: 'Save update source' })
+      )
+      expect(put).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  test('rejects a dot-segment repository before sending a settings request', async () => {
+    const user = userEvent.setup()
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true },
+    })
+    render(<UpdateSourceSettingsFixture repository='' />, { wrapper: Wrapper })
+    const input = screen.getByRole('textbox', {
+      name: 'Update source repository',
+    })
+    await user.type(input, 'owner/..')
+    await user.click(screen.getByRole('button', { name: 'Save update source' }))
+    await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+    expect(put).not.toHaveBeenCalled()
   })
 })
 
@@ -606,6 +728,79 @@ describe('version notification preferences', () => {
 })
 
 describe('update cache and scheduling', () => {
+  test('checks a changed repository immediately without leaking cached releases on failure', async () => {
+    const hook = renderHook(useSystemUpdate, { wrapper: Wrapper })
+    await waitFor(() => expect(hook.result.current.hasUpdate).toBe(true))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    fetchMock.mockImplementation(async () => new Response('', { status: 429 }))
+    act(() =>
+      client.setQueryData(STATUS_QUERY_KEY, {
+        version: 'v1.0.0-rc.35',
+        update_source_repository: 'azurekiln2333/new-api',
+      })
+    )
+    await waitFor(() => {
+      expect(hook.result.current.repository).toBe('azurekiln2333/new-api')
+      expect(hook.result.current.release).toBeNull()
+    })
+    await waitFor(() =>
+      expect(hook.result.current.snapshot?.error).toBe('rate-limit')
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[1][0])).toBe(
+      'https://api.github.com/repos/azurekiln2333/new-api/releases?per_page=100'
+    )
+    expect(hook.result.current.release).toBeNull()
+    expect(hook.result.current.hasUpdate).toBe(false)
+    expect(hook.result.current.snapshot?.repository).toBe(
+      'azurekiln2333/new-api'
+    )
+    act(() =>
+      client.setQueryData(STATUS_QUERY_KEY, { version: 'v1.0.0-rc.35' })
+    )
+    await waitFor(() =>
+      expect(hook.result.current.release?.tag_name).toBe(release.tag_name)
+    )
+    expect(hook.result.current.hasUpdate).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not hydrate legacy upstream storage into a configured fork', async () => {
+    const now = Date.now()
+    localStorage.setItem(
+      'system-update:v1',
+      JSON.stringify({
+        state: {
+          snapshot: {
+            release,
+            lastCheckedAt: now,
+            lastAttemptAt: now,
+            error: null,
+          },
+        },
+        version: 0,
+      })
+    )
+    await useSystemUpdateStore.persist.rehydrate()
+    expect(useSystemUpdateStore.getState().snapshot?.repository).toBe(
+      DEFAULT_UPDATE_SOURCE_REPOSITORY
+    )
+    client.setQueryData(STATUS_QUERY_KEY, {
+      version: 'custom-20261124-53a71f8',
+      update_source_repository: 'azurekiln2333/new-api',
+    })
+    fetchMock.mockImplementation(async () => new Response('[]'))
+    const hook = renderHook(useSystemUpdate, { wrapper: Wrapper })
+    await waitFor(() =>
+      expect(hook.result.current.snapshot?.repository).toBe(
+        'azurekiln2333/new-api'
+      )
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(hook.result.current.release).toBeNull()
+    expect(hook.result.current.hasUpdate).toBe(false)
+  })
+
   test('refreshes the server version during a later automatic check and clears an installed update', async () => {
     vi.useFakeTimers()
     fetchMock.mockImplementation(

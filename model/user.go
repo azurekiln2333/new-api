@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -113,6 +114,44 @@ type User struct {
 	LastLoginAt          int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+}
+
+type UserListItem struct {
+	*User
+	SubscriptionBalanceUsedQuota int64 `json:"subscription_balance_used_quota"`
+}
+
+// BuildUserListItems enriches a page of users with the recorded wallet quota
+// spent on successful balance-method subscription orders. The aggregate is
+// page-scoped and remains a read-only response projection.
+func BuildUserListItems(ctx context.Context, users []*User) ([]UserListItem, int, error) {
+	items := make([]UserListItem, 0, len(users))
+	if len(users) == 0 {
+		return items, 0, nil
+	}
+	ids := make([]int, 0, len(users))
+	for _, user := range users {
+		if user != nil {
+			ids = append(ids, user.Id)
+		}
+	}
+	used, malformed, err := GetSubscriptionBalanceUsedQuota(ctx, ids)
+	if err != nil {
+		return nil, malformed, err
+	}
+	if malformed > 0 {
+		common.SysLog(common.LogText("skipped %d malformed subscription balance order payloads", malformed))
+	}
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		items = append(items, UserListItem{
+			User:                         user,
+			SubscriptionBalanceUsedQuota: used[user.Id],
+		})
+	}
+	return items, malformed, nil
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -503,6 +542,35 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	}
 
 	return users, total, nil
+}
+
+// GetUsernamesByIDs resolves current display names for a bounded set of user
+// ids. Only currently existing users are returned; a missing id means the
+// account no longer exists and the caller renders a generic label. Callers pass
+// only ids a viewer may see, so this never looks up masked identities.
+func GetUsernamesByIDs(ctx context.Context, ids []int) (map[int]string, error) {
+	names := make(map[int]string, len(ids))
+	if len(ids) == 0 {
+		return names, nil
+	}
+	if len(ids) > 200 {
+		ids = ids[:200]
+	}
+	var users []struct {
+		Id       int
+		Username string
+	}
+	err := DB.WithContext(ctx).Model(&User{}).
+		Select("id, username").
+		Where("id IN ?", ids).
+		Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		names[user.Id] = user.Username
+	}
+	return names, nil
 }
 
 func GetUserById(id int, selectAll bool) (*User, error) {

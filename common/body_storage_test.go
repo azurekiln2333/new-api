@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -294,6 +295,35 @@ func requestContentTestContext(t *testing.T, contentType string, payload []byte)
 	t.Cleanup(func() { CleanupBodyStorage(c) })
 	BeginRequestContentCapture(c)
 	return c
+}
+
+func TestRequestContentCapturePersistedSettingsAndEnvironment(t *testing.T) {
+	OptionMapRWMutex.Lock()
+	previous := OptionMap
+	OptionMap = map[string]string{"log_setting.request_content_enabled": "false", "log_setting.request_content_max_bytes": "4096"}
+	OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		OptionMapRWMutex.Lock()
+		OptionMap = previous
+		OptionMapRWMutex.Unlock()
+	})
+	for _, key := range []string{requestContentEnabledEnv, requestContentMaxBytesEnv} {
+		// Setenv registers restoration; Unsetenv exercises the persisted path.
+		t.Setenv(key, "")
+		require.NoError(t, os.Unsetenv(key))
+	}
+	enabled, maxBytes, enabledOverride, maxOverride := RequestContentCaptureSettings()
+	assert.False(t, enabled)
+	assert.Equal(t, 4096, maxBytes)
+	assert.False(t, enabledOverride)
+	assert.False(t, maxOverride)
+	t.Setenv(requestContentEnabledEnv, "true")
+	t.Setenv(requestContentMaxBytesEnv, "8192")
+	enabled, maxBytes, enabledOverride, maxOverride = RequestContentCaptureSettings()
+	assert.True(t, enabled)
+	assert.Equal(t, 8192, maxBytes)
+	assert.True(t, enabledOverride)
+	assert.True(t, maxOverride)
 }
 
 func TestRequestContentCaptureKeepsOriginalPromptBeforeRewrite(t *testing.T) {

@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { selectLatestRelease, type SystemRelease } from './releases'
+import {
+  DEFAULT_UPDATE_SOURCE_REPOSITORY,
+  getSystemReleasesUrl,
+  selectLatestRelease,
+  type SystemRelease,
+} from './releases'
 
 export type UpdateCheckErrorCode =
   | 'network'
@@ -32,7 +37,8 @@ export class UpdateCheckError extends Error {
 }
 
 export async function fetchLatestSystemRelease(
-  signal: AbortSignal
+  signal: AbortSignal,
+  repository: string = DEFAULT_UPDATE_SOURCE_REPOSITORY
 ): Promise<SystemRelease | null> {
   const controller = new AbortController()
   const cancel = () => controller.abort()
@@ -41,14 +47,11 @@ export async function fetchLatestSystemRelease(
   const timeout = setTimeout(cancel, 10_000)
 
   try {
-    const response = await fetch(
-      'https://api.github.com/repos/QuantumNous/new-api/releases?per_page=100',
-      {
-        credentials: 'omit',
-        headers: { Accept: 'application/vnd.github+json' },
-        signal: controller.signal,
-      }
-    )
+    const response = await fetch(getSystemReleasesUrl(repository), {
+      credentials: 'omit',
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: controller.signal,
+    })
     if (response.status === 403 || response.status === 429) {
       throw new UpdateCheckError('rate-limit')
     }

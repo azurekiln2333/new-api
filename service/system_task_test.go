@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,6 +96,58 @@ func TestSystemTaskSchedulerCreatesWhenDueAndDedups(t *testing.T) {
 
 	runSystemTaskScheduler()
 	require.Equal(t, int64(2), countSystemTasks(t, handler.taskType))
+}
+
+func TestSystemTaskLogRetention(t *testing.T) {
+	truncate(t)
+	settings := operation_setting.GetLogSetting()
+	common.OptionMapRWMutex.Lock()
+	previousDays, previousMaster := settings.RetentionDays, common.IsMasterNode
+	settings.RetentionDays = 0
+	common.IsMasterNode = true
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		settings.RetentionDays, common.IsMasterNode = previousDays, previousMaster
+		common.OptionMapRWMutex.Unlock()
+	})
+	handler := logCleanupHandler{}
+	withSystemTaskRegistry(t, handler)
+	runSystemTaskScheduler()
+	assert.Zero(t, countSystemTasks(t, handler.Type()), "upgrade defaults never delete history")
+	common.OptionMapRWMutex.Lock()
+	settings.RetentionDays = 7
+	common.IsMasterNode = false
+	common.OptionMapRWMutex.Unlock()
+	runSystemTaskScheduler()
+	assert.Zero(t, countSystemTasks(t, handler.Type()), "followers cannot schedule retention")
+	common.IsMasterNode = true
+	runSystemTaskScheduler()
+	runSystemTaskScheduler()
+	assert.EqualValues(t, 1, countSystemTasks(t, handler.Type()), "manual and scheduled cleanup share active-task deduplication")
+	task, err := model.GetLatestSystemTask(handler.Type())
+	require.NoError(t, err)
+	require.NotNil(t, task)
+	var payload LogCleanupPayload
+	require.NoError(t, task.DecodePayload(&payload))
+	assert.True(t, payload.Scheduled)
+	assert.Equal(t, logCleanupBatchSize, payload.BatchSize)
+	assert.InDelta(t, common.GetTimestamp()-7*86400, payload.TargetTimestamp, 2)
+	_, claimed, err := model.ClaimSystemTask(task.ID, handler.Type(), "retention-runner", systemTaskLockUntil())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	common.OptionMapRWMutex.Lock()
+	settings.RetentionDays = 0
+	common.OptionMapRWMutex.Unlock()
+	runLogCleanupTask(t.Context(), task, "retention-runner")
+	latest, err := model.GetLatestSystemTask(handler.Type())
+	require.NoError(t, err)
+	assert.Equal(t, model.SystemTaskStatusSucceeded, latest.Status, "disabling retention stops the next batch without deleting logs")
+	common.OptionMapRWMutex.Lock()
+	settings.RetentionDays = operation_setting.MaxLogRetentionDays
+	common.OptionMapRWMutex.Unlock()
+	maxRetentionPayload := handler.NewPayload().(LogCleanupPayload)
+	assert.Greater(t, maxRetentionPayload.TargetTimestamp, int64(0), "the maximum accepted retention must not create an invalid task cutoff")
 }
 
 func TestSystemTaskSchedulerSkipsDisabled(t *testing.T) {

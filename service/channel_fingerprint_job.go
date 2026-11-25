@@ -169,6 +169,9 @@ func (job *FingerprintJob) completeProbe(index int, result FingerprintProbeResul
 	job.Probes[index].PromptTokens = result.PromptTokens
 	job.Probes[index].OutputTokens = result.OutputTokens
 	job.Probes[index].MaxTokens = maxTokens
+	output, outputTruncated := boundedProbeText(result.Text)
+	job.Probes[index].Output = output
+	job.Probes[index].OutputTruncated = outputTruncated
 	job.Probes[index].Error = ""
 }
 
@@ -183,6 +186,9 @@ func (job *FingerprintJob) failProbe(index int, message string, result Fingerpri
 	job.Probes[index].State = "failed"
 	job.Probes[index].PromptTokens = result.PromptTokens
 	job.Probes[index].OutputTokens = result.OutputTokens
+	output, outputTruncated := boundedProbeText(result.Text)
+	job.Probes[index].Output = output
+	job.Probes[index].OutputTruncated = outputTruncated
 	job.Probes[index].Error = message
 }
 

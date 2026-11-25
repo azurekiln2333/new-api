@@ -22,7 +22,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  within,
+} from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -146,6 +153,36 @@ test('keeps log details open when the parent refreshes with unchanged data', asy
   expect(await screen.findByRole('dialog')).toBeVisible()
   rerender(<DetailPreview other={other} isAdmin />)
   expect(screen.getByRole('dialog')).toBeVisible()
+})
+
+test('orders the common log columns for the table and mobile card', () => {
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    </I18nextProvider>
+  )
+  const { result } = renderHook(() => useCommonLogsColumns(true, false), {
+    wrapper,
+  })
+  const ids = result.current.map((column) => {
+    // `ColumnDef` is a union, so only accessor columns carry `accessorKey`.
+    return (
+      column.id ?? ('accessorKey' in column ? column.accessorKey : undefined)
+    )
+  })
+  // The requested order leads; every other column keeps its relative order
+  // after these, so no existing column is dropped or duplicated.
+  expect(ids.slice(0, 7)).toEqual([
+    'created_at',
+    'user',
+    'model_name',
+    'is_stream',
+    'prompt_tokens',
+    'use_time',
+    'quota',
+  ])
+  expect(ids).toContain('channel')
+  expect(new Set(ids).size).toBe(ids.length)
 })
 
 test.each([

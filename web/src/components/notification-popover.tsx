@@ -342,19 +342,15 @@ export function NotificationPopover({
           onValueChange={onTabChange as (value: string) => void}
         >
           <TabsList className='grid w-full grid-cols-2'>
-            <TabsTrigger value='notice' className='gap-1.5'>
-              <Bell className='size-3.5' />
-              {t('Notice')}
-            </TabsTrigger>
             <TabsTrigger value='announcements' className='gap-1.5'>
               <Megaphone className='size-3.5' />
               {t('Timeline')}
             </TabsTrigger>
+            <TabsTrigger value='notice' className='gap-1.5'>
+              <Bell className='size-3.5' />
+              {t('Notice')}
+            </TabsTrigger>
           </TabsList>
-
-          <TabsContent value='notice' className='mt-2'>
-            <NoticeContent notice={notice} loading={loading} t={t} />
-          </TabsContent>
 
           <TabsContent value='announcements' className='mt-2'>
             <AnnouncementsContent
@@ -362,6 +358,10 @@ export function NotificationPopover({
               loading={loading}
               t={t}
             />
+          </TabsContent>
+
+          <TabsContent value='notice' className='mt-2'>
+            <NoticeContent notice={notice} loading={loading} t={t} />
           </TabsContent>
         </Tabs>
 

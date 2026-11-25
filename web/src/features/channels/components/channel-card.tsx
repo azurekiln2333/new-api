@@ -21,12 +21,12 @@ import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadgeTypeContext } from '@/components/status-badge'
-import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow } from '../lib'
 import type { Channel } from '../types'
+import { ChannelQuotaCell } from './channel-budget-cell'
 import { ChannelConcurrencyCell } from './channel-concurrency-context'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
 import { useChannels } from './channels-provider'
@@ -80,22 +80,17 @@ function ChannelCardComponent({
   const priorityCell = renderCell('priority')
   const weightCell = renderCell('weight')
   const balanceCell = renderCell('balance')
-  const budgetCell = renderCell('local_budget')
   const usedTokensCell = renderCell('used_tokens')
   const responseCell = renderCell('response_time')
+  // The existing cell already renders relative text with the exact timestamp in
+  // its tooltip, so the card reuses it instead of duplicating that formatting.
+  const testTimeCell = renderCell('test_time')
 
   const labelClass = 'text-muted-foreground text-[11px] font-medium select-none'
   const valueClass = 'min-w-0 text-sm tabular-nums'
   // Inline cell badges already sit in a labelled slot, so drop their leading
   // margin and let them wrap inside a narrow card.
   const statusValueClass = cn(valueClass, '[&_[data-slot=status-badge]]:!ml-0')
-
-  // The card shows the complete test timestamp: the table's relative badge
-  // hides the date behind a tooltip, which is not readable at a glance.
-  const testTime = row.original.test_time
-  const testTimeParts = testTime
-    ? formatTimestampToDate(testTime).split(' ')
-    : []
 
   // In card view the enable/disable state is already conveyed by the inline
   // power toggle, so the plain "Enabled"/"Disabled" badge is redundant. Keep
@@ -115,22 +110,14 @@ function ChannelCardComponent({
         className='focus-visible:ring-ring flex min-w-0 flex-col gap-2 rounded-sm focus-visible:ring-2 focus-visible:outline-none'
       >
         {/* Row 1: selection, type logo (its name shows on hover), channel name
-          and id, with the status badge and actions menu on the right. */}
+          and id, then concurrency and the status/action icons. */}
         <div className='flex items-start justify-between gap-2'>
           <div className='flex min-w-0 flex-1 items-center gap-2'>
             {reorderCell}
             {!isTagRow && selectCell && (
               <span className='shrink-0'>{selectCell}</span>
             )}
-            <div
-              className={cn(
-                'min-w-0 shrink-0 overflow-hidden',
-                !isTagRow &&
-                  '[&_[data-slot=provider-badge]>[data-slot=status-badge]]:sr-only'
-              )}
-            >
-              {typeCell}
-            </div>
+            <div className='min-w-0 shrink-0 overflow-hidden'>{typeCell}</div>
             <div className='min-w-0 flex-1 overflow-hidden text-sm'>
               {nameCell}
               {!isTagRow && (
@@ -140,16 +127,22 @@ function ChannelCardComponent({
               )}
             </div>
           </div>
-          <div className='flex shrink-0 items-center gap-1.5'>
+          {/* Concurrency sits directly beside the name/ID, before the icons. */}
+          <div className='flex min-w-0 items-center gap-1.5'>
+            <ChannelConcurrencyCell
+              channelId={row.original.id}
+              aggregate={isTagRow}
+            />
             {showStatusBadge && statusCell}
             {actionsCell}
           </div>
         </div>
 
-        {/* Metrics: two columns of label/value lists. The left column holds
-          the usage pair, the right column the live response, test and
-          concurrency readings. The columns wrap below their own narrow
-          threshold, so a narrow card stacks metrics instead of overflowing. */}
+        {/* Metrics: the left column holds used tokens then the quota region
+          (an enabled local budget fills Remaining / Total, otherwise the
+          upstream balance renders), the right column the response and
+          last-test readings. The columns wrap below their own narrow
+          threshold, so a narrow card stacks instead of overflowing. */}
         <StatusBadgeTypeContext.Provider value='text'>
           <div
             data-card-metric-layout='main'
@@ -160,7 +153,15 @@ function ChannelCardComponent({
               className='flex min-w-0 flex-[1_1_8rem] flex-col gap-1.5'
             >
               <div className='flex min-w-0 flex-col gap-0.5'>
-                <dt className={labelClass}>{t('Used / Remaining')}</dt>
+                <dt className={labelClass}>{t('Used tokens')}</dt>
+                <dd className={valueClass}>
+                  {usedTokensCell ?? (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
+                </dd>
+              </div>
+              <div className='flex min-w-0 flex-col gap-0.5'>
+                <dt className={labelClass}>{t('Remaining / Total')}</dt>
                 <dd
                   className={cn(
                     valueClass,
@@ -168,21 +169,15 @@ function ChannelCardComponent({
                     '[&>div]:flex-wrap [&>div]:gap-x-3'
                   )}
                 >
-                  {balanceCell ?? (
-                    <span className='text-muted-foreground'>-</span>
-                  )}
-                </dd>
-              </div>
-              <div className='flex min-w-0 flex-col gap-0.5'>
-                <dt className={labelClass}>{t('Local Budget')}</dt>
-                <dd className={valueClass}>{budgetCell}</dd>
-              </div>
-              <div className='flex min-w-0 flex-col gap-0.5'>
-                <dt className={labelClass}>{t('Used tokens')}</dt>
-                <dd className={valueClass}>
-                  {usedTokensCell ?? (
-                    <span className='text-muted-foreground'>-</span>
-                  )}
+                  <ChannelQuotaCell
+                    channelId={row.original.id}
+                    aggregate={isTagRow}
+                    fallback={
+                      balanceCell ?? (
+                        <span className='text-muted-foreground'>-</span>
+                      )
+                    }
+                  />
                 </dd>
               </div>
             </dl>
@@ -201,21 +196,10 @@ function ChannelCardComponent({
               </div>
               <div className='flex min-w-0 items-baseline gap-1.5'>
                 <dt className={labelClass}>{t('Last Tested')}</dt>
-                <dd className={cn(valueClass, 'flex flex-wrap gap-x-1.5')}>
-                  {testTimeParts.length > 0 ? (
-                    testTimeParts.map((part) => <span key={part}>{part}</span>)
-                  ) : (
+                <dd className={valueClass}>
+                  {testTimeCell ?? (
                     <span className='text-muted-foreground'>-</span>
                   )}
-                </dd>
-              </div>
-              <div className='flex min-w-0 items-baseline gap-1.5'>
-                <dt className={labelClass}>{t('Concurrency')}</dt>
-                <dd className={statusValueClass}>
-                  <ChannelConcurrencyCell
-                    channelId={row.original.id}
-                    aggregate={isTagRow}
-                  />
                 </dd>
               </div>
             </dl>

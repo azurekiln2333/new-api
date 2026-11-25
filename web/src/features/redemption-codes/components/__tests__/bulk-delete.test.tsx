@@ -26,6 +26,7 @@ import userEvent from '@testing-library/user-event'
 import { Toaster, toast } from 'sonner'
 import { afterEach, expect, test, vi } from 'vitest'
 
+import { CodeExportProvider } from '@/components/code-export/code-export-provider'
 import { useDataTable } from '@/components/data-table'
 import { api } from '@/lib/api'
 
@@ -100,9 +101,11 @@ async function setup() {
   clients.push(client)
   render(
     <QueryClientProvider client={client}>
-      <RedemptionsProvider>
-        <RedemptionList />
-      </RedemptionsProvider>
+      <CodeExportProvider scope='redemption'>
+        <RedemptionsProvider>
+          <RedemptionList />
+        </RedemptionsProvider>
+      </CodeExportProvider>
       <Toaster />
     </QueryClientProvider>
   )

@@ -116,23 +116,22 @@ export function PricingSection({ defaultValues }: PricingSectionProps) {
       >,
       defaultValues,
       onSubmit: async (_data, changedFields) => {
-        for (const [key, value] of Object.entries(changedFields)) {
-          if (value === undefined || value === null) continue
-          if (typeof value === 'object') continue
-
-          let serialized: string | boolean = value as string | boolean
-
-          if (typeof value === 'boolean') {
-            serialized = String(value)
-          } else if (typeof value === 'number') {
-            serialized = Number.isFinite(value) ? String(value) : '0'
-          }
-
-          await updateOption.mutateAsync({
-            key,
-            value: serialized,
+        await updateOption.mutateAsync(
+          Object.entries(changedFields).flatMap(([key, value]) => {
+            if (
+              value === undefined ||
+              value === null ||
+              typeof value === 'object'
+            ) {
+              return []
+            }
+            const serialized =
+              typeof value === 'number' && !Number.isFinite(value)
+                ? '0'
+                : String(value)
+            return [{ key, value: serialized }]
           })
-        }
+        )
       },
     })
 
@@ -238,9 +237,7 @@ export function PricingSection({ defaultValues }: PricingSectionProps) {
                     <FormLabel>
                       {displayType === 'CNY'
                         ? t('CNY per USD')
-                        : displayType === 'USD'
-                          ? t('USD Exchange Rate')
-                          : t('USD Exchange Rate')}
+                        : t('USD Exchange Rate')}
                     </FormLabel>
                     <FormControl>
                       <Input

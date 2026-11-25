@@ -66,7 +66,10 @@ func ListInvitations(keyword, status string, offset, limit int) ([]Invitation, i
 	return rows, total, err
 }
 
-// InsertUserWithInvitation claims the code before any reads or account writes.
+// InsertUserWithInvitation creates a new user, enforcing the invitation-code
+// registration policy in the same transaction that writes the account.
+// InviteRegisterEnabled makes a single-use invitation code mandatory; the
+// affiliate code is only referral attribution and never substitutes for it.
 // The caller owns the transaction, including any OAuth binding. Conditional
 // updates serialize concurrent claims even on SQLite, where FOR UPDATE is absent.
 func InsertUserWithInvitation(tx *gorm.DB, user *User, inviterID int, code string) error {

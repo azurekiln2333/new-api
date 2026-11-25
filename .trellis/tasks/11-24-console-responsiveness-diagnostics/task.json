@@ -1,0 +1,35 @@
+{
+  "id": "console-responsiveness-diagnostics",
+  "name": "console-responsiveness-diagnostics",
+  "title": "Console responsiveness and diagnostics UX",
+  "description": "Fix channel read/save latency, code batch operations and console diagnostic, node and ranking interactions with cloud-only validation",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "lcy",
+  "assignee": "lcy",
+  "createdAt": "2026-11-24",
+  "completedAt": null,
+  "branch": "fix/console-responsiveness-20261124",
+  "base_branch": "merge/upstream",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-24-channel-loading-save-performance",
+    "11-24-management-mutations-code-batches",
+    "11-24-channel-diagnostics-log-presentation",
+    "11-24-dashboard-node-ranking-details",
+    "11-25-console-forward-to-master"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "authorization": "user explicitly requested planning and immediate Pi implementation on 2026-11-24",
+    "validation": "GitHub Actions only; no local tests builds vet lint typechecks DB probes or executable checks"
+  }
+}

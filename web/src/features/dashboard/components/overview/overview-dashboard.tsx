@@ -612,8 +612,13 @@ export function OverviewDashboard() {
   const completedStepCount = startSteps.filter((step) => step.completed).length
   const setupComplete = completedStepCount === startSteps.length
   const setupStatusReady = apiKeysQuery.isFetched && Boolean(user)
+  // Admins run the platform, so the onboarding guide is noise for them: hide
+  // it in every entry and reminder state. The first-run installer is separate
+  // and untouched.
+  const showSetupGuide = !isAdmin
   const setupGuideExpanded =
-    manualSetupGuideExpanded ?? (setupStatusReady && !setupComplete)
+    showSetupGuide &&
+    (manualSetupGuideExpanded ?? (setupStatusReady && !setupComplete))
   const showLeftContentPanels =
     isAdmin || showApiInfoPanel || showAnnouncementsPanel || showFAQPanel
   const showContentPanels = showLeftContentPanels || showUptimePanel
@@ -631,7 +636,7 @@ export function OverviewDashboard() {
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Overview')}</SectionPageLayout.Title>
       <SectionPageLayout.Actions>
-        {setupStatusReady && setupComplete && (
+        {showSetupGuide && setupStatusReady && setupComplete && (
           <Button
             ref={setupGuideToggleRef}
             variant='ghost'
@@ -731,7 +736,7 @@ export function OverviewDashboard() {
               </CardStaggerContainer>
             )}
           </div>
-          {!setupGuideExpanded && !setupComplete && (
+          {!setupGuideExpanded && !setupComplete && showSetupGuide && (
             <CardStaggerContainer>
               <CardStaggerItem className='bg-card overflow-hidden rounded-2xl border shadow-xs'>
                 <div className='relative overflow-hidden px-4 py-3 sm:px-5'>
@@ -802,10 +807,10 @@ export function OverviewDashboard() {
                 <div
                   className={cn(
                     'grid min-w-0 grid-cols-1 gap-4',
-                    (showApiInfoPanel ||
-                      showAnnouncementsPanel ||
-                      showFAQPanel) &&
-                      'lg:grid-cols-2'
+                    // The API panel carries per-node resources and controls, so
+                    // it takes the full content width instead of sharing a
+                    // two-column row with the other panels.
+                    (showAnnouncementsPanel || showFAQPanel) && 'lg:grid-cols-2'
                   )}
                 >
                   {isAdmin && (
@@ -814,7 +819,7 @@ export function OverviewDashboard() {
                     </CardStaggerItem>
                   )}
                   {showApiInfoPanel && (
-                    <CardStaggerItem>
+                    <CardStaggerItem className='lg:col-span-2'>
                       <ApiInfoPanel />
                     </CardStaggerItem>
                   )}

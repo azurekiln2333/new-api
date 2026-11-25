@@ -1,10 +1,14 @@
 package model
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -175,6 +179,129 @@ func TestAdminResetPlanSubscriptionsResetsAllActiveUsers(t *testing.T) {
 	}
 	assert.EqualValues(t, 1300, getSubscriptionResetSub(t, 9505).AmountUsed)
 	assert.EqualValues(t, 1400, getSubscriptionResetSub(t, 9506).AmountUsed)
+}
+
+func TestSubscriptionBalanceChargedQuota(t *testing.T) {
+	for _, tc := range []struct {
+		payload string
+		want    int
+		valid   bool
+	}{
+		{payload: "charged_quota=0", valid: true},
+		{payload: " charged_quota=120 \n", want: 120, valid: true},
+		{payload: fmt.Sprintf("charged_quota=%d", common.MaxWalletQuota), want: common.MaxWalletQuota, valid: true},
+		{payload: ""},
+		{payload: "120"},
+		{payload: "charged_quota="},
+		{payload: "charged_quota=-1"},
+		{payload: "charged_quota=1.5"},
+		{payload: "charged_quota=1e3"},
+		{payload: "charged_quota= 120"},
+		{payload: "charged_quota=120;refund=1"},
+		{payload: fmt.Sprintf("charged_quota=%d", int64(common.MaxWalletQuota)+1)},
+		{payload: "charged_quota=18446744073709551615"},
+	} {
+		t.Run(tc.payload, func(t *testing.T) {
+			got, valid := parseSubscriptionBalanceChargedQuota(tc.payload)
+			assert.Equal(t, tc.valid, valid)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestSubscriptionBalanceUsedQuotaDatabaseMatrix(t *testing.T) {
+	for _, engine := range []struct{ kind, env string }{
+		{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"},
+	} {
+		t.Run(engine.kind, func(t *testing.T) {
+			dsn := os.Getenv(engine.env)
+			if engine.env != "" && dsn == "" {
+				t.Skip("set " + engine.env + " to run this database")
+			}
+			db := openRequestLogStore(t, engine.kind, dsn)
+			previousDB, previousType := DB, common.MainDatabaseType()
+			DB = db
+			common.SetMainDatabaseType(common.DatabaseType(engine.kind))
+			t.Cleanup(func() {
+				DB = previousDB
+				common.SetMainDatabaseType(previousType)
+			})
+			require.NoError(t, db.AutoMigrate(&SubscriptionOrder{}))
+			versionQuery := "SELECT version()"
+			if engine.kind == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("subscription balance store: %s %s", engine.kind, version)
+
+			for i, row := range []struct {
+				userID                   int
+				method, provider, status string
+				payload                  string
+			}{
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, "charged_quota=120"},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, "charged_quota=30"},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, "charged_quota=0"},
+				{2, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, fmt.Sprintf("charged_quota=%d", common.MaxWalletQuota)},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, "legacy payload"},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, "charged_quota=-1"},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, fmt.Sprintf("charged_quota=%d", int64(common.MaxWalletQuota)+1)},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusPending, "charged_quota=999"},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusExpired, "charged_quota=999"},
+				{1, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusFailed, "charged_quota=999"},
+				{1, "card", PaymentProviderBalance, common.TopUpStatusSuccess, "charged_quota=999"},
+				{1, PaymentMethodBalance, "stripe", common.TopUpStatusSuccess, "charged_quota=999"},
+				{99, PaymentMethodBalance, PaymentProviderBalance, common.TopUpStatusSuccess, "outside page"},
+			} {
+				require.NoError(t, db.Create(&SubscriptionOrder{
+					UserId: row.userID, TradeNo: fmt.Sprintf("balance-projection-%d", i), Money: 99999,
+					PaymentMethod: row.method, PaymentProvider: row.provider, Status: row.status, ProviderPayload: row.payload,
+				}).Error)
+			}
+
+			used, malformed, err := GetSubscriptionBalanceUsedQuota(t.Context(), []int{1, 2, 3, 1, 0, -1})
+			require.NoError(t, err)
+			assert.Equal(t, map[int]int64{1: 150, 2: int64(common.MaxWalletQuota)}, used)
+			assert.Equal(t, 3, malformed, "only malformed successful balance orders for listed users are counted")
+
+			first := &User{Id: 1, Username: "first", Quota: 700, UsedQuota: 91}
+			second := &User{Id: 2, Username: "second", Quota: 800, UsedQuota: 92}
+			third := &User{Id: 3, Username: "no-orders", Quota: 900, UsedQuota: 93}
+			items, malformed, err := BuildUserListItems(t.Context(), []*User{second, nil, first, third})
+			require.NoError(t, err)
+			require.Len(t, items, 3)
+			assert.Equal(t, 3, malformed)
+			encoded, err := common.Marshal(items)
+			require.NoError(t, err)
+			var projected []struct {
+				ID                           int   `json:"id"`
+				Quota                        int   `json:"quota"`
+				UsedQuota                    int   `json:"used_quota"`
+				SubscriptionBalanceUsedQuota int64 `json:"subscription_balance_used_quota"`
+			}
+			require.NoError(t, common.Unmarshal(encoded, &projected))
+			require.Len(t, projected, 3)
+			assert.Equal(t, []int{2, 1, 3}, []int{projected[0].ID, projected[1].ID, projected[2].ID})
+			assert.Equal(t, []int64{int64(common.MaxWalletQuota), 150, 0}, []int64{projected[0].SubscriptionBalanceUsedQuota, projected[1].SubscriptionBalanceUsedQuota, projected[2].SubscriptionBalanceUsedQuota})
+			assert.Equal(t, 700, projected[1].Quota, "historical subscription spending is not deducted again")
+			assert.Equal(t, 91, projected[1].UsedQuota, "subscription spending stays separate from inference usage")
+			assert.Equal(t, 700, first.Quota)
+			assert.Equal(t, 91, first.UsedQuota)
+
+			cancelled, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, _, err = BuildUserListItems(cancelled, []*User{first})
+			assert.ErrorIs(t, err, context.Canceled, "request cancellation reaches the aggregate query")
+			empty, malformed, err := GetSubscriptionBalanceUsedQuota(cancelled, []int{0, -1})
+			require.NoError(t, err, "an empty page does not query the database")
+			assert.Empty(t, empty)
+			assert.Zero(t, malformed)
+			noItems, _, err := BuildUserListItems(cancelled, nil)
+			require.NoError(t, err)
+			assert.Empty(t, noItems)
+		})
+	}
 }
 
 func TestAdminResetPlanSubscriptionsNoMatchSucceeds(t *testing.T) {

@@ -61,6 +61,12 @@ func IsPaymentComplianceConfirmed() bool {
 // the saved ones. While RSA is active, both keys must parse; under MD5 only a
 // newly entered key is checked.
 func ValidateEpaySignOption(key, value string) error {
+	return ValidateEpaySignOptionWithUpdates(key, value, nil)
+}
+
+// ValidateEpaySignOptionWithUpdates checks the complete proposed section without
+// publishing credentials before its transaction commits.
+func ValidateEpaySignOptionWithUpdates(key, value string, updates map[string]string) error {
 	if key != EpaySignTypeOptionKey && key != EpayMerchantPrivateKeyOptionKey && key != EpayPlatformPublicKeyOptionKey {
 		return nil
 	}
@@ -70,6 +76,15 @@ func ValidateEpaySignOption(key, value string) error {
 	privateKey := paymentSetting.EpayMerchantPrivateKey
 	publicKey := paymentSetting.EpayPlatformPublicKey
 	common.OptionMapRWMutex.RUnlock()
+	if proposed, changed := updates[EpaySignTypeOptionKey]; changed {
+		signType = proposed
+	}
+	if proposed, changed := updates[EpayMerchantPrivateKeyOptionKey]; changed {
+		privateKey = proposed
+	}
+	if proposed, changed := updates[EpayPlatformPublicKeyOptionKey]; changed {
+		publicKey = proposed
+	}
 	switch key {
 	case EpaySignTypeOptionKey:
 		if value != EpaySignTypeMD5 && value != EpaySignTypeRSA {

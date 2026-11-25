@@ -67,7 +67,7 @@ function Fixture(props: {
   visibility?: VisibilityState
   logs?: UsageLog[]
   loading?: boolean
-  tokenCell?: boolean
+  columnId?: 'prompt_tokens' | 'channel' | 'model_name'
 }) {
   const columns = useCommonLogsColumns(props.admin ?? true, false)
   const context = useUsageLogsContext()
@@ -77,12 +77,12 @@ function Fixture(props: {
     getCoreRowModel: getCoreRowModel(),
     state: { columnVisibility: props.visibility ?? {} },
   })
-  if (props.tokenCell) {
+  if (props.columnId) {
     const cell = table
       .getRowModel()
       .rows[0].getAllCells()
-      .find((item) => item.column.id === 'prompt_tokens')
-    if (!cell) throw new Error('The log must have a tokens column')
+      .find((item) => item.column.id === props.columnId)
+    if (!cell) throw new Error('The requested log column must exist')
     return flexRender(cell.column.columnDef.cell, cell.getContext())
   }
   return (
@@ -193,6 +193,33 @@ it('shows model mismatch evidence when tapping the mobile model badge', async ()
   ).toBeVisible()
   expect(within(dialog).getByText('mapped-model')).toBeVisible()
   expect(within(dialog).getByText('unexpected-model')).toBeVisible()
+})
+
+it('hovering a desktop channel keeps the channel name and retry chain readable', async () => {
+  const user = userEvent.setup()
+  renderLogs({
+    columnId: 'channel',
+    logs: [
+      {
+        ...log,
+        channel: 38,
+        channel_name: 'CNBNew',
+        other: JSON.stringify({
+          admin_info: { use_channel: [118, 82, 38] },
+        }),
+      },
+    ],
+  })
+
+  await user.hover(screen.getByText('CNBNew'))
+
+  const channel = await screen.findByText('CNBNew #38')
+  const tooltip = channel.closest('[data-slot="tooltip-content"]')
+  expect(tooltip).toHaveClass('bg-popover', 'text-popover-foreground')
+  expect(channel).toBeVisible()
+  expect(
+    within(tooltip as HTMLElement).getByText('Chain: 118 → 82 → 38')
+  ).toBeVisible()
 })
 
 it('opens long channel text on tap and copies the complete value', async () => {
@@ -336,6 +363,57 @@ it('retains the user avatar and model badge in the mobile summary', () => {
   expect(screen.getByText('P')).toBeVisible()
   const modelButton = screen.getByRole('button', { name: `Model: ${longName}` })
   expect(modelButton.querySelector('[data-slot="status-badge"]')).not.toBeNull()
+})
+
+it.each([
+  { columnId: 'channel' as const, value: '-' },
+  { columnId: 'model_name' as const, value: '-' },
+])(
+  'shows an absent $columnId in a rejected desktop log',
+  ({ columnId, value }) => {
+    renderLogs({
+      columnId,
+      logs: [{ ...log, type: 5, channel: 0, channel_name: '', model_name: '' }],
+    })
+    expect(screen.getByText(value)).toBeVisible()
+    expect(screen.queryByText('#0')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  }
+)
+
+it.each([
+  { columnId: 'channel' as const, value: '#372' },
+  { columnId: 'model_name' as const, value: longName },
+])(
+  'preserves a recorded $columnId in a rejected desktop log',
+  ({ columnId, value }) => {
+    renderLogs({ columnId, logs: [{ ...log, type: 5 }] })
+    expect(screen.getByText(value)).toBeVisible()
+  }
+)
+
+it('shows absent routing fields in rejected mobile cards without a channel action', () => {
+  renderLogs({
+    logs: [{ ...log, type: 5, channel: 0, channel_name: '', model_name: '' }],
+  })
+  expect(screen.getByLabelText('Model: -')).toBeVisible()
+  const channel = screen.getByText('Channel').parentElement
+  expect(within(channel as HTMLElement).getByText('-')).toBeVisible()
+  expect(screen.queryByText('#0')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: /^Channel:/ })
+  ).not.toBeInTheDocument()
+})
+
+it('keeps an absent model readable when a rejected compact row is expanded', async () => {
+  renderCompactLogs({
+    logs: [{ ...log, type: 5, channel: 0, channel_name: '', model_name: '' }],
+  })
+  const row = screen.getByRole('button', { expanded: false })
+  expect(within(row).getByText('-')).toBeVisible()
+  await userEvent.setup().click(row)
+  expect(screen.getByLabelText('Model: -')).toBeVisible()
+  expect(screen.queryByText('#0')).not.toBeInTheDocument()
 })
 
 it('omits unused token and throughput placeholders for async jobs', () => {
@@ -515,7 +593,7 @@ it('reads the stored mobile list preference and ignores unknown values', () => {
 
 it('keeps desktop input, output and cache counts plain without widening the token cell', () => {
   renderLogs({
-    tokenCell: true,
+    columnId: 'prompt_tokens',
     logs: [
       {
         ...log,

@@ -101,9 +101,7 @@ export function WorkerSettingsSection({
       })
     }
 
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
+    await updateOption.mutateAsync(updates)
   }
 
   return (

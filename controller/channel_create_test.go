@@ -14,8 +14,6 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -35,16 +33,22 @@ func setupChannelCreateTest(t *testing.T) int {
 	common.SQLitePath = filepath.Join(t.TempDir(), "channel.db")
 	// A follower requires the activation marker table to exist, even when
 	// enforcement is disabled. Initialize that production startup prerequisite.
-	var dialect gorm.Dialector = sqlite.Open(common.SQLitePath)
+	var seed *gorm.DB
 	if dsn := os.Getenv("TEST_CHANNEL_SQL_DSN"); dsn != "" {
+		kind := "mysql"
 		if strings.HasPrefix(dsn, "postgres") {
-			dialect = postgres.Open(dsn)
-		} else {
-			dialect = mysql.Open(dsn)
+			kind = "postgres"
 		}
+		// Listing totals and atomic-write assertions require an empty database,
+		// not the service database used by earlier focused cases and CI steps.
+		var isolatedDSN string
+		seed, isolatedDSN = newAuditTestDatabase(t, kind, dsn)
+		t.Setenv("SQL_DSN", isolatedDSN)
+	} else {
+		var err error
+		seed, err = gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{})
+		require.NoError(t, err)
 	}
-	seed, err := gorm.Open(dialect, &gorm.Config{})
-	require.NoError(t, err)
 	require.NoError(t, seed.AutoMigrate(&model.Option{}))
 	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	require.NoError(t, seed.Where(map[string]any{"key": "internal.channel_budget.active_v1"}).Delete(&model.Option{}).Error)
@@ -58,7 +62,7 @@ func setupChannelCreateTest(t *testing.T) int {
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	model.LOG_DB = database
 	common.SetLogDatabaseType(common.MainDatabaseType())
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.AuditLog{}, &model.ChannelKeyEntry{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}, &model.Task{}, &model.SystemTask{}, &model.SystemTaskLock{}))
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.AuditLog{}, &model.ChannelKeyEntry{}, &model.AuditEventOutbox{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}, &model.Task{}, &model.SystemTask{}, &model.SystemTaskLock{}))
 	root := &model.User{Username: "channel-create-review-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
 	require.NoError(t, database.Create(root).Error)
 	t.Cleanup(func() { require.NoError(t, database.Unscoped().Delete(root).Error) })

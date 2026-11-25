@@ -28,6 +28,11 @@ const (
 	fingerprintProbeInputReserve = 512
 	// The most output one probe may ask for, before the run budget narrows it.
 	fingerprintProbeMaxTokens = 4096
+	// The job keeps its probes in memory for its whole TTL, so the actual prompt
+	// and reply are capped per probe. A diagnostic reply never needs more than a
+	// few thousand characters, and the cap keeps a pathological upstream that
+	// streams an unbounded reply from growing the retained snapshot.
+	fingerprintProbeTextMaxRunes = 4096
 	// Budget and timeout bounds. A run is a diagnostic, not a batch job.
 	fingerprintDefaultTokenBudget         = 24000
 	fingerprintMaxTokenBudget             = 200000
@@ -44,16 +49,25 @@ var (
 	ErrFingerprintTooManyJobs       = errors.New("too many fingerprint checks are running; wait for one to finish")
 )
 
-// FingerprintProbe is one collected answer.
+// FingerprintProbe is one collected answer. Prompt and Output carry the actual
+// challenge text and the model's actual reply so the console can show what was
+// sent and received; both come from already-collected bounded values and never
+// trigger another request. The truncated flags report when the retained text was
+// cut at the memory cap so the console can say so instead of showing a silently
+// shortened reply as if it were complete.
 type FingerprintProbe struct {
-	ID            string `json:"id"`
-	State         string `json:"state"`
-	ExpectedCount int    `json:"expected_count"`
-	ParsedCount   int    `json:"parsed_count"`
-	PromptTokens  int    `json:"prompt_tokens"`
-	OutputTokens  int    `json:"output_tokens"`
-	MaxTokens     uint   `json:"max_tokens"`
-	Error         string `json:"error,omitempty"`
+	ID              string `json:"id"`
+	State           string `json:"state"`
+	ExpectedCount   int    `json:"expected_count"`
+	ParsedCount     int    `json:"parsed_count"`
+	PromptTokens    int    `json:"prompt_tokens"`
+	OutputTokens    int    `json:"output_tokens"`
+	MaxTokens       uint   `json:"max_tokens"`
+	Prompt          string `json:"prompt,omitempty"`
+	PromptTruncated bool   `json:"prompt_truncated,omitempty"`
+	Output          string `json:"output,omitempty"`
+	OutputTruncated bool   `json:"output_truncated,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // FingerprintJob is one run and its bounded budget accounting.
@@ -92,6 +106,17 @@ type FingerprintProbeResult struct {
 	ParsedCount  int
 	PromptTokens int
 	OutputTokens int
+}
+
+// boundedProbeText keeps retained probe text inside the memory cap and reports
+// whether it cut the value. The cut is rune-aware so a multi-byte character is
+// never split.
+func boundedProbeText(text string) (string, bool) {
+	runes := []rune(text)
+	if len(runes) <= fingerprintProbeTextMaxRunes {
+		return text, false
+	}
+	return string(runes[:fingerprintProbeTextMaxRunes]), true
 }
 
 // FingerprintProber runs one probe against the channel with the given output
@@ -210,10 +235,13 @@ func StartChannelFingerprint(
 		done:           make(chan struct{}),
 	}
 	for i, challenge := range challenges {
+		prompt, promptTruncated := boundedProbeText(challenge.Prompt)
 		job.Probes[i] = FingerprintProbe{
-			ID:            challenge.ID,
-			State:         "queued",
-			ExpectedCount: challenge.ExpectedCount,
+			ID:              challenge.ID,
+			State:           "queued",
+			ExpectedCount:   challenge.ExpectedCount,
+			Prompt:          prompt,
+			PromptTruncated: promptTruncated,
 		}
 	}
 	if err := fingerprintJobs.add(job); err != nil {

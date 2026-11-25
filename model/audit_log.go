@@ -11,6 +11,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/gin-gonic/gin"
+	gomysql "github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -72,6 +74,50 @@ func AccessTokenFingerprint(token string) string {
 // RecordAuditLog captures safe request metadata only; raw URLs, query strings,
 // credentials and response/request bodies must never enter this table.
 func RecordAuditLog(c *gin.Context, entry AuditLog) {
+	ctx, entry := snapshotAuditLog(c, entry)
+	if entry.Username == "" {
+		entry.Username, _ = GetUsernameById(entry.UserId, false)
+	}
+	if LOG_DB == nil {
+		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): log database unavailable", entry.RequestId))
+		return
+	}
+	if err := WriteAuditLogEntry(ctx, entry); err != nil {
+		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
+	}
+}
+
+// RecordAuditLogDurable snapshots a middleware event before returning from the
+// request and persists its obligation in the primary outbox. It never looks up
+// an actor name or waits for normal log delivery. The bounded direct fallback
+// retains the same event if enqueue fails; both failures are returned to the
+// caller. This post-handler path retains the documented post-commit crash gap.
+func RecordAuditLogDurable(c *gin.Context, entry AuditLog) error {
+	ctx, entry := snapshotAuditLog(c, entry)
+	_, err := RecordManagementAuditDurable(ctx, AuditEventDraft{
+		EventId:       entry.EventId,
+		Category:      entry.Category,
+		Action:        entry.Action,
+		ActorUserId:   entry.UserId,
+		ActorUsername: entry.Username,
+		ActorRole:     entry.ActorRole,
+		AuthMethod:    entry.AuthMethod,
+		TokenRef:      entry.TokenRef,
+		Ip:            entry.Ip,
+		UserAgent:     entry.UserAgent,
+		Method:        entry.Method,
+		Route:         entry.Route,
+		Status:        entry.Status,
+		Success:       entry.Success,
+		RequestId:     entry.RequestId,
+		Content:       entry.Content,
+		Other:         &entry.Other,
+		CreatedAt:     entry.CreatedAt,
+	})
+	return err
+}
+
+func snapshotAuditLog(c *gin.Context, entry AuditLog) (context.Context, AuditLog) {
 	ctx := context.Background()
 	if c != nil && c.Request != nil {
 		ctx = c.Request.Context()
@@ -80,6 +126,9 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 		entry.UserAgent = c.Request.UserAgent()
 		entry.Method = c.Request.Method
 		entry.Route = c.FullPath()
+		if entry.Username == "" && entry.UserId == c.GetInt("id") {
+			entry.Username = c.GetString("username")
+		}
 		if entry.Status == 0 {
 			entry.Status = c.Writer.Status()
 		}
@@ -105,23 +154,25 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 		logger.LogError(ctx, common.LogText("audit actor role unavailable (request_id=%s, actor_role=%d)", entry.RequestId, entry.ActorRole))
 		entry.ActorRole = 0 // Unknown actors remain visible to root only.
 	}
-	if entry.Username == "" {
-		entry.Username, _ = GetUsernameById(entry.UserId, false)
-	}
 	ua := []rune(entry.UserAgent)
 	if len(ua) > 512 {
 		entry.UserAgent = string(ua[:512])
 	}
+	return ctx, entry
+}
+
+// WriteAuditLogEntry persists one prepared audit row. Callers own the actor
+// enrichment; the outbox delivery path uses this directly so it never repeats the
+// user lookup that slows the request critical path.
+func WriteAuditLogEntry(ctx context.Context, entry AuditLog) error {
 	if LOG_DB == nil {
-		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): log database unavailable", entry.RequestId))
-		return
+		return fmt.Errorf("log database unavailable")
 	}
 	var row any = &entry
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		encoded, err := common.Marshal(entry.Other)
 		if err != nil {
-			logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
-			return
+			return err
 		}
 		// The ClickHouse GORM insert callback passes structs to the native
 		// driver without resolving their Valuer. Bind this column's JSON
@@ -130,10 +181,60 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 			AuditLog     `gorm:"embedded"`
 			EncodedOther string `gorm:"column:other;type:json"`
 		}{AuditLog: entry, EncodedOther: string(encoded)}
+		// ClickHouse has no dedupe key on audit_logs, so a replayed event is
+		// written again. Delivery is documented at-least-once for this sink.
+		return LOG_DB.WithContext(ctx).Table("audit_logs").Create(row).Error
 	}
-	if err := LOG_DB.Table("audit_logs").Create(row).Error; err != nil {
-		logger.LogError(ctx, common.LogText("audit log write failed (request_id=%s): %v", entry.RequestId, err))
+	// The relational sink has a unique index on event_id. Re-delivering an event
+	// that the sink already accepted (a lost acknowledgement, or a reclaimed
+	// lease) must count as success, otherwise the outbox row would stay pending
+	// forever and the drain would retry it indefinitely.
+	err := LOG_DB.WithContext(ctx).Table("audit_logs").Create(row).Error
+	if err != nil && IsAuditEventDuplicate(ctx, err, entry.EventId) {
+		return nil
 	}
+	return err
+}
+
+// IsAuditEventDuplicate reports whether err is a unique-constraint violation on
+// this event's event_id. Only that specific conflict is absorbed: every other
+// failure, including a different unique constraint or a generic driver error,
+// still surfaces so the outbox keeps retrying.
+func IsAuditEventDuplicate(ctx context.Context, err error, eventId string) bool {
+	if err == nil || eventId == "" {
+		return false
+	}
+	if !errors.Is(err, gorm.ErrDuplicatedKey) && !isDuplicateKeyError(err) {
+		return false
+	}
+	// A duplicate-key error names the index or column it violated. Require the
+	// event identity to appear so an unrelated conflict is never swallowed.
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "event_id") && !strings.Contains(message, "idx_audit_event") {
+		return false
+	}
+	var count int64
+	if countErr := LOG_DB.WithContext(ctx).Table("audit_logs").Where("event_id = ?", eventId).Count(&count).Error; countErr != nil {
+		return false
+	}
+	return count > 0
+}
+
+// isDuplicateKeyError recognizes the duplicate-key failure of each supported
+// relational driver without matching unrelated SQL errors.
+func isDuplicateKeyError(err error) bool {
+	var mysqlErr *gomysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return mysqlErr.Number == 1062
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unique constraint failed") ||
+		strings.Contains(message, "duplicate entry") ||
+		strings.Contains(message, "duplicate key value")
 }
 
 func GetAuditLogs(filter AuditLogFilter, start, limit, viewerRole int) ([]*AuditLog, int64, error) {

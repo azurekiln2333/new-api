@@ -373,6 +373,7 @@ func TestPluginLoginAPI(t *testing.T) {
 	require.True(t, ok)
 	assert.JSONEq(t, `{"token":"tok-123"}`, string(credential.Data))
 
+	drainControllerAuditOutbox(t)
 	var audits []model.AuditLog
 	require.NoError(t, model.DB.Find(&audits).Error)
 	require.Len(t, audits, 1)
@@ -607,7 +608,7 @@ func TestProviderChannelManagementDatabaseMatrix(t *testing.T) {
 				t.Skip("set " + dialect.env + " to run this database")
 			}
 			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
-			require.NoError(t, db.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}, &model.AuthFlow{}, &model.Log{}))
+			require.NoError(t, db.AutoMigrate(&model.CasbinRule{}, &model.AuthzRole{}, &model.AuthFlow{}, &model.Log{}, &model.SystemTask{}))
 			require.NoError(t, authz.Init(db))
 			service.InitHttpClient()
 			pluginKey := "matrix-" + dialect.kind

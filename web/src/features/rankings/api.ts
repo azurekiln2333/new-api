@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { RankingPeriod, RankingsSnapshot } from './types'
+import type {
+  RankingModelUsage,
+  RankingPeriod,
+  RankingsSnapshot,
+} from './types'
 
 type RankingsResponse = {
   success: boolean
@@ -30,5 +34,30 @@ export async function getRankings(
   period: RankingPeriod
 ): Promise<RankingsResponse> {
   const res = await api.get('/api/rankings', { params: { period } })
+  return res.data
+}
+
+type RankingModelUsageResponse = {
+  success: boolean
+  message?: string
+  data: RankingModelUsage
+}
+
+/**
+ * Per-model usage plus the user ranking for the model usage drawer.
+ *
+ * `model` is sent as a query param (not a path segment) so model names that
+ * contain a slash still resolve. The server masks other users' identities
+ * before responding, so the payload is already viewer-safe.
+ */
+export async function getRankingModelUsage(
+  modelName: string,
+  period: RankingPeriod,
+  signal?: AbortSignal
+): Promise<RankingModelUsageResponse> {
+  const res = await api.get<RankingModelUsageResponse>(
+    '/api/rankings/model-usage',
+    { params: { model: modelName, period }, signal }
+  )
   return res.data
 }

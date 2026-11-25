@@ -49,6 +49,7 @@ func GetStatus(c *gin.Context) {
 
 	data := gin.H{
 		"version":                     common.Version,
+		"update_source_repository":    system_setting.UpdateSourceRepository(),
 		"start_time":                  common.StartTime,
 		"email_verification":          common.EmailVerificationEnabled,
 		"github_oauth":                common.GitHubOAuthEnabled,
@@ -89,6 +90,7 @@ func GetStatus(c *gin.Context) {
 		"self_use_mode_enabled":         operation_setting.SelfUseModeEnabled,
 		"register_enabled":              common.RegisterEnabled,
 		"invite_register_enabled":       common.InviteRegisterEnabled,
+		"affiliate_link_enabled":        common.RegisterAffiliateLinkEnabled,
 		"password_login_enabled":        common.PasswordLoginEnabled,
 		"password_register_enabled":     common.PasswordRegisterEnabled,
 		"default_use_auto_group":        setting.DefaultUseAutoGroup,
@@ -133,7 +135,7 @@ func GetStatus(c *gin.Context) {
 
 	// 根据启用状态注入可选内容
 	if cs.ApiInfoEnabled {
-		data["api_info"] = console_setting.GetApiInfo()
+		data["api_info"] = console_setting.GetPublicApiInfo()
 	}
 	if cs.AnnouncementsEnabled {
 		data["announcements"] = console_setting.GetAnnouncements()

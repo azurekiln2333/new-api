@@ -143,6 +143,55 @@ func TestRequestContentRelayLogLifecycle(t *testing.T) {
 	}
 }
 
+func TestRejectedRelayLogRetainsParsedModel(t *testing.T) {
+	db, _ := newAuditTestDatabase(t, "sqlite", "")
+	useLogExportDatabases(t, db, db, common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Log{}))
+	require.NoError(t, model.MigrateLogRequestDetails())
+	user := &model.User{Username: "rejected-model-log", AffCode: "rejected-model-log"}
+	require.NoError(t, db.Create(user).Error)
+	previousErrorLog := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() { constant.ErrorLogEnabled = previousErrorLog })
+	t.Setenv("REQUEST_CONTENT_LOG_ENABLED", "true")
+
+	for _, tc := range []struct {
+		name      string
+		body      string
+		wantHTTP  int
+		wantModel string
+	}{
+		{"model denied before selection", `{"model":"gpt-denied","messages":[]}`, http.StatusForbidden, "gpt-denied"},
+		{"invalid body has no parsed model", `{"model":`, http.StatusBadRequest, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requestID := common.NewRequestId()
+			engine := gin.New()
+			engine.Use(middleware.BodyStorageCleanup())
+			engine.POST("/v1/chat/completions", func(c *gin.Context) {
+				c.Set("id", user.Id)
+				c.Set("username", user.Username)
+				c.Set(common.RequestIdKey, requestID)
+				common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+				common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"gpt-allowed": true})
+			}, middleware.RequestLogDiagnostics(), middleware.Distribute(), func(c *gin.Context) {
+				t.Error("a rejected request must not reach the relay handler")
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, request)
+			require.Equal(t, tc.wantHTTP, response.Code)
+			var logs []model.Log
+			require.NoError(t, db.Where("request_id = ?", requestID).Find(&logs).Error)
+			require.Len(t, logs, 1)
+			assert.Equal(t, model.LogTypeError, logs[0].Type)
+			assert.Equal(t, tc.wantModel, logs[0].ModelName)
+			assert.Zero(t, logs[0].ChannelId, "the request was rejected before any channel was selected")
+		})
+	}
+}
+
 func TestResponsesWSRequestRunnerRequestContentDiagnostics(t *testing.T) {
 	user, token := setupResponsesWSRequestTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Log{}))

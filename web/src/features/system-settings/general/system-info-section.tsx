@@ -128,16 +128,15 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       >,
       defaultValues: normalizedDefaults,
       onSubmit: async (_data, changedFields) => {
-        for (const [key, value] of Object.entries(changedFields)) {
-          let v = normalizeValue(value)
-          if (key === 'ServerAddress' || key === 'TaskPublicAddress') {
-            v = v.replace(/\/+$/, '')
-          }
-          await updateOption.mutateAsync({
-            key,
-            value: v,
+        await updateOption.mutateAsync(
+          Object.entries(changedFields).map(([key, value]) => {
+            let normalized = normalizeValue(value)
+            if (key === 'ServerAddress' || key === 'TaskPublicAddress') {
+              normalized = normalized.replace(/\/+$/, '')
+            }
+            return { key, value: normalized }
           })
-        }
+        )
       },
     })
 

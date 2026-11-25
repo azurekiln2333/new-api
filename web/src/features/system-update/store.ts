@@ -24,10 +24,20 @@ import {
   type StateStorage,
 } from 'zustand/middleware'
 
-import { systemReleaseSchema } from './releases'
+import {
+  DEFAULT_UPDATE_SOURCE_REPOSITORY,
+  isUpdateSourceRepository,
+  systemReleaseSchema,
+} from './releases'
 
 const updateSnapshotSchema = z
   .object({
+    // Snapshots saved before repository overrides existed belong to upstream.
+    repository: z
+      .string()
+      .trim()
+      .refine(isUpdateSourceRepository)
+      .default(DEFAULT_UPDATE_SOURCE_REPOSITORY),
     release: systemReleaseSchema.nullable(),
     lastCheckedAt: z.number().finite().nonnegative(),
     lastAttemptAt: z.number().finite().nonnegative(),

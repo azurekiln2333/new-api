@@ -141,6 +141,12 @@ func markAuditLogged(c *gin.Context) {
 
 // recordManageAudit 记录一条由操作者本人归属的管理/高危审计日志（资源类操作：
 // 渠道 / 系统设置 / 兑换码等）。content 由 action+params 自动渲染。
+//
+// The event is normally enqueued into the primary outbox after the business
+// commit and delivered by the drain worker, so a save does not wait on the log
+// database or an actor-name lookup. If enqueue fails, the model attempts a
+// bounded direct write using this same prepared event. Code and channel mutations
+// that own a transaction use EnqueueAuditEventTx instead and enqueue atomically.
 func recordManageAudit(c *gin.Context, action string, params map[string]any) {
 	recordManageAuditFor(c, c.GetInt("id"), action, params)
 }
@@ -155,7 +161,14 @@ func recordManageAuditFor(c *gin.Context, targetUserId int, action string, param
 	if _, ok := params["target_user_id"]; !ok && targetUserId > 0 && targetUserId != operatorUserId {
 		params["target_user_id"] = targetUserId
 	}
-	model.RecordOperationAuditLog(operatorUserId, c.GetInt("role"), auditContentEN(action, params), c.ClientIP(), action, params, auditOperatorInfo(c), nil, c)
+	snapshot := snapshotAuditActor(c)
+	if _, err := model.RecordManagementAuditDurable(c.Request.Context(), buildAuditDraft(snapshot, action, params)); err != nil {
+		// The mutation is already committed. Leave the generic middleware fallback
+		// enabled for this rare double-persistence failure; the prepared detailed
+		// event and same EventId were already attempted by the model helper.
+		common.SysError(common.LogText("failed to enqueue audit event for action %s", action))
+		return
+	}
 	markAuditLogged(c)
 }
 

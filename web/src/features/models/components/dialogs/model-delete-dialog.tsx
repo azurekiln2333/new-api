@@ -72,12 +72,9 @@ export function ModelDeleteDialog(props: ModelDeleteDialogProps) {
       }
       return response.data
     },
-    onSuccess: async (result) => {
-      await invalidateVendorData(client)
-      if (removePricing) await invalidateModelPricing(client)
-      if (removeFromChannels) {
-        await client.invalidateQueries({ queryKey: ['channels'] })
-      }
+    onSuccess: (result) => {
+      // Persisted success releases the dialog and its buttons immediately. The
+      // invalidation only refreshes other surfaces, so it must not delay that.
       toast.success(
         t('Successfully deleted {{count}} model(s)', {
           count: result.deleted_count,
@@ -85,6 +82,11 @@ export function ModelDeleteDialog(props: ModelDeleteDialogProps) {
       )
       props.onSuccess?.()
       props.onClose()
+      void invalidateVendorData(client)
+      if (removePricing) void invalidateModelPricing(client)
+      if (removeFromChannels) {
+        void client.invalidateQueries({ queryKey: ['channels'] })
+      }
     },
   })
   const description =

@@ -177,6 +177,27 @@ func GetRankingsSnapshot(period string) (*RankingsResponse, error) {
 	return data, nil
 }
 
+// RankingTimeRange is the resolved [start, end] window for a ranking period.
+// Invalid is true when the period is not a supported value; callers then reject
+// the request instead of silently falling back.
+type RankingTimeRange struct {
+	Start   int64
+	End     int64
+	Invalid bool
+}
+
+// RankingPeriodRange resolves the time window for a ranking period using the
+// same period definitions as the rankings snapshot, so the model usage drawer
+// and the rankings page agree on what "week" means.
+func RankingPeriodRange(period string) RankingTimeRange {
+	config, err := rankingConfig(period)
+	if err != nil {
+		return RankingTimeRange{Invalid: true}
+	}
+	start, end := rankingTimeRange(config, time.Now())
+	return RankingTimeRange{Start: start, End: end}
+}
+
 func rankingConfig(period string) (rankingPeriodConfig, error) {
 	switch period {
 	case "", "week":

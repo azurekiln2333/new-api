@@ -280,10 +280,13 @@ export function PasskeySection(props: PasskeySectionProps) {
           'passkey.origins': saved['passkey.origins'],
         }
       }
-      for (const key of changedKeys) {
-        if (passkeyDomainKeys.some((domainKey) => domainKey === key)) continue
-        await updateOption.mutateAsync({ key, value: normalized[key] ?? '' })
-      }
+      await updateOption.mutateAsync(
+        changedKeys
+          .filter(
+            (key) => !passkeyDomainKeys.some((domainKey) => domainKey === key)
+          )
+          .map((key) => ({ key, value: normalized[key] ?? '' }))
+      )
     } catch {
       // The mutation reports the error once. Keep the draft available for retry.
       return

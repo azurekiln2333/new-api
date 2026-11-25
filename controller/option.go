@@ -187,175 +187,122 @@ func writePasskeyDomainSettingsError(c *gin.Context, err error) {
 	common.ApiError(c, err)
 }
 
-func UpdateOption(c *gin.Context) {
-	var option OptionUpdateRequest
-	err := common.DecodeJson(c.Request.Body, &option)
-	if err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
-		return
-	}
+var errTelegramOptionNotConfigured = common.NewMessage("Telegram OAuth is not configured or enabled. Please contact your administrator.")
+
+// Both entry points validate without publishing a draft into runtime globals.
+// Dependencies are read from the complete proposed section, not request order.
+func validateOptionUpdate(option *OptionUpdateRequest, updates map[string]string) error {
 	switch option.Value.(type) {
-	case bool:
-		option.Value = common.Interface2String(option.Value.(bool))
-	case float64:
-		option.Value = common.Interface2String(option.Value.(float64))
-	case int:
-		option.Value = common.Interface2String(option.Value.(int))
+	case bool, float64, int:
+		option.Value = common.Interface2String(option.Value)
 	default:
-		option.Value = fmt.Sprintf("%v", option.Value)
+		option.Value = fmt.Sprint(option.Value)
 	}
-	if (option.Key == "InviteRegisterEnabled" || option.Key == "LoginVerificationRequiredEnabled") && option.Value != "true" && option.Value != "false" {
-		common.ApiErrorT(c, "Invalid parameters")
-		return
+	value := option.Value.(string)
+	if (option.Key == "InviteRegisterEnabled" || option.Key == "RegisterAffiliateLinkEnabled" || option.Key == "LoginVerificationRequiredEnabled") && value != "true" && value != "false" {
+		return common.NewMessage("Invalid parameters")
 	}
 	if model.IsLoginVerificationUserOption(option.Key) {
-		common.ApiErrorT(c, "Invalid parameters")
-		return
+		return common.NewMessage("Invalid parameters")
 	}
 	switch option.Key {
 	case "QuotaForInviter", "QuotaForInvitee":
-		if isPositiveOptionValue(option.Value.(string)) && !operation_setting.IsPaymentComplianceConfirmed() {
-			common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
-			return
+		if isPositiveOptionValue(value) && !operation_setting.IsPaymentComplianceConfirmed() {
+			return common.NewMessage("Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
 		}
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
-			common.ApiErrorT(c, "Compliance confirmation fields cannot be changed through the general settings API")
-			return
+			return common.NewMessage("Compliance confirmation fields cannot be changed through the general settings API")
 		}
-		// The request plugin API validates each instance config.
 		if option.Key == request_plugin_setting.InstancesOption {
-			common.ApiErrorT(c, "Request plugin instances cannot be changed through the general settings API")
-			return
+			return common.NewMessage("Request plugin instances cannot be changed through the general settings API")
 		}
 	}
-	if option.Key == "TaskPublicAddress" && option.Value.(string) != "" {
-		if err := service.ValidateTaskArtifactBaseURL(option.Value.(string)); err != nil {
-			common.ApiError(c, err)
-			return
+	if option.Key == "TaskPublicAddress" && value != "" {
+		if err := service.ValidateTaskArtifactBaseURL(value); err != nil {
+			return err
 		}
 	}
+
+	common.OptionMapRWMutex.RLock()
+	effective := map[string]string{
+		"GitHubClientId":         common.GitHubClientId,
+		"discord.client_id":      system_setting.GetDiscordSettings().ClientId,
+		"oidc.client_id":         system_setting.GetOIDCSettings().ClientId,
+		"LinuxDOClientId":        common.LinuxDOClientId,
+		"EmailDomainWhitelist":   strings.Join(common.EmailDomainWhitelist, ","),
+		"WeChatServerAddress":    common.WeChatServerAddress,
+		"TurnstileSiteKey":       common.TurnstileSiteKey,
+		"telegram.client_id":     system_setting.GetTelegramSettings().ClientID,
+		"telegram.client_secret": system_setting.GetTelegramSettings().ClientSecret,
+	}
+	common.OptionMapRWMutex.RUnlock()
+	for key := range effective {
+		if proposed, changed := updates[key]; changed {
+			effective[key] = proposed
+		}
+	}
+	var err error
 	switch option.Key {
-	case "GitHubOAuthEnabled":
-		if option.Value == "true" && common.GitHubClientId == "" {
-			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "GitHub OAuth"})
-			return
+	case "GitHubOAuthEnabled", "discord.enabled", "oidc.enabled", "LinuxDOOAuthEnabled":
+		providers := map[string][2]string{
+			"GitHubOAuthEnabled":  {"GitHub OAuth", "GitHubClientId"},
+			"discord.enabled":     {"Discord OAuth", "discord.client_id"},
+			"oidc.enabled":        {"OIDC", "oidc.client_id"},
+			"LinuxDOOAuthEnabled": {"LinuxDO OAuth", "LinuxDOClientId"},
 		}
-	case "discord.enabled":
-		if option.Value == "true" && system_setting.GetDiscordSettings().ClientId == "" {
-			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "Discord OAuth"})
-			return
-		}
-	case "oidc.enabled":
-		if option.Value == "true" && system_setting.GetOIDCSettings().ClientId == "" {
-			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "OIDC"})
-			return
-		}
-	case "LinuxDOOAuthEnabled":
-		if option.Value == "true" && common.LinuxDOClientId == "" {
-			common.ApiErrorT(c, "Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": "LinuxDO OAuth"})
-			return
+		provider := providers[option.Key]
+		if value == "true" && effective[provider[1]] == "" {
+			return common.NewMessage("Cannot enable {{provider}}. Enter the {{provider}} Client ID and Client Secret first.", map[string]any{"provider": provider[0]})
 		}
 	case "EmailDomainRestrictionEnabled":
-		if option.Value == "true" && len(common.EmailDomainWhitelist) == 0 {
-			common.ApiErrorT(c, "Cannot enable the email domain restriction. Enter the allowed email domains first.")
-			return
+		if value == "true" && effective["EmailDomainWhitelist"] == "" {
+			return common.NewMessage("Cannot enable the email domain restriction. Enter the allowed email domains first.")
 		}
 	case "WeChatAuthEnabled":
-		if option.Value == "true" && common.WeChatServerAddress == "" {
-			common.ApiErrorT(c, "Cannot enable WeChat login. Enter the WeChat login settings first.")
-			return
+		if value == "true" && effective["WeChatServerAddress"] == "" {
+			return common.NewMessage("Cannot enable WeChat login. Enter the WeChat login settings first.")
 		}
 	case "TurnstileCheckEnabled":
-		if option.Value == "true" && common.TurnstileSiteKey == "" {
-			common.ApiErrorT(c, "Cannot enable Turnstile verification. Enter the Turnstile settings first.")
-			return
+		if value == "true" && effective["TurnstileSiteKey"] == "" {
+			return common.NewMessage("Cannot enable Turnstile verification. Enter the Turnstile settings first.")
 		}
 	case "TelegramOAuthEnabled":
-		if option.Value == "true" && !system_setting.GetTelegramSettings().IsConfigured() {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"code":    "TELEGRAM_OAUTH_NOT_CONFIGURED",
-				"message": "Telegram OAuth is not configured or enabled. Please contact your administrator.",
-			})
-			return
+		if value == "true" && (strings.TrimSpace(effective["telegram.client_id"]) == "" || strings.TrimSpace(effective["telegram.client_secret"]) == "") {
+			return errTelegramOptionNotConfigured
 		}
 	case "theme.frontend":
-		if option.Value != "default" {
-			common.ApiErrorT(c, "The Classic frontend has been removed. The theme can only be set to default")
-			return
+		if value != "default" {
+			return common.NewMessage("The Classic frontend has been removed. The theme can only be set to default")
 		}
 	case "GroupRatio":
-		err = ratio_setting.CheckGroupRatio(option.Value.(string))
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+		return ratio_setting.CheckGroupRatio(value)
 	case "gemini.safety_settings":
-		err = model_setting.ValidateGeminiSafetySettings(option.Value.(string))
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+		return model_setting.ValidateGeminiSafetySettings(value)
 	case "claude.default_max_tokens":
-		err = model_setting.ValidateClaudeDefaultMaxTokens(option.Value.(string))
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+		return model_setting.ValidateClaudeDefaultMaxTokens(value)
 	case operation_setting.ToolPriceOptionKey:
-		err = operation_setting.ValidateToolPricesJSON(option.Value.(string))
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	case "ImageRatio":
-		err = ratio_setting.UpdateImageRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorT(c, "Failed to set the image ratio: {{error}}", map[string]any{"error": err.Error()})
-			return
-		}
-	case "AudioRatio":
-		err = ratio_setting.UpdateAudioRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorT(c, "Failed to set the audio ratio: {{error}}", map[string]any{"error": err.Error()})
-			return
-		}
-	case "AudioCompletionRatio":
-		err = ratio_setting.UpdateAudioCompletionRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorT(c, "Failed to set the audio completion ratio: {{error}}", map[string]any{"error": err.Error()})
-			return
-		}
-	case "CreateCacheRatio":
-		err = ratio_setting.UpdateCreateCacheRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorT(c, "Failed to set the cache creation ratio: {{error}}", map[string]any{"error": err.Error()})
-			return
+		return operation_setting.ValidateToolPricesJSON(value)
+	case "ImageRatio", "AudioRatio", "AudioCompletionRatio", "CreateCacheRatio":
+		var ratios map[string]float64
+		if err = common.UnmarshalJsonStr(value, &ratios); err != nil {
+			messages := map[string]string{
+				"ImageRatio":           "Failed to set the image ratio: {{error}}",
+				"AudioRatio":           "Failed to set the audio ratio: {{error}}",
+				"AudioCompletionRatio": "Failed to set the audio completion ratio: {{error}}",
+				"CreateCacheRatio":     "Failed to set the cache creation ratio: {{error}}",
+			}
+			return common.NewMessage(messages[option.Key], map[string]any{"error": err.Error()})
 		}
 	case "ModelRequestRateLimitGroup":
-		err = setting.CheckModelRequestRateLimitGroup(option.Value.(string))
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	case "AutomaticDisableStatusCodes":
-		_, err = operation_setting.ParseHTTPStatusCodeRanges(option.Value.(string))
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	case "AutomaticRetryStatusCodes":
-		_, err = operation_setting.ParseHTTPStatusCodeRanges(option.Value.(string))
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+		return setting.CheckModelRequestRateLimitGroup(value)
+	case "AutomaticDisableStatusCodes", "AutomaticRetryStatusCodes":
+		_, err = operation_setting.ParseHTTPStatusCodeRanges(value)
+		return err
 	case "billing_setting.billing_expr":
 		expressions := make(map[string]string)
-		if err = common.UnmarshalJsonStr(option.Value.(string), &expressions); err != nil {
-			common.ApiErrorT(c, "Billing expressions must be a JSON object mapping models to expressions: {{error}}", map[string]any{"error": err.Error()})
-			return
+		if err = common.UnmarshalJsonStr(value, &expressions); err != nil {
+			return common.NewMessage("Billing expressions must be a JSON object mapping models to expressions: {{error}}", map[string]any{"error": err.Error()})
 		}
 		models := make([]string, 0, len(expressions))
 		for modelName := range expressions {
@@ -370,59 +317,128 @@ func UpdateOption(c *gin.Context) {
 					variants[plugin] = expression
 				}
 			}
-			err = model.ValidateModelPricing(modelName, model.PricingValues{
+			if err = model.ValidateModelPricing(modelName, model.PricingValues{
 				"billing_setting.billing_expr":          expressions[modelName],
 				billing_setting.PluginBillingExprOption: variants,
-			})
-			if err != nil {
-				common.ApiErrorT(c, "Invalid billing expression for model {{model}}: {{error}}", map[string]any{"model": modelName, "error": err.Error()})
-				return
+			}); err != nil {
+				return common.NewMessage("Invalid billing expression for model {{model}}: {{error}}", map[string]any{"model": modelName, "error": err.Error()})
 			}
 		}
 	case billing_setting.PluginBillingExprOption:
 		var expressions map[string]string
-		if err = common.UnmarshalJsonStr(option.Value.(string), &expressions); err != nil || expressions == nil {
-			common.ApiErrorMsg(c, "plugin billing expressions must be a JSON object")
-			return
+		if err = common.UnmarshalJsonStr(value, &expressions); err != nil || expressions == nil {
+			return errors.New("plugin billing expressions must be a JSON object")
 		}
 		for key, expression := range expressions {
 			plugin, name, valid := billing_setting.SplitPluginBillingExprKey(key)
 			if !valid {
-				common.ApiErrorMsg(c, "invalid plugin billing expression key: "+key)
-				return
+				return fmt.Errorf("invalid plugin billing expression key: %s", key)
 			}
 			if err = model.ValidateModelPricing(name, model.PricingValues{
 				billing_setting.PluginBillingExprOption: map[string]any{plugin: expression},
 			}); err != nil {
-				common.ApiError(c, err)
-				return
+				return err
 			}
 		}
 	case "console_setting.api_info":
-		err = console_setting.ValidateConsoleSettings(option.Value.(string), "ApiInfo")
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+		return console_setting.ValidateConsoleSettings(value, "ApiInfo")
 	case "console_setting.announcements":
-		err = console_setting.ValidateConsoleSettings(option.Value.(string), "Announcements")
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+		return console_setting.ValidateConsoleSettings(value, "Announcements")
 	case "console_setting.faq":
-		err = console_setting.ValidateConsoleSettings(option.Value.(string), "FAQ")
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
+		return console_setting.ValidateConsoleSettings(value, "FAQ")
 	case "console_setting.uptime_kuma_groups":
-		err = console_setting.ValidateConsoleSettings(option.Value.(string), "UptimeKumaGroups")
-		if err != nil {
-			common.ApiError(c, err)
+		return console_setting.ValidateConsoleSettings(value, "UptimeKumaGroups")
+	}
+	return nil
+}
+
+// UpdateOptionsBatch shares the existing option route's root/session/PAT guards.
+// It never dispatches specialized keys through the ordinary bulk store.
+func UpdateOptionsBatch(c *gin.Context) {
+	var request struct {
+		Options []OptionUpdateRequest `json:"options"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || len(request.Options) == 0 || len(request.Options) > 100 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	values := make(map[string]string, len(request.Options))
+	for i := range request.Options {
+		option := &request.Options[i]
+		if strings.TrimSpace(option.Key) == "" || len(option.Key) > 191 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"), gin.H{"key": option.Key})
 			return
 		}
+		if _, duplicate := values[option.Key]; duplicate {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"), gin.H{"key": option.Key})
+			return
+		}
+		switch option.Value.(type) {
+		case string, bool, float64:
+		default:
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"), gin.H{"key": option.Key})
+			return
+		}
+		if model.IsPasskeyDomainOption(option.Key) || model.IsModelPricingOption(option.Key) || model.IsRequestPolicyOption(option.Key) {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("This setting must be saved through its dedicated settings API"), gin.H{"key": option.Key})
+			return
+		}
+		option.Value = common.Interface2String(option.Value)
+		values[option.Key] = option.Value.(string)
 	}
+	options := make([]model.Option, 0, len(request.Options))
+	keys := make([]string, 0, len(request.Options))
+	for i := range request.Options {
+		option := &request.Options[i]
+		if err := validateOptionUpdate(option, values); err != nil {
+			fields := gin.H{"key": option.Key}
+			if errors.Is(err, errTelegramOptionNotConfigured) {
+				fields["code"] = "TELEGRAM_OAUTH_NOT_CONFIGURED"
+			}
+			common.ApiErrorStatus(c, http.StatusOK, err, fields)
+			return
+		}
+		options = append(options, model.Option{Key: option.Key, Value: option.Value.(string)})
+		keys = append(keys, option.Key)
+	}
+	// Preserve the existing translated audit action; key is display text and
+	// keys is structured context. Neither includes any setting value.
+	draft := buildAuditDraft(snapshotAuditActor(c), "option.update", map[string]any{
+		"key": strings.Join(keys, ", "), "keys": keys,
+	})
+	if err := model.UpdateOrdinaryOptionsBatch(c.Request.Context(), options, draft); err != nil {
+		fields := gin.H{}
+		var optionError *model.OptionUpdateError
+		if errors.As(err, &optionError) {
+			fields["key"] = optionError.Key
+		}
+		// Driver errors, including a failed commit, can contain secret values.
+		var message *common.Message
+		if !errors.As(err, &message) {
+			err = common.NewMessage("Failed to update settings")
+		}
+		common.ApiErrorStatus(c, http.StatusOK, err, fields)
+		return
+	}
+	markAuditLogged(c)
+	common.ApiSuccess(c, nil)
+}
+
+func UpdateOption(c *gin.Context) {
+	var option OptionUpdateRequest
+	if err := common.DecodeJson(c.Request.Body, &option); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if err := validateOptionUpdate(&option, nil); err != nil {
+		fields := gin.H{}
+		if errors.Is(err, errTelegramOptionNotConfigured) {
+			fields["code"] = "TELEGRAM_OAUTH_NOT_CONFIGURED"
+		}
+		common.ApiErrorStatus(c, http.StatusOK, err, fields)
+		return
+	}
+	var err error
 	if model.IsPasskeyDomainOption(option.Key) {
 		change, updateErr := model.UpdatePasskeyDomainOptions(map[string]string{option.Key: option.Value.(string)}, false, "")
 		if updateErr != nil {

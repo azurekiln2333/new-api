@@ -292,8 +292,11 @@ func Register(c *gin.Context) {
 		common.ApiErrorT(c, "Username already exists or has been deleted")
 		return
 	}
-	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	inviterId := 0
+	if common.RegisterAffiliateLinkEnabled && user.AffCode != "" {
+		// Referral attribution is independent of the required single-use code.
+		inviterId, _ = model.GetUserIdByAffCode(user.AffCode)
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -373,8 +376,13 @@ func GetAllUsers(c *gin.Context) {
 		return
 	}
 
+	items, _, err := model.BuildUserListItems(c.Request.Context(), users)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(items)
 
 	common.ApiSuccess(c, pageInfo)
 	return
@@ -403,8 +411,13 @@ func SearchUsers(c *gin.Context) {
 		return
 	}
 
+	items, _, err := model.BuildUserListItems(c.Request.Context(), users)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
 	return
 }

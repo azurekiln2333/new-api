@@ -291,52 +291,58 @@ export function ChannelsTable() {
       p: pagination.pageIndex + 1,
       page_size: pagination.pageSize,
     }),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (shouldSearch) {
         return requireServerSuccess(
-          await searchChannels({
-            keyword: globalFilter,
-            model: modelFilter,
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
-            status:
-              statusFilter.length > 0 && !statusFilter.includes('all')
-                ? statusFilter[0]
-                : undefined,
-            type:
-              typeFilter.length > 0 && !typeFilter.includes('all')
-                ? Number(typeFilter[0])
-                : undefined,
-            tag_mode: enableTagMode,
-            id_sort: idSort,
-            ...sortParams,
-            p: pagination.pageIndex + 1,
-            page_size: pagination.pageSize,
-          })
+          await searchChannels(
+            {
+              keyword: globalFilter,
+              model: modelFilter,
+              group:
+                groupFilter.length > 0 && !groupFilter.includes('all')
+                  ? groupFilter[0]
+                  : undefined,
+              status:
+                statusFilter.length > 0 && !statusFilter.includes('all')
+                  ? statusFilter[0]
+                  : undefined,
+              type:
+                typeFilter.length > 0 && !typeFilter.includes('all')
+                  ? Number(typeFilter[0])
+                  : undefined,
+              tag_mode: enableTagMode,
+              id_sort: idSort,
+              ...sortParams,
+              p: pagination.pageIndex + 1,
+              page_size: pagination.pageSize,
+            },
+            signal
+          )
         )
       } else {
         return requireServerSuccess(
-          await getChannels({
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
-            status:
-              statusFilter.length > 0 && !statusFilter.includes('all')
-                ? statusFilter[0]
-                : undefined,
-            type:
-              typeFilter.length > 0 && !typeFilter.includes('all')
-                ? Number(typeFilter[0])
-                : undefined,
-            tag_mode: enableTagMode,
-            id_sort: idSort,
-            ...sortParams,
-            p: pagination.pageIndex + 1,
-            page_size: pagination.pageSize,
-          })
+          await getChannels(
+            {
+              group:
+                groupFilter.length > 0 && !groupFilter.includes('all')
+                  ? groupFilter[0]
+                  : undefined,
+              status:
+                statusFilter.length > 0 && !statusFilter.includes('all')
+                  ? statusFilter[0]
+                  : undefined,
+              type:
+                typeFilter.length > 0 && !typeFilter.includes('all')
+                  ? Number(typeFilter[0])
+                  : undefined,
+              tag_mode: enableTagMode,
+              id_sort: idSort,
+              ...sortParams,
+              p: pagination.pageIndex + 1,
+              page_size: pagination.pageSize,
+            },
+            signal
+          )
         )
       }
     },
@@ -445,7 +451,11 @@ export function ChannelsTable() {
   const drag = useChannelPriorityDrag({
     items: channels,
     desc: sortDesc,
-    enabled: reorderActive && !priorityOrder.saving && !isFetching,
+    // A background refetch keeps the current list valid, and the gesture already
+    // snapshots its items and is cancelled by the scope when the visible set or
+    // priorities actually change. Only a first load with no data yet (or an
+    // in-flight save) must block reordering.
+    enabled: reorderActive && !priorityOrder.saving && !isLoading,
     scope: reorderScope,
     begin: priorityOrder.begin,
     select: priorityOrder.select,
@@ -457,7 +467,7 @@ export function ChannelsTable() {
   if (sortField !== 'priority') dragReason = 'sort'
   else if (enableTagMode) dragReason = 'tag'
   else if (!hasPermission(user, 'channel', 'write')) dragReason = 'permission'
-  else if (priorityOrder.saving || isFetching) dragReason = 'busy'
+  else if (priorityOrder.saving || isLoading) dragReason = 'busy'
 
   const dragControls = useMemo(
     () => ({ reason: dragReason, start: drag.start, keyDown: drag.keyDown }),

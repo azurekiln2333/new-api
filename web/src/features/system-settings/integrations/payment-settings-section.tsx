@@ -758,9 +758,7 @@ export function PaymentSettingsSection({
       return
     }
 
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
+    await updateOption.mutateAsync(updates)
 
     if (!hasWaffoPancakeChanges) {
       return

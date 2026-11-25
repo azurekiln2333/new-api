@@ -54,6 +54,9 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		// Rejections before channel selection still need the parsed model in
+		// their error log. No channel identity exists until selection succeeds.
+		common.SetContextKey(c, constant.ContextKeyOriginalModel, modelRequest.Model)
 		// A recognized goal-triggered turn becomes a channel constraint, so the
 		// same eligibility rule applies to the initial selection and to every
 		// retry, and a pinned channel that refuses it is rejected locally.

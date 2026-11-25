@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -163,9 +164,11 @@ func saveManagedKeyStatus(channelID int, change func(stored *model.Channel) erro
 	}
 	model.BumpSyncTopic(model.SyncTopicChannels)
 	if statusChanged {
-		return model.UpdateAbilityStatus(channelID, enabled)
+		if err := model.UpdateAbilityStatus(channelID, enabled); err != nil {
+			return err
+		}
 	}
-	return nil
+	return model.RefreshChannelRouting(channelID)
 }
 
 func applyChannelStatusFilter(query *gorm.DB, statusFilter int) *gorm.DB {
@@ -221,6 +224,151 @@ func GetChannelDefaultBaseURLs(c *gin.Context) {
 	common.ApiSuccess(c, baseURLs)
 }
 
+// channelOption is the lightweight channel projection a selector needs: enough
+// to show and filter a channel without loading its credential, settings or
+// allocation rows.
+type channelOption struct {
+	Id     int      `json:"id"`
+	Name   string   `json:"name"`
+	Models []string `json:"models"`
+}
+
+// GetChannelOptions returns a bounded page of id, name and models for channel
+// pickers, ordered by id desc. It projects only those three columns and never a
+// key, setting or allocation row, so a dropdown does not page the full channel
+// listing.
+//
+// Two independent bounds keep the response bounded: the page itself
+// (`page_size`, capped) and the optional `ids` hydration list (deduplicated and
+// capped), so neither a large page request nor a long id list can widen the
+// query. `keyword` narrows by id/name/models for a searchable dropdown.
+func GetChannelOptions(c *gin.Context) {
+	const (
+		defaultPageSize = 30
+		maxPageSize     = 100
+	)
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(defaultPageSize)))
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	pageSize = min(pageSize, maxPageSize)
+	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
+	if page < 1 {
+		page = 1
+	}
+	// Clamp the offset arithmetic itself. A huge `p` would otherwise overflow the
+	// int multiplication and produce a negative OFFSET, which some databases
+	// reject and others read as "start of the table".
+	const maxOffset = math.MaxInt32
+	if page-1 > maxOffset/pageSize {
+		page = maxOffset/pageSize + 1
+	}
+
+	// The hydration list is bounded independently of the page: an arbitrarily long
+	// `ids` value must not turn this endpoint into an unbounded IN query.
+	const maxHydratedIds = 100
+	selectedIds := make([]int, 0, maxHydratedIds)
+	seenSelected := make(map[int]struct{}, maxHydratedIds)
+	for _, raw := range strings.Split(c.Query("ids"), ",") {
+		if len(selectedIds) >= maxHydratedIds {
+			break
+		}
+		id, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || id <= 0 {
+			continue
+		}
+		if _, duplicate := seenSelected[id]; duplicate {
+			continue
+		}
+		seenSelected[id] = struct{}{}
+		selectedIds = append(selectedIds, id)
+	}
+
+	type optionRow struct {
+		Id     int    `gorm:"column:id"`
+		Name   string `gorm:"column:name"`
+		Models string `gorm:"column:models"`
+	}
+	rows := make([]optionRow, 0)
+	optionQuery := model.DB.WithContext(c.Request.Context()).
+		Model(&model.Channel{}).
+		Select("id, name, models")
+	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+		// id/name/models is the same searchable surface the console dropdown
+		// exposes; key and base_url stay out of a read-only projection.
+		optionQuery = optionQuery.Where("id = ? OR name LIKE ? OR models LIKE ?",
+			common.String2Int(keyword), "%"+keyword+"%", "%"+keyword+"%")
+	}
+	var matched int64
+	if err := optionQuery.Session(&gorm.Session{}).Count(&matched).Error; err != nil {
+		common.SysError(common.LogText("failed to count channel options: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to fetch channels. Please try again later")
+		return
+	}
+	if err := optionQuery.Order("id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
+		common.SysError(common.LogText("failed to list channel options: %s", err.Error()))
+		common.ApiErrorT(c, "Failed to fetch channels. Please try again later")
+		return
+	}
+	// has_more describes the page window only. Hydrated selected ids are appended
+	// afterwards and must never make a non-final page look like the last one.
+	pageRows := len(rows)
+	hasMore := int64((page-1)*pageSize+pageRows) < matched
+
+	// Hydrate the explicitly requested ids that the page did not cover so a
+	// selected channel outside the window still resolves, still bounded by the
+	// requested id list and the same three-column projection.
+	if len(selectedIds) > 0 {
+		seen := make(map[int]struct{}, len(rows))
+		for _, row := range rows {
+			seen[row.Id] = struct{}{}
+		}
+		missing := make([]int, 0, len(selectedIds))
+		for _, id := range selectedIds {
+			if _, ok := seen[id]; !ok {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) > 0 {
+			var extra []optionRow
+			if err := model.DB.WithContext(c.Request.Context()).
+				Model(&model.Channel{}).
+				Select("id, name, models").
+				Where("id IN ?", missing).
+				Order("id desc").
+				Limit(maxHydratedIds).
+				Find(&extra).Error; err != nil {
+				common.SysError(common.LogText("failed to list selected channel options: %s", err.Error()))
+				common.ApiErrorT(c, "Failed to fetch channels. Please try again later")
+				return
+			}
+			rows = append(rows, extra...)
+		}
+	}
+
+	items := make([]channelOption, 0, len(rows))
+	for _, row := range rows {
+		models := make([]string, 0)
+		if row.Models != "" {
+			for modelName := range strings.SplitSeq(row.Models, ",") {
+				if modelName = strings.TrimSpace(modelName); modelName != "" {
+					models = append(models, modelName)
+				}
+			}
+		}
+		items = append(items, channelOption{Id: row.Id, Name: row.Name, Models: models})
+	}
+	common.ApiSuccess(c, gin.H{
+		"items":     items,
+		"page":      page,
+		"page_size": pageSize,
+		"total":     matched,
+		// has_more lets a searchable dropdown keep fetching without guessing
+		// from a short page.
+		"has_more": hasMore,
+	})
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
@@ -241,15 +389,17 @@ func GetAllChannels(c *gin.Context) {
 	}
 
 	var total int64
+	ctx := c.Request.Context()
 
 	if enableTagMode {
-		tags, err := model.GetPaginatedChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+		tags, err := model.GetPaginatedChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter).WithContext(ctx), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 		if err != nil {
 			common.SysError(common.LogText("failed to get paginated tags: %s", err.Error()))
 			common.ApiErrorT(c, "Failed to fetch tags. Please try again later")
 			return
 		}
-		total, err = model.CountChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter))
+		requestedTags := make([]string, 0, len(tags))
+		total, err = model.CountChannelTags(buildChannelListQuery(groupFilter, statusFilter, typeFilter).WithContext(ctx))
 		if err != nil {
 			common.SysError(common.LogText("failed to count tags: %s", err.Error()))
 			common.ApiErrorT(c, "Failed to count tags. Please try again later")
@@ -259,53 +409,61 @@ func GetAllChannels(c *gin.Context) {
 			if tag == nil || *tag == "" {
 				continue
 			}
-			var tagChannels []*model.Channel
-			err := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter).Where("tag = ?", *tag)).
-				Omit("key").
-				Find(&tagChannels).Error
-			if err != nil {
+			requestedTags = append(requestedTags, *tag)
+		}
+		// One coalesced read for every tag on this page. Tag mode still returns
+		// each group complete (never truncated), but the number of queries no
+		// longer grows with the number of tags.
+		if len(requestedTags) > 0 {
+			tagQuery := buildChannelListQuery(groupFilter, statusFilter, typeFilter).
+				WithContext(model.WithBatchedChannelKeyEntries(ctx)).
+				Where("tag IN ?", requestedTags)
+			var fetched []*model.Channel
+			if err := sortOptions.Apply(tagQuery).Omit("key").Find(&fetched).Error; err != nil {
 				common.SysError(common.LogText("failed to get channels by tag: %s", err.Error()))
 				common.ApiErrorT(c, "Failed to fetch channels with this tag. Please try again later")
 				return
 			}
-			channelData = append(channelData, tagChannels...)
+			if err := model.ProjectChannelKeyEntries(tagQuery, ctx, fetched, true); err != nil {
+				common.SysError(common.LogText("failed to project channel allocations: %s", err.Error()))
+				common.ApiErrorT(c, "Failed to fetch channels with this tag. Please try again later")
+				return
+			}
+			// Regroup in tag-page order so the response keeps the same grouped
+			// ordering the per-tag reads produced.
+			byTag := make(map[string][]*model.Channel, len(requestedTags))
+			for _, channel := range fetched {
+				if channel.Tag == nil {
+					continue
+				}
+				byTag[*channel.Tag] = append(byTag[*channel.Tag], channel)
+			}
+			for _, tag := range requestedTags {
+				channelData = append(channelData, byTag[tag]...)
+			}
 		}
 	} else {
-		if err := buildChannelListQuery(groupFilter, statusFilter, typeFilter).Count(&total).Error; err != nil {
-			common.SysError(common.LogText("failed to count channels: %s", err.Error()))
-			common.ApiErrorT(c, "Failed to count channels. Please try again later")
-			return
-		}
-
-		err := sortOptions.Apply(buildChannelListQuery(groupFilter, statusFilter, typeFilter)).
-			Limit(pageInfo.GetPageSize()).
-			Offset(pageInfo.GetStartIdx()).
-			Omit("key").
-			Find(&channelData).Error
+		pageItems, pageTotal, err := model.ListChannelsPage(ctx, buildChannelListQuery(groupFilter, statusFilter, typeFilter), pageInfo.GetStartIdx(), pageInfo.GetPageSize(), true, sortOptions)
 		if err != nil {
 			common.SysError(common.LogText("failed to get channels: %s", err.Error()))
 			common.ApiErrorT(c, "Failed to fetch channels. Please try again later")
 			return
 		}
+		total = pageTotal
+		channelData = pageItems
 	}
 
 	for _, datum := range channelData {
 		clearChannelInfo(datum)
 	}
 
-	countQuery := buildChannelListQuery(groupFilter, statusFilter, -1)
-	var results []struct {
-		Type  int64
-		Count int64
-	}
-	if err := countQuery.Select("type, count(*) as count").Group("type").Find(&results).Error; err != nil {
+	// type_counts describes the same filter the page was counted under, so an
+	// enabled/disabled/type selection reports matching totals, not the whole table.
+	typeCounts, err := model.CountChannelTypesByQuery(buildChannelListQuery(groupFilter, statusFilter, -1).WithContext(ctx))
+	if err != nil {
 		common.SysError(common.LogText("failed to count channel types: %s", err.Error()))
 		common.ApiErrorT(c, "Failed to count channel types. Please try again later")
 		return
-	}
-	typeCounts := make(map[int64]int64)
-	for _, r := range results {
-		typeCounts[r.Type] = r.Count
 	}
 	common.ApiSuccess(c, gin.H{
 		"items":       channelData,
@@ -402,71 +560,13 @@ func SearchChannels(c *gin.Context) {
 	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
 	sortOptions := model.NewChannelSortOptions(c.Query("sort_by"), c.Query("sort_order"), idSort)
 	enableTagMode, _ := strconv.ParseBool(c.Query("tag_mode"))
-	channelData := make([]*model.Channel, 0)
-	if enableTagMode {
-		tags, err := model.SearchTags(keyword, group, modelKeyword, idSort)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		for _, tag := range tags {
-			if tag != nil && *tag != "" {
-				var tagChannels []*model.Channel
-				err := sortOptions.Apply(buildChannelListQuery(group, -1, -1).Where("tag = ?", *tag)).
-					Omit("key").
-					Find(&tagChannels).Error
-				if err != nil {
-					common.ApiError(c, err)
-					return
-				}
-				channelData = append(channelData, tagChannels...)
-			}
-		}
-	} else {
-		channels, err := model.SearchChannels(keyword, group, modelKeyword, idSort, sortOptions)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		channelData = channels
-	}
-
-	if statusFilter == common.ChannelStatusEnabled || statusFilter == 0 {
-		filtered := make([]*model.Channel, 0, len(channelData))
-		for _, ch := range channelData {
-			if statusFilter == common.ChannelStatusEnabled && ch.Status != common.ChannelStatusEnabled {
-				continue
-			}
-			if statusFilter == 0 && ch.Status == common.ChannelStatusEnabled {
-				continue
-			}
-			filtered = append(filtered, ch)
-		}
-		channelData = filtered
-	}
-
-	// calculate type counts for search results
-	typeCounts := make(map[int64]int64)
-	for _, channel := range channelData {
-		typeCounts[int64(channel.Type)]++
-	}
-
+	ctx := c.Request.Context()
 	typeParam := c.Query("type")
 	typeFilter := -1
 	if typeParam != "" {
 		if tp, err := strconv.Atoi(typeParam); err == nil {
 			typeFilter = tp
 		}
-	}
-
-	if typeFilter >= 0 {
-		filtered := make([]*model.Channel, 0, len(channelData))
-		for _, ch := range channelData {
-			if ch.Type == typeFilter {
-				filtered = append(filtered, ch)
-			}
-		}
-		channelData = filtered
 	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
@@ -477,12 +577,58 @@ func SearchChannels(c *gin.Context) {
 	if pageSize <= 0 {
 		pageSize = 20
 	}
+	// Cap the page before the offset math. Both listing branches page in SQL, so an
+	// unbounded page_size would let one request read the whole matching set; the
+	// cap matches the console's other bounded listing endpoint (/options).
+	const maxChannelPageSize = 100
+	pageSize = min(pageSize, maxChannelPageSize)
+	// Clamp the offset arithmetic so a huge page cannot overflow into a negative
+	// or wrapped OFFSET.
+	const maxOffset = math.MaxInt32
+	if page-1 > maxOffset/pageSize {
+		page = maxOffset/pageSize + 1
+	}
+	startIdx := (page - 1) * pageSize
 
-	total := len(channelData)
-	startIdx := min((page-1)*pageSize, total)
-	endIdx := min(startIdx+pageSize, total)
-
-	pagedData := channelData[startIdx:endIdx]
+	var total int64
+	var pagedData []*model.Channel
+	var typeCounts map[int64]int64
+	if enableTagMode {
+		// Tag mode keeps its contract: total and type_counts describe the expanded
+		// set after the status filter and before type narrowing, and only the
+		// requested page is read. The expansion, the counts and the page are all
+		// expressed as SQL over the same tag subquery, so no branch loads every
+		// matching channel row.
+		var err error
+		typeCounts, err = model.CountChannelTypesByQuery(model.ChannelTagSearchQuery(ctx, keyword, group, modelKeyword, statusFilter, -1))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		pageItems, pageTotal, err := model.ListChannelsPage(ctx, model.ChannelTagSearchQuery(ctx, keyword, group, modelKeyword, statusFilter, typeFilter), startIdx, pageSize, true, sortOptions)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		total = pageTotal
+		pagedData = pageItems
+	} else {
+		// The non-tag search filters, counts and pages the whole match set in SQL,
+		// so the page size never depends on loading every matching channel first.
+		var err error
+		typeCounts, err = model.CountChannelTypesByQuery(model.ChannelSearchQueryFiltered(ctx, keyword, group, modelKeyword, statusFilter, -1))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		pageItems, pageTotal, err := model.ListChannelsPage(ctx, model.ChannelSearchQueryFiltered(ctx, keyword, group, modelKeyword, statusFilter, typeFilter), (page-1)*pageSize, pageSize, true, sortOptions)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		total = pageTotal
+		pagedData = pageItems
+	}
 
 	for _, datum := range pagedData {
 		clearChannelInfo(datum)
@@ -937,20 +1083,28 @@ func AddChannel(c *gin.Context) {
 		channels = append(channels, *addChannelRequest.Channel)
 		channelInputIndices = append(channelInputIndices, nil)
 	}
-	err = model.BatchInsertChannels(channels)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	createAudit := map[string]any{
+	actor := snapshotChannelAuditActor(c)
+	createAuditParams := map[string]any{
 		"name":  addChannelRequest.Channel.Name,
 		"type":  addChannelRequest.Channel.Type,
 		"count": len(channels),
 	}
 	if baseURLFromPluginDefault {
-		createAudit["base_url_source"] = "plugin_default"
+		createAuditParams["base_url_source"] = "plugin_default"
 	}
-	recordManageAudit(c, "channel.create", createAudit)
+	// The audit obligation commits with the rows: a created channel can never be
+	// missing its audit event, and no post-commit write to the log database runs
+	// on this path.
+	err = model.BatchInsertChannelsWithAudit(channels, model.BatchChannelPublication{
+		Audit: actor.draft("channel.create", createAuditParams, true),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	// The audit event is durable now, so the middleware fallback must not add a
+	// second record for this request.
+	markAuditLogged(c)
 	ids := make([]int, len(channels))
 	results := make([]gin.H, 0, len(inputIndices))
 	for i, channel := range channels {
@@ -992,7 +1146,7 @@ func DeleteChannel(c *gin.Context) {
 	if !channelLookupFailed {
 		service.RevokeDeletedChannelCredentials([]*model.Channel{existing})
 	}
-	model.InitChannelCache()
+	model.CacheRemoveChannel(id)
 	if channelLookupFailed {
 		service.ResetProxyClientCache()
 	} else {
@@ -1244,8 +1398,6 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	baseURLFromPluginDefault := channel.Type == constant.ChannelTypeTaskPlugin &&
-		(channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "")
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
@@ -1447,13 +1599,19 @@ func UpdateChannel(c *gin.Context) {
 	}
 	// Merge only the requested key/mode changes into the current locked state;
 	// a configuration edit must not put back a stale scope, binding or status.
+	// The configuration edit and the key edit commit together with the ability
+	// rows and the audit obligation, so a full update is one transaction.
 	var keyBefore, keyAfter string
+	// auditBaseline is the locked row as committed before this edit; Apply fills it
+	// from the transaction so the audit never diffs against a pre-transaction read.
+	var auditBaseline *model.Channel
 	modeChanged := channel.MultiKeyMode != nil && *channel.MultiKeyMode != ""
 	toMultiKey := channel.ToMultiKey != nil && *channel.ToMultiKey
-	if keyChanged || modeChanged || toMultiKey {
-		pollingLock := model.GetChannelPollingLock(channel.Id)
-		pollingLock.Lock()
-		stored, err := model.UpdateChannelLocked(channel.Id, func(stored *model.Channel) error {
+	// updateDraft records the change set the same way regardless of which fields
+	// the request supplied; the committed row supplies the final values in Prepare.
+	auditActor := snapshotChannelAuditActor(c)
+	edit := model.ChannelConfigEdit{
+		EditKeys: func(tx *gorm.DB, stored *model.Channel) error {
 			if channel.ExpectedRevision != nil && *channel.ExpectedRevision != stored.ChannelInfo.KeyEntryRevision {
 				return model.ErrChannelKeyEntryRevisionStale
 			}
@@ -1487,52 +1645,44 @@ func UpdateChannel(c *gin.Context) {
 				}
 			}
 			return nil
-		})
-		pollingLock.Unlock()
-		if err != nil {
+		},
+		Apply: func(baseline, stored *model.Channel) error {
+			applyChannelConfigEdit(&channel, stored)
+			// The audit baseline is the locked row before this edit, so a field
+			// another writer changed in the meantime is not misreported as ours.
+			auditBaseline = baseline
+			return nil
+		},
+		Prepare: func(stored *model.Channel) (model.AuditEventDraft, error) {
+			keyAfter = stored.Key
+			// changed_fields is derived from the committed row, so it reports what
+			// was actually saved rather than what the request intended. Returning
+			// the draft is what carries it into the enqueue.
+			return auditActor.draft("channel.update", updateAuditParams(stored, auditBaseline), true), nil
+		},
+	}
+	if !keyChanged && !modeChanged && !toMultiKey {
+		edit.EditKeys = nil
+	}
+	updated, err := model.UpdateChannelConfigAtomic(channel.Id, edit)
+	if err != nil {
+		if keyChanged || modeChanged || toMultiKey {
 			channelKeyManageError(c, err)
 			return
 		}
-		keyAfter = stored.Key
-	}
-	err = channel.UpdateConfig()
-	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	model.InitChannelCache()
+	channel.Channel = *updated
 	if proxyChanged {
 		service.InvalidateProxyClient(originProxy)
 	}
 	if keyChanged {
 		service.RevokeRemovedChannelCredentials(originChannel, keyBefore, keyAfter)
 	}
-	// 记录变更的字段名（语言无关的字段标识），密钥仅记录"已更换"绝不记录内容。
-	changedFields := make([]string, 0)
-	if channel.Models != originChannel.Models {
-		changedFields = append(changedFields, "models")
-	}
-	if channel.Group != originChannel.Group {
-		changedFields = append(changedFields, "group")
-	}
-	if channel.Type != originChannel.Type {
-		changedFields = append(changedFields, "type")
-	}
-	if !equalStringPtr(channel.BaseURL, originChannel.BaseURL) {
-		changedFields = append(changedFields, "base_url")
-	}
-	if keyChanged {
-		changedFields = append(changedFields, "key")
-	}
-	updateAudit := map[string]any{
-		"id":             channel.Id,
-		"name":           channel.Name,
-		"changed_fields": changedFields,
-	}
-	if baseURLFromPluginDefault {
-		updateAudit["base_url_source"] = "plugin_default"
-	}
-	recordManageAudit(c, "channel.update", updateAudit)
+	// The audit event is durable in the same transaction as the edit, so the
+	// middleware fallback must not add a second record for this request.
+	markAuditLogged(c)
 	channel.Key = ""
 	clearChannelInfo(&channel.Channel)
 	c.JSON(http.StatusOK, gin.H{
@@ -1541,6 +1691,83 @@ func UpdateChannel(c *gin.Context) {
 		"data":    channel,
 	})
 	return
+}
+
+// applyChannelConfigEdit merges the requested configuration onto the freshly read
+// row. A field the request left empty keeps the stored value, matching the
+// partial-update semantics of an omitted JSON field.
+func applyChannelConfigEdit(request *PatchChannel, stored *model.Channel) {
+	candidate := request.Channel
+	if candidate.Name != "" {
+		stored.Name = candidate.Name
+	}
+	if candidate.Models != "" {
+		stored.Models = candidate.Models
+	}
+	if candidate.Group != "" {
+		stored.Group = candidate.Group
+	}
+	if candidate.Type != 0 {
+		stored.Type = candidate.Type
+	}
+	if candidate.BaseURL != nil {
+		stored.BaseURL = candidate.BaseURL
+	}
+	if candidate.Other != "" {
+		stored.Other = candidate.Other
+	}
+	if candidate.OtherSettings != "" {
+		stored.OtherSettings = candidate.OtherSettings
+	}
+	if candidate.Setting != nil {
+		stored.Setting = candidate.Setting
+	}
+	if candidate.Priority != nil {
+		stored.Priority = candidate.Priority
+	}
+	if candidate.Weight != nil {
+		stored.Weight = candidate.Weight
+	}
+	if candidate.Tag != nil {
+		stored.Tag = candidate.Tag
+	}
+	if candidate.TestModel != nil {
+		stored.TestModel = candidate.TestModel
+	}
+	if candidate.AutoBan != nil {
+		stored.AutoBan = candidate.AutoBan
+	}
+	// The key-indexed scope and binding maps belong to the locked row: EditKeys has
+	// already reconciled them against the authoritative allocation rows in this
+	// transaction. Overwriting them from the pre-transaction origin snapshot would
+	// make UpdateAbilities publish scopes that no longer match those rows.
+}
+
+// updateAuditParams derives the audit params from the committed row, so the
+// recorded changed_fields describe what was actually saved. baseline is the
+// locked row as read inside the transaction, before the edit was applied.
+func updateAuditParams(stored, baseline *model.Channel) map[string]any {
+	changedFields := make([]string, 0)
+	if stored.Models != baseline.Models {
+		changedFields = append(changedFields, "models")
+	}
+	if stored.Group != baseline.Group {
+		changedFields = append(changedFields, "group")
+	}
+	if stored.Type != baseline.Type {
+		changedFields = append(changedFields, "type")
+	}
+	if !equalStringPtr(stored.BaseURL, baseline.BaseURL) {
+		changedFields = append(changedFields, "base_url")
+	}
+	if stored.Key != baseline.Key {
+		changedFields = append(changedFields, "key")
+	}
+	return map[string]any{
+		"id":             stored.Id,
+		"name":           stored.Name,
+		"changed_fields": changedFields,
+	}
 }
 
 func UpdateChannelStatus(c *gin.Context) {
@@ -1554,12 +1781,17 @@ func UpdateChannelStatus(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	changed := model.UpdateChannelStatus(id, "", req.Status, "manual operation")
-	if changed {
-		model.InitChannelCache()
-		if req.Status != common.ChannelStatusEnabled {
-			closeActiveChannelWebSockets([]int{id})
-		}
+	// One transaction commits the status, the ability rows and the sync
+	// obligation, then publishes this channel locally. The former
+	// UpdateChannelStatus + InitChannelCache pair reloaded the whole channel table
+	// before the response returned.
+	changed, err := model.UpdateChannelStatusAtomic(id, req.Status, "manual operation")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if changed && req.Status != common.ChannelStatusEnabled {
+		closeActiveChannelWebSockets([]int{id})
 	}
 	recordManageAudit(c, "channel.status_update", map[string]any{
 		"id":      id,
@@ -1582,15 +1814,20 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 	changedCount := 0
 	var disabledIDs []int
 	for _, id := range req.Ids {
-		if model.UpdateChannelStatus(id, "", req.Status, "manual batch operation") {
+		// Each status commits with its ability rows and sync obligation, then
+		// publishes that channel locally; the batch no longer reloads the whole
+		// channel table before responding.
+		changed, err := model.UpdateChannelStatusAtomic(id, req.Status, "manual batch operation")
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if changed {
 			changedCount++
 			if req.Status != common.ChannelStatusEnabled {
 				disabledIDs = append(disabledIDs, id)
 			}
 		}
-	}
-	if changedCount > 0 {
-		model.InitChannelCache()
 	}
 	if len(disabledIDs) > 0 {
 		closeActiveChannelWebSockets(disabledIDs)
@@ -2337,7 +2574,6 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
 		}
@@ -2369,7 +2605,6 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
 		common.ApiSuccessT(c, "Key enabled", nil)
 		return
 
@@ -2389,7 +2624,6 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
 		common.ApiSuccessT(c, "Enabled {{count}} keys", nil, map[string]any{"count": enabledCount})
 		return
 
@@ -2432,7 +2666,6 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
 		}
@@ -2508,7 +2741,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		service.RevokeRemovedChannelCredentials(stored, keyBefore, stored.Key)
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
@@ -2579,7 +2815,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		service.RevokeRemovedChannelCredentials(stored, keyBefore, stored.Key)
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
@@ -2623,7 +2862,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		common.ApiSuccessT(c, "Key models saved", nil)
 		return
 
@@ -2659,7 +2901,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		// A key that just became exclusive to one user must not keep serving the
 		// sessions other users already opened on it.
 		closeActiveChannelWebSockets([]int{channel.Id})
@@ -2831,17 +3076,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		stored, err := reloadManagementChannel(persistCtx, channel.Id)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if err := stored.UpdateAbilities(nil); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		model.BumpSyncTopic(model.SyncTopicChannels)
-		model.InitChannelCache()
+		// MutateChannelKeyEntries commits abilities and the sync obligation, then
+		// publishes the authoritative channel snapshot locally before returning.
+		// Re-reading the row and rebuilding its abilities here duplicated work and
+		// used to trigger a full channel-cache reload.
 		response["applied"] = true
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
 		return

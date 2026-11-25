@@ -40,6 +40,82 @@ func sqliteChannelKeyLock(channelID int) *sync.Mutex {
 	return lock.(*sync.Mutex)
 }
 
+// reconcileLockedKeyEdit applies one key/mode edit to an already-locked channel
+// row and returns the columns to write plus which derived values changed. It is
+// the single reconciliation every key write goes through: the edit is planned
+// against the authoritative allocation rows, the rows are persisted, and the
+// key-indexed maps are re-projected so channels.key and the maps always describe
+// the same allocations. Both UpdateChannelLocked and the atomic configuration
+// edit call it, so their invariants cannot drift apart.
+func reconcileLockedKeyEdit(tx *gorm.DB, channel *Channel, update func(channel *Channel) error) (updates map[string]any, keyChanged, statusChanged, publish bool, err error) {
+	key, status, otherInfo := channel.Key, channel.Status, channel.OtherInfo
+	channel.Keys = nil
+	priorKeys := allocationKeyList(channel)
+	active := channel.ChannelInfo.KeyEntryRevision > 0 || tx.Migrator().HasTable(&ChannelKeyEntry{})
+	var entries []ChannelKeyEntry
+	if active {
+		if channel.ChannelInfo.KeyEntryRevision == 0 {
+			if err = CreateChannelKeyEntries(tx, channel); err != nil {
+				return nil, false, false, false, err
+			}
+		}
+		if entries, err = loadActiveChannelKeyEntries(tx, channel.Id); err != nil {
+			return nil, false, false, false, err
+		}
+	}
+	var info []byte
+	if info, err = common.Marshal(channel.ChannelInfo); err != nil {
+		return nil, false, false, false, err
+	}
+	pollingIndex := channel.ChannelInfo.MultiKeyPollingIndex
+	if err = update(channel); err != nil {
+		return nil, false, false, false, err
+	}
+	channel.Keys = nil
+	submittedKeys := allocationKeyList(channel)
+	entriesChanged := channel.Key != key
+	if active && (entriesChanged || len(entries) != len(priorKeys)) {
+		var next, retired []ChannelKeyEntry
+		if next, retired, err = planKeyEdit(entries, submittedKeys, KeyEdit{Replace: !hasPrefixKeys(submittedKeys, priorKeys)}); err != nil {
+			return nil, false, false, false, err
+		}
+		if channelInfoChanged(info, channel.ChannelInfo) {
+			syncKeyEntryAttributesFromProjection(next, channel)
+		}
+		if err = persistKeyEntries(tx, channel, next, retired); err != nil {
+			return nil, false, false, false, err
+		}
+	} else if active && channelInfoChanged(info, channel.ChannelInfo) {
+		// A legacy listener edited a key-indexed map (status, binding, model
+		// scope) in place. Copy it onto the rows and regenerate the projection
+		// so both representations describe the same allocations.
+		if syncKeyEntryAttributesFromProjection(entries, channel) {
+			if err = persistKeyEntries(tx, channel, entries, nil); err != nil {
+				return nil, false, false, false, err
+			}
+		}
+	}
+	updates = map[string]any{}
+	if channel.Key != key {
+		updates["key"], keyChanged = channel.Key, true
+	}
+	if channel.Status != status {
+		updates["status"], statusChanged = channel.Status, true
+	}
+	if channel.OtherInfo != otherInfo {
+		updates["other_info"] = channel.OtherInfo
+	}
+	if next, err := common.Marshal(channel.ChannelInfo); err != nil {
+		return nil, false, false, false, err
+	} else if string(next) != string(info) {
+		config := channel.ChannelInfo
+		config.MultiKeyPollingIndex = pollingIndex
+		publish = channelInfoChanged(info, config)
+		updates["channel_info"] = channel.ChannelInfo
+	}
+	return updates, keyChanged, statusChanged, publish, nil
+}
+
 // UpdateChannelLocked lets update change a channel's key while no other node
 // or goroutine can: MySQL and PostgreSQL hold the channel row lock across
 // update, and SQLite holds a process lock. update must not wait on the
@@ -60,73 +136,11 @@ func UpdateChannelLocked(channelID int, update func(channel *Channel) error) (*C
 	// anything is written, so channels.key and the key-indexed maps are always
 	// a projection of the rows.
 	changes := func(tx *gorm.DB) (map[string]any, error) {
-		key, status, otherInfo := channel.Key, channel.Status, channel.OtherInfo
-		channel.Keys = nil
-		priorKeys := allocationKeyList(&channel)
-		active := channel.ChannelInfo.KeyEntryRevision > 0 || tx.Migrator().HasTable(&ChannelKeyEntry{})
-		var entries []ChannelKeyEntry
-		if active {
-			if channel.ChannelInfo.KeyEntryRevision == 0 {
-				if err := CreateChannelKeyEntries(tx, &channel); err != nil {
-					return nil, err
-				}
-			}
-			var err error
-			entries, err = loadActiveChannelKeyEntries(tx, channelID)
-			if err != nil {
-				return nil, err
-			}
-		}
-		info, err := common.Marshal(channel.ChannelInfo)
+		updates, changedKey, changedStatus, changedPublish, err := reconcileLockedKeyEdit(tx, &channel, update)
 		if err != nil {
 			return nil, err
 		}
-		pollingIndex := channel.ChannelInfo.MultiKeyPollingIndex
-		if err := update(&channel); err != nil {
-			return nil, err
-		}
-		channel.Keys = nil
-		submittedKeys := allocationKeyList(&channel)
-		entriesChanged := channel.Key != key
-		if active && (entriesChanged || len(entries) != len(priorKeys)) {
-			next, retired, err := planKeyEdit(entries, submittedKeys, KeyEdit{Replace: !hasPrefixKeys(submittedKeys, priorKeys)})
-			if err != nil {
-				return nil, err
-			}
-			if channelInfoChanged(info, channel.ChannelInfo) {
-				syncKeyEntryAttributesFromProjection(next, &channel)
-			}
-			if err := persistKeyEntries(tx, &channel, next, retired); err != nil {
-				return nil, err
-			}
-		} else if active && channelInfoChanged(info, channel.ChannelInfo) {
-			// A legacy listener edited a key-indexed map (status, binding, model
-			// scope) in place. Copy it onto the rows and regenerate the
-			// projection so both representations describe the same allocations.
-			if syncKeyEntryAttributesFromProjection(entries, &channel) {
-				if err := persistKeyEntries(tx, &channel, entries, nil); err != nil {
-					return nil, err
-				}
-			}
-		}
-		updates := map[string]any{}
-		if channel.Key != key {
-			updates["key"], keyChanged = channel.Key, true
-		}
-		if channel.Status != status {
-			updates["status"], statusChanged = channel.Status, true
-		}
-		if channel.OtherInfo != otherInfo {
-			updates["other_info"] = channel.OtherInfo
-		}
-		if next, err := common.Marshal(channel.ChannelInfo); err != nil {
-			return nil, err
-		} else if string(next) != string(info) {
-			config := channel.ChannelInfo
-			config.MultiKeyPollingIndex = pollingIndex
-			publish = channelInfoChanged(info, config)
-			updates["channel_info"] = channel.ChannelInfo
-		}
+		keyChanged, statusChanged, publish = changedKey, changedStatus, changedPublish
 		return updates, nil
 	}
 	err := ChannelBudgetTransaction(context.Background(), channelID, func(tx *gorm.DB) error {

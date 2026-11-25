@@ -51,6 +51,10 @@ const defaultOperationsSettings: OperationsSettings = {
   LogConsumeEnabled: false,
   'log_setting.user_export_enabled': true,
   'log_setting.max_range_days': 365,
+  'log_setting.retention_days': 0,
+  'log_setting.request_content_retention_days': 0,
+  'log_setting.request_content_enabled': true,
+  'log_setting.request_content_max_bytes': 262144,
   'system_task_setting.retention_days': 30,
   'performance_setting.disk_cache_enabled': false,
   'performance_setting.disk_cache_threshold_mb': 10,
@@ -64,6 +68,7 @@ const defaultOperationsSettings: OperationsSettings = {
   'perf_metrics_setting.flush_interval': 5,
   'perf_metrics_setting.bucket_time': 'hour',
   'perf_metrics_setting.retention_days': 0,
+  'system_update_setting.repository': '',
 }
 
 export function OperationsSettings() {

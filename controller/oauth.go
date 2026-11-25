@@ -575,7 +575,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 
 	// Handle affiliate code
 	inviterId := 0
-	if affiliateCode != "" {
+	if affiliateCode != "" && common.RegisterAffiliateLinkEnabled {
 		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
 	}
 	user.InviterId = inviterId

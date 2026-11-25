@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
@@ -29,17 +30,18 @@ import {
   PulseSection,
   RankingsHero,
 } from './components'
+import { ModelUsageDrawer } from './components/model-usage-drawer'
 import { useRankings } from './hooks/use-rankings'
-import type { RankingPeriod } from './types'
+import type { ModelRanking, RankingPeriod } from './types'
 
-const VALID_PERIODS: RankingPeriod[] = ['today', 'week', 'month', 'year']
+const VALID_PERIODS = new Set<RankingPeriod>(['today', 'week', 'month', 'year'])
 
 export function Rankings() {
   const { t } = useTranslation()
   const search = useSearch({ from: '/rankings/' })
   const navigate = useNavigate()
 
-  const period: RankingPeriod = VALID_PERIODS.includes(
+  const period: RankingPeriod = VALID_PERIODS.has(
     search.period as RankingPeriod
   )
     ? (search.period as RankingPeriod)
@@ -47,6 +49,21 @@ export function Rankings() {
 
   const rankingsQuery = useRankings(period)
   const snapshot = rankingsQuery.data?.data
+  const [selectedModel, setSelectedModel] = useState<
+    | (Pick<ModelRanking, 'model_name'> &
+        Partial<Pick<ModelRanking, 'vendor' | 'vendor_icon'>>)
+    | null
+  >(null)
+
+  // Clicking a model name opens the usage drawer instead of navigating to the
+  // pricing page.
+  const handleOpenModel = useCallback(
+    (modelName: string) => {
+      const row = snapshot?.models.find((m) => m.model_name === modelName)
+      setSelectedModel(row ?? { model_name: modelName })
+    },
+    [snapshot]
+  )
 
   const handlePeriodChange = (next: RankingPeriod) => {
     navigate({
@@ -76,6 +93,7 @@ export function Rankings() {
           history={snapshot.models_history}
           rows={snapshot.models}
           period={period}
+          onOpenModel={handleOpenModel}
         />
         <MarketShareSection
           history={snapshot.vendor_share_history}
@@ -85,6 +103,7 @@ export function Rankings() {
         <PulseSection
           movers={snapshot.top_movers}
           droppers={snapshot.top_droppers}
+          onOpenModel={handleOpenModel}
         />
       </>
     )
@@ -114,6 +133,17 @@ export function Rankings() {
           {content}
         </PageTransition>
       </div>
+
+      <ModelUsageDrawer
+        modelName={selectedModel?.model_name ?? ''}
+        vendor={selectedModel?.vendor}
+        vendorIcon={selectedModel?.vendor_icon}
+        period={period}
+        open={selectedModel !== null}
+        onOpenChange={(next) => {
+          if (!next) setSelectedModel(null)
+        }}
+      />
     </PublicLayout>
   )
 }
