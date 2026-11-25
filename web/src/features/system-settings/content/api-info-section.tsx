@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { Plus, Trash2, Save, ChevronUp, ChevronDown } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
@@ -28,6 +29,8 @@ import { BadgeCell } from '@/components/data-table/core/badge-cell'
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { Dialog } from '@/components/dialog'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { StatusBadge } from '@/components/status-badge'
 import {
   AlertDialog,
@@ -59,8 +62,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { listSystemInstances } from '@/features/system-info/api'
 import { getBgColorClass } from '@/lib/colors'
 import { handleServerError } from '@/lib/handle-server-error'
+import { ROLE } from '@/lib/roles'
+import { createServerError } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsSection } from '../components/settings-section'
@@ -144,6 +151,8 @@ function parseApiInfoList(data: string): ApiInfo[] {
 
 export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const canReadInstances = user?.role === ROLE.SUPER_ADMIN
   const updateOption = useUpdateOption()
   const apiInfoSchema = createApiInfoSchema(t)
   const parsedApiInfoList = useMemo(() => parseApiInfoList(data), [data])
@@ -159,6 +168,29 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
   const apiInfoList = draftApiInfoList ?? parsedApiInfoList
   const isEnabled = isEnabledDraft ?? enabled
   const hasChanges = draftApiInfoList !== null
+  const instancesQuery = useQuery({
+    queryKey: [
+      'system-info',
+      'instances',
+      user?.id,
+      user?.role,
+      canReadInstances,
+    ],
+    queryFn: async () => {
+      const result = await listSystemInstances()
+      if (!result.success || !Array.isArray(result.data)) {
+        throw createServerError(result, t('We could not load instances.'))
+      }
+      return result.data.map((instance) => ({
+        node_name: instance.node_name,
+        status: instance.status,
+      }))
+    },
+    enabled: canReadInstances && showDialog,
+    staleTime: 30_000,
+    retry: false,
+    meta: { errorToast: false },
+  })
 
   const form = useForm<ApiInfoFormValues>({
     resolver: zodResolver(apiInfoSchema),
@@ -170,6 +202,45 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
       node_name: '',
     },
   })
+  const selectedNodeName =
+    useWatch({ control: form.control, name: 'node_name' }) ?? ''
+  const instanceOptions = useMemo(() => {
+    const options = [{ value: '', label: t('Unbound') }]
+    if (canReadInstances) {
+      for (const instance of instancesQuery.data ?? []) {
+        if (
+          !instance.node_name ||
+          options.some((option) => option.value === instance.node_name)
+        ) {
+          continue
+        }
+        const status = instance.status === 'online' ? t('Online') : t('Stale')
+        options.push({
+          value: instance.node_name,
+          label: `${instance.node_name} (${status})`,
+        })
+      }
+    }
+    // A saved or newly chosen binding must survive stale/missing metadata.
+    // Never reconcile the form value by clearing it when the list changes.
+    for (const nodeName of [editingApiInfo?.node_name, selectedNodeName]) {
+      if (nodeName && !options.some((option) => option.value === nodeName)) {
+        const status =
+          canReadInstances && instancesQuery.isSuccess
+            ? t('Unavailable')
+            : t('Unknown')
+        options.push({ value: nodeName, label: `${nodeName} (${status})` })
+      }
+    }
+    return options
+  }, [
+    canReadInstances,
+    editingApiInfo?.node_name,
+    instancesQuery.data,
+    instancesQuery.isSuccess,
+    selectedNodeName,
+    t,
+  ])
 
   const handleToggleEnabled = async (checked: boolean) => {
     try {
@@ -561,18 +632,49 @@ export function ApiInfoSection({ enabled, data }: ApiInfoSectionProps) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>{t('Instance')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={t('Node name of the serving instance')}
-                      {...field}
-                      value={field.value ?? ''}
-                    />
-                  </FormControl>
+                  <Select
+                    key={`${user?.id}:${user?.role}`}
+                    items={instanceOptions}
+                    value={field.value ?? ''}
+                    onValueChange={(value) => {
+                      if (value !== null) field.onChange(value)
+                    }}
+                    disabled={!canReadInstances}
+                  >
+                    <FormControl>
+                      <SelectTrigger
+                        ref={field.ref}
+                        onBlur={field.onBlur}
+                        className='w-full'
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {instanceOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
                   <FormDescription>
                     {t(
                       'Bind this API domain to a system instance. One instance can serve multiple domains.'
                     )}
                   </FormDescription>
+                  {canReadInstances && instancesQuery.isLoading && (
+                    <LoadingState inline size='sm' message={t('Loading...')} />
+                  )}
+                  {canReadInstances && instancesQuery.isError && (
+                    <ErrorState
+                      className='min-h-0 py-3'
+                      title={t('We could not load instances.')}
+                      onRetry={() => void instancesQuery.refetch()}
+                    />
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
