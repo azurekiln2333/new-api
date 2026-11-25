@@ -122,8 +122,9 @@ export function PricingSection({ defaultValues }: PricingSectionProps) {
               value === undefined ||
               value === null ||
               typeof value === 'object'
-            )
+            ) {
               return []
+            }
             const serialized =
               typeof value === 'number' && !Number.isFinite(value)
                 ? '0'

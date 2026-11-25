@@ -272,10 +272,12 @@ it('applies an edited quota as a delta and refreshes only the matching quota fie
     .auth.setUser({ id: 1, username: 'operator', role: 100 })
   const detail = { ...target, quota: 1_000_000 }
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/authz/catalog')
+    if (url === '/api/authz/catalog') {
       return { data: { success: true, data: { resources: [], roles: [] } } }
-    if (url === '/api/group/')
+    }
+    if (url === '/api/group/') {
       return { data: { success: true, data: ['default'] } }
+    }
     return { data: { success: true, data: detail } }
   })
   const post = vi
@@ -314,10 +316,12 @@ it('sends one quota request when Confirm is pressed twice, then reconciles with 
   let serverQuota = 1_000_000
   const detail = () => ({ ...target, quota: serverQuota })
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/authz/catalog')
+    if (url === '/api/authz/catalog') {
       return { data: { success: true, data: { resources: [], roles: [] } } }
-    if (url === '/api/group/')
+    }
+    if (url === '/api/group/') {
       return { data: { success: true, data: ['default'] } }
+    }
     return { data: { success: true, data: detail() } }
   })
   let resolveAdjustment!: (value: { data: { success: boolean } }) => void
@@ -368,10 +372,12 @@ it('keeps the delta baseline when the reconciliation read reports a server failu
     .auth.setUser({ id: 1, username: 'operator', role: 100 })
   let detailReads = 0
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/authz/catalog')
+    if (url === '/api/authz/catalog') {
       return { data: { success: true, data: { resources: [], roles: [] } } }
-    if (url === '/api/group/')
+    }
+    if (url === '/api/group/') {
       return { data: { success: true, data: ['default'] } }
+    }
     if (url === '/api/user/2/rate_limit') {
       return { data: { success: true, data: { enabled: false } } }
     }
