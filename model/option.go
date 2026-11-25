@@ -297,6 +297,9 @@ func validateOptionValueWithUpdates(key string, value string, updates map[string
 		_, err := system_setting.ParseOAuthAllowedOrigins(value)
 		return err
 	}
+	if key == system_setting.UpdateSourceRepositoryOption {
+		return system_setting.ValidateUpdateSourceRepository(value)
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}

@@ -144,13 +144,16 @@ const OPERATIONS_SECTIONS = [
     id: 'update-checker',
     titleKey: 'System maintenance',
     build: (
-      _settings: OperationsSettings,
+      settings: OperationsSettings,
       currentVersion?: string | null,
       startTime?: number | null
     ) => (
       <UpdateCheckerSection
         currentVersion={currentVersion}
         startTime={startTime}
+        defaultValues={{
+          repository: settings['system_update_setting.repository'] ?? '',
+        }}
       />
     ),
   },

@@ -18,7 +18,16 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
-import { compareSystemVersions, selectLatestRelease } from '../releases'
+import {
+  compareCustomBuildRelease,
+  compareSystemVersions,
+  DEFAULT_UPDATE_SOURCE_REPOSITORY,
+  getSystemReleaseUrl,
+  getSystemReleasesUrl,
+  parseCustomBuildVersion,
+  resolveUpdateSourceRepository,
+  selectLatestRelease,
+} from '../releases'
 
 describe('system release ordering', () => {
   test.each([
@@ -70,4 +79,165 @@ describe('system release ordering', () => {
     expect(() => selectLatestRelease({ message: 'bad response' })).toThrow()
     expect(() => selectLatestRelease([{ tag_name: 42 }])).toThrow()
   })
+})
+
+describe('update source repository', () => {
+  test('defaults to the upstream project when nothing is configured', () => {
+    expect(resolveUpdateSourceRepository('')).toBe(
+      DEFAULT_UPDATE_SOURCE_REPOSITORY
+    )
+    expect(resolveUpdateSourceRepository(undefined)).toBe(
+      DEFAULT_UPDATE_SOURCE_REPOSITORY
+    )
+    expect(getSystemReleasesUrl(DEFAULT_UPDATE_SOURCE_REPOSITORY)).toBe(
+      'https://api.github.com/repos/QuantumNous/new-api/releases?per_page=100'
+    )
+  })
+
+  test('uses a configured fork repository', () => {
+    expect(resolveUpdateSourceRepository('azurekiln2333/new-api')).toBe(
+      'azurekiln2333/new-api'
+    )
+    expect(getSystemReleasesUrl('azurekiln2333/new-api')).toBe(
+      'https://api.github.com/repos/azurekiln2333/new-api/releases?per_page=100'
+    )
+    expect(
+      getSystemReleaseUrl(
+        { tag_name: 'custom-20261124-53a71f8', prerelease: false },
+        'azurekiln2333/new-api'
+      )
+    ).toBe(
+      'https://github.com/azurekiln2333/new-api/releases/tag/custom-20261124-53a71f8'
+    )
+  })
+
+  test('rejects values that are not a bare owner/repo pair', () => {
+    for (const invalid of [
+      'https://github.com/QuantumNous/new-api',
+      'QuantumNous',
+      'QuantumNous/new-api/extra',
+      'QuantumNous new-api',
+      'user:pass@owner/repo',
+      'owner/repo?x=1',
+      './repo',
+      '../repo',
+      'owner/.',
+      'owner/..',
+      'owner./repo',
+      'owner/repo.',
+      `owner/${'x'.repeat(135)}`,
+      42,
+    ]) {
+      expect(resolveUpdateSourceRepository(invalid)).toBe(
+        DEFAULT_UPDATE_SOURCE_REPOSITORY
+      )
+    }
+  })
+})
+
+describe('fork build ordering', () => {
+  test('parses custom-YYYYMMDD-<sha> tags', () => {
+    expect(parseCustomBuildVersion('custom-20261124-53a71f8')).toEqual({
+      date: 20261124n,
+      commit: '53a71f8',
+    })
+    expect(parseCustomBuildVersion('custom-20240229-ABCDEF1')).toEqual({
+      date: 20240229n,
+      commit: 'abcdef1',
+    })
+    expect(parseCustomBuildVersion('custom-20261324-53a71f8')).toBeNull()
+    expect(parseCustomBuildVersion('custom-20260229-53a71f8')).toBeNull()
+    expect(parseCustomBuildVersion('custom-20260431-53a71f8')).toBeNull()
+    expect(parseCustomBuildVersion('custom-00001124-53a71f8')).toBeNull()
+    expect(parseCustomBuildVersion('v1.0.0-rc.36')).toBeNull()
+    expect(parseCustomBuildVersion('custom-20261124')).toBeNull()
+  })
+
+  test('does not flag a release published before the build day', () => {
+    const release = {
+      tag_name: 'v1.0.0',
+      prerelease: false,
+      published_at: '2026-11-20T10:00:00Z',
+    }
+    expect(compareCustomBuildRelease('custom-20261124-53a71f8', release)).toBe(
+      1
+    )
+  })
+
+  test('flags a newer fork release published after the build day', () => {
+    const release = {
+      tag_name: 'custom-20261126-abcdef1',
+      prerelease: false,
+      published_at: '2026-11-26T09:00:00Z',
+    }
+    expect(compareCustomBuildRelease('custom-20261124-53a71f8', release)).toBe(
+      -1
+    )
+  })
+
+  test.each([
+    ['custom-20261124-53a71f8', '2026-11-28T10:00:00Z', 0],
+    ['custom-20261125-53a71f8abcdef', '2026-11-28T10:00:00Z', 0],
+    ['custom-20261124-abcdef1', '2026-11-28T10:00:00Z', 0],
+    ['custom-20261123-abcdef1', '2026-11-28T10:00:00Z', 1],
+    ['custom-20261126-abcdef1', '2026-11-20T10:00:00Z', -1],
+  ] as const)(
+    'compares fork tag %s by build identity/date despite publication %s',
+    (tag_name, published_at, expected) => {
+      expect(
+        compareCustomBuildRelease('custom-20261124-53a71f8', {
+          tag_name,
+          published_at,
+          prerelease: false,
+        })
+      ).toBe(expected)
+    }
+  )
+
+  test('selects newer fork build dates instead of republished older tags', () => {
+    expect(
+      selectLatestRelease([
+        {
+          tag_name: 'custom-20261123-abcdef1',
+          published_at: '2026-11-28T10:00:00Z',
+          prerelease: false,
+          draft: false,
+        },
+        {
+          tag_name: 'custom-20261124-53a71f8',
+          published_at: '2026-11-24T10:00:00Z',
+          prerelease: false,
+          draft: false,
+        },
+      ])?.tag_name
+    ).toBe('custom-20261124-53a71f8')
+  })
+
+  test('treats a same-day release as not newer', () => {
+    const release = {
+      tag_name: 'v1.0.0',
+      prerelease: false,
+      published_at: '2026-11-24T08:00:00Z',
+    }
+    expect(compareCustomBuildRelease('custom-20261124-53a71f8', release)).toBe(
+      1
+    )
+  })
+
+  test.each([
+    ['v1.0.0-rc.52', true],
+    ['v1.0.0-rc.52', false],
+    ['custom-20261126-abcdef1', true],
+  ] as const)(
+    'ignores prerelease %s with flag %s for a stable fork build',
+    (tag_name, prerelease) => {
+      expect(
+        compareCustomBuildRelease('custom-20261124-53a71f8', {
+          tag_name,
+          prerelease,
+          published_at: '2026-12-01T00:00:00Z',
+        })
+      ).toBe(0)
+    }
+  )
 })

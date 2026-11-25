@@ -38,7 +38,13 @@ import {
   UpdateCheckError,
   type UpdateCheckErrorCode,
 } from './api'
-import { compareSystemVersions } from './releases'
+import {
+  compareCustomBuildRelease,
+  compareSystemVersions,
+  parseCustomBuildVersion,
+  resolveUpdateSourceRepository,
+  type SystemRelease,
+} from './releases'
 import {
   subscribeSystemUpdatePreferences,
   useSystemUpdatePreferencesStore,
@@ -48,6 +54,28 @@ import {
 
 export const SYSTEM_UPDATE_INTERVAL = 60 * 60 * 1000
 export const SYSTEM_UPDATE_QUERY_KEY = ['system-update'] as const
+
+function systemUpdateQueryKey(repository: string) {
+  return [...SYSTEM_UPDATE_QUERY_KEY, repository] as const
+}
+
+/**
+ * Order a running build against the latest release.
+ *
+ * Fork builds (`custom-YYYYMMDD-<sha>`) are dated, not version ranked, so they
+ * compare on the release timeline. Everything else keeps the semver ordering
+ * that the upstream release channel relies on.
+ */
+export function compareRunningVersion(
+  currentVersion: string | null | undefined,
+  release: SystemRelease | null | undefined
+): -1 | 0 | 1 | null {
+  if (!release) return null
+  if (parseCustomBuildVersion(currentVersion)) {
+    return compareCustomBuildRelease(currentVersion, release)
+  }
+  return compareSystemVersions(currentVersion, release.tag_name)
+}
 
 export function getUpdateErrorMessage(
   code: UpdateCheckErrorCode,
@@ -65,58 +93,68 @@ export function getUpdateErrorMessage(
   }
 }
 
-export const systemUpdateQueryOptions = queryOptions({
-  queryKey: SYSTEM_UPDATE_QUERY_KEY,
-  queryFn: async ({ signal, client }): Promise<SystemUpdateSnapshot> => {
-    // Refresh the running server version too, so an open tab notices upgrades.
-    void client
-      .fetchQuery({ ...statusQueryOptions, meta: { errorToast: false } })
-      .catch(() => undefined)
-    let snapshot: SystemUpdateSnapshot
-    try {
-      const release = await fetchLatestSystemRelease(signal)
-      signal.throwIfAborted()
-      const now = Date.now()
-      snapshot = {
-        release,
-        lastCheckedAt: now,
-        lastAttemptAt: now,
-        error: null,
+export const systemUpdateQueryOptions = (repository: string) => {
+  const stored = useSystemUpdateStore.getState().snapshot
+  const initialSnapshot = stored?.repository === repository ? stored : undefined
+  return queryOptions({
+    queryKey: systemUpdateQueryKey(repository),
+    queryFn: async ({ signal, client }): Promise<SystemUpdateSnapshot> => {
+      // Refresh the running server version too, so an open tab notices upgrades.
+      void client
+        .fetchQuery({ ...statusQueryOptions, meta: { errorToast: false } })
+        .catch(() => undefined)
+      let snapshot: SystemUpdateSnapshot
+      try {
+        const release = await fetchLatestSystemRelease(signal, repository)
+        signal.throwIfAborted()
+        const now = Date.now()
+        snapshot = {
+          repository,
+          release,
+          lastCheckedAt: now,
+          lastAttemptAt: now,
+          error: null,
+        }
+      } catch (error) {
+        if (signal.aborted) throw error
+        const storedSnapshot = useSystemUpdateStore.getState().snapshot
+        const previous =
+          client.getQueryData<SystemUpdateSnapshot>(
+            systemUpdateQueryKey(repository)
+          ) ??
+          (storedSnapshot?.repository === repository ? storedSnapshot : null)
+        // A failed attempt is also cached, so focus changes and remounts cannot
+        // hammer GitHub while it is unavailable or rate limiting this browser.
+        snapshot = {
+          repository,
+          release: previous?.release ?? null,
+          lastCheckedAt: previous?.lastCheckedAt ?? 0,
+          lastAttemptAt: Date.now(),
+          error: error instanceof UpdateCheckError ? error.code : 'network',
+        }
       }
-    } catch (error) {
-      if (signal.aborted) throw error
-      const previous = useSystemUpdateStore.getState().snapshot
-      // A failed attempt is also cached, so focus changes and remounts cannot
-      // hammer GitHub while it is unavailable or rate limiting this browser.
-      snapshot = {
-        release: previous?.release ?? null,
-        lastCheckedAt: previous?.lastCheckedAt ?? 0,
-        lastAttemptAt: Date.now(),
-        error: error instanceof UpdateCheckError ? error.code : 'network',
-      }
-    }
-    useSystemUpdateStore.getState().setSnapshot(snapshot)
-    return snapshot
-  },
-  initialData: () => useSystemUpdateStore.getState().snapshot ?? undefined,
-  initialDataUpdatedAt: () =>
-    useSystemUpdateStore.getState().snapshot?.lastAttemptAt,
-  staleTime: SYSTEM_UPDATE_INTERVAL,
-  gcTime: 24 * SYSTEM_UPDATE_INTERVAL,
-  retry: false,
-  meta: { errorToast: false },
-  refetchOnWindowFocus: true,
-  refetchOnReconnect: true,
-  refetchIntervalInBackground: false,
-  refetchInterval: (query) => {
-    if (query.state.fetchStatus === 'fetching') return false
-    return Math.max(
-      1_000,
-      SYSTEM_UPDATE_INTERVAL -
-        (Date.now() - (query.state.data?.lastAttemptAt ?? 0))
-    )
-  },
-})
+      useSystemUpdateStore.getState().setSnapshot(snapshot)
+      return snapshot
+    },
+    initialData: initialSnapshot,
+    initialDataUpdatedAt: initialSnapshot?.lastAttemptAt,
+    staleTime: SYSTEM_UPDATE_INTERVAL,
+    gcTime: 24 * SYSTEM_UPDATE_INTERVAL,
+    retry: false,
+    meta: { errorToast: false },
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchIntervalInBackground: false,
+    refetchInterval: (query) => {
+      if (query.state.fetchStatus === 'fetching') return false
+      return Math.max(
+        1_000,
+        SYSTEM_UPDATE_INTERVAL -
+          (Date.now() - (query.state.data?.lastAttemptAt ?? 0))
+      )
+    },
+  })
+}
 
 function isPageVisible(): boolean {
   return focusManager.isFocused()
@@ -137,9 +175,12 @@ export function useSystemUpdate() {
   const online = useSyncExternalStore(onlineManager.subscribe, isBrowserOnline)
   const { status } = useStatus()
   const queryClient = useQueryClient()
+  const repository = resolveUpdateSourceRepository(
+    status?.update_source_repository
+  )
   const query = useQuery({
-    ...systemUpdateQueryOptions,
-    enabled: isAdmin && visible && online,
+    ...systemUpdateQueryOptions(repository),
+    enabled: isAdmin && Boolean(status) && visible && online,
   })
 
   useEffect(() => {
@@ -154,7 +195,7 @@ export function useSystemUpdate() {
       ? undefined
       : version || undefined
   const release = query.data?.release ?? null
-  const comparison = compareSystemVersions(currentVersion, release?.tag_name)
+  const comparison = compareRunningVersion(currentVersion, release)
   const hasUpdate = comparison === -1
   const isIgnored = useSyncExternalStore(subscribeSystemUpdatePreferences, () =>
     Boolean(
@@ -184,6 +225,7 @@ export function useSystemUpdate() {
   return {
     currentVersion,
     release,
+    repository,
     comparison,
     hasUpdate,
     isIgnored,
