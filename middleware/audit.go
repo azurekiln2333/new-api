@@ -261,7 +261,7 @@ func TokenOperationAudit() gin.HandlerFunc {
 		common.SetContextKey(c, constant.ContextKeyTokenAuditParams, params)
 		entry := model.AuditLog{
 			EventId: common.NewRequestId(), CreatedAt: common.GetTimestamp(),
-			AuthMethod: auditAuthMethod(c), TokenRef: c.GetString("access_token_ref"),
+			AuthMethod: auditAuthMethod(c),
 			UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
 			Category: model.AuditCategorySecurity, Action: action, Content: content,
 			Other: model.AuditOther{Op: &model.AuditOperation{Action: action, Params: params}},

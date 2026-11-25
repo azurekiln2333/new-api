@@ -746,6 +746,7 @@ func TestAuditRoleSnapshotSurvivesActorChanges(t *testing.T) {
 		c.Status(200)
 	})
 	require.Equal(t, http.StatusOK, auditRequest(router, "POST", "/change-role", pat).Code)
+	drainControllerAuditOutbox(t)
 	entries, total, err := model.GetAuditLogs(model.AuditLogFilter{}, 0, 20, common.RoleAdminUser)
 	require.NoError(t, err)
 	assert.Zero(t, total)

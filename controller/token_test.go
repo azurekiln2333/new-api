@@ -1409,8 +1409,14 @@ func verifyAPITokenAudit(t *testing.T) {
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
+			requestId := response.Header().Get(common.RequestIdKey)
+			var queued []model.AuditEventOutbox
+			require.NoError(t, model.DB.Where("request_id = ? AND delivered_at = 0", requestId).Find(&queued).Error)
+			require.Len(t, queued, 1, "bounded metadata must persist in the primary outbox before delivery")
+			drainControllerAuditOutbox(t)
 			var event model.AuditLog
-			require.NoError(t, model.LOG_DB.Where("request_id = ?", response.Header().Get(common.RequestIdKey)).First(&event).Error)
+			require.NoError(t, model.LOG_DB.Where("request_id = ?", requestId).First(&event).Error)
+			assert.Equal(t, queued[0].EventId, event.EventId)
 			var params struct {
 				IDs       []int `json:"requested_ids"`
 				Truncated bool  `json:"requested_ids_truncated"`
