@@ -704,33 +704,35 @@ test.each(['response', 'rejection'])(
     }>((resolve) => {
       resolveCurrent = resolve
     })
-    const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
-      const params = body as { action: string; channel_id: number }
-      if (params.action === 'fetch_key_models') {
-        return params.channel_id === 7 ? oldDiscovery : currentDiscovery
-      }
-      return {
-        data: {
-          success: true,
+    const post = vi
+      .spyOn(api, 'post')
+      .mockImplementation(async (_url, body) => {
+        const params = body as { action: string; channel_id: number }
+        if (params.action === 'fetch_key_models') {
+          return params.channel_id === 7 ? oldDiscovery : currentDiscovery
+        }
+        return {
           data: {
-            keys: [
-              keyStatus({
-                id: params.channel_id === 7 ? '1001' : '2001',
-                rev: 3,
-                scope_mode: 'allowlist',
-                models: [],
-              }),
-            ],
-            revision: 10,
-            total: 1,
-            page: 1,
-            page_size: 10,
-            total_pages: 1,
-            enabled_count: 1,
+            success: true,
+            data: {
+              keys: [
+                keyStatus({
+                  id: params.channel_id === 7 ? '1001' : '2001',
+                  rev: 3,
+                  scope_mode: 'allowlist',
+                  models: [],
+                }),
+              ],
+              revision: 10,
+              total: 1,
+              page: 1,
+              page_size: 10,
+              total_pages: 1,
+              enabled_count: 1,
+            },
           },
-        },
-      }
-    })
+        }
+      })
     const view = (row: Channel) => (
       <I18nextProvider i18n={i18n}>
         <DialogHarness channel={row} />
@@ -740,7 +742,9 @@ test.each(['response', 'rejection'])(
     const user = userEvent.setup()
     await screen.findByText('1001')
     await user.click(screen.getByRole('button', { name: 'Set Models' }))
-    await user.click(screen.getByRole('button', { name: 'Fetch from upstream' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Fetch from upstream' })
+    )
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(
@@ -750,7 +754,9 @@ test.each(['response', 'rejection'])(
     rerender(view({ ...channel, id: 8, name: 'next channel' }))
     await screen.findByText('2001')
     await user.click(screen.getByRole('button', { name: 'Set Models' }))
-    await user.click(screen.getByRole('button', { name: 'Fetch from upstream' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Fetch from upstream' })
+    )
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
 
     await act(async () => {
