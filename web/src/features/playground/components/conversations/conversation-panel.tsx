@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { PlusIcon } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -24,6 +25,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 
 import type { PlaygroundConversation, PlaygroundProject } from '../../types'
 import { ConversationList } from './conversation-list'
+import { ProjectNameDialog } from './project-name-dialog'
 
 interface ConversationPanelProps {
   conversations: PlaygroundConversation[]
@@ -42,6 +44,7 @@ interface ConversationPanelProps {
 
 export function ConversationPanel(props: ConversationPanelProps) {
   const { t } = useTranslation()
+  const [creatingProject, setCreatingProject] = useState(false)
 
   return (
     <div className='flex min-h-0 flex-1 flex-col'>
@@ -49,7 +52,17 @@ export function ConversationPanel(props: ConversationPanelProps) {
         <h2 className='truncate text-sm font-medium'>{t('Chats')}</h2>
       </div>
 
-      <div className='px-2 pb-2'>
+      <div className='flex shrink-0 flex-col gap-1.5 px-2 pb-2'>
+        <Button
+          className='w-full justify-start gap-1.5'
+          size='sm'
+          type='button'
+          variant='outline'
+          onClick={() => setCreatingProject(true)}
+        >
+          <PlusIcon aria-hidden='true' data-icon='inline-start' />
+          {t('New project')}
+        </Button>
         <Button
           className='w-full justify-start gap-1.5'
           size='sm'
@@ -57,7 +70,7 @@ export function ConversationPanel(props: ConversationPanelProps) {
           variant='outline'
           onClick={props.onCreate}
         >
-          <PlusIcon className='size-4' />
+          <PlusIcon aria-hidden='true' data-icon='inline-start' />
           {t('New chat')}
         </Button>
       </div>
@@ -69,7 +82,6 @@ export function ConversationPanel(props: ConversationPanelProps) {
             conversations={props.conversations}
             projects={props.projects}
             onArchive={props.onArchive}
-            onCreateProject={props.onCreateProject}
             onDelete={props.onDelete}
             onDeleteProject={props.onDeleteProject}
             onMoveToProject={props.onMoveToProject}
@@ -79,6 +91,13 @@ export function ConversationPanel(props: ConversationPanelProps) {
           />
         </div>
       </ScrollArea>
+
+      <ProjectNameDialog
+        initialName=''
+        open={creatingProject}
+        onConfirm={props.onCreateProject}
+        onOpenChange={setCreatingProject}
+      />
     </div>
   )
 }

@@ -18,3 +18,16 @@ jsdom class assertions can protect a deliberate layout contract, but cannot prov
 - `cn` uses `tailwind-merge`: inspect the final DOM/classes before reasoning about competing utility specificity. The overridden user `max-w-[80%]` class may already have been removed before CSS applies.
 - The stream fade span is inline and its animation only changes opacity. Do not claim it changes width without an observed reproduction.
 - A user's live-only observation does not prove every overflow is streaming-only. Record which fixtures fail in live, final and restored states separately.
+
+## Project navigation and saved state
+
+`ConversationPanel` owns the single New project control above New chat and reuses
+`ProjectNameDialog`. Creating a project persists the project record without
+creating a placeholder conversation or switching the active chat.
+`groupConversationsByProject` includes each saved project in created-time order,
+even when its open-conversation list is empty. `ConversationList` must render
+those groups alongside the no-chats message rather than returning before them.
+Rename/delete/move/archive behavior and existing message history stay attached to
+their original identities. The existing conversation-list, playground-state and
+conversation-storage suites cover keyboard/create/cancel, empty-project reload,
+moving chats, preserved history and absence of dummy chats.

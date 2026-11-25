@@ -21,7 +21,6 @@ import {
   FolderIcon,
   MoreHorizontalIcon,
   PencilIcon,
-  PlusIcon,
   Trash2Icon,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -60,7 +59,6 @@ interface ConversationListProps {
   onDelete: (conversationId: string) => void
   onArchive: (conversationId: string, archived: boolean) => void
   onMoveToProject: (conversationId: string, projectId: string | null) => void
-  onCreateProject: (name: string) => void
   onRenameProject: (projectId: string, name: string) => void
   onDeleteProject: (projectId: string) => void
 }
@@ -79,7 +77,6 @@ export function ConversationList(props: ConversationListProps) {
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(
     null
   )
-  const [creatingProject, setCreatingProject] = useState(false)
 
   const openConversations = useMemo(
     () =>
@@ -114,16 +111,13 @@ export function ConversationList(props: ConversationListProps) {
     (conversation) => conversation.id === deletingId
   )
 
-  if (props.conversations.length === 0) {
-    return (
-      <p className='text-muted-foreground px-2 py-6 text-center text-xs'>
-        {t('No chats yet')}
-      </p>
-    )
-  }
-
   return (
     <div className='flex flex-col gap-0.5'>
+      {props.conversations.length === 0 ? (
+        <p className='text-muted-foreground px-2 py-6 text-center text-xs'>
+          {t('No chats yet')}
+        </p>
+      ) : null}
       {openGroups.map((group) => {
         if (group.projectId === null) {
           return (
@@ -236,15 +230,6 @@ export function ConversationList(props: ConversationListProps) {
         )
       })}
 
-      <button
-        className='text-muted-foreground hover:text-foreground mt-1 flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-xs'
-        type='button'
-        onClick={() => setCreatingProject(true)}
-      >
-        <PlusIcon className='size-3.5' />
-        {t('New project')}
-      </button>
-
       {archivedConversations.length > 0 ? (
         <Collapsible
           className='mt-2'
@@ -314,13 +299,6 @@ export function ConversationList(props: ConversationListProps) {
           props.onDelete(deletingConversation.id)
           setDeletingId(null)
         }}
-      />
-
-      <ProjectNameDialog
-        initialName=''
-        open={creatingProject}
-        onConfirm={props.onCreateProject}
-        onOpenChange={setCreatingProject}
       />
 
       <ProjectNameDialog

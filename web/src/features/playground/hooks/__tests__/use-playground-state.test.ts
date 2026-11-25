@@ -22,6 +22,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { STORAGE_KEYS } from '../../constants'
+import { groupConversationsByProject } from '../../lib/state/playground-state-utils'
+import { loadConversationIndex } from '../../lib/storage/storage'
 import { buildChatCompletionPayload } from '../../lib/streaming/payload-builder'
 import type { Message } from '../../types'
 import { usePlaygroundState } from '../use-playground-state'
@@ -51,6 +53,118 @@ afterEach(() => {
 })
 
 describe('usePlaygroundState conversations', () => {
+  test('creates and restores an empty project without adding or switching chats', async () => {
+    const view = await renderPlaygroundState()
+    const conversations = view.result.current.conversations
+    const activeId = view.result.current.activeConversationId
+    let projectId: string | null = null
+
+    act(() => {
+      projectId = view.result.current.createProject('  Research  ')
+    })
+
+    expect(projectId).not.toBeNull()
+    expect(view.result.current.conversations).toEqual(conversations)
+    expect(view.result.current.activeConversationId).toBe(activeId)
+    expect(view.result.current.messages).toEqual([])
+    expect(
+      groupConversationsByProject(
+        view.result.current.conversations,
+        view.result.current.projects
+      )[0]
+    ).toEqual({ projectId, name: 'Research', conversations: [] })
+    view.unmount()
+
+    const reloaded = await renderPlaygroundState()
+    expect(reloaded.result.current.conversations).toEqual(conversations)
+    expect(reloaded.result.current.activeConversationId).toBe(activeId)
+    expect(
+      groupConversationsByProject(
+        reloaded.result.current.conversations,
+        reloaded.result.current.projects
+      )[0]
+    ).toEqual({ projectId, name: 'Research', conversations: [] })
+    reloaded.unmount()
+  })
+
+  test('deleting a project ungroups its chat and preserves saved messages', async () => {
+    const view = await renderPlaygroundState()
+    const conversationId = view.result.current.activeConversationId ?? ''
+    const messages = [userMessage('Keep this history', 'keep')]
+    let projectId: string | null = null
+    act(() => {
+      projectId = view.result.current.createProject('Research')
+    })
+    act(() => {
+      view.result.current.moveConversationToProject(conversationId, projectId)
+      view.result.current.updateMessages(messages)
+    })
+    expect(view.result.current.conversations[0].projectId).toBe(projectId)
+
+    act(() => {
+      view.result.current.deleteProject(projectId ?? '')
+    })
+
+    expect(view.result.current.projects).toEqual([])
+    expect(view.result.current.conversations).toHaveLength(1)
+    expect(view.result.current.conversations[0].projectId).toBeUndefined()
+    expect(view.result.current.activeConversationId).toBe(conversationId)
+    expect(view.result.current.messages).toEqual(messages)
+    view.unmount()
+
+    const reloaded = await renderPlaygroundState()
+    expect(reloaded.result.current.projects).toEqual([])
+    expect(reloaded.result.current.conversations).toHaveLength(1)
+    expect(reloaded.result.current.conversations[0].projectId).toBeUndefined()
+    expect(reloaded.result.current.messages).toEqual(messages)
+    reloaded.unmount()
+  })
+
+  test('keeps a new project in memory without replacing an index with unsaved message changes', async () => {
+    const view = await renderPlaygroundState()
+    const conversationId = view.result.current.activeConversationId ?? ''
+    const durableIndex = loadConversationIndex()
+    const messages = [userMessage('Do not lose unsaved history', 'pending')]
+    const originalSetItem = Storage.prototype.setItem
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(function (this: Storage, key, value) {
+        if (key.startsWith(`${STORAGE_KEYS.CONVERSATION_MESSAGES}:`)) {
+          throw new DOMException('quota exceeded', 'QuotaExceededError')
+        }
+        originalSetItem.call(this, key, value)
+      })
+
+    act(() => {
+      view.result.current.updateMessages(messages)
+    })
+    act(() => {
+      view.result.current.createProject('Pending project')
+      view.result.current.createConversation()
+    })
+
+    expect(view.result.current.storageFailure).toBe('quota')
+    expect(view.result.current.projects[0].name).toBe('Pending project')
+    expect(loadConversationIndex()).toEqual(durableIndex)
+    act(() => {
+      view.result.current.switchConversation(conversationId)
+    })
+    expect(view.result.current.messages).toEqual(messages)
+
+    setItem.mockRestore()
+    act(() => {
+      view.result.current.switchConversation(conversationId)
+    })
+    expect(view.result.current.storageFailure).toBeNull()
+    view.unmount()
+    const reloaded = await renderPlaygroundState()
+    expect(reloaded.result.current.messages).toEqual(messages)
+    expect(reloaded.result.current.projects).toEqual([
+      expect.objectContaining({ name: 'Pending project' }),
+    ])
+    reloaded.unmount()
+  })
+
   test('keeps channel pins ephemeral and clears them atomically when changing groups', async () => {
     useAuthStore
       .getState()
