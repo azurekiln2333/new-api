@@ -66,7 +66,7 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
 export function useNotifications() {
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
-    'notice'
+    'announcements'
   )
 
   // Fetch Notice from API
@@ -134,7 +134,13 @@ export function useNotifications() {
 
   // Handle popover open
   const handleOpenPopover = (tab?: 'notice' | 'announcements') => {
-    const nextTab = tab || activeTab
+    // The timeline is the primary tab; fall back to the notice when the
+    // timeline is disabled so the popover never opens on an empty tab.
+    const requestedTab = tab || activeTab
+    const nextTab =
+      requestedTab === 'announcements' && !announcementsEnabled
+        ? 'notice'
+        : requestedTab
 
     // Mark currently visible content as read when opening the notification center
     if (noticeContent) {
