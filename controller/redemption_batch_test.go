@@ -2,7 +2,6 @@ package controller
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -358,6 +357,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 					var count int64
 					require.NoError(t, model.DB.Model(&model.Redemption{}).Count(&count).Error)
 					assert.EqualValues(t, 16, count)
+					drainControllerAuditOutbox(t)
 					var events []model.AuditLog
 					require.NoError(t, logDB.Where("request_id = ? AND category = ?", response.Header().Get(common.RequestIdKey), model.AuditCategoryOperation).Find(&events).Error)
 					require.Len(t, events, 1)
@@ -387,7 +387,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 				assert.True(t, result.Success)
 				assert.Equal(t, expectedCount, result.Data)
-				require.Equal(t, 1, model.DrainAuditOutbox(context.Background()))
+				drainControllerAuditOutbox(t)
 				var events []model.AuditLog
 				require.NoError(t, logDB.Where("request_id = ? AND category = ?", response.Header().Get(common.RequestIdKey), model.AuditCategoryOperation).Find(&events).Error)
 				require.Len(t, events, 1, "one operation event, without a duplicate single-delete fallback")
