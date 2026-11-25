@@ -450,9 +450,12 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, recheckCapacity bool) (*model.Channel, *types.NewAPIError) {
 	state := service.RequestPolicy(c)
-	if info.ChannelMeta == nil && len(state.SaturatedChannelIDs) == 0 && len(state.UpstreamBusyChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
+	// Preparation can fail before ChannelMeta is initialized. Preserve the
+	// selected middleware snapshot on those retries; only the final capacity
+	// recheck explicitly requires a fresh selection after clearing exclusions.
+	if !recheckCapacity && info.ChannelMeta == nil && len(state.SaturatedChannelIDs) == 0 && len(state.CapacityRejectedChannelIDs) == 0 && len(state.UpstreamBusyChannelIDs) == 0 && len(state.BudgetRejectedChannelIDs) == 0 {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -493,44 +496,68 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 // Capacity traversal does not advance RetryParam: no upstream attempt has run
 // yet. Busy channels remain excluded even when failed-channel avoidance is off.
 func getChannelWithCapacity(c *gin.Context, info *relaycommon.RelayInfo, retry *service.RetryParam) (*model.Channel, *service.ChannelCapacityLease, *types.NewAPIError) {
-	var lastBusy *types.NewAPIError
+	var lastCapacityErr, waitFailure *types.NewAPIError
+	var saturatedBeforeWait, rejectedBeforeWait []int
 	state := service.RequestPolicy(c)
+	defer func() {
+		// A final admission recheck must not erase earlier rejections for the
+		// next upstream retry, including when a different channel admitted.
+		state.SaturatedChannelIDs = append(state.SaturatedChannelIDs, saturatedBeforeWait...)
+		state.CapacityRejectedChannelIDs = append(state.CapacityRejectedChannelIDs, rejectedBeforeWait...)
+	}()
 	for {
 		_, pinned, _ := service.GetChannelConstraints(c).ResolvedPin()
-		if len(state.UpstreamBusyChannelIDs) > 0 && (pinned || state.SessionMode == "strict" || service.ShouldSkipRetryAfterChannelAffinityFailure(c)) {
-			grant, channel, waitErr := waitForChannelGrant(c, info)
-			if grant != nil {
-				return channel, grant.Lease, nil
-			}
-			return nil, nil, waitErr
-		}
-		channel, err := getChannel(c, info, retry)
-		if err != nil {
-			if lastBusy == nil && len(state.UpstreamBusyChannelIDs) == 0 {
+		fixedChannel := pinned || state.SessionMode == "strict" || service.ShouldSkipRetryAfterChannelAffinityFailure(c)
+		if len(state.UpstreamBusyChannelIDs) == 0 || !fixedChannel {
+			channel, err := getChannel(c, info, retry, waitFailure != nil)
+			if err == nil {
+				lease, capacityErr := service.AcquireRequestChannelCapacity(c, channel.Id)
+				if capacityErr == nil {
+					return channel, lease, nil
+				}
+				lastCapacityErr = capacityErr
+				if capacityErr.GetErrorCode() == types.ErrorCodeChannelCapacitySaturated {
+					rememberChannelWaitCandidate(c, channel.Id, info.UsingGroup)
+				}
+				if service.RetryChannelAdmission(c, channel.Id, capacityErr, retry) {
+					continue
+				}
+				if capacityErr.GetErrorCode() != types.ErrorCodeChannelCapacitySaturated {
+					if waitFailure != nil {
+						return nil, nil, waitFailure
+					}
+					return nil, nil, capacityErr
+				}
+			} else if len(state.SaturatedChannelIDs) == 0 && len(state.UpstreamBusyChannelIDs) == 0 {
+				if waitFailure != nil {
+					return nil, nil, waitFailure
+				}
+				if lastCapacityErr != nil {
+					return nil, nil, lastCapacityErr
+				}
 				return nil, nil, err
 			}
-			if grant, grantedChannel, waitErr := waitForChannelGrant(c, info); grant != nil {
-				return grantedChannel, grant.Lease, nil
-			} else {
-				return nil, nil, waitErr
-			}
 		}
-		lease, err := service.AcquireRequestChannelCapacity(c, channel.Id)
-		if err == nil {
-			return channel, lease, nil
+		if waitFailure != nil {
+			return nil, nil, waitFailure
 		}
-		if err.GetErrorCode() != types.ErrorCodeChannelCapacitySaturated {
-			return nil, nil, err
+		grant, grantedChannel, waitErr := waitForChannelGrant(c, info)
+		if grant != nil {
+			return grantedChannel, grant.Lease, nil
 		}
-		rememberChannelWaitCandidate(c, channel.Id, info.UsingGroup)
-		if !service.RetryChannelAdmission(c, channel.Id, err, retry) {
-			if grant, grantedChannel, waitErr := waitForChannelGrant(c, info); grant != nil {
-				return grantedChannel, grant.Lease, nil
-			} else {
-				return nil, nil, waitErr
-			}
+		if !service.IsChannelCapacityError(waitErr) || c.Request.Context().Err() != nil || fixedChannel || c.Writer.Written() {
+			return nil, nil, waitErr
 		}
-		lastBusy = err
+		// Queue full/timeout/coordinator failure does not prove every channel
+		// is still unavailable. Make one final normal selection pass, retaining
+		// upstream-busy, failed, budget and request-filter exclusions. Never
+		// wait again, reset the queue deadline or consume an upstream retry.
+		waitFailure = waitErr
+		saturatedBeforeWait, rejectedBeforeWait = state.SaturatedChannelIDs, state.CapacityRejectedChannelIDs
+		state.SaturatedChannelIDs, state.CapacityRejectedChannelIDs = nil, nil
+		if retry.TokenGroup == "auto" {
+			common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, 0)
+		}
 	}
 }
 

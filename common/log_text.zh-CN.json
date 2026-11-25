@@ -365,6 +365,7 @@
   "channel %d polling index: %d": "渠道 %d 的多密钥轮询位置: %d",
   "channel %q (#%d) failed, disabling it, reason: %s": "通道「%s」（#%d）发生错误，准备禁用，原因：%s",
   "channel %q (#%d) has automatic disabling turned off, skipping": "通道「%s」（#%d）未启用自动禁用功能，跳过禁用操作",
+  "channel capacity Redis coordination failed: channel_id=%d error_class=%s": "渠道并发 Redis 协调失败: channel_id=%d error_class=%s",
   "channel affinity cache delete current failed: err=%v": "渠道亲和性缓存: 删除当前请求的记录失败: err=%v",
   "channel affinity cache delete many failed: err=%v": "渠道亲和性缓存: 批量删除失败: err=%v",
   "channel affinity cache get failed: key=%s, err=%v": "渠道亲和性缓存: 读取失败: key=%s, err=%v",

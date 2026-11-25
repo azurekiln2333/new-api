@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -22,6 +24,81 @@ import (
 
 const channelCapacityLeaseTTL = 30 * time.Second
 const channelCapacityRedisTimeout = 2 * time.Second
+
+const (
+	channelCapacityAdmissionTimeoutEnv     = "CHANNEL_CAPACITY_ADMISSION_TIMEOUT_MS"
+	channelCapacityAdmissionTimeoutDefault = 3000
+	channelCapacityAdmissionTimeoutMin     = 250
+	channelCapacityAdmissionTimeoutMax     = 10000
+	channelCapacityAdmissionCleanupTimeout = 250 * time.Millisecond
+	channelCapacityRenewalSafetyMargin     = time.Second
+	channelCapacityRedisErrorLogInterval   = time.Minute
+)
+
+var channelCapacityRedisErrorLog = struct {
+	sync.Mutex
+	lastByChannel map[int]time.Time
+}{lastByChannel: make(map[int]time.Time)}
+
+func channelCapacityAdmissionTimeout() time.Duration {
+	milliseconds := common.GetEnvOrDefault(channelCapacityAdmissionTimeoutEnv, channelCapacityAdmissionTimeoutDefault)
+	milliseconds = max(channelCapacityAdmissionTimeoutMin, min(channelCapacityAdmissionTimeoutMax, milliseconds))
+	return time.Duration(milliseconds) * time.Millisecond
+}
+
+func channelCapacityRedisErrorClass(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	if err.Error() == "redis: connection pool timeout" {
+		return "pool_timeout"
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) || errors.Is(err, net.ErrClosed) || errors.Is(err, redis.ErrClosed) {
+		return "network"
+	}
+	var redisError redis.Error
+	if errors.As(err, &redisError) {
+		return "redis_server"
+	}
+	return "redis_command"
+}
+
+func logChannelCapacityRedisError(channelID int, err error) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	now := time.Now()
+	channelCapacityRedisErrorLog.Lock()
+	last := channelCapacityRedisErrorLog.lastByChannel[channelID]
+	if now.Sub(last) < channelCapacityRedisErrorLogInterval {
+		channelCapacityRedisErrorLog.Unlock()
+		return
+	}
+	for id, loggedAt := range channelCapacityRedisErrorLog.lastByChannel {
+		if now.Sub(loggedAt) >= channelCapacityRedisErrorLogInterval {
+			delete(channelCapacityRedisErrorLog.lastByChannel, id)
+		}
+	}
+	if len(channelCapacityRedisErrorLog.lastByChannel) >= 4096 {
+		channelCapacityRedisErrorLog.Unlock()
+		return
+	}
+	channelCapacityRedisErrorLog.lastByChannel[channelID] = now
+	channelCapacityRedisErrorLog.Unlock()
+	logger.LogWarn(context.Background(), common.LogText("channel capacity Redis coordination failed: channel_id=%d error_class=%s", channelID, channelCapacityRedisErrorClass(err)))
+}
+
+func channelCapacityRenewalTimeout(deadline time.Time, timeout time.Duration) time.Duration {
+	remaining := time.Until(deadline)
+	if remaining <= channelCapacityRenewalSafetyMargin {
+		return 0
+	}
+	return min(timeout, remaining-channelCapacityRenewalSafetyMargin)
+}
 
 // Unlimited counting is telemetry only; it must not add the full coordinator
 // timeout to a request that would otherwise leave immediately.
@@ -163,15 +240,18 @@ func hasLostChannelCapacityOwner(channelID int) bool {
 // plus a best-effort shared owner entry, and their telemetry loss is recorded
 // instead of canceling the traffic.
 type ChannelCapacityLease struct {
-	ctx       context.Context
-	control   context.Context
-	cancel    context.CancelCauseFunc
-	once      sync.Once
-	channelID int
-	client    *redis.Client
-	key       string
-	owner     string
-	done      chan struct{}
+	ctx          context.Context
+	control      context.Context
+	cancel       context.CancelCauseFunc
+	once         sync.Once
+	channelID    int
+	client       *redis.Client
+	key          string
+	owner        string
+	done         chan struct{}
+	leaseExpiry  atomic.Int64
+	probeExpiry  atomic.Int64
+	renewalRetry atomic.Bool
 	// unlimited leases count without rejecting. A telemetry failure may never
 	// cancel their traffic, so their context carries a typed-nil lease and a
 	// separate retention handle.
@@ -592,13 +672,17 @@ func (l *ChannelCapacityLease) reconcileTelemetry(marked bool) bool {
 func acquireRedisChannelCapacity(ctx context.Context, client *redis.Client, channelID, limit int) (*ChannelCapacityLease, *types.NewAPIError) {
 	key := channelCapacityKey(channelID)
 	owner := uuid.NewString()
-	commandCtx, cancel := context.WithTimeout(ctx, channelCapacityRedisTimeout)
+	acquireStarted := time.Now()
+	commandCtx, cancel := context.WithTimeout(ctx, channelCapacityAdmissionTimeout())
 	admitted, err := channelCapacityAcquireScript.Run(commandCtx, client, []string{key, channelWaitQueueKey(channelID), channelWaitGlobalKey}, limit, owner, channelCapacityLeaseTTL.Milliseconds()).Int()
 	cancel()
 	if err != nil {
+		if ctx.Err() == nil {
+			logChannelCapacityRedisError(channelID, err)
+		}
 		// The result of a timed-out write is ambiguous. Remove this token
 		// only; expiration also bounds cleanup if Redis is still unavailable.
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), channelCapacityRedisTimeout)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), channelCapacityAdmissionCleanupTimeout)
 		_ = client.ZRem(cleanupCtx, key, owner).Err()
 		cleanupCancel()
 		return nil, channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
@@ -608,40 +692,99 @@ func acquireRedisChannelCapacity(ctx context.Context, client *redis.Client, chan
 	}
 	lease := newChannelCapacityLease(ctx, channelID)
 	lease.client, lease.key, lease.owner, lease.done = client, key, owner, make(chan struct{})
+	lease.leaseExpiry.Store(acquireStarted.Add(channelCapacityLeaseTTL).UnixNano())
 	go lease.maintain()
 	return lease, nil
 }
 
-func (l *ChannelCapacityLease) renew() bool {
-	ctx, cancel := context.WithTimeout(l.control, channelCapacityRedisTimeout)
-	defer cancel()
-	renewed, err := channelCapacityRenewScript.Run(ctx, l.client, []string{l.key}, l.owner, channelCapacityLeaseTTL.Milliseconds()).Int()
-	if err != nil || renewed != 1 {
+func (l *ChannelCapacityLease) renewalDeadline() time.Time {
+	deadline := l.leaseExpiry.Load()
+	if l.waitProbeOwner != "" && !l.waitProbeAvailable.Load() {
+		deadline = min(deadline, l.probeExpiry.Load())
+	}
+	return time.Unix(0, deadline)
+}
+
+// An ambiguous renewal does not extend the confirmed ownership deadline. A
+// transient coordinator failure can be retried only inside that deadline.
+func (l *ChannelCapacityLease) retryRenewal(err error) bool {
+	if l.control.Err() != nil {
+		return false
+	}
+	logChannelCapacityRedisError(l.channelID, err)
+	if errors.Is(err, redis.ErrClosed) || channelCapacityRenewalTimeout(l.renewalDeadline(), channelCapacityAdmissionTimeout()) <= 0 {
 		l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
 		return false
 	}
+	l.renewalRetry.Store(true)
+	return true
+}
+
+func (l *ChannelCapacityLease) renew() bool {
+	timeout := channelCapacityAdmissionTimeout()
+	commandTimeout := channelCapacityRenewalTimeout(l.renewalDeadline(), timeout)
+	if commandTimeout <= 0 {
+		l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
+		return false
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(l.control, commandTimeout)
+	renewed, err := channelCapacityRenewScript.Run(ctx, l.client, []string{l.key}, l.owner, channelCapacityLeaseTTL.Milliseconds()).Int()
+	cancel()
+	if err != nil {
+		return l.retryRenewal(err)
+	}
+	if renewed != 1 || channelCapacityRenewalTimeout(l.renewalDeadline(), timeout) <= 0 {
+		l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
+		return false
+	}
+	l.leaseExpiry.Store(started.Add(channelCapacityLeaseTTL).UnixNano())
 	if l.waitProbeOwner != "" && !l.waitProbeAvailable.Load() {
-		renewed, err := channelWaitProbeRenewScript.Run(ctx, l.client, []string{channelWaitBusyKey(l.channelID)}, l.waitProbeOwner, channelCapacityLeaseTTL.Milliseconds()).Int()
-		if err != nil || renewed != 1 && !l.waitProbeAvailable.Load() {
+		probeTimeout := channelCapacityRenewalTimeout(l.renewalDeadline(), timeout)
+		if probeTimeout <= 0 {
 			l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
 			return false
 		}
+		probeStarted := time.Now()
+		probeCtx, probeCancel := context.WithTimeout(l.control, probeTimeout)
+		probeRenewed, probeErr := channelWaitProbeRenewScript.Run(probeCtx, l.client, []string{channelWaitBusyKey(l.channelID)}, l.waitProbeOwner, channelCapacityLeaseTTL.Milliseconds()).Int()
+		probeCancel()
+		if probeErr != nil && !l.waitProbeAvailable.Load() {
+			return l.retryRenewal(probeErr)
+		}
+		if !l.waitProbeAvailable.Load() {
+			if probeRenewed != 1 || channelCapacityRenewalTimeout(l.renewalDeadline(), timeout) <= 0 {
+				l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
+				return false
+			}
+			l.probeExpiry.Store(probeStarted.Add(channelCapacityLeaseTTL).UnixNano())
+		}
 	}
+	l.renewalRetry.Store(false)
 	return true
 }
 
 func (l *ChannelCapacityLease) maintain() {
 	defer close(l.done)
-	ticker := time.NewTicker(channelCapacityLeaseTTL / 3)
-	defer ticker.Stop()
+	delay := channelCapacityRenewalTimeout(l.renewalDeadline(), channelCapacityLeaseTTL/3)
+	timer := time.NewTimer(max(0, delay))
+	defer timer.Stop()
 	for {
 		select {
 		case <-l.control.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if !l.renew() {
 				return
 			}
+			delay = channelCapacityLeaseTTL / 3
+			if l.renewalRetry.Swap(false) {
+				delay = time.Second
+			}
+			// Never sleep beyond the last confirmed lease/probe deadline. The
+			// next renewal fails closed before another gateway can reuse it.
+			delay = channelCapacityRenewalTimeout(l.renewalDeadline(), delay)
+			timer.Reset(max(0, delay))
 		}
 	}
 }
@@ -663,7 +806,7 @@ func AcquireRequestChannelCapacity(c *gin.Context, channelID int) (*ChannelCapac
 	return lease, err
 }
 
-// RetryChannelAdmission excludes a busy candidate without recording an
+// RetryChannelAdmission excludes a capacity-rejected candidate without recording an
 // upstream failure or consuming the upstream retry budget. Pins and strict
 // sessions keep their routing boundary even when no upstream call was made.
 func RetryChannelAdmission(c *gin.Context, channelID int, err *types.NewAPIError, retry *RetryParam) bool {
@@ -673,12 +816,15 @@ func RetryChannelAdmission(c *gin.Context, channelID int, err *types.NewAPIError
 	state := RequestPolicy(c)
 	decision := PolicyDecision{Action: "stop", Reason: string(err.GetErrorCode()), Source: "capacity"}
 	_, pinned, _ := GetChannelConstraints(c).ResolvedPin()
-	if err.GetErrorCode() == types.ErrorCodeChannelCapacitySaturated && c.Request.Context().Err() == nil &&
-		!pinned && !ShouldSkipRetryAfterChannelAffinityFailure(c) && state.SessionMode != "strict" && !c.Writer.Written() {
-		if !slices.Contains(state.SaturatedChannelIDs, channelID) {
-			state.SaturatedChannelIDs = append(state.SaturatedChannelIDs, channelID)
+	if channelID > 0 && c.Request != nil && c.Request.Context().Err() == nil && !pinned && !ShouldSkipRetryAfterChannelAffinityFailure(c) && state.SessionMode != "strict" && !c.Writer.Written() {
+		rejected := state.CapacityRejectedChannelIDs
+		if !slices.Contains(rejected, channelID) {
+			state.CapacityRejectedChannelIDs = append(rejected, channelID)
+			if err.GetErrorCode() == types.ErrorCodeChannelCapacitySaturated && !slices.Contains(state.SaturatedChannelIDs, channelID) {
+				state.SaturatedChannelIDs = append(state.SaturatedChannelIDs, channelID)
+			}
 			// Auto selection may have prepared the NEXT retry's group before
-			// admission (including the initial middleware selection). A busy
+			// admission (including the initial middleware selection). A rejected
 			// candidate did not use that retry: exhaust its actual group first.
 			retry.restoreUnusedAutoGroupAttempt(c, channelID, state.selectedAutoGroupRetry)
 			decision.Action = "select"
