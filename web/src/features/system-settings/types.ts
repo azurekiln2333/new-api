@@ -157,6 +157,7 @@ export type SiteSettings = {
   'legal.privacy_policy': string
   HeaderNavModules: string
   SidebarModulesAdmin: string
+  'console_setting.sidebar_personal_settings_enabled': boolean
 }
 
 export type AuthSettings = {

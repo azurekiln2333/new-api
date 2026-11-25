@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { CheckinCalendarCard } from '@/features/profile/components/checkin-calendar-card'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -81,6 +82,11 @@ export function Wallet(props: WalletProps) {
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
 
   const { status } = useStatus()
+  const checkinEnabled = status?.checkin_enabled === true
+  const turnstileEnabled = !!(
+    status?.turnstile_check && status?.turnstile_site_key
+  )
+  const turnstileSiteKey = status?.turnstile_site_key || ''
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
 
@@ -289,6 +295,14 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
+            {checkinEnabled && (
+              <CheckinCalendarCard
+                checkinEnabled={checkinEnabled}
+                turnstileEnabled={turnstileEnabled}
+                turnstileSiteKey={turnstileSiteKey}
+                onCheckinSuccess={fetchUser}
+              />
+            )}
 
             <div
               className={

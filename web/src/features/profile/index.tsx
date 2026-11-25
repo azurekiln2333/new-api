@@ -22,9 +22,10 @@ import {
   CardStaggerItem,
 } from '@/components/page-transition'
 import { useStatus } from '@/hooks/use-status'
+import { ROLE } from '@/lib/roles'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CheckinCalendarCard } from './components/checkin-calendar-card'
 import { LanguagePreferencesCard } from './components/language-preferences-card'
 import { ProfileHeader } from './components/profile-header'
 import { ProfileSettingsCard } from './components/profile-settings-card'
@@ -34,14 +35,12 @@ import { useProfile } from './hooks'
 export function Profile() {
   const { profile, loading, refreshProfile } = useProfile()
   const { status } = useStatus()
-  const permissions = useAuthStore((s) => s.auth.user?.permissions)
+  const user = useAuthStore((state) => state.auth.user)
 
-  const checkinEnabled = status?.checkin_enabled === true
-  const turnstileEnabled = !!(
-    status?.turnstile_check && status?.turnstile_site_key
-  )
-  const turnstileSiteKey = status?.turnstile_site_key || ''
-  const canConfigureSidebar = permissions?.sidebar_settings !== false
+  const canConfigureSidebar =
+    user?.permissions?.sidebar_settings !== false &&
+    ((user?.role ?? ROLE.USER) >= ROLE.ADMIN ||
+      status?.sidebar_personal_settings_enabled !== false)
   // Older cached status payloads lack these fields; the site default is on.
   const quotaRemindEnabled = status?.quota_remind_enabled !== false
   const quotaRemindThreshold = status?.quota_remind_threshold ?? 0
@@ -55,7 +54,13 @@ export function Profile() {
           </CardStaggerItem>
 
           <CardStaggerItem>
-            <div className='grid gap-4 sm:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.46fr)] xl:items-start'>
+            <div
+              className={cn(
+                'grid gap-4 sm:gap-5',
+                canConfigureSidebar &&
+                  'xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.46fr)] xl:items-start'
+              )}
+            >
               <div className='space-y-4 sm:space-y-6'>
                 <ProfileSettingsCard
                   profile={profile}
@@ -70,16 +75,11 @@ export function Profile() {
                 />
               </div>
 
-              <div className='space-y-4 sm:space-y-6 xl:sticky xl:top-6'>
-                {checkinEnabled && (
-                  <CheckinCalendarCard
-                    checkinEnabled={checkinEnabled}
-                    turnstileEnabled={turnstileEnabled}
-                    turnstileSiteKey={turnstileSiteKey}
-                  />
-                )}
-                {canConfigureSidebar && <SidebarModulesCard />}
-              </div>
+              {canConfigureSidebar && (
+                <div className='space-y-4 sm:space-y-6 xl:sticky xl:top-6'>
+                  <SidebarModulesCard />
+                </div>
+              )}
             </div>
           </CardStaggerItem>
         </CardStaggerContainer>

@@ -54,12 +54,14 @@ interface CheckinCalendarCardProps {
   checkinEnabled: boolean
   turnstileEnabled: boolean
   turnstileSiteKey: string
+  onCheckinSuccess?: () => void | Promise<void>
 }
 
 export function CheckinCalendarCard({
   checkinEnabled,
   turnstileEnabled,
   turnstileSiteKey,
+  onCheckinSuccess,
 }: CheckinCalendarCardProps) {
   const { t } = useTranslation()
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -151,6 +153,7 @@ export function CheckinCalendarCard({
           )
           refetch()
           setTurnstileModalVisible(false)
+          void onCheckinSuccess?.()
         } else {
           if (!token && shouldTriggerTurnstile(res.message)) {
             if (!turnstileSiteKey) {
@@ -171,7 +174,7 @@ export function CheckinCalendarCard({
         setCheckinLoading(false)
       }
     },
-    [refetch, shouldTriggerTurnstile, t, turnstileSiteKey]
+    [onCheckinSuccess, refetch, shouldTriggerTurnstile, t, turnstileSiteKey]
   )
 
   const handlePrevMonth = () => {
