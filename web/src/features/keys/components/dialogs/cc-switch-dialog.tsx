@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { getUserModels } from '@/lib/api'
+import { compareModelOptions } from '@/lib/model-options'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 const APP_CONFIGS = {
@@ -111,7 +112,9 @@ export function CCSwitchDialog(props: Props) {
 
   const modelOptions = useMemo(() => {
     const items = modelsData?.data ?? []
-    return items.map((m) => ({ value: m, label: m }))
+    return items
+      .map((model) => ({ value: model, label: model }))
+      .sort(compareModelOptions)
   }, [modelsData?.data])
 
   useEffect(() => {

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import type { ApiKey } from '../../types'
@@ -49,13 +50,16 @@ const originalGet = apiClient.get
 const originalPost = apiClient.post
 let renderedDrawer: RenderedDrawer | null = null
 
-function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
+function installApiFixtures(
+  createdPayloads: Array<Record<string, unknown>>,
+  models: string[] = []
+) {
   apiClient.get = async (url) => {
     switch (url) {
       case '/api/status':
         return { data: { data: { default_use_auto_group: true } } }
       case '/api/user/models':
-        return { data: { success: true, data: [] } }
+        return { data: { success: true, data: models } }
       case '/api/user/self/groups':
         return {
           data: {
@@ -86,7 +90,7 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
   }
 }
 
-async function renderCreateDrawer(): Promise<void> {
+async function renderCreateDrawer(models: string[] = []): Promise<void> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -98,7 +102,7 @@ async function renderCreateDrawer(): Promise<void> {
   )
   queryClient.setQueryData(
     ['user-models'],
-    { success: true, data: [] },
+    { success: true, data: models },
     { updatedAt: freshAt }
   )
   queryClient.setQueryData(
@@ -203,6 +207,45 @@ afterEach(() => {
     renderedDrawer.queryClient.clear()
     renderedDrawer = null
   }
+})
+
+test('model limits sort offered and selected-only choices while preserving selected and saved model order', async () => {
+  const payloads: Array<Record<string, unknown>> = []
+  const models = ['zeta', 'model-10', 'model-2']
+  Object.freeze(models)
+  installApiFixtures(payloads, models)
+  await renderCreateDrawer(models)
+  const user = userEvent.setup()
+  await user.click(findButton('Advanced Settings', true))
+  const input = screen.getByRole('combobox', {
+    name: 'Select models (empty for allow all)',
+  })
+  await user.click(input)
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['model-2', 'model-10', 'zeta'])
+  await user.click(screen.getByRole('option', { name: 'model-10' }))
+  await user.click(screen.getByRole('option', { name: 'model-2' }))
+  await act(async () => {
+    renderedDrawer?.queryClient.setQueryData(['user-models'], {
+      success: true,
+      data: ['zeta', 'alpha'],
+    })
+  })
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['alpha', 'model-2', 'model-10', 'zeta'])
+  expect(
+    [...document.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['model-10', 'model-2'])
+  expect(models).toEqual(['zeta', 'model-10', 'model-2'])
+  await user.keyboard('{Escape}')
+  changeInput(getControlByLabel('Name'), 'ordered model limits')
+  await user.click(findButton('Save changes', true))
+  await waitFor(() => expect(payloads).toHaveLength(1))
+  expect(payloads[0]?.model_limits).toBe('model-10,model-2')
 })
 
 describe('API keys mutate drawer Auto group integration', () => {

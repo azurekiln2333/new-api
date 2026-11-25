@@ -58,6 +58,11 @@ interface MultiSelectProps {
   options: Option[]
   selected: string[]
   onChange: (values: string[]) => void
+  /** Sorts offered options only, including selected values absent from options. */
+  compareOptions?: (
+    left: { label: string; value: string },
+    right: { label: string; value: string }
+  ) => number
   placeholder?: string
   className?: string
   allowCreate?: boolean
@@ -114,7 +119,7 @@ function splitDraft(value: string): { completed: string[]; draft: string } {
  * - When `allowCreate` is true, custom values can be added inline:
  *   - Type and press Enter / "," to add a single value.
  *   - Paste a comma- (or newline-) separated list to add many at once.
- *   - A "Add \"<value>\"" item appears at the top of the dropdown when the
+ *   - An "Add \"<value>\"" item appears after the matching options when the
  *     typed text doesn't match any option.
  * - Backspace on an empty input removes the last selected chip (Base UI default).
  * - `maxVisibleChips` can cap large selections and show a compact "+N more"
@@ -188,11 +193,28 @@ export function MultiSelect(props: MultiSelectProps) {
     for (const value of props.selected) {
       set.add(value)
     }
-    if (canCreate) {
-      set.add(trimmedInput)
+    const candidates = [...set]
+    const compareOptions = props.compareOptions
+    if (compareOptions) {
+      candidates.sort((left, right) =>
+        compareOptions(
+          { label: labelMap.get(left) ?? left, value: left },
+          { label: labelMap.get(right) ?? right, value: right }
+        )
+      )
     }
-    return [...set]
-  }, [props.options, props.selected, canCreate, trimmedInput])
+    if (canCreate) {
+      candidates.push(trimmedInput)
+    }
+    return candidates
+  }, [
+    props.options,
+    props.selected,
+    props.compareOptions,
+    labelMap,
+    canCreate,
+    trimmedInput,
+  ])
 
   const addValues = React.useCallback(
     (values: string[]) => {

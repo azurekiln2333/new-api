@@ -33,12 +33,30 @@ locale makes the order deterministic across interface languages. The
 standalone `ModelSelector` preserves category order and sorts each newly
 allocated category list with the same comparator.
 
+The shared `@/lib/model-options` exports `compareModelOptions({ label, value },
+{ label, value })` and `compareModelNames(string, string)`. Model callers reuse
+these helpers; generic selectors preserve their existing ordering by default.
+`MultiSelect.compareOptions` is opt-in and sorts a fresh candidate list after
+merging offered and selected-only values. Missing labels fall back to the raw ID.
+Selected chips and emitted values keep controlled selection order; a create
+candidate remains last. API-key model limits opt in, while group and Auto options
+keep their business order. CC Switch sorts copied model lists and retains a valid
+selection when the catalog refreshes.
+
+The visible API-key row import button invokes the same explicit `resolveRealKey`
+and CC Switch dialog path as the menu action. Rendering/hover never reveals a key;
+pending reveal disables repeated activation. Credentials remain out of DOM and
+browser storage; the existing external URI is constructed only by explicit dialog
+submission. Provider identity changes must invalidate an older reveal result.
+
 Never sort caller-owned arrays in place or change the selected model as a
 side effect of display sorting. Desktop popover and mobile drawer use the
 same sorted data. `model-group-selector/__tests__/sorting.test.tsx` covers
 numeric names, equivalent names with distinct IDs, filtering, immutable
-inputs and preserved selection in both viewport modes. Future channel/group
-navigation must retain these invariants.
+inputs and preserved selection in both viewport modes. The existing MultiSelect,
+API-key limits/listing and CC Switch suites also cover selected-only values,
+unchanged chip/payload order, default generic order, explicit reveal, stale results
+and failure states. Future channel/group navigation must retain these invariants.
 
 ## Playground channel visibility
 

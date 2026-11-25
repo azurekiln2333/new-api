@@ -24,6 +24,7 @@ import {
   ModelGroupSelector,
   ModelSelector,
 } from '@/components/model-group-selector'
+import { compareModelNames } from '@/lib/model-options'
 
 // JSDOM does not implement the pointer-capture API used by the drawer.
 const pointerCapture = Object.getOwnPropertyDescriptor(
@@ -169,24 +170,50 @@ describe.each([
     expect(onModelChange).toHaveBeenCalledExactlyOnceWith('gpt-2')
   })
 
-  test('uses natural model ordering in the standalone selector', async () => {
+  test('sorts options within the existing category order without changing selection or the source list', async () => {
     vi.stubGlobal('innerWidth', width)
     const user = userEvent.setup()
+    const onModelChange = vi.fn()
+    const models = [
+      { label: 'gpt-10', value: 'gpt-10', category: 'Beta' },
+      { label: 'gpt-2', value: 'gpt-2', category: 'Beta' },
+      { label: 'claude-10', value: 'claude-10', category: 'Alpha' },
+      { label: 'claude-2', value: 'claude-2', category: 'Alpha' },
+    ]
+    Object.freeze(models)
     render(
       <ModelSelector
-        models={[
-          { label: 'gpt-10', value: 'gpt-10' },
-          { label: 'gpt-2', value: 'gpt-2' },
-        ]}
+        models={models}
         selectedModel='gpt-10'
-        onModelChange={vi.fn()}
+        onModelChange={onModelChange}
       />
     )
 
-    await user.click(screen.getByRole('combobox'))
+    const trigger = screen.getByRole('combobox')
+    await user.click(trigger)
 
     expect(
       screen.getAllByRole('option').map((item) => item.textContent)
-    ).toEqual(['gpt-2', 'gpt-10'])
+    ).toEqual(['gpt-2', 'gpt-10', 'claude-2', 'claude-10'])
+    expect(models.map((model) => model.value)).toEqual([
+      'gpt-10',
+      'gpt-2',
+      'claude-10',
+      'claude-2',
+    ])
+    expect(trigger).toHaveTextContent('gpt-10')
+    expect(onModelChange).not.toHaveBeenCalled()
   })
+})
+
+test('string model choices use the same natural ordering and raw-ID ties without mutating the catalog', () => {
+  const models = ['model-10', 'model-2', 'Model-2', 'alpha']
+  Object.freeze(models)
+  expect([...models].sort(compareModelNames)).toEqual([
+    'alpha',
+    'Model-2',
+    'model-2',
+    'model-10',
+  ])
+  expect(models).toEqual(['model-10', 'model-2', 'Model-2', 'alpha'])
 })
