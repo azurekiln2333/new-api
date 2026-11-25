@@ -981,3 +981,71 @@ Wrong: infer Messages from `RelayFormatClaude`, convert twice to add a prompt, o
 detect a WebSocket turn from stripped Upgrade headers. Correct: use the selected
 attempt target, apply the prompt once before conversion, and enforce transport
 support at the Responses WebSocket payload boundary.
+
+## Session admission and temporary refresh failures
+
+### 1. Scope / Trigger
+
+Apply to concurrent-session admission, session listings and browser refresh recovery.
+
+### 2. Signatures
+
+`USER_SESSION_ACTIVE_LIMIT` defaults to `0` (unlimited); positive values opt into
+an active-session cap. `CountActiveUserSessions(userID, now)` and
+`ListActiveUserSessions(userID, currentSID, now)` share usable-session semantics.
+`RefreshLoginSession` returns typed credential failures separately from storage errors.
+
+### 3. Contracts
+
+Active means current authoritative user auth version, `status=active`,
+`revoked_at=0` and `expires_at>now`. The MFA admission transaction uses its locked
+user auth version. Do not count unusable historical rows or delete them to free
+slots. Zero skips the entire active-count query in both admission paths.
+Rolling issuance counts every issued row in its window regardless of current
+status, expiry or auth version; disabling the concurrent cap does not disable it.
+
+A missing refresh session maps to invalid credentials; a confirmed inactive
+session remains revoked. Operational lookup errors propagate to the generic
+`AUTH_INTERNAL_ERROR` response without clearing refresh or session-hint cookies.
+Do not log usable credentials or expose storage error details. Browser route
+guards must preserve a retryable transient outcome instead of treating it as
+confirmed anonymous. They must not render protected content while unresolved.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Unset/zero/invalid active cap | Unlimited concurrent sessions; issuance checks remain |
+| Explicit positive cap with stale/expired/revoked rows | Only usable rows occupy slots |
+| Issuance limit reached, even with cap zero | Reject without cookies or new session |
+| Temporary session SELECT failure | Generic 500, no cookie deletion; retry can recover the same SID |
+| Missing/expired/revoked refresh session | Unauthorized; clear invalid browser credentials |
+| MFA admission rejected | Parent authorization unconsumed; no new session or cookie |
+| Transient browser restoration failure | Recoverable error at requested destination, no false sign-in state |
+
+### 5. Good / Base / Bad Cases
+
+Good: a DB outage preserves the refresh cookie for recovery. Base: explicit
+positive limits still reject when usable sessions fill the cap. Bad: counting
+rows hidden by session listing, or mapping every storage error to invalid tokens.
+
+### 6. Tests Required
+
+Extend existing configuration, service, model, controller login-flow/refresh and
+frontend guard tests. Exercise real SQLite, MySQL and PostgreSQL through
+`TestSecurityLoginSessionLimitPolicy` and `TestRefreshAuth*`; assert count/list
+agreement, historical-row preservation, cookie behavior, retry identity and MFA
+replay/rollback. Run focused session race checks and existing full CI in Actions.
+Keep expiry, revocation, refresh rotation/reuse, auth-version and origin checks.
+
+OWASP references: ASVS 5.0.0 V7.1.2 (documented concurrent-session policy),
+V7.2.1 (backend session verification), Authentication and Session Management
+Cheat Sheets. These bounded checks do not establish full ASVS compliance.
+Stable shared `SESSION_SECRET` remains necessary across restarts/nodes; a
+source-supported missing-secret risk is not proof of production configuration.
+
+### 7. Wrong vs Correct
+
+Wrong: invalid sessions still consume the cap, while a transient database failure
+destroys valid browser credentials. Correct: count usable sessions and distinguish
+credential invalidation from temporary inability to validate them.

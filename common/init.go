@@ -152,7 +152,12 @@ func InitEnv() {
 }
 
 func initUserSessionSettings() {
-	UserSessionActiveLimit = positiveUserSessionEnv("USER_SESSION_ACTIVE_LIMIT", DefaultUserSessionActiveLimit)
+	// Unlike issuance and retention settings, zero disables the active-session cap.
+	UserSessionActiveLimit = GetEnvOrDefault("USER_SESSION_ACTIVE_LIMIT", DefaultUserSessionActiveLimit)
+	if UserSessionActiveLimit < 0 {
+		SysError(LogText("%s must be non-negative, using default value: %d", "USER_SESSION_ACTIVE_LIMIT", DefaultUserSessionActiveLimit))
+		UserSessionActiveLimit = DefaultUserSessionActiveLimit
+	}
 	UserSessionIssuanceLimit = positiveUserSessionEnv("USER_SESSION_ISSUANCE_LIMIT", DefaultUserSessionIssuanceLimit)
 	UserSessionIssuanceWindowSeconds = int64(positiveUserSessionEnv("USER_SESSION_ISSUANCE_WINDOW_SECONDS", DefaultUserSessionIssuanceWindowSeconds))
 	UserSessionRevokedRetentionDays = positiveUserSessionEnv("USER_SESSION_REVOKED_RETENTION_DAYS", DefaultUserSessionRevokedRetentionDays)

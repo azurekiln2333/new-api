@@ -36,3 +36,8 @@ The user explicitly authorized task planning, immediate implementation by FOUR e
 - Unrelated workspace edits remain untouched; workers never stage/commit/push. Root reviews, checks cloud, commits and publishes exact tested SHA using existing fork workflow.
 ## Exclusions
 No production deploy, provider billing/pricing changes, global security weakening or broad cache bypass. API domain binding is display association, not a traffic-routing change.
+
+## R21 — Login recovery follow-up (2026-11-25)
+The user explicitly reuses the existing login incident task and authorizes an immediate fix, separate commits, hosted CI and release. The reported active-session-limit error must not lock a successfully authenticated administrator out under the default configuration. Default concurrent-session count becomes unlimited (`USER_SESSION_ACTIVE_LIMIT=0`); explicitly positive limits remain supported. Existing sessions are not evicted to admit a new login. Retain issuance throttling, expiry, revocation, authentication/MFA, origin and replay checks.
+
+Investigate the separately reported loss of login after deployment/restart. Fix evidence-supported restoration defects and distinguish source conditions from observed production configuration; never claim persistent login merely because the concurrent-session cap is removed. No production credential probing or secret disclosure. The existing hosted-only validation restriction remains in force.

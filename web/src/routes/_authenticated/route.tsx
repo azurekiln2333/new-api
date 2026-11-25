@@ -16,11 +16,42 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  redirect,
+  useRouter,
+  type ErrorComponentProps,
+} from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { AuthenticatedLayout } from '@/components/layout'
+import { GeneralError } from '@/features/errors/general-error'
 import { resolveAuthentication } from '@/lib/auth-session'
 import { useAuthStore } from '@/stores/auth-store'
+
+function AuthSessionError(props: ErrorComponentProps) {
+  const { t } = useTranslation()
+  const router = useRouter()
+
+  if (
+    !(props.error instanceof Error) ||
+    props.error.name !== 'AuthSessionRefreshUnavailableError'
+  ) {
+    return <GeneralError error={props.error} />
+  }
+
+  return (
+    <ErrorState
+      title={t('Request failed')}
+      description={t('Please try again later.')}
+      onRetry={() => {
+        props.reset()
+        void router.invalidate()
+      }}
+    />
+  )
+}
 
 export const Route = createFileRoute('/_authenticated')({
   beforeLoad: async ({ location }) => {
@@ -28,7 +59,12 @@ export const Route = createFileRoute('/_authenticated')({
     // present. That skip is an optimization for public pages and must not
     // decide a protected route, so resolve against the server before
     // redirecting. An in-memory session returns without a request.
-    await resolveAuthentication()
+    const outcome = await resolveAuthentication()
+    if (outcome.kind === 'transient_error') {
+      throw Object.assign(new Error('Request failed'), {
+        name: 'AuthSessionRefreshUnavailableError',
+      })
+    }
 
     const { auth } = useAuthStore.getState()
 
@@ -39,5 +75,6 @@ export const Route = createFileRoute('/_authenticated')({
       })
     }
   },
+  errorComponent: AuthSessionError,
   component: AuthenticatedLayout,
 })

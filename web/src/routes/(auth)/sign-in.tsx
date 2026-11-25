@@ -16,11 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  redirect,
+  useRouter,
+  type ErrorComponentProps,
+} from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 
+import { ErrorState } from '@/components/error-state'
 import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
 import { SignIn } from '@/features/auth/sign-in'
+import { GeneralError } from '@/features/errors/general-error'
 import { resolveAuthentication } from '@/lib/auth-session'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -28,13 +36,41 @@ const searchSchema = z.object({
   redirect: z.string().optional(),
 })
 
+function AuthSessionError(props: ErrorComponentProps) {
+  const { t } = useTranslation()
+  const router = useRouter()
+
+  if (
+    !(props.error instanceof Error) ||
+    props.error.name !== 'AuthSessionRefreshUnavailableError'
+  ) {
+    return <GeneralError error={props.error} />
+  }
+
+  return (
+    <ErrorState
+      title={t('Request failed')}
+      description={t('Please try again later.')}
+      onRetry={() => {
+        props.reset()
+        void router.invalidate()
+      }}
+    />
+  )
+}
+
 export const Route = createFileRoute('/(auth)/sign-in')({
   component: SignIn,
   validateSearch: searchSchema,
   beforeLoad: async ({ search }) => {
     // 根 guard 可能因为没有会话提示而跳过了 refresh。此处必须回源确认，
     // 否则持有有效 Refresh Cookie 的用户会被要求重新输入密码。
-    await resolveAuthentication()
+    const outcome = await resolveAuthentication()
+    if (outcome.kind === 'transient_error') {
+      throw Object.assign(new Error('Request failed'), {
+        name: 'AuthSessionRefreshUnavailableError',
+      })
+    }
 
     const { auth } = useAuthStore.getState()
 
@@ -46,4 +82,5 @@ export const Route = createFileRoute('/(auth)/sign-in')({
       throw redirect({ href: target, replace: true })
     }
   },
+  errorComponent: AuthSessionError,
 })

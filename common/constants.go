@@ -43,7 +43,8 @@ var DefaultLanguage string
 var SessionCookieTrustedURLs []string
 
 const (
-	DefaultUserSessionActiveLimit           = 50
+	// Zero leaves concurrent sessions uncapped; rolling issuance limits still apply.
+	DefaultUserSessionActiveLimit           = 0
 	DefaultUserSessionIssuanceLimit         = 100
 	DefaultUserSessionIssuanceWindowSeconds = 24 * 60 * 60
 	DefaultUserSessionRevokedRetentionDays  = 7

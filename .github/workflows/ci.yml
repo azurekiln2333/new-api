@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [merge/upstream, fix/console-responsiveness-20261124]
+    branches: [merge/upstream, fix/console-responsiveness-20261124, fix/login-session-recovery-20261125]
   pull_request:
     types: [opened, synchronize, closed]
   workflow_call:
@@ -515,12 +515,18 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: go test -p 1 -count=1 -v ./setting/system_setting -run 'TestUpdateSource|TestValidateUpdateSourceRepository'
 
-      - name: Verify login avatar updates on MySQL and PostgreSQL
+      - name: Verify session admission, refresh recovery and login avatars on SQLite, MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
-          for DIALECT in mysql postgres; do
-            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestOAuthLogin.*Avatar|TestUserSettingsPreserveProviderAvatar|TestSecurityLogin'
+          for DIALECT in sqlite mysql postgres; do
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestOAuthLogin.*Avatar|TestUserSettingsPreserveProviderAvatar|TestSecurityLogin|TestRefreshAuth'
           done
+
+      - name: Check session admission, revocation and refresh recovery races
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -p 1 -count=1 ./common ./model ./service ./controller -run 'TestInitUserSessionSettings|TestUserSessionGrowthCounts|TestListActiveUserSessions|TestCreateLoginSession|TestLoginSessionCreateRefreshAndRevoke|TestIndependentRedis.*Session|TestIndependentRedisAuthVersion|TestUserAuthVersionInvalidatesExistingSession|TestSecurityLoginSession|TestSecurityLoginPasskeyConcurrentCompletion|TestRefreshAuth'
 
       - name: Verify API key rotation and custom keys on MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
