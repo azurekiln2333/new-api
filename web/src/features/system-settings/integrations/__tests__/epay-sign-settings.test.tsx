@@ -158,8 +158,14 @@ describe('Epay signature type', () => {
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
     expect(request).toHaveBeenCalledWith('/api/option/batch', {
       options: [
-        { key: 'payment_setting.epay_merchant_private_key', value: 'merchant-private-key' },
-        { key: 'payment_setting.epay_platform_public_key', value: 'platform-public-key' },
+        {
+          key: 'payment_setting.epay_merchant_private_key',
+          value: 'merchant-private-key',
+        },
+        {
+          key: 'payment_setting.epay_platform_public_key',
+          value: 'platform-public-key',
+        },
         { key: 'payment_setting.epay_sign_type', value: 'RSA' },
       ],
     })

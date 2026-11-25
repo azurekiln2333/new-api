@@ -289,7 +289,12 @@ describe('email delivery settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(request).toHaveBeenLastCalledWith('/api/option/batch', {
-        options: [{ key: 'ResendFrom', value: '"New API, \\"Support\\"" <notify@example.com>' }],
+        options: [
+          {
+            key: 'ResendFrom',
+            value: '"New API, \\"Support\\"" <notify@example.com>',
+          },
+        ],
       })
     )
     await user.clear(name)

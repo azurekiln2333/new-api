@@ -22,7 +22,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  within,
+} from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -159,7 +166,9 @@ test('orders the common log columns for the table and mobile card', () => {
   })
   const ids = result.current.map((column) => {
     // `ColumnDef` is a union, so only accessor columns carry `accessorKey`.
-    return column.id ?? ('accessorKey' in column ? column.accessorKey : undefined)
+    return (
+      column.id ?? ('accessorKey' in column ? column.accessorKey : undefined)
+    )
   })
   // The requested order leads; every other column keeps its relative order
   // after these, so no existing column is dropped or duplicated.

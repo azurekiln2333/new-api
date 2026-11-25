@@ -226,7 +226,11 @@ export function selectLatestRelease(payload: unknown): SystemRelease | null {
 function isNewerRelease(candidate: SystemRelease, current: SystemRelease) {
   const candidateBuild = parseCustomBuildVersion(candidate.tag_name)
   const currentBuild = parseCustomBuildVersion(current.tag_name)
-  if (candidateBuild && currentBuild && candidateBuild.date !== currentBuild.date) {
+  if (
+    candidateBuild &&
+    currentBuild &&
+    candidateBuild.date !== currentBuild.date
+  ) {
     return candidateBuild.date > currentBuild.date
   }
   const candidateVersion = parseSystemVersion(candidate.tag_name)

@@ -49,9 +49,8 @@ const clients: QueryClient[] = []
 const actor = { id: 1, username: 'admin', role: 100 }
 
 function operationIdFromRequestConfig(config: unknown) {
-  return (
-    config as { params?: { operation_id?: string } } | undefined
-  )?.params?.operation_id
+  return (config as { params?: { operation_id?: string } } | undefined)?.params
+    ?.operation_id
 }
 
 const item: Invitation = {
@@ -135,17 +134,15 @@ function renderCreateEditor() {
 }
 
 it('generates a batch and returns the codes for export', async () => {
-  const post = vi
-    .spyOn(api, 'post')
-    .mockResolvedValue({
-      data: {
-        success: true,
-        data: ['code-a', 'code-b'],
-        operation_id: 'replayed-operation',
-        replayed: true,
-        batch_id: '',
-      },
-    })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: ['code-a', 'code-b'],
+      operation_id: 'replayed-operation',
+      replayed: true,
+      batch_id: '',
+    },
+  })
   const { saved, user } = renderCreateEditor()
   await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
   await user.clear(screen.getByRole('spinbutton', { name: 'Count' }))
@@ -246,7 +243,9 @@ it('uses a new invitation operation ID when a failed create payload changes', as
   expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
     expect.any(String)
   )
-  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+    originalId
+  )
   expect(saved).not.toHaveBeenCalled()
 })
 
@@ -286,7 +285,9 @@ it('uses a new invitation operation ID for another create after success', async 
   expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toEqual(
     expect.any(String)
   )
-  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+    originalId
+  )
 })
 
 it('recovers a lost invitation response after remount and clears only confirmed success', async () => {
@@ -335,7 +336,9 @@ it('recovers a lost invitation response after remount and clears only confirmed 
       replayed: false,
     })
   )
-  expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).not.toBe(
+    originalId
+  )
   expect(sessionStorage.length).toBe(0)
 })
 
@@ -365,7 +368,9 @@ it.each([
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
   expect(originalId).toBeTruthy()
-  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(originalId)
+  expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).not.toBe(
+    originalId
+  )
   next.result.unmount()
   useAuthStore.getState().auth.setUser(actor)
 
@@ -386,7 +391,9 @@ it('does not create invitations when browser storage cannot preserve the retry I
   })
   const client = queryClient()
   const reportedError = vi.fn()
-  client.setDefaultOptions({ mutations: { retry: false, onError: reportedError } })
+  client.setDefaultOptions({
+    mutations: { retry: false, onError: reportedError },
+  })
   render(
     <QueryClientProvider client={client}>
       <InvitationEditor onClose={vi.fn()} onSaved={vi.fn()} />

@@ -98,7 +98,9 @@ test.each(['0.5', '1.5', '2.5', '0.0001'])(
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
-        options: [{ key: 'quota_setting.pre_consume_multiplier', value: Number(value) }],
+        options: [
+          { key: 'quota_setting.pre_consume_multiplier', value: Number(value) },
+        ],
       })
     )
   }

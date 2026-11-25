@@ -70,7 +70,9 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
       >
         <SheetHeader className='border-border/70 bg-background/95 border-b px-4 py-3 backdrop-blur sm:px-6 sm:py-4'>
           <SheetTitle className='flex items-center gap-2'>
-            <span className='shrink-0'>{getLobeIcon(props.vendorIcon, 20)}</span>
+            <span className='shrink-0'>
+              {getLobeIcon(props.vendorIcon, 20)}
+            </span>
             <span className='truncate font-mono text-sm font-semibold'>
               {props.modelName || t('Model usage')}
             </span>
@@ -131,7 +133,11 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
                 {usage && usage.users.length > 0 ? (
                   <ul className='divide-border/60 divide-y'>
                     {usage.users.map((row) => (
-                      <UserRankingRow key={row.rank} row={row} locale={locale} />
+                      <UserRankingRow
+                        key={row.rank}
+                        row={row}
+                        locale={locale}
+                      />
                     ))}
                   </ul>
                 ) : (
@@ -167,7 +173,10 @@ function SummaryStat(props: { label: string; value: string }) {
   )
 }
 
-function UserRankingRow(props: { row: RankingModelUsageUser; locale?: string }) {
+function UserRankingRow(props: {
+  row: RankingModelUsageUser
+  locale?: string
+}) {
   const { t } = useTranslation()
   const { row, locale } = props
   return (

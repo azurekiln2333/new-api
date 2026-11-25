@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -92,9 +98,7 @@ describe('ApiInfoSection', () => {
       within(primaryRow as HTMLElement).getByRole('button', { name: 'Edit' })
     )
     await userEvent.click(screen.getByRole('button', { name: 'Update' }))
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save Settings' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
 
     await waitFor(() => {
       expect(put.spy).toHaveBeenCalled()
@@ -126,9 +130,7 @@ describe('ApiInfoSection', () => {
       })
     )
 
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save Settings' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
 
     await waitFor(() => {
       expect(put.spy).toHaveBeenCalled()
@@ -159,9 +161,7 @@ describe('ApiInfoSection', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
     await userEvent.click(screen.getByRole('button', { name: 'Update' }))
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save Settings' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
 
     await waitFor(() => {
       expect(put.spy).toHaveBeenCalled()
@@ -219,9 +219,7 @@ describe('ApiInfoSection', () => {
     // The edit dialog submits with "Update".
     await userEvent.click(screen.getByRole('button', { name: 'Update' }))
 
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save Settings' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
     await waitFor(() => {
       expect(put.spy).toHaveBeenCalled()
     })
@@ -264,7 +262,9 @@ describe('ApiInfoSection', () => {
     await userEvent.click(
       within(twoRow as HTMLElement).getByRole('button', { name: 'Open menu' })
     )
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    await userEvent.click(
+      await screen.findByRole('menuitem', { name: 'Delete' })
+    )
     // Confirm in the alert dialog, which also uses "Delete" as its action.
     await userEvent.click(
       within(screen.getByRole('alertdialog')).getByRole('button', {
@@ -272,9 +272,7 @@ describe('ApiInfoSection', () => {
       })
     )
 
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save Settings' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
     await waitFor(() => {
       expect(put.spy).toHaveBeenCalled()
     })

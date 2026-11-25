@@ -193,7 +193,10 @@ export function SSRFSection({ defaultValues }: SSRFSectionProps) {
     await updateOption.mutateAsync(
       updates.map((key) => {
         const value = normalized[key]
-        return { key, value: Array.isArray(value) ? JSON.stringify(value) : value }
+        return {
+          key,
+          value: Array.isArray(value) ? JSON.stringify(value) : value,
+        }
       })
     )
 

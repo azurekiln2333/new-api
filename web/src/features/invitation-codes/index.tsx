@@ -19,20 +19,20 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
+import { Download, History } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   CodeExportProvider,
   useCodeExport,
 } from '@/components/code-export/code-export-provider'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   DataTableBulkActions,
   DataTablePage,
   useDataTable,
 } from '@/components/data-table'
-import { Download, History } from 'lucide-react'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { MaskedValueDisplay } from '@/components/masked-value-display'
@@ -62,7 +62,8 @@ export function InvitationCodes() {
 function InvitationCodesContent() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { exportIds, exportBatch, exportFiltered, openHistory } = useCodeExport()
+  const { exportIds, exportBatch, exportFiltered, openHistory } =
+    useCodeExport()
   const [editor, setEditor] = useState<Invitation | 'new' | null>(null)
   const [remove, setRemove] = useState<number[] | 'invalid' | null>(null)
   const state = useTableUrlState({
@@ -150,8 +151,7 @@ function InvitationCodesContent() {
             return (
               item.status !== 2 &&
               item.status !== 3 &&
-              (item.expired_time === 0 ||
-                item.expired_time > Date.now() / 1000)
+              (item.expired_time === 0 || item.expired_time > Date.now() / 1000)
             )
           })
           // Only adjust for rows this cached page proves were removed. The

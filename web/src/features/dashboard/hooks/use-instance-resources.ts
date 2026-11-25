@@ -30,7 +30,9 @@ function readSavedOrder(): number[] {
     const raw = window.localStorage.getItem(API_ORDER_STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'number') : []
+    return Array.isArray(parsed)
+      ? parsed.filter((v) => typeof v === 'number')
+      : []
   } catch {
     return []
   }

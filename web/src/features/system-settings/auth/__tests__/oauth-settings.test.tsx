@@ -262,10 +262,19 @@ describe('OAuth settings saves', () => {
     await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
     expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
       options: expect.arrayContaining([
-        { key: 'oidc.well_known', value: 'https://provider.example.com/discovery' },
-        { key: 'oidc.authorization_endpoint', value: response.data.authorization_endpoint },
+        {
+          key: 'oidc.well_known',
+          value: 'https://provider.example.com/discovery',
+        },
+        {
+          key: 'oidc.authorization_endpoint',
+          value: response.data.authorization_endpoint,
+        },
         { key: 'oidc.token_endpoint', value: response.data.token_endpoint },
-        { key: 'oidc.user_info_endpoint', value: response.data.userinfo_endpoint },
+        {
+          key: 'oidc.user_info_endpoint',
+          value: response.data.userinfo_endpoint,
+        },
       ]),
     })
     await waitFor(() =>
@@ -325,7 +334,12 @@ describe('OAuth settings saves', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
-        options: [{ key: 'oidc.well_known', value: 'https://provider.example.com/discovery' }],
+        options: [
+          {
+            key: 'oidc.well_known',
+            value: 'https://provider.example.com/discovery',
+          },
+        ],
       })
     )
   })

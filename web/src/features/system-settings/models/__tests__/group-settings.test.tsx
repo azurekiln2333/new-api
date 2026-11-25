@@ -459,16 +459,18 @@ it('preserves manual drafts after saving levels and receiving unchanged group de
       .getAllByRole<HTMLInputElement>('textbox', { name: 'Description' })
       .map((input) => input.value)
   ).toEqual(['Draft access', ''])
-  expect(
-    screen.getAllByRole('combobox', { name: 'Group name' })
-  ).toHaveLength(2)
+  expect(screen.getAllByRole('combobox', { name: 'Group name' })).toHaveLength(
+    2
+  )
   await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() =>
     expect(api.put).toHaveBeenCalledWith('/api/option/batch', {
-      options: [{
-        key: 'group_ratio_setting.group_special_usable_group',
-        value: '{"vip":{"+:default":"Draft access"}}',
-      }],
+      options: [
+        {
+          key: 'group_ratio_setting.group_special_usable_group',
+          value: '{"vip":{"+:default":"Draft access"}}',
+        },
+      ],
     })
   )
 
@@ -476,8 +478,7 @@ it('preserves manual drafts after saving levels and receiving unchanged group de
     <RatioCardFixture
       groupDefaults={{
         ...initial,
-        GroupSpecialUsableGroup:
-          '{"vip":{"+:default":"Updated on server"}}',
+        GroupSpecialUsableGroup: '{"vip":{"+:default":"Updated on server"}}',
       }}
     />
   )
@@ -543,9 +544,9 @@ it('keeps unfinished manual rules when the parent echoes the current serialized 
       onChange={onChange}
     />
   )
-  expect(
-    screen.getAllByRole('combobox', { name: 'Group name' })
-  ).toHaveLength(2)
+  expect(screen.getAllByRole('combobox', { name: 'Group name' })).toHaveLength(
+    2
+  )
 })
 
 it('edits group levels, rejects fractions and previews the server permission result', async () => {

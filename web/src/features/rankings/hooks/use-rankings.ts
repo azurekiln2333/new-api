@@ -52,7 +52,14 @@ export function useRankingModelUsage(
   const roleKey = user?.role ?? 0
 
   return useQuery({
-    queryKey: ['rankings', 'model-usage', modelName, period, viewerKey, roleKey],
+    queryKey: [
+      'rankings',
+      'model-usage',
+      modelName,
+      period,
+      viewerKey,
+      roleKey,
+    ],
     queryFn: async ({ signal }) => {
       const result = await getRankingModelUsage(modelName, period, signal)
       return requireServerSuccess(result)

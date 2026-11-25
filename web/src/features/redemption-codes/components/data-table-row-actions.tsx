@@ -21,8 +21,8 @@ import { Download, Trash2, Edit, Power, PowerOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { DataTableRowActionMenu } from '@/components/data-table/core/row-action-menu'
 import { useCodeExport } from '@/components/code-export/code-export-provider'
+import { DataTableRowActionMenu } from '@/components/data-table/core/row-action-menu'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenuItem,

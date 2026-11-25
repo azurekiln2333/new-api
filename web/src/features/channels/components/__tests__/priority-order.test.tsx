@@ -343,7 +343,9 @@ test('saved priority and undo remain usable while list refetches are pending', a
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled()
   )
-  expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBeGreaterThan(0)
+  expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBeGreaterThan(
+    0
+  )
   expect(orderInView()).toEqual(['channel:1', 'channel:3', 'channel:2'])
   expect(
     screen.getByRole('button', { name: 'Reorder channel 3' })
@@ -358,7 +360,9 @@ test('saved priority and undo remain usable while list refetches are pending', a
     revision: 'applied',
     restore: [{ id: 3, previous: 90, priority: 0 }],
   })
-  expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBeGreaterThan(0)
+  expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBeGreaterThan(
+    0
+  )
   releaseListRefresh?.()
   await waitFor(() =>
     expect(client.isFetching({ queryKey: ['channels', 'list'] })).toBe(0)

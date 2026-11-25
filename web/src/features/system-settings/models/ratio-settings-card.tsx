@@ -450,7 +450,10 @@ export function RatioSettingsCard({
       )
 
       await updateOption.mutateAsync(
-        updates.map((key) => ({ key: apiKeyMap[key] || key, value: normalized[key] }))
+        updates.map((key) => ({
+          key: apiKeyMap[key] || key,
+          value: normalized[key],
+        }))
       )
 
       groupNormalizedDefaults.current = normalized

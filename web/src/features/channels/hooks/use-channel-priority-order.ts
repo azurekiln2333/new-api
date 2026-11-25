@@ -164,9 +164,12 @@ export function useChannelPriorityOrder(props: {
     const priorities = new Map(
       result.items.map((item) => [item.id, item.priority])
     )
-    for (const [queryKey, previous] of client.getQueriesData<GetChannelsResponse>(
-      { queryKey: channelsQueryKeys.lists() }
-    )) {
+    for (const [
+      queryKey,
+      previous,
+    ] of client.getQueriesData<GetChannelsResponse>({
+      queryKey: channelsQueryKeys.lists(),
+    })) {
       if (!previous?.data) continue
       const params = queryKey[2] as Record<string, unknown>
       const items = previous.data.items.map((channel) =>

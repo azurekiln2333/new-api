@@ -361,7 +361,12 @@ it('offers unique channel model aliases and replaces stale selections on channel
           name: 'channel-seven',
           // The server already splits and trims the model list; a repeated
           // alias must still collapse to one option.
-          models: ['qwen3-max@stable', 'gpt-4.1', 'qwen3-max@stable', 'gpt-4.1'],
+          models: [
+            'qwen3-max@stable',
+            'gpt-4.1',
+            'qwen3-max@stable',
+            'gpt-4.1',
+          ],
         },
         { id: 8, name: 'channel-eight', models: ['claude-sonnet-4'] },
         { id: 9, name: 'channel-empty', models: [] },
@@ -840,12 +845,10 @@ it('shows the actual prompt and reply of every probe in its own card', async () 
   expect(screen.getByText('1 2 3 4 5')).toBeVisible()
   expect(screen.getByText('list one hundred integers again')).toBeVisible()
   // Every slot is rendered: two real probes plus one explicit not-run slot.
-  expect(document.querySelectorAll('[data-probe-slot="probe"]')).toHaveLength(
-    2
+  expect(document.querySelectorAll('[data-probe-slot="probe"]')).toHaveLength(2)
+  expect(document.querySelectorAll('[data-probe-slot="unused"]')).toHaveLength(
+    1
   )
-  expect(
-    document.querySelectorAll('[data-probe-slot="unused"]')
-  ).toHaveLength(1)
   expect(screen.getByText('Not run')).toBeVisible()
 })
 

@@ -282,7 +282,9 @@ export function PasskeySection(props: PasskeySectionProps) {
       }
       await updateOption.mutateAsync(
         changedKeys
-          .filter((key) => !passkeyDomainKeys.some((domainKey) => domainKey === key))
+          .filter(
+            (key) => !passkeyDomainKeys.some((domainKey) => domainKey === key)
+          )
           .map((key) => ({ key, value: normalized[key] ?? '' }))
       )
     } catch {

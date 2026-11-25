@@ -951,8 +951,7 @@ export function useCommonLogsColumns(
     for (const column of columns) {
       // `ColumnDef` is a union: only accessor columns carry `accessorKey`.
       const id =
-        column.id ??
-        ('accessorKey' in column ? column.accessorKey : undefined)
+        column.id ?? ('accessorKey' in column ? column.accessorKey : undefined)
       if (typeof id === 'string') byId.set(id, column)
     }
     for (const id of [
@@ -975,8 +974,7 @@ export function useCommonLogsColumns(
     // Any remaining column keeps its original relative position at the end.
     for (const column of columns) {
       const id =
-        column.id ??
-        ('accessorKey' in column ? column.accessorKey : undefined)
+        column.id ?? ('accessorKey' in column ? column.accessorKey : undefined)
       if (typeof id !== 'string' || byId.has(id)) orderedColumns.push(column)
     }
 
