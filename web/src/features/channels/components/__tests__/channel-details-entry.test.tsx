@@ -683,8 +683,10 @@ it('shows unavailable instead of the upstream balance when the local budget is u
       </QueryClientProvider>
     </I18nextProvider>
   )
+  await waitFor(() =>
+    expect(document.querySelector(CARD_SELECTOR)).not.toBeNull()
+  )
   const card = document.querySelector(CARD_SELECTOR) as HTMLElement
-  expect(card).not.toBeNull()
 
   // The quota region must not present the upstream balance as the local budget.
   const label = await within(card).findByText('Remaining / Total')
