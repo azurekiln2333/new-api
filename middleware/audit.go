@@ -262,7 +262,7 @@ func TokenOperationAudit() gin.HandlerFunc {
 		entry := model.AuditLog{
 			EventId: common.NewRequestId(), CreatedAt: common.GetTimestamp(),
 			AuthMethod: auditAuthMethod(c),
-			UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
+			UserId:     c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
 			Category: model.AuditCategorySecurity, Action: action, Content: content,
 			Other: model.AuditOther{Op: &model.AuditOperation{Action: action, Params: params}},
 		}
