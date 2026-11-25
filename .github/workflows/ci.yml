@@ -413,7 +413,7 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestCodexWhamChannelManagement|TestChannelManagement|TestPricingSyncChannelManagement|TestChannelDiagnostic|TestFingerprintDiagnostic|TestOllamaChannelManagement'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestCodexWhamChannelManagement|TestChannelManagement|TestPricingSyncChannelManagement|TestChannelDiagnostic|TestChannelTestStableKeyIdentityAdmissionFence|TestFingerprintDiagnostic|TestOllamaChannelManagement'
           done
           for DIALECT in mysql postgres; do
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestUpdateChannelStatusCheckedCacheRouting$'
@@ -491,7 +491,7 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
-        run: go test -race -p 1 -count=1 ./model -run 'TestChannelBudget|TestLogRequestDetail'
+        run: go test -race -p 1 -count=1 ./model -run 'TestChannelBudget|TestLogRequestDetail|TestLogRequestPayloadIsAStringDriverValue'
 
       - name: Check panel critical rate-limit isolation races
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
@@ -546,7 +546,7 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
-        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'RetryAvoidsFailedChannelsAcrossPrioritiesAndGroups|ChannelCapacity|ChannelWait|ChannelBudget|LedgerTaskSubmission|LegacyTaskSubmission|TaskSubmissionCommits|RelayKeepAliveDuringImagePreparation|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|MultiKeyModel|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
+        run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'RetryAvoidsFailedChannelsAcrossPrioritiesAndGroups|ChannelCapacity|ChannelWait|ChannelBudget|LedgerTaskSubmission|LegacyTaskSubmission|TaskSubmissionCommits|RelayKeepAliveDuringImagePreparation|ChannelDiagnostic|TestChannelTestStableKeyIdentityAdmissionFence|ChannelManagement|ChannelBalanceManagement|MultiKeyModel|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
 
   frontend:
     name: Frontend typecheck, test, and build

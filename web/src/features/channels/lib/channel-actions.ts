@@ -300,6 +300,8 @@ export async function handleTestChannel(
     endpointType?: string
     stream?: boolean
     keyIndex?: number
+    keyEntryId?: string
+    expectedRev?: number
     silent?: boolean
   },
   onTestComplete?: (
@@ -313,7 +315,11 @@ export async function handleTestChannel(
     typeof options?.keyIndex === 'number' && options.keyIndex >= 0
   const payload =
     options &&
-    (options.testModel || options.endpointType || options.stream || hasKeyIndex)
+    (options.testModel ||
+      options.endpointType ||
+      options.stream ||
+      hasKeyIndex ||
+      options.keyEntryId)
       ? {
           ...(options.testModel ? { model: options.testModel } : {}),
           ...(options.endpointType
@@ -321,6 +327,12 @@ export async function handleTestChannel(
             : {}),
           ...(options.stream ? { stream: true } : {}),
           ...(hasKeyIndex ? { key_index: options.keyIndex } : {}),
+          ...(options.keyEntryId
+            ? {
+                key_entry_id: options.keyEntryId,
+                expected_rev: options.expectedRev,
+              }
+            : {}),
         }
       : undefined
 

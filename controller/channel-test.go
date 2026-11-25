@@ -155,6 +155,58 @@ func checkChannelTestKey(channel *model.Channel, keyIndex int, testModel string)
 	return nil
 }
 
+// pinChannelTestKey resolves an explicit selection from the current channel snapshot.
+// When the caller supplies an allocation identity, the optional index is an
+// additional snapshot fence: it must still point at that allocation.
+func pinChannelTestKey(channel *model.Channel, keyIndex int, entryID, expectedRevision int64, testModel string) (*pinnedChannelTestKey, error) {
+	if entryID == 0 && expectedRevision == 0 {
+		if keyIndex < 0 {
+			return nil, nil
+		}
+		if err := checkChannelTestKey(channel, keyIndex, testModel); err != nil {
+			return nil, err
+		}
+		pinned := &pinnedChannelTestKey{index: keyIndex, value: channel.GetKeys()[keyIndex]}
+		if allocation, ok := channel.ChannelAllocationByPosition(keyIndex); ok && allocation.Key == pinned.value {
+			pinned.entryID = allocation.EntryID
+			pinned.revision = allocation.Revision
+		}
+		return pinned, nil
+	}
+
+	if entryID <= 0 || expectedRevision <= 0 || channel == nil || !channel.ChannelInfo.IsMultiKey {
+		return nil, &channelTestKeyError{
+			message: "Channel key configuration changed, reload and retry",
+			code:    types.ErrorCodeInvalidRequest,
+		}
+	}
+
+	position := -1
+	for index, id := range channel.KeyEntryIDs {
+		if id == entryID {
+			position = index
+			break
+		}
+	}
+	if position < 0 || position >= len(channel.KeyEntryRevisions) ||
+		channel.KeyEntryRevisions[position] != expectedRevision ||
+		(keyIndex >= 0 && keyIndex != position) || position >= len(channel.GetKeys()) {
+		return nil, &channelTestKeyError{
+			message: "Channel key configuration changed, reload and retry",
+			code:    types.ErrorCodeInvalidRequest,
+		}
+	}
+	if err := checkChannelTestKey(channel, position, testModel); err != nil {
+		return nil, err
+	}
+	return &pinnedChannelTestKey{
+		index:    position,
+		value:    channel.GetKeys()[position],
+		entryID:  entryID,
+		revision: expectedRevision,
+	}, nil
+}
+
 // servedTestKeyIndex reports which key of the channel serves the test request,
 // so a failure is attributed to that key rather than to the channel. It returns
 // -1 when the key is unknown, including for a single-key channel.
@@ -172,17 +224,21 @@ func servedTestKeyIndex(c *gin.Context, channel *model.Channel) int {
 }
 
 type channelTestSpec struct {
-	userID      int
-	model       string
-	endpoint    string
-	stream      bool
-	keyIndex    int
-	healthCheck bool
+	userID           int
+	model            string
+	endpoint         string
+	stream           bool
+	keyIndex         int
+	keyEntryID       int64
+	keyEntryRevision int64
+	healthCheck      bool
 }
 
 type pinnedChannelTestKey struct {
-	index int // -1 for a single-key channel
-	value string
+	index    int // -1 for a single-key channel
+	value    string
+	entryID  int64
+	revision int64
 }
 
 // testChannel runs one manual test or fingerprint sample. A non-negative
@@ -199,12 +255,12 @@ func runChannelTest(ctx context.Context, channel *model.Channel, spec channelTes
 	}
 	spec.model = strings.TrimSpace(spec.model)
 	spec.endpoint = strings.TrimSpace(spec.endpoint)
-	var pinned *pinnedChannelTestKey
-	if spec.keyIndex >= 0 {
-		if err := checkChannelTestKey(channel, spec.keyIndex, channelTestModel(channel, spec.model)); err != nil {
-			return testResult{localErr: err, keyIndex: spec.keyIndex}
-		}
-		pinned = &pinnedChannelTestKey{index: spec.keyIndex, value: channel.GetKeys()[spec.keyIndex]}
+	pinned, err := pinChannelTestKey(channel, spec.keyIndex, spec.keyEntryID, spec.keyEntryRevision, channelTestModel(channel, spec.model))
+	if err != nil {
+		return testResult{localErr: err, keyIndex: spec.keyIndex}
+	}
+	if pinned != nil {
+		spec.keyIndex = pinned.index
 	}
 	requireConfiguredModel := spec.model != "" && channelTestModelConfigured(channel, spec.model)
 	admissionUserID := spec.userID
@@ -226,7 +282,16 @@ func runChannelTest(ctx context.Context, channel *model.Channel, spec channelTes
 	// One safe replay of a refused request. Do not choose a different key or
 	// model on retry, even if automatic selection was used on the first attempt.
 	spec.model = common.GetContextKeyString(result.context, constant.ContextKeyOriginalModel)
-	pinned = &pinnedChannelTestKey{index: result.keyIndex, value: common.GetContextKeyString(result.context, constant.ContextKeyChannelKey)}
+	if pinned == nil || pinned.entryID == 0 {
+		keyValue := common.GetContextKeyString(result.context, constant.ContextKeyChannelKey)
+		pinned = &pinnedChannelTestKey{index: result.keyIndex, value: keyValue}
+		if result.channel != nil {
+			if allocation, ok := result.channel.ChannelAllocationByPosition(result.keyIndex); ok && allocation.Key == keyValue {
+				pinned.entryID = allocation.EntryID
+				pinned.revision = allocation.Revision
+			}
+		}
+	}
 	lease, latest, apiErr := admitChannelTest(ctx, admission, current, true)
 	if apiErr != nil {
 		return testResult{localErr: apiErr, newAPIError: apiErr}
@@ -309,6 +374,15 @@ func runAdmittedChannelTest(ctx context.Context, lease *service.ChannelCapacityL
 	if err := checkChannelTestKey(channel, spec.keyIndex, testModel); err != nil {
 		return testResult{localErr: err, keyIndex: spec.keyIndex}
 	}
+	if pinned != nil && pinned.entryID > 0 && !pinned.matchesAllocation(channel) {
+		return testResult{
+			localErr: &channelTestKeyError{
+				message: "Channel key configuration changed, reload and retry",
+				code:    types.ErrorCodeInvalidRequest,
+			},
+			keyIndex: pinned.index,
+		}
+	}
 	if pinned != nil && !pinned.stillServes(channel, testModel, spec.keyIndex >= 0) {
 		err := &channelTestKeyError{message: "no enabled key serves this request", code: types.ErrorCodeChannelKeyScopeUnsatisfied}
 		return testResult{localErr: err, keyIndex: pinned.index}
@@ -349,7 +423,19 @@ func runAdmittedChannelTest(ctx context.Context, lease *service.ChannelCapacityL
 	return result
 }
 
+func (key *pinnedChannelTestKey) matchesAllocation(channel *model.Channel) bool {
+	return key != nil && channel != nil && key.entryID > 0 && key.revision > 0 &&
+		key.index >= 0 && key.index < len(channel.KeyEntryIDs) &&
+		key.index < len(channel.KeyEntryRevisions) && key.index < len(channel.GetKeys()) &&
+		channel.ChannelKeyEntryID(key.index) == key.entryID &&
+		channel.KeyEntryRevisions[key.index] == key.revision &&
+		channel.GetKeys()[key.index] == key.value
+}
+
 func (key *pinnedChannelTestKey) stillServes(channel *model.Channel, testModel string, explicit bool) bool {
+	if key.entryID > 0 && !key.matchesAllocation(channel) {
+		return false
+	}
 	if key.index < 0 {
 		if channel.ChannelInfo.IsMultiKey || key.value != channel.Key {
 			return false
@@ -922,11 +1008,36 @@ func TestChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	query, err := url.ParseQuery(c.Request.URL.RawQuery)
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
 	keyIndex := -1
-	if raw := c.Query("key_index"); raw != "" {
+	if raw := query.Get("key_index"); raw != "" {
 		keyIndex, err = strconv.Atoi(raw)
 		if err != nil || keyIndex < 0 {
 			common.ApiError(c, errors.New("key_index must be a non-negative integer"))
+			return
+		}
+	}
+	keyEntryID := int64(0)
+	expectedKeyRevision := int64(0)
+	entryIDValues, hasEntryID := query["key_entry_id"]
+	revisionValues, hasExpectedRevision := query["expected_rev"]
+	if hasEntryID || hasExpectedRevision {
+		if !hasEntryID || !hasExpectedRevision || len(entryIDValues) != 1 || len(revisionValues) != 1 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		keyEntryID, err = strconv.ParseInt(entryIDValues[0], 10, 64)
+		if err != nil || keyEntryID <= 0 || strconv.FormatInt(keyEntryID, 10) != entryIDValues[0] {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		expectedKeyRevision, err = strconv.ParseInt(revisionValues[0], 10, 64)
+		if err != nil || expectedKeyRevision <= 0 || strconv.FormatInt(expectedKeyRevision, 10) != revisionValues[0] {
+			common.ApiErrorT(c, "Invalid parameters")
 			return
 		}
 	}
@@ -935,9 +1046,9 @@ func TestChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	testModel := c.Query("model")
-	endpointType := c.Query("endpoint_type")
-	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	testModel := query.Get("model")
+	endpointType := query.Get("endpoint_type")
+	isStream, _ := strconv.ParseBool(query.Get("stream"))
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -947,7 +1058,15 @@ func TestChannel(c *gin.Context) {
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
 	}
-	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream, keyIndex)
+	result := runChannelTest(requestCtx, channel, channelTestSpec{
+		userID:           testUserID,
+		model:            testModel,
+		endpoint:         endpointType,
+		stream:           isStream,
+		keyIndex:         keyIndex,
+		keyEntryID:       keyEntryID,
+		keyEntryRevision: expectedKeyRevision,
+	})
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -966,7 +1085,7 @@ func TestChannel(c *gin.Context) {
 	}
 	milliseconds := result.elapsed.Milliseconds()
 	// A test of one named key acts on that key only. Queue time is not upstream latency.
-	if keyIndex < 0 {
+	if keyIndex < 0 && keyEntryID == 0 {
 		go channel.UpdateResponseTime(milliseconds)
 	}
 	consumedTime := result.elapsed.Seconds()
