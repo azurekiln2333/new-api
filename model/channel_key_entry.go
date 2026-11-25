@@ -649,8 +649,8 @@ func UpdateChannelAllocationStatusChecked(ctx context.Context, selected ChannelA
 		return false
 	}
 	publishChannelStatus(&source, committed)
+	BumpTaskAliasChannelRevision()
 	InvalidatePricingCache()
-	rebuildTaskAliasView()
 	BumpSyncTopic(SyncTopicChannels)
 	return true
 }
@@ -731,7 +731,7 @@ func MutateChannelKeyEntries(ctx context.Context, channelID int, revision int64,
 	}
 	if written {
 		BumpSyncTopic(SyncTopicChannels)
-		InitChannelCache()
+		publishChannelSnapshot(updated)
 	}
 	return updated, nil
 }

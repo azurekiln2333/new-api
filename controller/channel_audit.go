@@ -12,16 +12,16 @@ import (
 // delivery worker never retain *gin.Context, and the username is snapshotted so
 // delivery never performs a user lookup on a request path.
 type channelAuditActor struct {
-	UserId    int
-	Username  string
-	Role      int
+	UserId     int
+	Username   string
+	Role       int
 	AuthMethod string
-	TokenRef  string
-	Ip        string
-	UserAgent string
-	Method    string
-	Route     string
-	RequestId string
+	TokenRef   string
+	Ip         string
+	UserAgent  string
+	Method     string
+	Route      string
+	RequestId  string
 }
 
 // snapshotChannelAuditActor reads the actor and request context once, before the

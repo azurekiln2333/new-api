@@ -21,11 +21,29 @@ type TaskAliasTarget struct {
 
 type taskAliasView struct {
 	generation uint64
-	expiresAt  time.Time
-	byFold     map[string]TaskAliasTarget
+	// channelRevision is the channel-table revision this view was built from. A
+	// management write bumps it instead of rebuilding the view, so a stale view is
+	// rejected on the next read rather than through a full enabled-channel scan on
+	// the save path.
+	channelRevision uint64
+	expiresAt       time.Time
+	byFold          map[string]TaskAliasTarget
 }
 
 const taskAliasViewTTL = 60 * time.Second
+
+// taskAliasChannelRevision advances on every committed channel write that can
+// change an alias: model_mapping, models, status, type or deletion. A view built
+// from an older revision is rejected and rebuilt lazily by the first reader.
+var taskAliasChannelRevision atomic.Uint64
+
+// BumpTaskAliasChannelRevision invalidates every published alias view without
+// scanning the channel table. It is called from the channel write path, so a
+// management save never pays for the full rebuild; the rebuild happens on the
+// next alias lookup instead.
+func BumpTaskAliasChannelRevision() {
+	taskAliasChannelRevision.Add(1)
+}
 
 var (
 	taskAliasViewPtr   atomic.Pointer[taskAliasView]
@@ -85,9 +103,15 @@ func loadFreshTaskAliasView(g *jsplugin.RoutingGeneration) *taskAliasView {
 }
 
 func taskAliasViewFresh(view *taskAliasView, generation uint64) bool {
-	return view != nil && view.generation == generation && time.Now().Before(view.expiresAt)
+	return view != nil &&
+		view.generation == generation &&
+		view.channelRevision == taskAliasChannelRevision.Load() &&
+		time.Now().Before(view.expiresAt)
 }
 
+// rebuildTaskAliasView rebuilds the view eagerly. Only cache reloads call it;
+// the channel write path bumps the revision instead, so a save never scans the
+// whole enabled-channel table.
 func rebuildTaskAliasView() {
 	taskAliasRebuildMu.Lock()
 	defer taskAliasRebuildMu.Unlock()
@@ -105,9 +129,10 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 		genNum = generation.Number
 	}
 	view := &taskAliasView{
-		generation: genNum,
-		expiresAt:  time.Now().Add(taskAliasViewTTL),
-		byFold:     make(map[string]TaskAliasTarget),
+		generation:      genNum,
+		channelRevision: taskAliasChannelRevision.Load(),
+		expiresAt:       time.Now().Add(taskAliasViewTTL),
+		byFold:          make(map[string]TaskAliasTarget),
 	}
 	if DB == nil {
 		return view

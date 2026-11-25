@@ -451,7 +451,11 @@ export function ChannelsTable() {
   const drag = useChannelPriorityDrag({
     items: channels,
     desc: sortDesc,
-    enabled: reorderActive && !priorityOrder.saving && !isFetching,
+    // A background refetch keeps the current list valid, and the gesture already
+    // snapshots its items and is cancelled by the scope when the visible set or
+    // priorities actually change. Only a first load with no data yet (or an
+    // in-flight save) must block reordering.
+    enabled: reorderActive && !priorityOrder.saving && !isLoading,
     scope: reorderScope,
     begin: priorityOrder.begin,
     select: priorityOrder.select,
@@ -463,7 +467,7 @@ export function ChannelsTable() {
   if (sortField !== 'priority') dragReason = 'sort'
   else if (enableTagMode) dragReason = 'tag'
   else if (!hasPermission(user, 'channel', 'write')) dragReason = 'permission'
-  else if (priorityOrder.saving || isFetching) dragReason = 'busy'
+  else if (priorityOrder.saving || isLoading) dragReason = 'busy'
 
   const dragControls = useMemo(
     () => ({ reason: dragReason, start: drag.start, keyDown: drag.keyDown }),

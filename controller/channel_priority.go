@@ -33,8 +33,7 @@ func ReorderChannelPriority(c *gin.Context) {
 		}
 		return
 	}
-	if !move.Preview && len(order.Changes) > 0 {
-		model.InitChannelCache()
-	}
+	// The model re-publishes exactly the channels this move changed, so the
+	// handler no longer triggers a full channel-table reload before responding.
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": order})
 }

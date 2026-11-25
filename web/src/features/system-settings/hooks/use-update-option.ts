@@ -24,7 +24,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { updatePasskeyDomains, updateSystemOption } from '../api'
-import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
+import type { SystemOptionsResponse, UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
@@ -59,8 +59,29 @@ export function useUpdateOption() {
       requireServerSuccess(await updateSystemOption(request)),
     onSuccess: (data, variables) => {
       if (data.success) {
-        // Always refresh system-options
-        queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        // A single-field save commits exactly `variables.value`. Patch that one
+        // cached entry so the form and every other settings surface see the
+        // saved value without refetching the whole options payload. The query is
+        // still marked stale so a later natural fetch reconciles it.
+        const saved = String(variables.value)
+        queryClient.setQueryData<SystemOptionsResponse>(
+          ['system-options'],
+          (previous) => {
+            if (!previous?.data) return previous
+            return {
+              ...previous,
+              data: previous.data.map((option) =>
+                option.key === variables.key
+                  ? { ...option, value: saved }
+                  : option
+              ),
+            }
+          }
+        )
+        queryClient.invalidateQueries({
+          queryKey: ['system-options'],
+          refetchType: 'none',
+        })
 
         // If updating frontend-display-related config, also refresh status
         if (STATUS_RELATED_KEYS.has(variables.key)) {

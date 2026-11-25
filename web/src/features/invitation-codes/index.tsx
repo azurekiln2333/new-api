@@ -90,16 +90,85 @@ function InvitationCodesContent() {
   })
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: ['invitations'] })
+  // Patch every cached page from the committed values, filtered the same way the
+  // server would, so a row that no longer matches the active filter leaves the
+  // page instead of lingering. Only rows the page already holds are counted;
+  // the background refetch supplies cross-page totals.
+  const patchInvitation = (changed: {
+    id: number
+    name?: string
+    expired_time?: number
+    status?: number
+  }) => {
+    for (const [queryKey, previous] of queryClient.getQueriesData<
+      Awaited<ReturnType<typeof listInvitations>>
+    >({ queryKey: ['invitations'] })) {
+      if (!previous) continue
+      const filter = queryKey[3]
+      let removed = 0
+      const items = previous.items.flatMap((item) => {
+        if (item.id !== changed.id) return [item]
+        const updated = { ...item, ...changed }
+        const expired =
+          updated.expired_time > 0 && updated.expired_time <= Date.now() / 1000
+        let matches = true
+        if (filter === '1') matches = updated.status === 1 && !expired
+        else if (filter === 'expired') {
+          matches = updated.status === 1 && expired
+        } else if (filter === '2' || filter === '3') {
+          matches = updated.status === Number(filter)
+        }
+        if (matches) return [updated]
+        removed++
+        return []
+      })
+      queryClient.setQueryData(queryKey, {
+        ...previous,
+        items,
+        total: Math.max(0, previous.total - removed),
+      })
+    }
+  }
   const update = useMutation({
     mutationFn: updateInvitation,
-    onSuccess: refresh,
+    onSuccess: (_, changed) => {
+      void queryClient.cancelQueries({ queryKey: ['invitations'] })
+      patchInvitation(changed)
+      void refresh()
+    },
   })
   const deletion = useMutation({
     mutationFn: deleteInvitations,
-    onSuccess: async () => {
+    onSuccess: (_, deleted) => {
+      void queryClient.cancelQueries({ queryKey: ['invitations'] })
+      queryClient.setQueriesData<Awaited<ReturnType<typeof listInvitations>>>(
+        { queryKey: ['invitations'] },
+        (previous) => {
+          if (!previous) return previous
+          const items = previous.items.filter((item) => {
+            if (deleted !== 'invalid') return !deleted.includes(item.id)
+            return (
+              item.status !== 2 &&
+              item.status !== 3 &&
+              (item.expired_time === 0 ||
+                item.expired_time > Date.now() / 1000)
+            )
+          })
+          // Only adjust for rows this cached page proves were removed. The
+          // refetch supplies cross-page totals and fills any resulting gaps.
+          return {
+            ...previous,
+            items,
+            total: Math.max(
+              0,
+              previous.total - (previous.items.length - items.length)
+            ),
+          }
+        }
+      )
       setRemove(null)
       table.resetRowSelection()
-      await refresh()
+      void refresh()
     },
   })
   const columns: ColumnDef<Invitation>[] = [
@@ -346,6 +415,13 @@ function InvitationCodesContent() {
         <InvitationEditor
           invitation={editor === 'new' ? undefined : editor}
           onClose={() => setEditor(null)}
+          onUpdated={(saved) => {
+            // Patch the cached rows with the committed name/expiry immediately.
+            // The single list refresh happens in onSaved, which also closes the
+            // dialog, so an edit triggers exactly one invalidation and no second
+            // PUT.
+            patchInvitation(saved)
+          }}
           onSaved={(result) => {
             setEditor(null)
             void refresh()
@@ -353,7 +429,9 @@ function InvitationCodesContent() {
             // create and a recovered replay download through one path. The batch
             // identity is what the server re-reads under the actor binding, which
             // keeps key exposure limited to the operator who committed it.
-            exportBatch(result.operationId)
+            if (editor === 'new' && result.operationId) {
+              exportBatch(result.operationId)
+            }
           }}
         />
       )}

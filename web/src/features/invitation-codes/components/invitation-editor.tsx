@@ -49,10 +49,18 @@ import {
 
 type InvitationFormValues = { name: string; count: number; expires: string }
 
+/** The authoritative fields an edit committed, so the caller can patch its cache. */
+export type InvitationUpdateResult = {
+  id: number
+  name: string
+  expired_time: number
+}
+
 export function InvitationEditor(props: {
   invitation?: Invitation
   onClose: () => void
   onSaved: (result: InvitationCreateResult) => void
+  onUpdated?: (result: InvitationUpdateResult) => void
 }) {
   const { t } = useTranslation()
   const validationMessage = t(
@@ -95,6 +103,14 @@ export function InvitationEditor(props: {
       }
       if (props.invitation) {
         await updateInvitation({
+          id: props.invitation.id,
+          name: values.name,
+          expired_time: expires,
+        })
+        // The update endpoint returns no body, so hand back exactly what was
+        // saved. The caller patches its cached row with these committed values
+        // instead of re-deriving them from a stale list response.
+        props.onUpdated?.({
           id: props.invitation.id,
           name: values.name,
           expired_time: expires,

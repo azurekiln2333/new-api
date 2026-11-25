@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -31,6 +32,11 @@ var channelCacheGenerationLock sync.Mutex
 
 // channelCacheGeneration advances on every successful routing publication.
 var channelCacheGeneration int64
+
+// channelPublicationLock keeps management commits and their local publications
+// in the same order, including priority-only writes across several channels.
+// Take it before polling/row locks; readers continue using channelSyncLock.
+var channelPublicationLock sync.Mutex
 
 // BumpChannelCacheGeneration marks that a targeted publication changed the
 // channel routing snapshot.
@@ -264,13 +270,10 @@ func publishChannelSnapshot(channel *Channel) {
 		publishUserBoundChannelIndexForChannel(channel)
 		BumpChannelCacheGeneration()
 		channelSyncLock.Unlock()
-		// The pricing cache and the task alias view are derived from the channel
-		// rows in this mode, so a changed channel invalidates them exactly as the
-		// full reload does. Both run outside channelSyncLock: InvalidatePricingCache
-		// takes updatePricingLock, which nests channelSyncLock.RLock, so holding it
-		// here would be an AB-BA deadlock.
+		// Alias readers reject the previous channel generation. Pricing invalidation
+		// stays outside channelSyncLock to preserve its lock order.
+		BumpTaskAliasChannelRevision()
 		InvalidatePricingCache()
-		rebuildTaskAliasView()
 		return
 	}
 	channelSyncLock.Lock()
@@ -278,8 +281,8 @@ func publishChannelSnapshot(channel *Channel) {
 	publishUserBoundChannelIndexForChannel(channel)
 	BumpChannelCacheGeneration()
 	channelSyncLock.Unlock()
+	BumpTaskAliasChannelRevision()
 	InvalidatePricingCache()
-	rebuildTaskAliasView()
 }
 
 // BatchChannelPublication carries the caller's in-transaction hook and audit
@@ -297,6 +300,8 @@ func BatchInsertChannelsWithAudit(channels []Channel, publication BatchChannelPu
 	if len(channels) == 0 {
 		return nil
 	}
+	channelPublicationLock.Lock()
+	defer channelPublicationLock.Unlock()
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return tx.Error
@@ -353,14 +358,16 @@ func BatchInsertChannelsWithAudit(channels []Channel, publication BatchChannelPu
 		}
 		committed = append(committed, snapshot)
 	}
+	if err := bumpSyncTopic(tx, SyncTopicChannels); err != nil {
+		tx.Rollback()
+		return err
+	}
 	if err := tx.Commit().Error; err != nil {
 		return err
 	}
-	// Publish the whole batch once. Publishing row by row would rebuild the task
-	// alias view and the bound index per row, turning a multi-create into
-	// O(rows) full channel-table scans.
+	// Publish the whole batch once, with one generation change and pricing
+	// invalidation. The durable task performs the full reload asynchronously.
 	publishChannelBatch(committed)
-	BumpSyncTopic(SyncTopicChannels)
 	return nil
 }
 
@@ -379,10 +386,10 @@ func publishChannelBatch(channels []*Channel) {
 		}
 		BumpChannelCacheGeneration()
 		channelSyncLock.Unlock()
-		// Same derived caches as the single-channel path, invalidated once for the
-		// batch and outside channelSyncLock (lock-order requirement).
+		// Alias freshness follows the generation; pricing invalidation must stay
+		// outside channelSyncLock (lock-order requirement).
+		BumpTaskAliasChannelRevision()
 		InvalidatePricingCache()
-		rebuildTaskAliasView()
 		return
 	}
 	channelSyncLock.Lock()
@@ -392,8 +399,75 @@ func publishChannelBatch(channels []*Channel) {
 	}
 	BumpChannelCacheGeneration()
 	channelSyncLock.Unlock()
+	BumpTaskAliasChannelRevision()
 	InvalidatePricingCache()
-	rebuildTaskAliasView()
+}
+
+// UpdateChannelStatusAtomic applies a whole-channel management status change.
+// The channel, abilities and sync obligation commit together before publication;
+// individual allocation status and scope are preserved, including disabled keys.
+func UpdateChannelStatusAtomic(channelID int, status int, reason string) (bool, error) {
+	channelPublicationLock.Lock()
+	defer channelPublicationLock.Unlock()
+	pollingLock := GetChannelPollingLock(channelID)
+	pollingLock.Lock()
+	defer pollingLock.Unlock()
+	var committed *Channel
+	err := ChannelBudgetTransaction(context.Background(), channelID, func(tx *gorm.DB) error {
+		stored, err := loadChannelRoutingSnapshot(tx, channelID)
+		if err != nil {
+			return err
+		}
+		// A request failure must not replace an administrator's manual disable, so
+		// automatic recovery cannot re-enable the channel later. Same guard the
+		// in-place status path applies before it writes.
+		if status == common.ChannelStatusAutoDisabled && stored.Status == common.ChannelStatusManuallyDisabled {
+			return nil
+		}
+		info := stored.GetOtherInfo()
+		overridesKeyExhaustion := stored.ChannelInfo.IsMultiKey &&
+			status == common.ChannelStatusManuallyDisabled && reason != ChannelStatusReasonAllKeysDisabled &&
+			info["status_reason"] == ChannelStatusReasonAllKeysDisabled
+		if stored.Status == status && !overridesKeyExhaustion {
+			return nil
+		}
+		// A multi-key channel keeps its per-allocation state: the same handler the
+		// in-place path uses decides whether the channel status follows its keys,
+		// so no key status, reason or cursor is overwritten by this write.
+		updates := map[string]any{}
+		if stored.ChannelInfo.IsMultiKey {
+			handlerMultiKeyUpdate(stored, "", status, reason)
+			updates["status"] = stored.Status
+			updates["channel_info"] = stored.ChannelInfo
+		} else {
+			stored.Status = status
+			info["status_reason"] = reason
+			info["status_time"] = common.GetTimestamp()
+			stored.SetOtherInfo(info)
+			updates["status"] = stored.Status
+			updates["other_info"] = stored.OtherInfo
+		}
+		if err := tx.Model(&Channel{}).Where("id = ?", channelID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&Ability{}).Where("channel_id = ?", channelID).
+			Select("enabled").Update("enabled", stored.Status == common.ChannelStatusEnabled).Error; err != nil {
+			return err
+		}
+		if err := bumpSyncTopic(tx, SyncTopicChannels); err != nil {
+			return err
+		}
+		committed = stored
+		return nil
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil || committed == nil {
+		return false, err
+	}
+	publishChannelSnapshot(committed)
+	return true, nil
 }
 
 // ChannelConfigEdit collects the configuration a channel edit changes and the
@@ -425,6 +499,8 @@ func UpdateChannelConfigAtomic(channelID int, edit ChannelConfigEdit) (*Channel,
 	if channelID <= 0 {
 		return nil, ErrChannelKeyEntryNotFound
 	}
+	channelPublicationLock.Lock()
+	defer channelPublicationLock.Unlock()
 	pollingLock := GetChannelPollingLock(channelID)
 	pollingLock.Lock()
 	defer pollingLock.Unlock()
@@ -488,7 +564,7 @@ func UpdateChannelConfigAtomic(channelID int, edit ChannelConfigEdit) (*Channel,
 			return err
 		}
 		committed = snapshot
-		return nil
+		return bumpSyncTopic(tx, SyncTopicChannels)
 	})
 	if err != nil {
 		return nil, err
@@ -497,8 +573,36 @@ func UpdateChannelConfigAtomic(channelID int, edit ChannelConfigEdit) (*Channel,
 		CacheUpdateChannelKey(channelID, committed.Key)
 	}
 	publishChannelSnapshot(committed)
-	BumpSyncTopic(SyncTopicChannels)
 	return committed, nil
+}
+
+// RefreshChannelRouting reloads only one already-committed channel and publishes
+// its authoritative allocations, routes and bindings before a management reply.
+// Callers may already hold the polling lock; do not acquire publicationLock here
+// (configuration writes acquire those locks in the opposite order).
+func RefreshChannelRouting(channelID int) error {
+	for range 3 {
+		generation := ChannelCacheGeneration()
+		stored, err := loadChannelRoutingSnapshot(DB, channelID)
+		if err != nil {
+			return err
+		}
+		channelSyncLock.Lock()
+		if ChannelCacheGeneration() != generation {
+			channelSyncLock.Unlock()
+			continue
+		}
+		if common.MemoryCacheEnabled {
+			publishChannelLocked(stored)
+		}
+		publishUserBoundChannelIndexForChannel(stored)
+		BumpChannelCacheGeneration()
+		channelSyncLock.Unlock()
+		BumpTaskAliasChannelRevision()
+		InvalidatePricingCache()
+		return nil
+	}
+	return errors.New("channel routing changed during publication; retry the operation")
 }
 
 // CacheRemoveChannel unpublishes one channel from the routing snapshot: it can no
@@ -511,11 +615,10 @@ func CacheRemoveChannel(id int) {
 	removeChannelFromUserBoundIndex(id)
 	BumpChannelCacheGeneration()
 	channelSyncLock.Unlock()
-	// Both derived caches depend on the channel rows, with or without the routing
-	// snapshot, so a removal invalidates them exactly as the full reload does. They
-	// must run outside channelSyncLock: InvalidatePricingCache takes updatePricingLock,
+	// Alias readers reject the previous generation. Pricing invalidation must run
+	// outside channelSyncLock: InvalidatePricingCache takes updatePricingLock,
 	// which nests channelSyncLock.RLock, so holding it here would be an AB-BA
 	// deadlock.
+	BumpTaskAliasChannelRevision()
 	InvalidatePricingCache()
-	rebuildTaskAliasView()
 }

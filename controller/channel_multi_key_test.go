@@ -28,6 +28,97 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestManagedKeyStatusPublishesOnlyChangedChannel(t *testing.T) {
+	setupChannelCreateTest(t)
+	for _, cacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cache=%t", cacheEnabled), func(t *testing.T) {
+			previous := common.MemoryCacheEnabled
+			common.MemoryCacheEnabled = cacheEnabled
+			t.Cleanup(func() { common.MemoryCacheEnabled = previous })
+			channel := &model.Channel{Name: t.Name(), Type: 1, Key: "first\nsecond", Models: "managed-model", Group: "default", Status: common.ChannelStatusEnabled,
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2}}
+			require.NoError(t, channel.Insert())
+			model.InitChannelCache()
+			const callback = "test:managed-status-no-full-reload"
+			database := model.DB
+			fullReads := 0
+			require.NoError(t, database.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table != "channels" {
+					return
+				}
+				if _, bounded := tx.Statement.Clauses["WHERE"]; !bounded {
+					fullReads++
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, database.Callback().Query().Remove(callback)) })
+			require.NoError(t, saveManagedKeyStatus(channel.Id, func(stored *model.Channel) error {
+				stored.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled, 1: common.ChannelStatusManuallyDisabled}
+				disableMultiKeyChannelIfUnavailable(stored)
+				return nil
+			}))
+			cached, err := model.CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			assert.Equal(t, common.ChannelStatusManuallyDisabled, cached.Status)
+			assert.Equal(t, common.ChannelStatusManuallyDisabled, cached.ChannelInfo.MultiKeyStatusList[0])
+			require.NoError(t, saveManagedKeyStatus(channel.Id, func(stored *model.Channel) error {
+				delete(stored.ChannelInfo.MultiKeyStatusList, 0)
+				restoreMultiKeyChannelIfAvailable(stored)
+				return nil
+			}))
+			cached, err = model.CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			assert.Equal(t, common.ChannelStatusEnabled, cached.Status)
+			assert.Equal(t, common.ChannelStatusManuallyDisabled, cached.ChannelInfo.MultiKeyStatusList[1])
+			assert.Zero(t, fullReads, "status saves must publish one channel without a full channel reload")
+		})
+	}
+}
+
+func TestMultiKeyAllocationPublishesOnlyChangedChannel(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	for _, cacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cache=%t", cacheEnabled), func(t *testing.T) {
+			previous := common.MemoryCacheEnabled
+			common.MemoryCacheEnabled = cacheEnabled
+			t.Cleanup(func() { common.MemoryCacheEnabled = previous })
+			channel := &model.Channel{Name: t.Name(), Type: 1, Key: "allocation-first", Models: "allocation-model", Group: "default", Status: common.ChannelStatusEnabled,
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1}}
+			require.NoError(t, channel.Insert())
+			model.InitChannelCache()
+			const callback = "test:managed-allocation-no-full-reload"
+			database := model.DB
+			fullReads := 0
+			require.NoError(t, database.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table != "channels" {
+					return
+				}
+				if _, bounded := tx.Statement.Clauses["WHERE"]; !bounded {
+					fullReads++
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, database.Callback().Query().Remove(callback)) })
+
+			current, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			entryID := strconv.FormatInt(current.KeyEntryIDs[0], 10)
+			revision := current.KeyEntryRevisions[0]
+			recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_models", KeyEntryID: entryID, ExpectedRev: &revision, ScopeMode: common.GetPointer("allowlist")})
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			var result struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+			require.True(t, result.Success, recorder.Body.String())
+			assert.Zero(t, fullReads, "allocation mutations must publish one channel without a full channel reload")
+
+			published, err := model.CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			assert.Equal(t, "allowlist", published.ChannelInfo.MultiKeyScopeModes[0])
+			assert.False(t, model.IsChannelEnabledForGroupModel("default", "allocation-model", channel.Id), "the newly empty allowlist must remove the local public route")
+		})
+	}
+}
+
 func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
 	database := model.DB

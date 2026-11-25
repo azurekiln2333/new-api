@@ -113,6 +113,22 @@ func TestChannelPriorityDatabaseMatrix(t *testing.T) {
 					require.NoError(t, db.Create(&Ability{Group: group, Model: "test", ChannelId: channel.Id, Priority: channel.Priority, Weight: uint(*channel.Weight), Enabled: true}).Error)
 				}
 			}
+			// Exercise the live routing snapshot, not only persisted ability rows.
+			channelSyncLock.Lock()
+			previousChannels, previousRoutes, previousConfigs := channelsIDM, group2model2channels, channel2advancedCustomConfig
+			previousCacheEnabled := common.MemoryCacheEnabled
+			common.MemoryCacheEnabled = true
+			channelsIDM, group2model2channels, channel2advancedCustomConfig = nil, nil, nil
+			for i := range channels {
+				publishChannelLocked(&channels[i])
+			}
+			channelSyncLock.Unlock()
+			t.Cleanup(func() {
+				channelSyncLock.Lock()
+				channelsIDM, group2model2channels, channel2advancedCustomConfig = previousChannels, previousRoutes, previousConfigs
+				common.MemoryCacheEnabled = previousCacheEnabled
+				channelSyncLock.Unlock()
+			})
 			initial, err := GetChannelPriorityOrder()
 			require.NoError(t, err)
 			move := ChannelPriorityMove{Revision: initial.Revision, ID: channels[3].Id, TargetID: channels[1].Id, Position: "before", Preview: true}
@@ -127,6 +143,10 @@ func TestChannelPriorityDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, preview, applied)
 			for _, change := range applied.Changes {
+				cached, cacheErr := CacheGetChannel(change.ID)
+				require.NoError(t, cacheErr)
+				require.NotNil(t, change.Priority)
+				assert.Equal(t, *change.Priority, cached.GetPriority(), "routing sees the committed priority before return")
 				var abilities []Ability
 				require.NoError(t, db.Where("channel_id = ?", change.ID).Find(&abilities).Error)
 				require.Len(t, abilities, 2)
@@ -172,6 +192,13 @@ func TestChannelPriorityDatabaseMatrix(t *testing.T) {
 			}
 			assert.Equal(t, 1, succeeded)
 			assert.Equal(t, 1, conflicted)
+			committed, err := GetChannelPriorityOrder()
+			require.NoError(t, err)
+			for _, item := range committed.Items {
+				cached, cacheErr := CacheGetChannel(item.ID)
+				require.NoError(t, cacheErr)
+				assert.Equal(t, item.value(), cached.GetPriority(), "concurrent reorder cannot leave an older routing priority")
+			}
 			_, err = ReorderChannelPriority(undo)
 			require.NoError(t, err)
 			sqlDB.SetMaxOpenConns(1)

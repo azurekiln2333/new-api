@@ -32,7 +32,7 @@ import {
   type PriorityMove,
   type PriorityOrder,
 } from '../lib/channel-priority-order'
-import type { Channel } from '../types'
+import type { Channel, GetChannelsResponse } from '../types'
 
 export function useChannelPriorityOrder(props: {
   channels: Channel[]
@@ -46,6 +46,7 @@ export function useChannelPriorityOrder(props: {
     null
   )
   const [savedPreview, setSavedPreview] = useState<PriorityOrder | null>(null)
+  const savedChannels = useRef(props.channels)
   // Only the status strip subscribes to hover/priority-preview updates. The table's
   // data and row objects stay unchanged throughout the pointer gesture.
   const [previewStore] = useState(() => {
@@ -89,7 +90,6 @@ export function useChannelPriorityOrder(props: {
     session.current = null
     setActive(false)
     setOptimisticDrop(null)
-    setSavedPreview(null)
     previewStore.publish({ drop: null, preview: null, preparing: false })
   }, [previewStore])
 
@@ -158,10 +158,40 @@ export function useChannelPriorityOrder(props: {
 
   async function save(move: PriorityMove) {
     const result = await mutation.mutateAsync(move)
+    await client.cancelQueries({ queryKey: channelsQueryKeys.lists() })
+    savedChannels.current = props.channels
     setSavedPreview(result)
-    await client.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+    const priorities = new Map(
+      result.items.map((item) => [item.id, item.priority])
+    )
+    for (const [queryKey, previous] of client.getQueriesData<GetChannelsResponse>(
+      { queryKey: channelsQueryKeys.lists() }
+    )) {
+      if (!previous?.data) continue
+      const params = queryKey[2] as Record<string, unknown>
+      const items = previous.data.items.map((channel) =>
+        priorities.has(channel.id)
+          ? { ...channel, priority: priorities.get(channel.id) ?? null }
+          : channel
+      )
+      if (
+        !params.tag_mode &&
+        (params.sort_by === 'priority' || (!params.sort_by && !params.id_sort))
+      ) {
+        const direction = params.sort_order === 'asc' ? 1 : -1
+        items.sort(
+          (a, b) =>
+            ((a.priority ?? 0) - (b.priority ?? 0)) * direction || b.id - a.id
+        )
+      }
+      client.setQueryData(queryKey, {
+        ...previous,
+        data: { ...previous.data, items },
+      })
+    }
     setUndo(move.restore ? null : result)
     if (result.changes.length > 0) toast.success(t('Channel priorities saved'))
+    void client.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
   }
 
   async function commit() {
@@ -182,7 +212,7 @@ export function useChannelPriorityOrder(props: {
       await save({ ...current.drop, revision: snapshot.revision })
     } catch (error) {
       handleServerError(error)
-      await client.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      void client.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
     } finally {
       busy.current = false
       setSaving(false)
@@ -206,7 +236,7 @@ export function useChannelPriorityOrder(props: {
     } catch (error) {
       setUndo(null)
       handleServerError(error)
-      await client.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      void client.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
     } finally {
       busy.current = false
       setSaving(false)
@@ -216,8 +246,14 @@ export function useChannelPriorityOrder(props: {
 
   useEffect(() => {
     cancel()
+    setSavedPreview(null)
     // View/filter/page changes cancel a pending gesture, but not an in-flight save.
   }, [props.scope, props.enabled, cancel])
+  useEffect(() => {
+    if (savedPreview && props.channels !== savedChannels.current) {
+      setSavedPreview(null)
+    }
+  }, [props.channels, savedPreview])
   useEffect(
     () => () => {
       clearTimeout(timer.current)

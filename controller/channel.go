@@ -164,9 +164,11 @@ func saveManagedKeyStatus(channelID int, change func(stored *model.Channel) erro
 	}
 	model.BumpSyncTopic(model.SyncTopicChannels)
 	if statusChanged {
-		return model.UpdateAbilityStatus(channelID, enabled)
+		if err := model.UpdateAbilityStatus(channelID, enabled); err != nil {
+			return err
+		}
 	}
-	return nil
+	return model.RefreshChannelRouting(channelID)
 }
 
 func applyChannelStatusFilter(query *gorm.DB, statusFilter int) *gorm.DB {
@@ -1779,12 +1781,17 @@ func UpdateChannelStatus(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	changed := model.UpdateChannelStatus(id, "", req.Status, "manual operation")
-	if changed {
-		model.InitChannelCache()
-		if req.Status != common.ChannelStatusEnabled {
-			closeActiveChannelWebSockets([]int{id})
-		}
+	// One transaction commits the status, the ability rows and the sync
+	// obligation, then publishes this channel locally. The former
+	// UpdateChannelStatus + InitChannelCache pair reloaded the whole channel table
+	// before the response returned.
+	changed, err := model.UpdateChannelStatusAtomic(id, req.Status, "manual operation")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if changed && req.Status != common.ChannelStatusEnabled {
+		closeActiveChannelWebSockets([]int{id})
 	}
 	recordManageAudit(c, "channel.status_update", map[string]any{
 		"id":      id,
@@ -1807,15 +1814,20 @@ func BatchUpdateChannelStatus(c *gin.Context) {
 	changedCount := 0
 	var disabledIDs []int
 	for _, id := range req.Ids {
-		if model.UpdateChannelStatus(id, "", req.Status, "manual batch operation") {
+		// Each status commits with its ability rows and sync obligation, then
+		// publishes that channel locally; the batch no longer reloads the whole
+		// channel table before responding.
+		changed, err := model.UpdateChannelStatusAtomic(id, req.Status, "manual batch operation")
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if changed {
 			changedCount++
 			if req.Status != common.ChannelStatusEnabled {
 				disabledIDs = append(disabledIDs, id)
 			}
 		}
-	}
-	if changedCount > 0 {
-		model.InitChannelCache()
 	}
 	if len(disabledIDs) > 0 {
 		closeActiveChannelWebSockets(disabledIDs)
@@ -2562,7 +2574,6 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
 		}
@@ -2594,7 +2605,6 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
 		common.ApiSuccessT(c, "Key enabled", nil)
 		return
 
@@ -2614,7 +2624,6 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
-		model.InitChannelCache()
 		common.ApiSuccessT(c, "Enabled {{count}} keys", nil, map[string]any{"count": enabledCount})
 		return
 
@@ -2657,7 +2666,6 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
 		}
@@ -2733,7 +2741,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		service.RevokeRemovedChannelCredentials(stored, keyBefore, stored.Key)
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
@@ -2804,7 +2815,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		service.RevokeRemovedChannelCredentials(stored, keyBefore, stored.Key)
 		if shouldCloseWebSocket {
 			closeActiveChannelWebSockets([]int{channel.Id})
@@ -2848,7 +2862,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		common.ApiSuccessT(c, "Key models saved", nil)
 		return
 
@@ -2884,7 +2901,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		model.InitChannelCache()
+		if err := model.RefreshChannelRouting(channel.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		// A key that just became exclusive to one user must not keep serving the
 		// sessions other users already opened on it.
 		closeActiveChannelWebSockets([]int{channel.Id})
@@ -3056,17 +3076,10 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		stored, err := reloadManagementChannel(persistCtx, channel.Id)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if err := stored.UpdateAbilities(nil); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		model.BumpSyncTopic(model.SyncTopicChannels)
-		model.InitChannelCache()
+		// MutateChannelKeyEntries commits abilities and the sync obligation, then
+		// publishes the authoritative channel snapshot locally before returning.
+		// Re-reading the row and rebuilding its abilities here duplicated work and
+		// used to trigger a full channel-cache reload.
 		response["applied"] = true
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
 		return
