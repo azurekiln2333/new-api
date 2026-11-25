@@ -612,6 +612,56 @@ func TestAdminChannelSurfaceAdmitsOnlyAuthorizedAdmins(t *testing.T) {
 	}
 }
 
+// TestOptionBatchAccessTokenScopes exercises the real route chain: root role
+// and option:write are both required, just like the compatibility single PUT.
+func TestOptionBatchAccessTokenScopes(t *testing.T) {
+	fixture := setupAdminChannelSurfaceFixture(t)
+	require.NoError(t, fixture.database.AutoMigrate(&model.SystemTask{}, &model.AuditEventOutbox{}))
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	writePAT := createAdminSurfacePAT(t, fixture.adminId, authz.Permission{Resource: "option", Action: authz.ActionWrite})
+	readPAT := createAdminSurfacePAT(t, fixture.adminId, authz.Permission{Resource: "option", Action: authz.ActionRead})
+	const key = "TestBatchPATSetting"
+	const body = `{"options":[{"key":"TestBatchPATSetting","value":"committed"},{"key":"TestBatchPATSecond","value":false}]}`
+
+	for _, credential := range []string{readPAT, fixture.ordinarySession, ""} {
+		response := fixture.request(http.MethodPut, "/api/option/batch", credential, body)
+		if credential == "" {
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+		} else {
+			assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		}
+		if credential == readPAT {
+			assert.Contains(t, response.Body.String(), `"code":"ACCESS_TOKEN_SCOPE_DENIED"`)
+		}
+		var count int64
+		require.NoError(t, fixture.database.Model(&model.Option{}).Where(&model.Option{Key: key}).Count(&count).Error)
+		assert.Zero(t, count, "authorization failure must occur before any settings write")
+	}
+
+	response := fixture.request(http.MethodPut, "/api/option/batch", writePAT, body)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	var stored model.Option
+	require.NoError(t, fixture.database.Where(&model.Option{Key: key}).First(&stored).Error)
+	assert.Equal(t, "committed", stored.Value)
+	assert.Equal(t, "false", common.OptionMap["TestBatchPATSecond"])
+	var events []model.AuditEventOutbox
+	require.NoError(t, fixture.database.Where("action = ?", "option.update").Find(&events).Error)
+	require.Len(t, events, 1, "the batch handler must suppress generic duplicate success auditing")
+	assert.Contains(t, events[0].ParamsJson, key)
+	assert.NotContains(t, events[0].ParamsJson+events[0].Content, "committed")
+
+	// Even option:write cannot grant an administrator root-only privileges.
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleAdminUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	denied := fixture.request(http.MethodPut, "/api/option/batch", writePAT,
+		`{"options":[{"key":"TestBatchPATSetting","value":"forbidden"}]}`)
+	assert.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	require.NoError(t, fixture.database.Where(&model.Option{Key: key}).First(&stored).Error)
+	assert.Equal(t, "committed", stored.Value)
+}
+
 // seedDashboardRankingUsage writes one hourly usage row per user for a model in
 // the current ranking week, plus the two rows every ranking assertion relies on:
 // a second model that must never appear, and a usage row for a deleted account.
