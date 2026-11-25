@@ -20,6 +20,7 @@ import { Route } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -29,7 +30,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import { useInstanceResourceSummary } from '@/features/dashboard/hooks/use-instance-resources'
 import { useApiInfo } from '@/features/dashboard/hooks/use-status-data'
 import {
@@ -103,11 +103,7 @@ function formatPercentValue(value: number | null, t: (key: string) => string): s
   return value === null ? t('Unknown') : formatPercent(value)
 }
 
-function DetailRow(props: {
-  label: string
-  value: string
-  mono?: boolean
-}) {
+function DetailRow(props: { label: string; value: string; mono?: boolean }) {
   return (
     <div className='flex flex-col gap-0.5'>
       <dt className='text-muted-foreground/70 text-xs font-medium tracking-wide uppercase'>
@@ -129,11 +125,21 @@ export function ApiInfoPanel() {
   const { items: list, loading } = useApiInfo()
   const { instances } = useInstanceResourceSummary()
   const [pingStatus, setPingStatus] = useState<PingStatusMap>({})
-  // The public status payload may contain legacy entries with no positive id.
-  // Selecting one by id would then match the wrong row, so the selection is a
-  // positional UI identity that is stable for this list rather than a server
-  // id.
-  const [detailIndex, setDetailIndex] = useState<number | null>(null)
+  const [detailKey, setDetailKey] = useState<string | null>(null)
+  // Saved entries have persistent ids. Legacy entries use their public content
+  // so routes sharing a URL remain distinct and selection survives reordering.
+  const entries = useMemo(() => {
+    const occurrences = new Map<string, number>()
+    return list.map((item) => {
+      const identity =
+        item.id > 0
+          ? `api-${item.id}`
+          : JSON.stringify([item.url, item.route, item.description, item.color])
+      const occurrence = occurrences.get(identity) ?? 0
+      occurrences.set(identity, occurrence + 1)
+      return { item, key: `${identity}:${occurrence}` }
+    })
+  }, [list])
 
   // Each configured API entry is mapped to its instance by the configured
   // public domain, which the summary already exposes. No stored node identity
@@ -148,10 +154,7 @@ export function ApiInfoPanel() {
     return map
   }, [instances])
 
-  const detailItem = useMemo(
-    () => (detailIndex === null ? undefined : list[detailIndex]),
-    [list, detailIndex]
-  )
+  const detailItem = entries.find((entry) => entry.key === detailKey)?.item
   // Derived on every render, so the detail always reflects the newest sample.
   const detailInstance = detailItem
     ? instanceByDomain.get(detailItem.url)
@@ -185,23 +188,18 @@ export function ApiInfoPanel() {
       contentClassName='p-0'
     >
       <ScrollArea className='h-72'>
-        <div>
-          {list.map((item: ApiInfoItem, idx: number) => {
+        <div className='divide-border/60 divide-y'>
+          {entries.map(({ item, key }) => {
             const instance = instanceByDomain.get(item.url)
             return (
-              <div
-                key={`${item.url}-${idx}`}
-                className={
-                  idx < list.length - 1 ? 'border-border/60 border-b' : ''
-                }
-              >
+              <div key={key}>
                 <ApiInfoItemComponent
                   item={item}
                   status={pingStatus[item.url] || getDefaultPingStatus()}
                   onTest={handleTest}
                   resources={instance?.resources ?? null}
                   instanceStatus={instance?.status ?? null}
-                  onOpenDetail={() => setDetailIndex(idx)}
+                  onOpenDetail={() => setDetailKey(key)}
                 />
               </div>
             )
@@ -212,7 +210,7 @@ export function ApiInfoPanel() {
       <Sheet
         open={detailItem !== undefined}
         onOpenChange={(next) => {
-          if (!next) setDetailIndex(null)
+          if (!next) setDetailKey(null)
         }}
       >
         <SheetContent
@@ -227,10 +225,7 @@ export function ApiInfoPanel() {
           </SheetHeader>
           <div className='flex-1 overflow-y-auto px-4 py-4'>
             {detailItem ? (
-              <NodeDetailPanel
-                item={detailItem}
-                instance={detailInstance}
-              />
+              <NodeDetailPanel item={detailItem} instance={detailInstance} />
             ) : null}
           </div>
         </SheetContent>

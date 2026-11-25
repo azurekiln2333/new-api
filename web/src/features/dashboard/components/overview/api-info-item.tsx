@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Zap, ExternalLink, Gauge } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
 import { CopyButton } from '@/components/copy-button'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -209,7 +210,8 @@ function ResourceMeters(props: {
   let stateLabel: string | null = null
   if (props.status === 'stale') stateLabel = t('Stale')
   else if (props.status === 'disabled') stateLabel = t('Disabled')
-  else if (props.status === 'unknown' || !props.resources) stateLabel = t('Unknown')
+  else if (props.status === 'unknown' || !props.resources)
+    stateLabel = t('Unknown')
 
   return (
     // Required information, so it wraps onto its own line on narrow screens

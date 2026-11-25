@@ -17,11 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor, act } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  act,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
 
 import { ApiInfoPanel } from '../api-info-panel'
 
@@ -32,6 +40,7 @@ const getAnimationsDescriptor = Object.getOwnPropertyDescriptor(
 )
 
 beforeEach(() => {
+  localStorage.clear()
   Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
     configurable: true,
     value: () => [],
@@ -41,6 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   client.clear()
   vi.restoreAllMocks()
   if (getAnimationsDescriptor) {
@@ -204,7 +214,43 @@ describe('ApiInfoPanel', () => {
     expect(screen.getByText('12%')).toBeVisible()
   })
 
-  it('reports an operator-disabled instance instead of pretending it is unknown', async () => {    mockStatusAndInstances({
+  it('keeps a legacy route selected when entries sharing its URL are reordered', async () => {
+    const user = userEvent.setup()
+    const legacyEntries = [
+      { ...apiInfoEntries[0], id: 0 },
+      { ...apiInfoEntries[1], id: 0, url: apiInfoEntries[0].url },
+    ]
+    vi.spyOn(api, 'get').mockImplementation((url: string) => {
+      if (url.includes('/api/status/instances')) {
+        return Promise.resolve({
+          data: { success: true, data: { instances: [] } },
+        })
+      }
+      return Promise.resolve({
+        data: { api_info_enabled: true, api_info: legacyEntries },
+      })
+    })
+
+    renderPanel()
+    await user.click(await screen.findByRole('button', { name: 'Backup' }))
+    const detail = within(screen.getByRole('dialog'))
+    expect(detail.getByText('Standby route')).toBeVisible()
+
+    await act(async () => {
+      client.setQueryData(STATUS_QUERY_KEY, {
+        api_info_enabled: true,
+        api_info: [legacyEntries[1], legacyEntries[0]],
+      })
+    })
+
+    await waitFor(() => {
+      expect(detail.getByText('Standby route')).toBeVisible()
+      expect(detail.queryByText('Primary route')).not.toBeInTheDocument()
+    })
+  })
+
+  it('reports an operator-disabled instance instead of pretending it is unknown', async () => {
+    mockStatusAndInstances({
       instances: [
         {
           key: 'api-1',
@@ -276,7 +322,9 @@ describe('ApiInfoPanel', () => {
 
     // Force the next poll; the open drawer must not keep the old snapshot.
     await act(async () => {
-      await client.refetchQueries({ queryKey: ['dashboard', 'overview', 'instance-resources'] })
+      await client.refetchQueries({
+        queryKey: ['dashboard', 'overview', 'instance-resources'],
+      })
     })
 
     await waitFor(() => {

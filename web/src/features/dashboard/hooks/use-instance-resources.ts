@@ -49,7 +49,8 @@ function saveOrder(ids: number[]) {
  * whatever order the server returns, so reordering never changes the stable
  * instance key.
  */
-export function useInstanceResourceSummary() {  const query = useQuery({
+export function useInstanceResourceSummary() {
+  const query = useQuery({
     queryKey: ['dashboard', 'overview', 'instance-resources'],
     queryFn: async ({ signal }) => getInstanceResourceSummary(signal),
     staleTime: 30 * 1000,
