@@ -34,10 +34,13 @@ It does not authorize request bodies in audit events or process logs.
 - Capture only `messages`, `prompt`, `input`, `instructions`, `system`, `contents`
   and `systemInstruction`, including whitelisted multipart text fields. Keep
   roles/text structure; omit credentials, file bytes and signed media URLs.
-- `REQUEST_CONTENT_LOG_ENABLED` defaults to true;
-  `REQUEST_CONTENT_LOG_MAX_BYTES` defaults to 262144 and is bounded by the server
-  body limit. The byte budget includes escaped JSON overhead. Truncation leaves
-  valid UTF-8 and JSON. Rejected unread bodies remain unread.
+- Capture defaults to enabled with a 262144-byte limit. Persisted
+  `log_setting.request_content_enabled` / `request_content_max_bytes` supply
+  cluster defaults; explicitly set `REQUEST_CONTENT_LOG_ENABLED` /
+  `REQUEST_CONTENT_LOG_MAX_BYTES` override them on each node. Bounds remain
+  256–134217728 bytes and the server body limit. The byte budget includes escaped
+  JSON overhead. Truncation leaves valid UTF-8 and JSON; rejected unread bodies
+  remain unread.
 - `RequestContentSnapshot.Payload` has `json:"-"`. Only the authorized detail DTO
   serializes it. Ordinary logs, lists/exports, consume parameters and process
   logs must not carry this payload.
@@ -56,8 +59,22 @@ It does not authorize request bodies in audit events or process logs.
   Pending deletes and retired refs cannot be reused; late bytes are swept.
 - Cleanup checks renewable ingress leases, surviving logs and durable task
   liveness, including terminal `BudgetPending` and unresolved refunds, using the
-  primary transaction. Storage errors never mean no references. Detail rows have
-  no independent creation-time TTL.
+  primary transaction. Storage errors never mean no references.
+- Independent expiration is opt-in: `log_setting.retention_days` and
+  `log_setting.request_content_retention_days` default to 0 (keep forever), with
+  whole-day bounds 0–36500. Master-only scheduled usage cleanup selects bounded
+  relational ID pages; content expiry preserves usage rows and active task/writer
+  protections. `expire_pending` / `retired` fences reject reads and delayed writes
+  even while an old usage link survives. Never treat age alone as permission to
+  remove an uncertain pending operation.
+- `model.ExpireLogRequestDetails(ctx, cutoff, limit)` uses an exclusive creation
+  cutoff and existing cross-store fencing. `GET /api/option/log_storage` is
+  root-only plus PAT `option:read`, with `no-store`; response data includes
+  `tables[{name,database,bytes,estimated}]`, effective `capture_enabled` /
+  `capture_max_bytes` and their override booleans. Unavailable bytes are null,
+  never fabricated zero; SQLite must not scan payloads for per-table sizes.
+  PostgreSQL deletion only makes space reusable; VACUUM FULL / pg_repack is a
+  separate authorized operational action, never automatic application cleanup.
 
 ### 4. Validation & Error Matrix
 
@@ -70,15 +87,21 @@ It does not authorize request bodies in audit events or process logs.
 | Final API error has `ErrOptionWithNoRecordErrorLog` | Mark `request_error_log_excluded` at the final boundary; fallback cannot recreate it |
 | Independent remote insert/delete has uncertain outcome | Keep pending/retired fencing; lease expiry alone is not proof of rollback |
 | Metadata-only later caller finds no original detail | Do not synthesize an empty recorded body |
+| Retention days outside 0–36500, fractional days, non-boolean capture or bytes outside 256–134217728 | Reject single/batch settings before persistence/publication |
+| Expired/retired content with a surviving usage link or delayed remote bytes | Empty 404; keep the value-free tombstone and reclaim late bytes safely |
+| Storage metadata unavailable or not cheaply supported | Return null bytes; no payload/count scan and no invented empty table |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: retry error and later success share one immutable snapshot; deleting one
   retry preserves the success-linked body. HK submission and US refund retain
   distinct submission/processing nodes.
-- Base: old logs remain readable summaries without invented content or nodes.
-- Bad: serialize a snapshot into consume parameters, fetch by display ID, or
-  expire an uncertain fence merely because time passed.
+- Base: old logs remain readable summaries without invented content or nodes;
+  default-zero retention leaves their history untouched.
+- Good: an administrator explicitly enables content retention; unpinned payloads
+  expire independently while logs remain and active tasks retain their payload.
+- Bad: serialize a snapshot into consume parameters, fetch by display ID, enable
+  deletion on upgrade, or expire an uncertain fence merely because time passed.
 
 ### 6. Tests Required
 
@@ -102,6 +125,18 @@ It does not authorize request bodies in audit events or process logs.
   `TestResponsesWSRequestRunnerRequestContentDiagnostics`: server permissions,
   no-store on denials, associations, original prompts, node provenance, per-turn
   snapshots and final no-record exclusions.
+- `TestLogRequestDetailRetentionDatabaseMatrix`: actual relational/ClickHouse
+  stores, repeated migration and legacy preservation, exclusive cutoff,
+  writer/task/pending protection, surviving log, delayed-write tombstone,
+  idempotency, bounded repeated relational deletion and honest metadata.
+- `TestRequestContentCapturePersistedSettingsAndEnvironment`,
+  `TestSystemTaskLogRetention` and `TestPersonalAccessTokenLogStorageScope`:
+  explicit environment precedence, keep-forever/follower-off scheduling,
+  disable-at-next-batch and root/scope denial. Scheduler fixture is SQLite-only;
+  it is not a replacement for the real storage matrix.
+- These are required assertion points, not passing-results claims. Run the
+  current workflow on the final integrated SHA; source-authored or skipped
+  fixtures do not establish compatibility.
 - Run `go test -race -p 1 -count=1 ./model -run '^TestLogRequestDetail'` with real
   relational DSNs. ClickHouse requires actual `TEST_CLICKHOUSE_DSN` execution;
   a skip or relational pass does not verify native TTL, duplicate/nontransactional
