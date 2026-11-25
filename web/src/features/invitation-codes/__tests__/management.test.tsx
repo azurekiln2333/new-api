@@ -508,6 +508,142 @@ it('shows a retry action on load failure and the empty state after recovery', as
   ).toBeDisabled()
 })
 
+it('keeps long invitation names and row actions compact while preserving keyboard menu access', async () => {
+  const name =
+    'Launch invitations for regional partners across multiple deployment environments'
+  await renderManager([{ ...item, name }])
+  const user = userEvent.setup()
+  const row = await screen.findByRole('row', { name: new RegExp(name) })
+  const nameTrigger = within(row).getByText(name).closest('[tabindex]')
+  expect(nameTrigger).toHaveClass('truncate')
+  expect(nameTrigger).toHaveClass('max-w-64')
+  const actions = within(row).getByRole('cell', { name: 'Open menu' })
+  expect(within(actions).getAllByRole('button')).toHaveLength(1)
+  const trigger = within(actions).getByRole('button', { name: 'Open menu' })
+  expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+  expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+  trigger.focus()
+  await user.keyboard('{Enter}')
+  const menu = await screen.findByRole('menu')
+  expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  expect(
+    within(menu)
+      .getAllByRole('menuitem')
+      .map((action) => action.textContent)
+  ).toEqual(['Edit', 'Disable', 'Download', 'Delete'])
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(trigger).toHaveFocus())
+  expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+  await user.click(trigger)
+  await user.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+  const editor = await screen.findByRole('dialog', {
+    name: 'Edit invitation code',
+  })
+  expect(within(editor).getByRole('textbox', { name: 'Name' })).toHaveValue(name)
+})
+
+it.each([
+  {
+    status: 1,
+    action: 'Disable',
+    nextStatus: 2,
+    nextLabel: 'Disabled',
+  },
+  {
+    status: 2,
+    action: 'Enable',
+    nextStatus: 1,
+    nextLabel: 'Unused',
+  },
+])(
+  'blocks repeated $action and editing until the invitation update settles',
+  async ({ status, action, nextStatus, nextLabel }) => {
+    let finishUpdate!: (response: { data: { success: boolean } }) => void
+    const updateResponse = new Promise<{ data: { success: boolean } }>(
+      (resolve) => {
+        finishUpdate = resolve
+      }
+    )
+    const put = vi.spyOn(api, 'put').mockImplementation(() => updateResponse)
+    const { get } = await renderManager([{ ...item, status }])
+    const user = userEvent.setup()
+    await screen.findByText(item.name)
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    await user.click(await screen.findByRole('menuitem', { name: action }))
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('/api/invitation/', {
+        id: item.id,
+        status: nextStatus,
+      })
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(
+      await screen.findByRole('menuitem', { name: 'Edit' })
+    ).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('menuitem', { name: action })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+
+    get.mockResolvedValue({
+      data: {
+        success: true,
+        data: { items: [{ ...item, status: nextStatus }], total: 1 },
+      },
+    })
+    finishUpdate({ data: { success: true } })
+    expect(await screen.findByRole('cell', { name: nextLabel })).toBeVisible()
+    expect(put).toHaveBeenCalledTimes(1)
+  }
+)
+
+it('downloads only the invitation chosen from the row menu', async () => {
+  vi.stubGlobal(
+    'URL',
+    Object.assign(class extends URL {}, {
+      createObjectURL: vi.fn(() => 'blob:invitation-row-export'),
+      revokeObjectURL: vi.fn(),
+    })
+  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+    () => undefined
+  )
+  const { get } = await renderManager([
+    item,
+    {
+      ...item,
+      id: 8,
+      key: 'partner-invitation-code',
+      name: 'Partner invitations',
+    },
+  ])
+  const user = userEvent.setup()
+  const row = await screen.findByRole('row', { name: /Partner invitations/ })
+  await user.click(within(row).getByRole('button', { name: 'Open menu' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Download' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Export codes' })
+  expect(dialog).toHaveTextContent('1 selected codes')
+  get.mockResolvedValueOnce({
+    data: new Blob(['Partner invitations\tpartner-invitation-code\n']),
+    headers: { 'content-type': 'text/plain;charset=utf-8' },
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Download' }))
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith(
+      '/api/invitation/export?ids=8&format=txt&include_quota=false',
+      { responseType: 'blob' }
+    )
+  )
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Export codes' })).toBeNull()
+  )
+})
+
 it('exports the current page and requires confirmation before deleting a code', async () => {
   const downloads: { filename: string; blob: Blob }[] = []
   let currentBlob: Blob
@@ -569,7 +705,8 @@ it('exports the current page and requires confirmation before deleting a code', 
   await waitFor(() =>
     expect(screen.queryByRole('dialog', { name: 'Export codes' })).toBeNull()
   )
-  await user.click(screen.getByRole('button', { name: 'Delete' }))
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
   const confirm = await screen.findByRole('alertdialog')
   expect(post).not.toHaveBeenCalled()
   await user.click(within(confirm).getByRole('button', { name: 'Continue' }))
@@ -582,6 +719,21 @@ it('exports the current page and requires confirmation before deleting a code', 
 it('prevents editing or re-enabling an already used code', async () => {
   await renderManager([{ ...item, status: 3, used_user_id: 12, used_time: 2 }])
   await screen.findByText(item.name)
-  expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Enable' })).toBeDisabled()
+  await userEvent
+    .setup()
+    .click(screen.getByRole('button', { name: 'Open menu' }))
+  expect(
+    await screen.findByRole('menuitem', { name: 'Edit' })
+  ).toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByRole('menuitem', { name: 'Enable' })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  expect(
+    screen.getByRole('menuitem', { name: 'Download' })
+  ).not.toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByRole('menuitem', { name: 'Delete' })).not.toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
 })

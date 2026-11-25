@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Download, History } from 'lucide-react'
+import { Download, Edit, History, Power, PowerOff, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +31,8 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   DataTableBulkActions,
   DataTablePage,
+  DataTableRowActionMenu,
+  TruncatedCell,
   useDataTable,
 } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
@@ -38,6 +40,12 @@ import { SectionPageLayout } from '@/components/layout'
 import { MaskedValueDisplay } from '@/components/masked-value-display'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+} from '@/components/ui/dropdown-menu'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { formatTimestampToDate } from '@/lib/format'
 
@@ -198,7 +206,12 @@ function InvitationCodesContent() {
       accessorKey: 'name',
       header: t('Name'),
       meta: { mobileTitle: true },
-      cell: ({ row }) => <span className='break-all'>{row.original.name}</span>,
+      cell: ({ row }) => (
+        <TruncatedCell className='max-w-64 font-medium' tabIndex={0}>
+          {row.original.name}
+        </TruncatedCell>
+      ),
+      size: 180,
     },
     {
       accessorKey: 'key',
@@ -257,44 +270,60 @@ function InvitationCodesContent() {
     {
       id: 'actions',
       header: t('Actions'),
+      meta: { pinned: 'right' },
       cell: ({ row }) => (
-        <div className='flex flex-wrap gap-1'>
-          <Button
-            variant='ghost'
-            size='sm'
-            disabled={row.original.status === 3 || update.isPending}
-            onClick={() => setEditor(row.original)}
-          >
-            {t('Edit')}
-          </Button>
-          <Button
-            variant='ghost'
-            size='sm'
-            disabled={row.original.status === 3 || update.isPending}
-            onClick={() =>
-              update.mutate({
-                id: row.original.id,
-                status: row.original.status === 1 ? 2 : 1,
-              })
-            }
-          >
-            {row.original.status === 1 ? t('Disable') : t('Enable')}
-          </Button>
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={() => exportIds([row.original.id])}
-          >
-            {t('Download')}
-          </Button>
-          <Button
-            variant='ghost'
-            size='sm'
-            onClick={() => setRemove([row.original.id])}
-          >
-            {t('Delete')}
-          </Button>
-        </div>
+        <DataTableRowActionMenu ariaLabel={t('Open menu')} modal={false}>
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              disabled={row.original.status === 3 || update.isPending}
+              onClick={() => setEditor(row.original)}
+            >
+              {t('Edit')}
+              <DropdownMenuShortcut>
+                <Edit aria-hidden='true' />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={row.original.status === 3 || update.isPending}
+              onClick={() =>
+                update.mutate({
+                  id: row.original.id,
+                  status: row.original.status === 1 ? 2 : 1,
+                })
+              }
+            >
+              {row.original.status === 1 ? t('Disable') : t('Enable')}
+              <DropdownMenuShortcut>
+                {row.original.status === 1 ? (
+                  <PowerOff aria-hidden='true' />
+                ) : (
+                  <Power aria-hidden='true' />
+                )}
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => exportIds([row.original.id])}>
+              {t('Download')}
+              <DropdownMenuShortcut>
+                <Download aria-hidden='true' />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              variant='destructive'
+              onClick={() => setRemove([row.original.id])}
+            >
+              {t('Delete')}
+              <DropdownMenuShortcut>
+                <Trash2 aria-hidden='true' />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DataTableRowActionMenu>
       ),
     },
   ]
@@ -369,6 +398,7 @@ function InvitationCodesContent() {
               isLoading={query.isLoading}
               isFetching={query.isFetching}
               emptyTitle={t('No invitation codes found')}
+              applyHeaderSize
               toolbarProps={{
                 searchPlaceholder: t('Search by name or code'),
                 searchDebounceMs: 300,
