@@ -263,9 +263,7 @@ it('shows the existing check-in card in Wallet and refreshes authoritative balan
   await user.click(checkin)
 
   expect(await screen.findByText(formatQuota(1250000))).toBeVisible()
-  expect(
-    await screen.findByRole('button', { name: 'Checked in', exact: true })
-  ).toBeDisabled()
+  expect(await screen.findByRole('button', { name: 'Checked in' })).toBeDisabled()
   expect(post).toHaveBeenCalledWith('/api/user/checkin')
   expect(
     get.mock.calls.filter(([url]) => url === '/api/user/self')

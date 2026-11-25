@@ -174,7 +174,9 @@ describe('sidebar personalization card visibility', () => {
         sidebar_personal_settings_enabled: false,
       })
     })
-    expect(screen.queryByText('Sidebar Personal Settings')).toBeNull()
+    await waitFor(() =>
+      expect(screen.queryByText('Sidebar Personal Settings')).toBeNull()
+    )
     expect(useAuthStore.getState().auth.user?.sidebar_modules).toBe(
       sidebarModules
     )
@@ -183,7 +185,9 @@ describe('sidebar personalization card visibility', () => {
         sidebar_personal_settings_enabled: true,
       })
     })
-    expect(screen.getByText('Sidebar Personal Settings')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByText('Sidebar Personal Settings')).toBeVisible()
+    )
     expect(useAuthStore.getState().auth.user?.sidebar_modules).toBe(
       sidebarModules
     )
