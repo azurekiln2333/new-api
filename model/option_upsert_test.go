@@ -88,11 +88,20 @@ func TestUpdateOptionPersistsAcrossDialects(t *testing.T) {
 			db := optionTestDB(t, dialect)
 			settings := operation_setting.GetLogSetting()
 			previousSettings := *settings
+			assert.Equal(t, 3, previousSettings.RequestContentRetentionDays, "a fresh configuration defaults request content to three days")
 			t.Cleanup(func() {
 				common.OptionMapRWMutex.Lock()
 				*settings = previousSettings
 				common.OptionMapRWMutex.Unlock()
 			})
+			common.OptionMapRWMutex.Lock()
+			settings.RetentionDays = 0
+			settings.RequestContentRetentionDays = 3
+			common.OptionMapRWMutex.Unlock()
+			require.NoError(t, LoadOptionsFromDatabase())
+			usageDays, contentDays := operation_setting.LogRetentionDays()
+			assert.Zero(t, usageDays)
+			assert.Equal(t, 3, contentDays, "an absent stored override retains the request-content default")
 			for _, option := range []Option{
 				{Key: "log_setting.retention_days", Value: "0"},
 				{Key: "log_setting.request_content_retention_days", Value: "7"},
@@ -104,9 +113,21 @@ func TestUpdateOptionPersistsAcrossDialects(t *testing.T) {
 				require.NoError(t, db.Where(&Option{Key: option.Key}).First(&persisted).Error)
 				assert.Equal(t, option.Value, persisted.Value)
 			}
-			usageDays, contentDays := operation_setting.LogRetentionDays()
+			usageDays, contentDays = operation_setting.LogRetentionDays()
 			assert.Zero(t, usageDays)
 			assert.Equal(t, 7, contentDays)
+			const contentRetentionKey = "log_setting.request_content_retention_days"
+			require.NoError(t, UpdateOption(contentRetentionKey, "0"))
+			common.OptionMapRWMutex.Lock()
+			settings.RequestContentRetentionDays = 3
+			common.OptionMapRWMutex.Unlock()
+			require.NoError(t, LoadOptionsFromDatabase())
+			usageDays, contentDays = operation_setting.LogRetentionDays()
+			assert.Zero(t, usageDays)
+			assert.Zero(t, contentDays, "an explicitly stored zero remains keep-forever")
+			var persistedRetention Option
+			require.NoError(t, db.Where(&Option{Key: contentRetentionKey}).First(&persistedRetention).Error)
+			assert.Equal(t, "0", persistedRetention.Value)
 			const key = "TestUpsertKey"
 
 			require.NoError(t, UpdateOption(key, "first"))
