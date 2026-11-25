@@ -175,6 +175,14 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			var option Option
 			require.NoError(t, db.Where(map[string]any{"key": "RetryTimes"}).First(&option).Error)
 			assert.Equal(t, "2", option.Value)
+			// Policy writes use UPDATE; the ordinary GroupLevels save now uses
+			// Create with ON CONFLICT. Reject both real write paths so the fixture
+			// still verifies that a failed save cannot publish draft permissions.
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("policy_fail", func(tx *gorm.DB) {
+				if tx.Statement.Table == "policy_test_options" {
+					tx.AddError(errors.New("save rejected"))
+				}
+			}))
 			require.NoError(t, db.Callback().Update().Before("gorm:update").Register("policy_fail", func(tx *gorm.DB) {
 				if tx.Statement.Table == "policy_test_options" {
 					tx.AddError(errors.New("save rejected"))
@@ -184,6 +192,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Error(t, UpdateOption("GroupLevels", `{"default":0,"vip":99}`))
 			assert.Equal(t, map[string]int{"default": 0, "vip": 1}, setting.GetGroupLevelsCopy(), "a failed save cannot change permissions")
 			assert.Same(t, snapshot, CurrentRequestPolicy())
+			require.NoError(t, db.Callback().Create().Remove("policy_fail"))
 			require.NoError(t, db.Callback().Update().Remove("policy_fail"))
 			option = Option{}
 			require.NoError(t, db.Where(map[string]any{"key": "RetryTimes"}).First(&option).Error)
