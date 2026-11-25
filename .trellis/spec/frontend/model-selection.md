@@ -58,6 +58,13 @@ API-key limits/listing and CC Switch suites also cover selected-only values,
 unchanged chip/payload order, default generic order, explicit reveal, stale results
 and failure states. Future channel/group navigation must retain these invariants.
 
+Request-plugin model scope opts into the same display comparator, including saved
+values absent from the offered catalog. Model-value autocomplete and matched
+pricing-model choices sort newly allocated suggestions only. Empty model scope
+continues to mean All models; an unfinished blank `modelValues` row is omitted by
+the existing parser and produces `{}`, not an empty named map. Sorting must not
+reorder model-value rows, emitted config, selected chips or dirty-pricing dialogs.
+
 ## Playground channel visibility
 
 `canSelectPlaygroundChannel(user)` requires both the administrator role and

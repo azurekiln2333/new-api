@@ -45,6 +45,7 @@ import { Switch } from '@/components/ui/switch'
 import type { TaskPluginOption } from '@/features/channels/api'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { resolveLocalizedText } from '@/lib/localized-text'
+import { compareModelOptions } from '@/lib/model-options'
 import { resolveModelProvider } from '@/lib/model-provider'
 
 import { localizedPluginName } from '../lib/plugin-name'
@@ -535,6 +536,7 @@ function InstanceEditorDialog(props: RequestPluginInstanceEditorProps) {
             {!followsPlugin && modelScope === 'chosen' && (
               <MultiSelect
                 id={`${formId}-model-list`}
+                compareOptions={compareModelOptions}
                 options={[...new Set([...props.models, ...models])].map(
                   (model) => {
                     const provider = resolveModelProvider(model)
