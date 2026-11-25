@@ -442,7 +442,9 @@ test('changing channels discards an open binding draft and ignores its late save
   expect(
     within(nextEditor).getByRole('spinbutton', { name: 'User ID' })
   ).toHaveValue(null)
-  expect(within(nextEditor).getByRole('button', { name: 'Save' })).toBeDisabled()
+  expect(
+    within(nextEditor).getByRole('button', { name: 'Save' })
+  ).toBeDisabled()
   await user.click(within(nextEditor).getByRole('button', { name: 'Cancel' }))
   await waitFor(() =>
     expect(

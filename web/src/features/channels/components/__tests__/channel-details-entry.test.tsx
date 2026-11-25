@@ -376,9 +376,7 @@ it('keeps the channel type and provider visible in table view', async () => {
   expect(
     within(table).getByRole('columnheader', { name: /^Type\b/ })
   ).toBeVisible()
-  expect(
-    within(table).getByText('OpenAI', { selector: 'span' })
-  ).toBeVisible()
+  expect(within(table).getByText('OpenAI', { selector: 'span' })).toBeVisible()
   expect(table.querySelector('[data-slot="provider-badge"]')).not.toBeNull()
 })
 
