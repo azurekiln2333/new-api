@@ -208,12 +208,13 @@ describe('ApiInfoPanel', () => {
     await user.click(await screen.findByRole('button', { name: 'CN2 GIA' }))
 
     // The detail surface states the approved fields for this entry.
+    const detail = within(screen.getByRole('dialog'))
     await waitFor(() => {
-      expect(screen.getByText('Domains')).toBeVisible()
+      expect(detail.getByText('Domains')).toBeVisible()
     })
-    expect(screen.getByText('Primary route')).toBeVisible()
+    expect(detail.getByText('Primary route')).toBeVisible()
     // Percentages go through the shared formatter, not a hand-rolled toFixed.
-    expect(screen.getByText('12%')).toBeVisible()
+    expect(detail.getByText('12%')).toBeVisible()
   })
 
   it('keeps a legacy route selected when entries sharing its URL are reordered', async () => {
@@ -324,8 +325,9 @@ describe('ApiInfoPanel', () => {
     renderPanel()
 
     await user.click(await screen.findByRole('button', { name: 'CN2 GIA' }))
+    const detail = within(screen.getByRole('dialog'))
     await waitFor(() => {
-      expect(screen.getByText('12%')).toBeVisible()
+      expect(detail.getByText('12%')).toBeVisible()
     })
 
     // Force the next poll; the open drawer must not keep the old snapshot.
@@ -336,8 +338,8 @@ describe('ApiInfoPanel', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('77%')).toBeVisible()
+      expect(detail.getByText('77%')).toBeVisible()
     })
-    expect(screen.queryByText('12%')).not.toBeInTheDocument()
+    expect(detail.queryByText('12%')).not.toBeInTheDocument()
   })
 })
