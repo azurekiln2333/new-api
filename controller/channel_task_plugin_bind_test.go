@@ -38,7 +38,7 @@ func setupTaskPluginBindChannelTest(t *testing.T) {
 	// Option holds the durable activation marker; the allocation and budget
 	// tables keep channel insertion and key allocation on their real schema.
 	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.CasbinRule{}, &model.AuthzRole{}, &model.Log{}, &model.AuditLog{}, &model.AuditEventOutbox{}, &model.User{},
-		&model.Option{}, &model.ChannelKeyEntry{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}))
+		&model.Option{}, &model.SystemTask{}, &model.ChannelKeyEntry{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}))
 	model.DB = database
 	model.LOG_DB = database
 	require.NoError(t, authz.Init(database))
