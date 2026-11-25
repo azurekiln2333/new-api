@@ -77,6 +77,11 @@ var RegisterEnabled = true
 var InviteRegisterEnabled = false
 var LoginVerificationRequiredEnabled = false
 
+// RegisterAffiliateLinkEnabled controls referral attribution (affiliate links and
+// rewards) independently of InviteRegisterEnabled. A referral link never proves
+// a registration entitlement; it only attributes the inviter and its rewards.
+var RegisterAffiliateLinkEnabled = true
+
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制
 var EmailDomainWhitelist = []string{

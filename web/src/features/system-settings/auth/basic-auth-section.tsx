@@ -50,6 +50,7 @@ const basicAuthSchema = z.object({
   EmailVerificationEnabled: z.boolean(),
   RegisterEnabled: z.boolean(),
   InviteRegisterEnabled: z.boolean(),
+  RegisterAffiliateLinkEnabled: z.boolean(),
   LoginVerificationRequiredEnabled: z.boolean(),
   EmailDomainRestrictionEnabled: z.boolean(),
   EmailAliasRestrictionEnabled: z.boolean(),
@@ -162,10 +163,32 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
             render={({ field }) => (
               <SettingsSwitchItem>
                 <SettingsSwitchContent>
-                  <FormLabel>{t('Invitation registration')}</FormLabel>
+                  <FormLabel>{t('Require an invitation code')}</FormLabel>
                   <FormDescription>
                     {t(
                       'Require a single-use invitation code for every new account. With open registration off, only OAuth or SSO can register.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='RegisterAffiliateLinkEnabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Allow referral links')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Referral links attribute the inviter and rewards. They never replace a required invitation code.'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>

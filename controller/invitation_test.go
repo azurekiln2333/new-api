@@ -26,11 +26,12 @@ func setupInvitationTest(t *testing.T) {
 	t.Helper()
 	setupSecurityEnrollmentTest(t)
 	previousOpen, previousInvite := common.RegisterEnabled, common.InviteRegisterEnabled
+	previousAffiliate := common.RegisterAffiliateLinkEnabled
 	previousPassword, previousEmail, previousToken := common.PasswordRegisterEnabled, common.EmailVerificationEnabled, constant.GenerateDefaultToken
-	common.RegisterEnabled, common.InviteRegisterEnabled = true, true
+	common.RegisterEnabled, common.InviteRegisterEnabled, common.RegisterAffiliateLinkEnabled = true, true, true
 	common.PasswordRegisterEnabled, common.EmailVerificationEnabled, constant.GenerateDefaultToken = true, false, false
 	t.Cleanup(func() {
-		common.RegisterEnabled, common.InviteRegisterEnabled = previousOpen, previousInvite
+		common.RegisterEnabled, common.InviteRegisterEnabled, common.RegisterAffiliateLinkEnabled = previousOpen, previousInvite, previousAffiliate
 		common.PasswordRegisterEnabled, common.EmailVerificationEnabled, constant.GenerateDefaultToken = previousPassword, previousEmail, previousToken
 	})
 	// Add the new table beside existing account data and repeat migration.
@@ -141,6 +142,142 @@ func TestInvitationRegistrationModes(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestInvitationAffiliateLinkNeverReplacesCode(t *testing.T) {
+	for _, path := range []struct {
+		name     string
+		email    bool
+		provider oauth.Provider
+	}{
+		{name: "password"},
+		{name: "verified email", email: true},
+		{name: "github", provider: &oauth.GitHubProvider{}},
+		{name: "discord", provider: &oauth.DiscordProvider{}},
+		{name: "oidc", provider: &oauth.OIDCProvider{}},
+		{name: "linuxdo", provider: &oauth.LinuxDOProvider{}},
+		{name: "custom oauth", provider: oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{Id: 42, Slug: "r20-custom", Name: "R20 SSO", Enabled: true})},
+	} {
+		for _, affiliateEnabled := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/affiliate=%t", path.name, affiliateEnabled), func(t *testing.T) {
+				setupInvitationTest(t)
+				common.RegisterAffiliateLinkEnabled = affiliateEnabled
+				common.EmailVerificationEnabled = path.email
+				inviter := model.User{Username: "referral-owner", AffCode: "public-referral-link", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+				require.NoError(t, model.DB.Create(&inviter).Error)
+				keys, err := model.CreateInvitations(1, "registration entitlement", 1, 0)
+				require.NoError(t, err)
+				for i, attempt := range []struct {
+					name string
+					code string
+					want bool
+				}{
+					{name: "affiliate alone"},
+					{name: "affiliate submitted as invitation", code: inviter.AffCode},
+					{name: "valid invitation", code: keys[0], want: true},
+					{name: "invitation replay", code: keys[0]},
+				} {
+					username := fmt.Sprintf("referral-user-%d", i)
+					if path.provider == nil {
+						fields := map[string]string{"username": username, "password": "safe-long-password-42", "aff_code": inviter.AffCode, "invitation_code": attempt.code}
+						if path.email {
+							fields["email"], fields["verification_code"] = username+"@example.com", "531415"
+							common.RegisterVerificationCodeWithKey(fields["email"], fields["verification_code"], common.EmailVerificationPurpose)
+						}
+						body, err := common.Marshal(fields)
+						require.NoError(t, err)
+						response := securityEnrollmentRequest(http.MethodPost, "/api/user/register", string(body), "", service.AuthIdentity{}, Register)
+						if path.email {
+							common.DeleteKey(fields["email"], common.EmailVerificationPurpose)
+						}
+						result := decodeSecurityEnrollmentResponse(t, response)
+						require.Equal(t, attempt.want, result.Success, "%s: %s", attempt.name, response.Body.String())
+						if !attempt.want {
+							assert.Contains(t, response.Body.String(), model.ErrInvitationInvalid.Error())
+						}
+					} else {
+						c, _ := gin.CreateTestContext(httptest.NewRecorder())
+						c.Request = httptest.NewRequest(http.MethodGet, "/api/oauth/test", nil)
+						_, _, err := findOrCreateOAuthUser(c, path.provider, &oauth.OAuthUser{ProviderUserID: fmt.Sprintf("%d", 7000+i), Username: username}, nil, inviter.AffCode, attempt.code)
+						if attempt.want {
+							require.NoError(t, err)
+						} else {
+							require.ErrorIs(t, err, model.ErrInvitationInvalid, attempt.name)
+						}
+					}
+					var stored model.User
+					err := model.DB.Where("username = ?", username).Take(&stored).Error
+					if !attempt.want {
+						assert.ErrorIs(t, err, gorm.ErrRecordNotFound, "rejected registration cannot write an account")
+						continue
+					}
+					require.NoError(t, err)
+					wantInviter := 0
+					if affiliateEnabled {
+						wantInviter = inviter.Id
+					}
+					assert.Equal(t, wantInviter, stored.InviterId, "referral setting controls attribution, not entitlement")
+					var invitation model.Invitation
+					require.NoError(t, model.DB.Where("code = ?", keys[0]).Take(&invitation).Error)
+					assert.Equal(t, model.InvitationUsed, invitation.Status)
+					assert.Equal(t, stored.Id, invitation.UsedUserId)
+				}
+			})
+		}
+	}
+}
+
+func TestInvitationAffiliateSettingPersistsBeforeTakingEffect(t *testing.T) {
+	setupInvitationTest(t)
+	previousOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() { common.OptionMap = previousOptions })
+	require.NoError(t, model.UpdateOption("RegisterAffiliateLinkEnabled", "false"))
+	assert.False(t, common.RegisterAffiliateLinkEnabled)
+	assert.True(t, common.InviteRegisterEnabled, "disabling referral links must not relax the invitation requirement")
+	var option model.Option
+	require.NoError(t, model.DB.Where(&model.Option{Key: "RegisterAffiliateLinkEnabled"}).Take(&option).Error)
+	assert.Equal(t, "false", option.Value)
+	for _, invalid := range []string{"invalid", "", "1"} {
+		body, err := common.Marshal(OptionUpdateRequest{Key: "RegisterAffiliateLinkEnabled", Value: invalid})
+		require.NoError(t, err)
+		response := securityEnrollmentRequest(http.MethodPut, "/api/option/", string(body), "", service.AuthIdentity{}, UpdateOption)
+		assert.False(t, decodeSecurityEnrollmentResponse(t, response).Success)
+		assert.False(t, common.RegisterAffiliateLinkEnabled)
+	}
+	require.NoError(t, model.DB.Migrator().DropTable(&model.Option{}))
+	assert.Error(t, model.UpdateOption("RegisterAffiliateLinkEnabled", "true"))
+	assert.False(t, common.RegisterAffiliateLinkEnabled, "storage failure cannot re-enable referral attribution")
+}
+
+func TestInvitationLoginOnlyMethodsCannotProvision(t *testing.T) {
+	setupInvitationTest(t)
+	keys, err := model.CreateInvitations(1, "not a login credential", 1, 0)
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/oauth/telegram", nil)
+	_, _, err = findOrCreateOAuthUser(c, oauth.NewTelegramProvider(http.DefaultClient), &oauth.OAuthUser{ProviderUserID: "987654321"}, nil, "public-affiliate", keys[0])
+	assert.ErrorIs(t, err, oauth.ErrTelegramAccountNotBound, "Telegram login cannot create an unbound account, even with an invitation")
+	for _, endpoint := range []struct {
+		path    string
+		handler gin.HandlerFunc
+	}{
+		{path: "/api/user/passkey/register/begin", handler: PasskeyRegisterBegin},
+		{path: "/api/user/passkey/register/finish", handler: PasskeyRegisterFinish},
+	} {
+		body, err := common.Marshal(map[string]string{"aff_code": "public-affiliate", "invitation_code": keys[0]})
+		require.NoError(t, err)
+		response := securityEnrollmentRequest(http.MethodPost, endpoint.path, string(body), "", service.AuthIdentity{}, endpoint.handler)
+		assert.False(t, decodeSecurityEnrollmentResponse(t, response).Success, "anonymous Passkey enrollment is not account registration")
+	}
+	response := securityEnrollmentRequest(http.MethodGet, "/api/oauth/telegram/login?aff=public-affiliate", "", "", service.AuthIdentity{}, TelegramLegacyAuth)
+	assert.Equal(t, http.StatusGone, response.Code)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.User{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count, "only the explicitly seeded fixture user exists")
+	var invitation model.Invitation
+	require.NoError(t, model.DB.Where("code = ?", keys[0]).Take(&invitation).Error)
+	assert.Equal(t, model.InvitationEnabled, invitation.Status)
 }
 
 func TestInvitationManagement(t *testing.T) {
@@ -301,34 +438,49 @@ func TestManagementCodeCreateReplaySurvivesExpiry(t *testing.T) {
 }
 
 func TestInvitationOAuthCallbackUsesServerPayload(t *testing.T) {
-	for _, tamper := range []bool{false, true} {
-		t.Run(fmt.Sprintf("tamper=%t", tamper), func(t *testing.T) {
+	for _, attempt := range []struct {
+		name             string
+		storedInvitation bool
+		tamper           bool
+	}{
+		{name: "stored invitation", storedInvitation: true},
+		{name: "tampered state", storedInvitation: true, tamper: true},
+		{name: "affiliate with callback-only invitation"},
+	} {
+		t.Run(attempt.name, func(t *testing.T) {
 			setupInvitationTest(t)
 			common.RegisterEnabled = false
 			keys, err := model.CreateInvitations(1, "callback", 2, 0)
 			require.NoError(t, err)
+			inviter := model.User{Username: "callback-inviter", AffCode: "callback-affiliate"}
+			require.NoError(t, model.DB.Create(&inviter).Error)
 			const slug = "invitation-state-test"
 			oauth.Register(slug, &authFlowTestOAuthProvider{})
 			t.Cleanup(func() { oauth.Unregister(slug) })
-			payload, err := common.Marshal(oauthFlowPayload{InvitationCode: keys[0]})
+			flowPayload := oauthFlowPayload{AffiliateCode: inviter.AffCode}
+			if attempt.storedInvitation {
+				flowPayload.InvitationCode = keys[0]
+			}
+			payload, err := common.Marshal(flowPayload)
 			require.NoError(t, err)
 			token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{Purpose: model.AuthFlowPurposeOAuth, Provider: slug, Intent: model.AuthFlowIntentLogin, Payload: string(payload), ExpiresAt: time.Now().Add(time.Minute)})
 			require.NoError(t, err)
-			if tamper {
+			if attempt.tamper {
 				token += "altered"
 			}
 			router := gin.New()
 			router.GET("/api/oauth/:provider", HandleOAuth)
 			response := httptest.NewRecorder()
-			router.ServeHTTP(response, httptest.NewRequest("GET", "/api/oauth/"+slug+"?code=provider-code&state="+token+"&invitation_code="+keys[1], nil))
+			router.ServeHTTP(response, httptest.NewRequest("GET", "/api/oauth/"+slug+"?code=provider-code&state="+token+"&aff="+inviter.AffCode+"&invitation_code="+keys[1], nil))
 			result := decodeSecurityEnrollmentResponse(t, response)
-			assert.Equal(t, !tamper, result.Success, response.Body.String())
+			want := attempt.storedInvitation && !attempt.tamper
+			assert.Equal(t, want, result.Success, response.Body.String())
 			var invitation model.Invitation
 			require.NoError(t, model.DB.Where("code = ?", keys[0]).Take(&invitation).Error)
-			if tamper {
-				assert.Equal(t, model.InvitationEnabled, invitation.Status)
-			} else {
+			if want {
 				assert.Equal(t, model.InvitationUsed, invitation.Status)
+			} else {
+				assert.Equal(t, model.InvitationEnabled, invitation.Status)
 			}
 			require.NoError(t, model.DB.Where("code = ?", keys[1]).Take(&model.Invitation{}).Error)
 			var unused int64
@@ -370,13 +522,14 @@ func TestInvitationCustomOAuthAndWeChat(t *testing.T) {
 				previousEnabled, previousAddress := common.WeChatAuthEnabled, common.WeChatServerAddress
 				common.WeChatAuthEnabled, common.WeChatServerAddress = true, upstream.URL
 				t.Cleanup(func() { common.WeChatAuthEnabled, common.WeChatServerAddress = previousEnabled, previousAddress })
-				for _, code := range []string{"", keys[0], ""} {
-					body, err := common.Marshal(map[string]string{"code": "wechat-code", "invitation_code": code})
+				for _, code := range []string{"", "public-affiliate-link", keys[0], ""} {
+					body, err := common.Marshal(map[string]string{"code": "wechat-code", "invitation_code": code, "aff_code": "public-affiliate-link"})
 					require.NoError(t, err)
 					response := securityEnrollmentRequest("POST", "/api/oauth/wechat", string(body), "", service.AuthIdentity{}, WeChatAuth)
 					result := decodeSecurityEnrollmentResponse(t, response)
-					assert.Equal(t, code != "" || !common.InviteRegisterEnabled, result.Success, response.Body.String())
-					if code != "" {
+					valid := code == keys[0] || !common.InviteRegisterEnabled
+					assert.Equal(t, valid, result.Success, response.Body.String())
+					if code == keys[0] {
 						common.InviteRegisterEnabled = false
 					}
 				}

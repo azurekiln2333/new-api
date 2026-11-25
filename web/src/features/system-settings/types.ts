@@ -166,6 +166,7 @@ export type AuthSettings = {
   EmailVerificationEnabled: boolean
   RegisterEnabled: boolean
   InviteRegisterEnabled: boolean
+  RegisterAffiliateLinkEnabled: boolean
   LoginVerificationRequiredEnabled: boolean
   EmailDomainRestrictionEnabled: boolean
   EmailAliasRestrictionEnabled: boolean

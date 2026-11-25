@@ -133,6 +133,7 @@ export interface SystemStatus {
     oauth_register_enabled?: boolean
     register_enabled?: boolean
     invite_register_enabled?: boolean
+    affiliate_link_enabled?: boolean
     password_login_enabled?: boolean
     password_login_encryption_enabled?: boolean
     password_register_enabled?: boolean
@@ -181,6 +182,7 @@ export interface SystemStatus {
   oauth_register_enabled?: boolean
   register_enabled?: boolean
   invite_register_enabled?: boolean
+  affiliate_link_enabled?: boolean
   password_login_enabled?: boolean
   password_login_encryption_enabled?: boolean
   password_register_enabled?: boolean

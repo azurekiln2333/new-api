@@ -57,6 +57,7 @@ func InitOptionMap() {
 	common.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(common.TurnstileCheckEnabled)
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["InviteRegisterEnabled"] = strconv.FormatBool(common.InviteRegisterEnabled)
+	common.OptionMap["RegisterAffiliateLinkEnabled"] = strconv.FormatBool(common.RegisterAffiliateLinkEnabled)
 	common.OptionMap["LoginVerificationRequiredEnabled"] = strconv.FormatBool(common.LoginVerificationRequiredEnabled)
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
@@ -265,7 +266,7 @@ func validateOptionValueWithUpdates(key string, value string, updates map[string
 	if key == requestPolicyRetryDefaultsMigrationKey || IsLoginVerificationUserOption(key) {
 		return common.NewMessage("Invalid parameters")
 	}
-	if (key == "InviteRegisterEnabled" || key == "LoginVerificationRequiredEnabled") && value != "true" && value != "false" {
+	if (key == "InviteRegisterEnabled" || key == "RegisterAffiliateLinkEnabled" || key == "LoginVerificationRequiredEnabled") && value != "true" && value != "false" {
 		return common.NewMessage("Invalid parameters")
 	}
 	// Match the parsers used during local publication without changing live
@@ -382,7 +383,7 @@ func validateThemeSettings(value string) error {
 }
 
 func UpdateOption(key string, value string) error {
-	if key == "InviteRegisterEnabled" || key == "LoginVerificationRequiredEnabled" {
+	if key == "InviteRegisterEnabled" || key == "RegisterAffiliateLinkEnabled" || key == "LoginVerificationRequiredEnabled" {
 		if value != "true" && value != "false" {
 			return common.NewMessage("Invalid parameters")
 		}
@@ -625,6 +626,8 @@ func updateOptionMapLocked(key string, value string) (err error) {
 			common.RegisterEnabled = boolValue
 		case "InviteRegisterEnabled":
 			common.InviteRegisterEnabled = boolValue
+		case "RegisterAffiliateLinkEnabled":
+			common.RegisterAffiliateLinkEnabled = boolValue
 		case "LoginVerificationRequiredEnabled":
 			common.LoginVerificationRequiredEnabled = boolValue
 		case "EmailDomainRestrictionEnabled":

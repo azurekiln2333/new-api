@@ -37,6 +37,7 @@ const AUTH_SECTIONS = [
           EmailVerificationEnabled: settings.EmailVerificationEnabled,
           RegisterEnabled: settings.RegisterEnabled,
           InviteRegisterEnabled: settings.InviteRegisterEnabled,
+          RegisterAffiliateLinkEnabled: settings.RegisterAffiliateLinkEnabled,
           LoginVerificationRequiredEnabled:
             settings.LoginVerificationRequiredEnabled,
           EmailDomainRestrictionEnabled: settings.EmailDomainRestrictionEnabled,

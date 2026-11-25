@@ -199,7 +199,7 @@ func validateOptionUpdate(option *OptionUpdateRequest, updates map[string]string
 		option.Value = fmt.Sprint(option.Value)
 	}
 	value := option.Value.(string)
-	if (option.Key == "InviteRegisterEnabled" || option.Key == "LoginVerificationRequiredEnabled") && value != "true" && value != "false" {
+	if (option.Key == "InviteRegisterEnabled" || option.Key == "RegisterAffiliateLinkEnabled" || option.Key == "LoginVerificationRequiredEnabled") && value != "true" && value != "false" {
 		return common.NewMessage("Invalid parameters")
 	}
 	if model.IsLoginVerificationUserOption(option.Key) {
