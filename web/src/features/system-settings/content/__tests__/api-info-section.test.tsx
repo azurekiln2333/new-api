@@ -84,6 +84,14 @@ describe('ApiInfoSection', () => {
     expect(await screen.findByText('https://primary.example.com')).toBeVisible()
     expect(screen.getByText('https://secondary.example.com')).toBeVisible()
 
+    const primaryRow = screen
+      .getByText('https://primary.example.com')
+      .closest('tr')
+    expect(primaryRow).not.toBeNull()
+    await userEvent.click(
+      within(primaryRow as HTMLElement).getByRole('button', { name: 'Edit' })
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Update' }))
     await userEvent.click(
       screen.getByRole('button', { name: 'Save Settings' })
     )
@@ -149,6 +157,8 @@ describe('ApiInfoSection', () => {
 
     expect(await screen.findByText('https://legacy.example.com')).toBeVisible()
 
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Update' }))
     await userEvent.click(
       screen.getByRole('button', { name: 'Save Settings' })
     )
@@ -252,8 +262,9 @@ describe('ApiInfoSection', () => {
       .closest('tr')
     expect(twoRow).not.toBeNull()
     await userEvent.click(
-      within(twoRow as HTMLElement).getByRole('button', { name: 'Delete' })
+      within(twoRow as HTMLElement).getByRole('button', { name: 'Open menu' })
     )
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
     // Confirm in the alert dialog, which also uses "Delete" as its action.
     await userEvent.click(
       within(screen.getByRole('alertdialog')).getByRole('button', {
