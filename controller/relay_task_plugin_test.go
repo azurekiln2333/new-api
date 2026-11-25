@@ -24,6 +24,7 @@ import (
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -822,6 +823,12 @@ func newLedgerSubmissionFixture(t *testing.T, withReservation bool, extraModels 
 	common.SetDatabaseTypes(dialect, dialect)
 	common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled = false, false, false
 	t.Cleanup(func() {
+		// Persisted refund balances do not mean the nested quota-cache task
+		// has finished. Drain the default pool before restoring globals or
+		// releasing this fixture's database. Workers may enqueue more work;
+		// all of those workers finish before WorkerCount reaches zero.
+		require.Eventually(t, func() bool { return gopool.WorkerCount() == 0 }, 5*time.Second, time.Millisecond,
+			"ledger submission refund/cache workers must finish before fixture teardown")
 		model.DB, model.LOG_DB = oldDB, oldLogDB
 		common.SetDatabaseTypes(oldMain, oldLog)
 		common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled = oldRedis, oldMemory, oldBatch
