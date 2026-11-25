@@ -19,6 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // Console forwarding errors returned by the backend.
+  'console master unavailable',
+  'invalid console forwarding envelope',
   // Channel capability labels and validation messages passed to t() dynamically.
   'Inherit existing routing',
   'Chat Completions only',

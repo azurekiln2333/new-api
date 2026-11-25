@@ -218,9 +218,14 @@ func main() {
 		return
 	}
 	server.Use(middleware.PanicRecover())
+	if common.ConsoleForwardSettings != nil && strings.TrimSpace(os.Getenv("TRUSTED_PROXIES")) == "" {
+		common.SysLog(common.LogText("console forwarding is configured with default TRUSTED_PROXIES; configure explicit ingress proxy addresses or none"))
+	}
+	server.Use(middleware.ConsoleIngress())
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
+	server.Use(middleware.ConsoleForwarder())
 	server.Use(middleware.Version())
 	server.Use(middleware.I18n())
 	middleware.SetUpLogger(server)
@@ -240,6 +245,11 @@ func main() {
 	srv := &http.Server{
 		Addr:    net.JoinHostPort(host, port),
 		Handler: server,
+	}
+	if common.ConsoleForwardSettings != nil && common.IsMasterNode {
+		// Keep the master's idle lifetime longer than the worker pool's 45s.
+		// This does not impose an active-response/SSE write deadline.
+		srv.IdleTimeout = 90 * time.Second
 	}
 
 	go func() {

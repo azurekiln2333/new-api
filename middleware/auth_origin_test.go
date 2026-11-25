@@ -109,6 +109,70 @@ func TestSessionCookieOriginGuardDevelopmentCompatibility(t *testing.T) {
 	}
 }
 
+func runVerifiedIngressOriginGuardRequest(t *testing.T, identity common.ConsoleIngressIdentity, origin, referer string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/user/auth/refresh", SessionCookieOriginGuard(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+	// The master accepts the forwarded request over plain internal HTTP, so TLS is
+	// truthfully nil and the only public-origin evidence is the verified envelope.
+	request := httptest.NewRequest(http.MethodPost, "http://10.100.2.1:3000/api/user/auth/refresh", nil)
+	request.Host = "10.100.2.1:3000"
+	if origin != "" {
+		request.Header.Set("Origin", origin)
+	}
+	if referer != "" {
+		request.Header.Set("Referer", referer)
+	}
+	request = common.WithConsoleIngressIdentity(request, identity)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func TestSessionCookieOriginGuardUsesVerifiedConsoleIngress(t *testing.T) {
+	previousSecure := common.SessionCookieSecure
+	previousTrustedURLs := common.SessionCookieTrustedURLs
+	common.SessionCookieSecure = true
+	common.SessionCookieTrustedURLs = nil
+	t.Cleanup(func() {
+		common.SessionCookieSecure = previousSecure
+		common.SessionCookieTrustedURLs = previousTrustedURLs
+	})
+
+	// Verified public HTTPS that reached the master over internal HTTP.
+	forwarded := common.ConsoleIngressIdentity{EntryNode: "hk01", Scheme: "https", Host: "panel.example.com", Forwarded: true}
+	// Same public scheme/host name but supplied without proof, so the request keeps
+	// its plain-HTTP transport origin.
+	unverified := common.ConsoleIngressIdentity{EntryNode: "hk01", Scheme: "https", Host: "panel.example.com"}
+
+	tests := []struct {
+		name     string
+		identity common.ConsoleIngressIdentity
+		origin   string
+		referer  string
+		expected int
+	}{
+		{name: "verified public https accepted", identity: forwarded, origin: "https://panel.example.com", expected: http.StatusNoContent},
+		{name: "verified referer fallback accepted", identity: forwarded, referer: "https://panel.example.com/profile", expected: http.StatusNoContent},
+		{name: "verified foreign origin rejected", identity: forwarded, origin: "https://evil.example.com", expected: http.StatusForbidden},
+		{name: "verified null origin rejected", identity: forwarded, origin: "null", expected: http.StatusForbidden},
+		{name: "verified missing origin rejected", identity: forwarded, expected: http.StatusForbidden},
+		{name: "verified scheme mismatch rejected", identity: forwarded, origin: "http://panel.example.com", expected: http.StatusForbidden},
+		{name: "unverified identity does not lift transport origin", identity: unverified, origin: "https://panel.example.com", expected: http.StatusForbidden},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := runVerifiedIngressOriginGuardRequest(t, test.identity, test.origin, test.referer)
+			assert.Equal(t, test.expected, response.Code)
+			assert.Empty(t, response.Header().Get("Access-Control-Allow-Origin"))
+		})
+	}
+}
+
 func TestSessionCookieOriginGuardDoesNotTrustForwardedProtoFromClient(t *testing.T) {
 	previousSecure := common.SessionCookieSecure
 	previousTrustedURLs := common.SessionCookieTrustedURLs

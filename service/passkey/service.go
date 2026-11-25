@@ -181,11 +181,10 @@ func resolveOrigins(r *http.Request, settings *system_setting.PasskeySettings) (
 
 autoDetect:
 	scheme := detectScheme(r)
-	if scheme == "http" && !settings.AllowInsecureOrigin && r.Host != "localhost" && r.Host != "127.0.0.1" && !strings.HasPrefix(r.Host, "127.0.0.1:") && !strings.HasPrefix(r.Host, "localhost:") {
-		return nil, fmt.Errorf("passkey requires HTTPS, current request: %s://%s; allow insecure origins in the Passkey settings or configure HTTPS", scheme, r.Host)
+	host := passkeyRequestHost(r)
+	if scheme == "http" && !settings.AllowInsecureOrigin && host != "localhost" && host != "127.0.0.1" && !strings.HasPrefix(host, "127.0.0.1:") && !strings.HasPrefix(host, "localhost:") {
+		return nil, fmt.Errorf("passkey requires HTTPS, current request: %s://%s; allow insecure origins in the Passkey settings or configure HTTPS", scheme, host)
 	}
-	// 优先使用请求的完整Host（包含端口）
-	host := r.Host
 
 	// 如果无法从请求获取Host，尝试从ServerAddress获取
 	if host == "" && system_setting.ServerAddress != "" {
@@ -197,7 +196,7 @@ autoDetect:
 		}
 	}
 	if host == "" {
-		return nil, fmt.Errorf("cannot determine the Passkey origin; set it in the system settings or the Passkey settings. Host: '%s', ServerAddress: '%s'", r.Host, system_setting.ServerAddress)
+		return nil, fmt.Errorf("cannot determine the Passkey origin; set it in the system settings or the Passkey settings. Host: '%s', ServerAddress: '%s'", host, system_setting.ServerAddress)
 	}
 	if scheme == "" {
 		scheme = "https"
@@ -234,9 +233,27 @@ func hostWithoutPort(host string) string {
 	return host
 }
 
+// passkeyRequestHost returns the public host the browser used. A verified console
+// forwarding envelope is authoritative; raw X-Forwarded-Host is never trusted.
+func passkeyRequestHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if identity, ok := common.VerifiedConsoleIngress(r); ok && identity.Forwarded && identity.Host != "" {
+		return identity.Host
+	}
+	return r.Host
+}
+
 func detectScheme(r *http.Request) string {
 	if r == nil {
 		return ""
+	}
+	// A verified console forwarding envelope carries the public scheme the browser
+	// actually used. Raw forwarding headers are never consulted for it, so a
+	// spoofed X-Forwarded-Proto cannot relax the HTTPS requirement below.
+	if identity, ok := common.VerifiedConsoleIngress(r); ok && identity.Forwarded {
+		return common.EffectiveRequestScheme(r)
 	}
 	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
 		parts := strings.Split(proto, ",")
