@@ -12,22 +12,30 @@ Keep explicit name/detail buttons usable. Regression coverage in
 opening details, focused card Enter/Space opens details, and explicit name
 activation still works.
 
-Keep the channel name and ID on their existing two lines. Place the shared
-concurrency `current / limit` display and status/action icons next, then used
-Tokens, remaining/total quota, response time and last test. Priority and weight
+The card header starts with the existing channel name renderer after optional
+selection/reorder controls, with ID on the second line. Do not render the type
+badge, provider logo or an empty type spacer in cards; table type cells remain.
+Place the shared concurrency `current / limit` display and status/action icons next, then used
+Tokens, billed used/total quota, response time and last test. Priority and weight
 share the final row. The last-test value uses the existing relative-time
 formatter (for example, minutes or days ago); the exact timestamp may remain
 in its tooltip, but is not the inline value. This supersedes the earlier full
 inline timestamp requirement by the user decision of 2026-11-24. Use direct
 dt/dd pairs for metrics and preserve keyboard activation and responsive wrapping.
+Response and Last Tested labels and values must remain fully readable in narrow
+cards and longer translations; allow wrapping instead of clipping the text.
 
-An enabled local channel budget occupies the existing remaining/total quota
-region, using server `remaining_quota` and `limit_quota` with the shared quota
-formatter. Do not add a separate local-budget row or combine upstream balance
-with local usage to invent a total. Actual used Tokens still come from the
-channel usage aggregation. Keep ledger-inactive, loading and unavailable states
-distinct from unlimited capacity, preserve privacy masking, and retain the
-budget details for used/reserved amounts and the upstream balance details.
+The existing quota region always keeps billed `channel.used_quota` as the
+numerator, formatted by the shared currency/quota formatter. Its denominator
+is the configured local `limit_quota` only when both the ledger and budget are
+enabled; a known ledger-off, disabled or unconfigured budget displays 0. For example, used 125 with no enabled
+budget shows `125 / 0`, and with limit 500 shows `125 / 500`, in the selected
+display unit. Never substitute `remaining_quota` or period usage for the billed
+numerator. Loading or failed budget reads keep the known numerator and an honest
+unknown denominator, not a fabricated 0. Privacy masking and aggregate-row
+semantics remain. Reuse the page budget context, preserve budget details and
+upstream balance details, and never infer a total by adding upstream balance to
+local usage. This supersedes the remaining/total card contract on 2026-11-26.
 
 `ChannelUsedTokens` uses `compact` only in card layout: call the shared
 `formatCompactNumber` with a normalized Intl locale to display Chinese 万/亿

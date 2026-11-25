@@ -72,8 +72,21 @@ the current source before Start is enabled or a request is built.
 all valid combinations in the channel editor. Messages-only still accepts Chat and
 HTTP Responses diagnostic clients through conversion; compact requires Responses.
 Diagnostic key selection must honor `scope_mode`: an explicitly empty `allowlist`
-serves no model. If the chosen key cannot serve the model, retain the existing
-automatic-key fallback rather than sending that key's index.
+serves no model. Selecting a specific Key filters the visible/testable model list
+to that Key's scope. Reset hidden selections and pagination when switching Keys;
+never silently send an explicit-Key test through a different Key. Automatic
+selection remains available as its own explicit mode. The channel-test dialog
+defaults to streaming on open, still prohibits it on unsupported endpoints, and
+uses one model-list scroll region rather than nested dialog/body/list scrollers.
+
+Per-Key upstream discovery is read-only. Its editor can select newly discovered
+models outside the current channel catalog, then explicitly Save. The server
+validates Key identity/revision and additively merges the selected allowlist into
+the existing channel catalog in the same write as the Key scope. Preserve manual
+models, other Keys and existing ordering; an empty allowlist remains deny-all and
+never shrinks the catalog. Consume the successful response's authoritative
+`channel_models` so reopening the editor sees the committed options. Never replace
+this operation with an implicit all-Key fetch or a second channel update.
 
 ### 4. Validation & Error Matrix
 
