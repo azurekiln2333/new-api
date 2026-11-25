@@ -194,7 +194,7 @@ function reportFormatterDiff(file, original) {
         truncated = true
         break
       }
-      if (part.length + escaped.length > 6000) {
+      if (part.length + escaped.length > 3500) {
         parts.push(part)
         part = ''
       }
