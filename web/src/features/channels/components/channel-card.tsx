@@ -86,13 +86,14 @@ function ChannelCardComponent({
 
   const labelClass = 'text-muted-foreground text-[11px] font-medium select-none'
   const valueClass = 'min-w-0 text-sm tabular-nums'
-  // Shared badges truncate both the root and inner label. Override both only
-  // in card metric values so response and relative test time remain readable.
+  // Shared badges truncate both the root and inner label. TooltipTrigger
+  // replaces the badge's slot, so include both renderings only in these card
+  // metric values to keep response and relative test time readable.
   const statusValueClass = cn(
     valueClass,
     'max-w-full wrap-anywhere',
-    '[&_[data-slot=status-badge]]:!ml-0 [&_[data-slot=status-badge]]:whitespace-normal',
-    '[&_[data-slot=status-badge]>span]:overflow-visible [&_[data-slot=status-badge]>span]:text-clip [&_[data-slot=status-badge]>span]:whitespace-normal'
+    '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])]:!ml-0 [&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])]:whitespace-normal',
+    '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:overflow-visible [&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:text-clip [&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:whitespace-normal'
   )
 
   // In card view the enable/disable state is already conveyed by the inline

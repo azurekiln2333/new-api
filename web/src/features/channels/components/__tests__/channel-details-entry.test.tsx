@@ -327,7 +327,10 @@ it('starts the card with the long channel name and ID without a type slot', asyn
       ...channel,
       name: longName,
       channel_info: { ...channel.channel_info, is_multi_key: true },
-      other_info: JSON.stringify({ source: 'ionet', deployment_id: 'deploy-3' }),
+      other_info: JSON.stringify({
+        source: 'ionet',
+        deployment_id: 'deploy-3',
+      }),
     },
   ])
   const name = within(card).getByRole('button', { name: longName })
@@ -373,7 +376,9 @@ it('keeps the channel type and provider visible in table view', async () => {
   expect(
     within(table).getByRole('columnheader', { name: /^Type\b/ })
   ).toBeVisible()
-  expect(within(table).getByText('OpenAI')).toBeVisible()
+  expect(
+    within(table).getByText('OpenAI', { selector: 'span' })
+  ).toBeVisible()
   expect(table.querySelector('[data-slot="provider-badge"]')).not.toBeNull()
 })
 
@@ -568,12 +573,26 @@ it('lets the metric columns wrap instead of overflowing a narrow card', async ()
     expect(value).toHaveClass(
       'max-w-full',
       'wrap-anywhere',
-      '[&_[data-slot=status-badge]]:whitespace-normal',
-      '[&_[data-slot=status-badge]>span]:overflow-visible',
-      '[&_[data-slot=status-badge]>span]:text-clip',
-      '[&_[data-slot=status-badge]>span]:whitespace-normal'
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])]:!ml-0',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])]:whitespace-normal',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:overflow-visible',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:text-clip',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:whitespace-normal'
     )
-    expect(value.querySelector('[data-slot="status-badge"]')).toBeVisible()
+    // Both roots and their direct text spans must match the card overrides.
+    const badge = value.querySelector<HTMLElement>(
+      ':is([data-slot="status-badge"],[data-slot="tooltip-trigger"])'
+    )
+    expect(badge).toBeVisible()
+    expect(badge).toHaveAttribute(
+      'data-slot',
+      label === 'Response' ? 'status-badge' : 'tooltip-trigger'
+    )
+    const reading = within(value).getByText(
+      label === 'Response' ? 'Not tested' : /ago$/
+    )
+    expect(badge?.querySelector(':scope > span')).toBe(reading)
+    expect(reading).toBeVisible()
   }
 
   // The priority/weight row also wraps rather than pushing past the edge.

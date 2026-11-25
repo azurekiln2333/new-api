@@ -262,9 +262,9 @@ test('the billed card quota retains local accounting details and separate upstre
 
 test('the table local budget still shows remaining capacity instead of billed usage', () => {
   renderQuotaCell({ view: displayBudget, table: true })
-  expect(screen.getByRole('button', { name: 'Local Budget' })).toHaveTextContent(
-    '$465'
-  )
+  expect(
+    screen.getByRole('button', { name: 'Local Budget' })
+  ).toHaveTextContent('$465')
   expect(screen.queryByText('$125 / $500')).not.toBeInTheDocument()
 })
 

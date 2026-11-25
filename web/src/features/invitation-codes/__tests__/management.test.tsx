@@ -517,9 +517,10 @@ it('keeps long invitation names and row actions compact while preserving keyboar
   const nameTrigger = within(row).getByText(name).closest('[tabindex]')
   expect(nameTrigger).toHaveClass('truncate')
   expect(nameTrigger).toHaveClass('max-w-64')
-  const actions = within(row).getByRole('cell', { name: 'Open menu' })
+  const trigger = within(row).getByRole('button', { name: 'Open menu' })
+  const actions = trigger.closest('td') as HTMLElement
+  expect(actions).not.toBeNull()
   expect(within(actions).getAllByRole('button')).toHaveLength(1)
-  const trigger = within(actions).getByRole('button', { name: 'Open menu' })
   expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
   expect(trigger).toHaveAttribute('aria-expanded', 'false')
 
@@ -541,7 +542,9 @@ it('keeps long invitation names and row actions compact while preserving keyboar
   const editor = await screen.findByRole('dialog', {
     name: 'Edit invitation code',
   })
-  expect(within(editor).getByRole('textbox', { name: 'Name' })).toHaveValue(name)
+  expect(within(editor).getByRole('textbox', { name: 'Name' })).toHaveValue(
+    name
+  )
 })
 
 it.each([
@@ -722,9 +725,10 @@ it('prevents editing or re-enabling an already used code', async () => {
   await userEvent
     .setup()
     .click(screen.getByRole('button', { name: 'Open menu' }))
-  expect(
-    await screen.findByRole('menuitem', { name: 'Edit' })
-  ).toHaveAttribute('aria-disabled', 'true')
+  expect(await screen.findByRole('menuitem', { name: 'Edit' })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
   expect(screen.getByRole('menuitem', { name: 'Enable' })).toHaveAttribute(
     'aria-disabled',
     'true'
