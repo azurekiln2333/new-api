@@ -232,9 +232,11 @@ test('model limits sort offered and selected-only choices while preserving selec
       data: ['zeta', 'alpha'],
     })
   })
-  expect(
-    screen.getAllByRole('option').map((option) => option.textContent)
-  ).toEqual(['alpha', 'model-2', 'model-10', 'zeta'])
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole('option').map((option) => option.textContent)
+    ).toEqual(['alpha', 'model-2', 'model-10', 'zeta'])
+  )
   expect(
     [...document.querySelectorAll('[data-slot="combobox-chip"]')].map(
       (chip) => chip.textContent

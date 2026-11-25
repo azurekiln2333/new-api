@@ -58,6 +58,12 @@ API-key limits/listing and CC Switch suites also cover selected-only values,
 unchanged chip/payload order, default generic order, explicit reveal, stale results
 and failure states. Future channel/group navigation must retain these invariants.
 
+Mounted-query regressions must await the observable option list after
+`QueryClient.setQueryData`: observer notifications are scheduled, so a synchronous
+`act` around the cache mutation does not guarantee updated props have rendered.
+Use `waitFor` with the complete expected list; retain source-array, chip and saved
+payload assertions rather than accepting the stale subset.
+
 Request-plugin model scope opts into the same display comparator, including saved
 values absent from the offered catalog. Model-value autocomplete and matched
 pricing-model choices sort newly allocated suggestions only. Empty model scope
