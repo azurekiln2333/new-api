@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -277,7 +283,16 @@ test.each([
     await user.click(await screen.findByRole('option', { name: label }))
 
     expect(stream).not.toBeChecked()
-    expect(stream).toBeDisabled()
+    expect(stream).toHaveAttribute('aria-disabled', 'true')
+    await user.click(stream)
+    expect(stream).not.toBeChecked()
+    fireEvent.keyDown(stream, { key: ' ' })
+    fireEvent.keyUp(stream, { key: ' ' })
+    expect(stream).not.toBeChecked()
+    fireEvent.keyDown(stream, { key: 'Enter' })
+    fireEvent.keyUp(stream, { key: 'Enter' })
+    expect(stream).not.toBeChecked()
+    expect(api.get).not.toHaveBeenCalled()
     await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: 'Test Connection' }))
     await vi.waitFor(() =>

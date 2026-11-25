@@ -109,7 +109,9 @@ function OpenWithRow({ channel }: { channel: Channel }) {
   }, [channel, setCurrentRow])
   return (
     <>
-      <button onClick={() => setOpen(true)}>Open test dialog</button>
+      <button type='button' onClick={() => setOpen(true)}>
+        Open test dialog
+      </button>
       <ChannelTestDialog open={open} onOpenChange={setOpen} />
     </>
   )
@@ -617,7 +619,6 @@ test('deleting failures for a selected key preserves models hidden by its scope'
   await user.click(
     within(await screen.findByRole('alertdialog')).getByRole('button', {
       name: 'Delete',
-      exact: true,
     })
   )
 
