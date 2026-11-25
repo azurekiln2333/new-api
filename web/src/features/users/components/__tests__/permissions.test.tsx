@@ -185,6 +185,9 @@ it('keeps Retry accessible after a failed detail load and enables saving only af
     if (url === '/api/group/') {
       return { data: { success: true, data: ['default'] } }
     }
+    if (url === '/api/user/2/rate_limit') {
+      return { data: { success: true, data: { enabled: false } } }
+    }
     detailReads += 1
     if (detailReads === 1) {
       return { data: { success: false, message: 'Detail unavailable' } }
@@ -284,6 +287,9 @@ it("keeps the delta baseline when the reconciliation read reports a server failu
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/authz/catalog') return { data: { success: true, data: { resources: [], roles: [] } } }
     if (url === '/api/group/') return { data: { success: true, data: ['default'] } }
+    if (url === '/api/user/2/rate_limit') {
+      return { data: { success: true, data: { enabled: false } } }
+    }
     detailReads += 1
     // A failed body must never seed the baseline, even if it carries data.
     if (detailReads > 1) {
@@ -322,7 +328,7 @@ it('treats a saved matrix as changed when the loaded baseline came from a user t
   await screen.findByDisplayValue('Managed admin')
   const detail = first.mock.calls
     .map(([url]) => url)
-    .filter((url) => url?.startsWith('/api/user/'))
+    .filter((url) => url === '/api/user/2')
   expect(detail).toEqual(['/api/user/2'])
 })
 
@@ -385,6 +391,9 @@ it('re-reads the fresh detail for a reopened user so the quota baseline is not t
     }
     if (url === '/api/group/') {
       return { data: { success: true, data: ['default'] } }
+    }
+    if (url === '/api/user/2/rate_limit') {
+      return { data: { success: true, data: { enabled: false } } }
     }
     detailCalls.push(url)
     return { data: { success: true, data: { ...target, quota: serverQuota } } }
