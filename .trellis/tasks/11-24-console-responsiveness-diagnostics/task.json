@@ -23,7 +23,8 @@
     "11-24-management-mutations-code-batches",
     "11-24-channel-diagnostics-log-presentation",
     "11-24-dashboard-node-ranking-details",
-    "11-25-console-forward-to-master"
+    "11-25-console-forward-to-master",
+    "11-26-durable-usage-statistics"
   ],
   "parent": null,
   "relatedFiles": [],

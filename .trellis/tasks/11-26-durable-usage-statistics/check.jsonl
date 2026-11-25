@@ -1,0 +1,4 @@
+{"file":"AGENTS.md","reason":"Required real three-database compatibility and migration/idempotency evidence"}
+{"file":".agents/rules/billing.md","reason":"Review accounting invariants without altering charge math"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Numeric facts cannot replace surviving-log authorization or weaken cleanup fences"}
+{"file":".trellis/tasks/11-26-durable-usage-statistics/research/backend-statistics-inventory.md","reason":"Check every reader/write gate, legacy overlap, exact filters and token semantics"}

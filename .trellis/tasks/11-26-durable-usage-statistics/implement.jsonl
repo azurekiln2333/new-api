@@ -1,0 +1,5 @@
+{"file":"AGENTS.md","reason":"Cross-dialect persistence, meaningful tests, protected boundaries and hosted-only session override"}
+{"file":".agents/rules/billing.md","reason":"Mandatory full accounting rules before numeric consume/settlement integration"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Database and shared authoritative transaction conventions"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Preserve independent log content lifecycle, authorization and cleanup fences"}
+{"file":".trellis/tasks/11-26-durable-usage-statistics/research/backend-statistics-inventory.md","reason":"Exact endpoint/filter/token/event semantics and legacy coverage gaps"}

@@ -13,8 +13,8 @@ The user explicitly authorized task planning, immediate implementation by FOUR e
 | R5 | Fingerprint shows three prompt/output cards below controls, actual prompts and actual replies, live queued/running/complete/error states; preserve score/cancel/limits, admin-only access, do not launch extra paid probes | pi-ui |
 | R6 | Common log columns: time, user, model, stream, Token usage, duration, cost, channel, processing node; remaining fields afterward | pi-ui |
 | R7 | Public homepage signed-in avatar navigates directly to console; console avatar opens menu. Hide overview onboarding guide for admins, including entry/reminder; preserve initial installer | pi-logs |
-| R8 | Existing overview API cards are wider, order configurable, bound to instance through existing system settings; one instance supports multiple API domains. Everyone sees CPU/memory/storage in original cards. Clicking API item opens filtered node details, with unknown/stale states | pi-logs |
-| R9 | LLM model ranking click opens model-square-style side drawer instead of price navigation, with model usage and per-model user usage ranking. Admin sees full names; ordinary user only own full name, others masked SERVER-SIDE | pi-logs |
+| R8 | Each overview API is a distinct card; clicking its entire area opens a centered shared dialog with safe instance details. Show Online/Offline separately from monitoring-disabled/unknown states. CPU/memory/storage reuse the instance-list ring and percentage display with consistent unknown text. Settings bind an API through an authorized instance-list dropdown, not manual node-name entry; preserve missing/offline current bindings and explicit unbind. Order remains configurable and one instance supports multiple API domains | pi-logs |
+| R9 | LLM model ranking click opens model-square-style side drawer instead of price navigation, with model usage and per-model user usage ranking. ADMIN and ROOT see full names; ordinary users see their own full name and rune-safe partial names for others, without others' identifiers. Anonymous names remain ***. Masking is SERVER-SIDE; the separate admin user chart isolates caches and live access by identity/role | pi-logs |
 | R10 | Group levels increase numerically (0 < 1 < 2 < 3 < 4); preview matches runtime permissions. Preserve global/manual grants, apply explicit hidden rules after level inheritance, and keep the manual editor synchronized with loaded settings without deleting existing rules | group_visibility_repair |
 | R11 | Common logs preserve an already parsed model when a request is rejected before channel selection; absent channel/model use an honest placeholder, never a fabricated channel `#0`. Preserve unread-body rejection and existing history | cloud_gate_source_review + group_visibility_repair |
 | R12 | Trace and remove avoidable blocking across settings, invitation/redemption creation, channel status and priority changes, including shared audit/cache work and frontend post-save refetch waits. Persisted success must release the UI without awaiting cross-node propagation or unrelated refreshes; required durable writes and immediate local correctness remain synchronous | root + source-review workers |
@@ -46,3 +46,84 @@ Investigate the separately reported loss of login after deployment/restart. Fix 
 Keep only the model-list scroll container in the test dialog; controls and footer remain reachable. Remove the selected-Key explanatory sentence. Default to streaming on open, while unsupported endpoints still forbid streaming. Selecting a specific Key filters the visible and batch-testable models by that Key's authoritative scope; an empty explicit allowlist allows no models. Switching Keys must not leave hidden selected models queued for testing or silently test with a different Key.
 
 Trace and correct per-Key upstream-model fetching/saving so distinct Key model lists are retained and the channel-wide model list correctly includes their union. Preserve the existing explicit preview/apply boundary and authorization; no extra paid/live probes. Fix the unresponsive multi-key quota and Bind User controls at their actual event/layout/state cause without removing server permission, ledger, identity/revision or conflict guards. Extend suitable existing regressions and run them through hosted CI only.
+
+## R17 follow-up — Request-content storage growth (2026-11-26)
+The user reports PostgreSQL volume 6.7 GB, normal WAL 81 MB, request-detail table 3.8 GB (about 3.77 GB TOAST) and usage logs 2.7 GB. These are user-supplied observations, not production queries by this task. The user now explicitly requests a finite default of 3 or 7 days and compression while recording request content. Adopt 3 days for the request-content default; preserve explicitly stored administrator retention choices, including 0, and leave the separate usage-log policy unchanged. This supersedes only the original default-zero requirement for an absent request-content setting. Explain the two controls clearly. New payloads should use beneficial bounded compression with transparent legacy reads; do not fabricate compression ratios or migrate/delete historical payloads merely to rewrite their encoding. Cleanup-throughput findings are informational only: no sweeper/model cleanup expansion is authorized in this follow-up. All compatibility and database verification remains hosted-only, including the separate ClickHouse store. No production settings changes, deletions or compaction are authorized.
+
+## R23 — Sidebar personalization visibility and Wallet check-in
+
+Administrators control whether ordinary users see the entire sidebar personalization card in Personal Settings. This is a card visibility setting, not permission/menu policy: default visible, missing legacy value visible, ADMIN/ROOT retain their current behavior, and existing explicit per-user permission denial still applies. Hiding must preserve every saved user menu preference and remove the empty layout column. Saving this separate flag must preserve unrelated unsaved menu drafts.
+
+Move the existing check-in card from Personal Settings to Wallet, using the same enabled/Turnstile gates. Confirmed success refreshes authoritative user balance through the existing API; no local quota arithmetic or reward/auth/backend change.
+
+## R24 — All statistics independent of logs
+
+Child `.trellis/tasks/11-26-durable-usage-statistics` owns the full inventory, durable numeric persistence, idempotent historical backfill, coverage and all business-reader migration. Include channel/model totals, rankings, dashboards and log-page numeric summary cards. Preserve actual retained-log pagination/export/storage and request-content authorization semantics. Existing independent accounting/performance stores keep their authority.
+
+Usage-log cleanup remains paused until implementation and required hosted checks pass. The separate production session may later retain logs for24hours; this session performs no production cleanup. Numeric facts must not become another request-body archive. The child plan must resolve legacy quota_data overlap, optional-log/export gates, exact token/count semantics, multi-node/restart recovery and separate ClickHouse identity/TTL before implementation.
+
+## R25 — Official provider status
+
+Show one fixed-height card per official provider: OpenAI, Anthropic, Gemini API, xAI, DeepSeek, Moonshot, MiniMax and Mistral. Components can expand/collapse inside the fixed card and scroll internally. Present overall/component status, current and recent incidents, last successful fetch, last check and source update time with honest unknown/error states. Mark successful data older than 30 minutes stale; distinguish a failed fetch from an upstream outage. Investigate DeepSeek's never-successful source retrieval. Verify each provider's official machine source; Vertex AI is not a substitute for Gemini API. Availability percentages require sufficient official historical evidence and a defined calculation, never copied sample numbers.
+
+## R26 — Effective subscription users
+
+Add an administrator subscription tab listing currently effective users and their plan/start/expiry. Use the server's effective-subscription semantics, current permissions and bounded pagination; do not infer activity from payment status alone or change subscription billing.
+
+## R27 — Playground usability and capabilities
+
+Fix the unresponsive New Project action and place it above New Conversation. Support usable web search, file and image input through existing capabilities where possible. Explain the actual triggers for drawing/task logs. Temporary uploads, generated caches and transient data need finite lifetimes, automatic expiry and capacity bounds appropriate to the user's 20 GB server. Preserve saved conversations/projects and disclose unsupported capabilities rather than showing inert controls. Inspect current authorization, provider and billing contracts before changing request construction.
+
+## R28 — API-key import and model choices
+
+Expose the existing configuration-import action through a direct, visible icon button on API-key rows; reuse the existing credential resolution and dialog flow. Audit every model-selection dropdown, including CCS main model, and display models alphabetically with the existing deterministic natural comparator. Preserve group/category order, special Auto choices, selected values and persisted/manual catalog order; never globally sort generic combobox options.
+
+## R29 — Classified request-error monitoring
+
+Provide a separate administrator log-monitoring page that groups equivalent request errors into useful categories for troubleshooting. Show occurrence counts, first/latest times, affected models/channels and expandable safe evidence. Preserve access boundaries and drill-down to retained authorized log details. Define bounded retention/capacity and grouping that avoids merging different causes; do not duplicate raw request/response bodies or expose credentials. Coordinate durable numeric summaries with R24, rather than introducing another unbounded log archive.
+
+## R30 — Common-log match-mode clarity
+
+The selected Contains/Exact button must be visually unambiguous in light and dark themes and agree with its accessible pressed state, URL and API parameter. Preserve Contains -> fuzzy and Exact -> exact. Cover both transitions and reload; the reported appearance is not authorization to reverse matching semantics.
+
+## R31 — Mobile common-log hierarchy
+
+Keep the PC layout unchanged. On mobile, Usage, RPM, TPM and cache hit rate occupy one compact row with readable values and units. Cache hit rate uses a small icon plus percentage and an accessible tap/focus explanation, never a fabricated abbreviation such as "缓:". Preserve formatter precision, hidden-sensitive values and unavailable states.
+
+Mobile log entries prioritize the model name, streaming status and actual available TPS. Use a prominent wrapping model title and clearly separated primary metrics; put token usage, cost and time in secondary labeled content with details expandable. Do not compress unrelated fields into an abbreviated single sentence. Preserve existing throughput semantics, model inspection/copy, privacy, permissions, visibility preferences and error details. No desktop table or accounting changes.
+
+## R32 — Workspace completion and migration, last
+
+Complete all feature/fix work and hosted verification before migration. Then audit all local/remote branches and source/Trellis progress, exclude secrets/build/native/intermediate artifacts, commit genuine project progress to GitHub, integrate reviewed work into main and obtain a clean source checkout. Audit cloud CI/CD and client/full-installer workflows; all future builds/tests remain GitHub-only.
+
+The source is `D:\My2KProjects\new-api`; the verified target is `E:\MyNewProjects\WebProjects\new-api` (Herdr workspace w6E, Codex p1 and four Pi p2–p5). Pull completed GitHub main to the target, configure GitHub as its only remote if setup is needed, compare both source trees and complete Trellis state, and hand off through Herdr. Persist the no-local-build/test/generated-artifact rule. Inventory and safely remove only verified build artifacts, and report the original-directory cleanup process. Target Pi may assist against explicitly named old-source paths now; target files/Git and migration stay untouched until the prerequisite work is complete.
+
+## R33 — Common-log search and scope consistency
+
+Support administrator channel-name search using authorized channel data, retaining stable channel identity and disambiguation. Investigate the reported continued latency across the Hong Kong console / US database topology from current request routing and SQL round trips, including list/count/stat and duplicate requests. Do not claim a measured latency or deployed correction without evidence.
+
+Provide All / Only me / Everyone except me scope filters to authorized administrators. Their columns, visible field set, order and visibility preferences must remain identical: scope changes rows, not administrator capability. The same scope must apply to list/count/numeric summaries/export, and ordinary users must remain server-limited to their own logs. Separate viewer authorization from the row filter. Coordinate schema/reader changes with R24 and mobile surfaces with R31.
+
+## R34 — Safe client-facing upstream errors
+
+Do not pass upstream promotional text, payment links, contact groups or API-key fragments through to API clients. Return a safe useful error category/message plus request correlation, preserve protocol/status/retry behavior and keep administrator troubleshooting evidence appropriately redacted. Cover the supplied 403 exhausted shared-free-quota example without hardcoding one advertiser or treating every upstream failure as the same cause. Inventory HTTP and streaming/protocol error sinks before implementation; preserve accounting and retry logic.
+
+## R35 — Model-square card layout
+
+Use the user's supplied pricing-card HTML/layout as visual guidance: provider icon and model title, input/output/cache prices immediately below, visible Details and Copy controls, bounded description, provider/billing-mode and supported-protocol/context metadata, then clearly labeled latency/throughput/status with success-rate detail. Reuse existing project components and authoritative model/pricing/performance data; no copied sample prices, 3s/7t values or availability percentages. Preserve price units, full-name inspection and responsive readability.
+
+## R19 follow-up — Fork update-source binding
+
+User reports current `custom-20261126-37a4174` alongside latest `v1.0.0-rc.51` dated 2026-11-13 17:30:24 and asks why the update panel is not following their GitHub. Inspect effective source selection and fork build configuration; make the user's fork release flow follow `azurekiln2333/new-api` while preserving protected upstream identity/attribution. Distinguish current installed version from update-source selection and do not claim production settings changed. Verify the current/latest comparison against actual fork releases in hosted tests and remote release evidence.
+
+## R5 follow-up — Three-sample detector layout and channel controls
+
+The user supplied the rendered body of `https://lm.ikale.io/` and explicitly requests broadly matching placement with this site's theme/components. Show three sample cards before a run, each with sample/status header, prompt with Copy and expand/collapse, response area and actual parsed-number count. Prompts independently use Chinese, English, Japanese, Korean or French. Place change-prompts and detection actions below the cards. Display the actual prompt sent and actual response received, without extra paid requests. Remove the visible Estimated token budget input/presentation; retain internal bounded request/output/cancel protections. Reference details are captured in `research/fingerprint-reference-layout.md`.
+
+Fix the slow/incomplete channel selector and confusing standalone Previous/Next paging controls. Include a selectable Key for multi-Key channels; model scope and effective endpoint/request follow the selected channel and stable Key identity/revision. Supported conversion remains available and stale selections never silently choose another Key. Compare against the user's installed `custom-20261126-37a4174`; do not explain an already-released defect as merely unpublished work.
+
+## R36 — Multiple upstream addresses and per-Key upstream protocols
+
+The user confirmed one OpenAI or Anthropic channel can contain multiple upstream Base URLs with random request selection. The URL pool is independent of the existing multi-Key pool. Add an optional homepage URL; when empty, the first configured Base URL is the homepage destination.
+
+Each Key can restrict its upstream protocol to Messages, Chat Completions or Responses. This is an upstream dispatch restriction: a Messages-only Key can serve client Chat/Responses through supported conversions. Unsupported combinations fail clearly. Keep Key identity/revision, model scope, capacity, retry, accounting and authentication authoritative; pin the chosen URL/Key/protocol to each actual attempt. Channel tests and fingerprint controls must consume the same effective capabilities.
