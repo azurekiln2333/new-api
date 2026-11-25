@@ -99,7 +99,10 @@ function NodeDetailPanel(props: {
   )
 }
 
-function formatPercentValue(value: number | null, t: (key: string) => string): string {
+function formatPercentValue(
+  value: number | null,
+  t: (key: string) => string
+): string {
   return value === null ? t('Unknown') : formatPercent(value)
 }
 

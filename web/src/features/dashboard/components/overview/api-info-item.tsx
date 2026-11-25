@@ -208,10 +208,13 @@ function ResourceMeters(props: {
   ]
 
   let stateLabel: string | null = null
-  if (props.status === 'stale') stateLabel = t('Stale')
-  else if (props.status === 'disabled') stateLabel = t('Disabled')
-  else if (props.status === 'unknown' || !props.resources)
+  if (props.status === 'stale') {
+    stateLabel = t('Stale')
+  } else if (props.status === 'disabled') {
+    stateLabel = t('Disabled')
+  } else if (props.status === 'unknown' || !props.resources) {
     stateLabel = t('Unknown')
+  }
 
   return (
     // Required information, so it wraps onto its own line on narrow screens

@@ -810,8 +810,7 @@ export function OverviewDashboard() {
                     // The API panel carries per-node resources and controls, so
                     // it takes the full content width instead of sharing a
                     // two-column row with the other panels.
-                    (showAnnouncementsPanel || showFAQPanel) &&
-                      'lg:grid-cols-2'
+                    (showAnnouncementsPanel || showFAQPanel) && 'lg:grid-cols-2'
                   )}
                 >
                   {isAdmin && (

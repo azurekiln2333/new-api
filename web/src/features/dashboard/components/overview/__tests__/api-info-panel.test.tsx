@@ -89,9 +89,11 @@ function mockStatusAndInstances(instances: unknown, pending = false) {
       if (pending) return new Promise(() => {})
       return Promise.resolve({ data: { success: true, data: instances } })
     }
-    // /api/status returns the status map itself, not an envelope.
     return Promise.resolve({
-      data: { api_info_enabled: true, api_info: apiInfoEntries },
+      data: {
+        success: true,
+        data: { api_info_enabled: true, api_info: apiInfoEntries },
+      },
     })
   })
 }
@@ -227,7 +229,10 @@ describe('ApiInfoPanel', () => {
         })
       }
       return Promise.resolve({
-        data: { api_info_enabled: true, api_info: legacyEntries },
+        data: {
+          success: true,
+          data: { api_info_enabled: true, api_info: legacyEntries },
+        },
       })
     })
 
@@ -309,7 +314,10 @@ describe('ApiInfoPanel', () => {
         })
       }
       return Promise.resolve({
-        data: { api_info_enabled: true, api_info: apiInfoEntries },
+        data: {
+          success: true,
+          data: { api_info_enabled: true, api_info: apiInfoEntries },
+        },
       })
     })
 
