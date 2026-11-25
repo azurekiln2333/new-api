@@ -65,11 +65,13 @@ export function CodeBatchHistoryDialog(props: CodeBatchHistoryDialogProps) {
     >
       {batches.isLoading ? (
         <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
-      ) : items.length === 0 ? (
+      ) : null}
+      {!batches.isLoading && items.length === 0 ? (
         <p className='text-muted-foreground text-sm'>
           {t('No create batches yet.')}
         </p>
-      ) : (
+      ) : null}
+      {!batches.isLoading && items.length > 0 ? (
         <ul className='divide-y'>
           {items.map((batch) => (
             <li
@@ -82,7 +84,9 @@ export function CodeBatchHistoryDialog(props: CodeBatchHistoryDialogProps) {
                 </p>
                 <p className='text-muted-foreground truncate text-xs'>
                   {t('{{count}} codes', { count: batch.count })}
-                  {batch.creation_batch_id ? ` · ${t('Shared claim limit')}` : ''}
+                  {batch.creation_batch_id
+                    ? ` · ${t('Shared claim limit')}`
+                    : ''}
                 </p>
               </div>
               <Button
@@ -95,7 +99,7 @@ export function CodeBatchHistoryDialog(props: CodeBatchHistoryDialogProps) {
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
     </Dialog>
   )
 }

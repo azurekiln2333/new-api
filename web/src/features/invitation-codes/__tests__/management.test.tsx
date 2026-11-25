@@ -151,7 +151,14 @@ it('generates a batch and returns the codes for export', async () => {
   await user.clear(screen.getByRole('spinbutton', { name: 'Count' }))
   await user.type(screen.getByRole('spinbutton', { name: 'Count' }), '2')
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(saved).toHaveBeenCalledWith(['code-a', 'code-b']))
+  await waitFor(() =>
+    expect(saved).toHaveBeenCalledWith({
+      keys: ['code-a', 'code-b'],
+      operationId: 'replayed-operation',
+      creationBatchId: '',
+      replayed: true,
+    })
+  )
   expect(post).toHaveBeenCalledWith(
     '/api/invitation/',
     { name: 'Launch', count: 2, expired_time: 0 },
@@ -192,7 +199,14 @@ it.each(['lost response', 'server rejection'])(
     await user.clear(name)
     await user.type(name, 'Launch')
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(saved).toHaveBeenCalledWith(['original-code']))
+    await waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({
+        keys: ['original-code'],
+        operationId: '',
+        creationBatchId: '',
+        replayed: true,
+      })
+    )
     expect(post).toHaveBeenNthCalledWith(
       2,
       '/api/invitation/',
@@ -244,14 +258,28 @@ it('uses a new invitation operation ID for another create after success', async 
   const { saved, user } = renderCreateEditor()
   await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(saved).toHaveBeenCalledWith(['first-code']))
+  await waitFor(() =>
+    expect(saved).toHaveBeenCalledWith({
+      keys: ['first-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   )
   const originalId = operationIdFromRequestConfig(post.mock.calls[0]?.[2])
 
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(saved).toHaveBeenLastCalledWith(['second-code']))
+  await waitFor(() =>
+    expect(saved).toHaveBeenLastCalledWith({
+      keys: ['second-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
   expect(post).toHaveBeenCalledTimes(2)
   expect(post.mock.calls[1]?.[1]).toEqual(post.mock.calls[0]?.[1])
   expect(originalId).toBeTruthy()
@@ -284,7 +312,14 @@ it('recovers a lost invitation response after remount and clears only confirmed 
   const retry = renderCreateEditor()
   await retry.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
   await retry.user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(retry.saved).toHaveBeenCalledWith(['original-code']))
+  await waitFor(() =>
+    expect(retry.saved).toHaveBeenCalledWith({
+      keys: ['original-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: true,
+    })
+  )
   expect(operationIdFromRequestConfig(post.mock.calls[1]?.[2])).toBe(originalId)
   expect(sessionStorage.length).toBe(0)
   retry.result.unmount()
@@ -292,7 +327,14 @@ it('recovers a lost invitation response after remount and clears only confirmed 
   const fresh = renderCreateEditor()
   await fresh.user.type(screen.getByRole('textbox', { name: 'Name' }), 'Launch')
   await fresh.user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(fresh.saved).toHaveBeenCalledWith(['fresh-code']))
+  await waitFor(() =>
+    expect(fresh.saved).toHaveBeenCalledWith({
+      keys: ['fresh-code'],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
   expect(operationIdFromRequestConfig(post.mock.calls[2]?.[2])).not.toBe(originalId)
   expect(sessionStorage.length).toBe(0)
 })
@@ -433,7 +475,14 @@ it('keeps editing available after a rejected save and persists a successful retr
   expect(saved).not.toHaveBeenCalled()
   expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Renamed')
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(saved).toHaveBeenCalledWith([]))
+  await waitFor(() =>
+    expect(saved).toHaveBeenCalledWith({
+      keys: [],
+      operationId: '',
+      creationBatchId: '',
+      replayed: false,
+    })
+  )
   expect(put).toHaveBeenLastCalledWith('/api/invitation/', {
     id: 7,
     name: 'Renamed',
@@ -453,7 +502,28 @@ it('shows a retry action on load failure and the empty state after recovery', as
 })
 
 it('exports the current page and requires confirmation before deleting a code', async () => {
-  const { removeItem } = await renderManager([item])
+  const downloads: { filename: string; blob: Blob }[] = []
+  let currentBlob: Blob
+  vi.stubGlobal(
+    'URL',
+    Object.assign(class extends URL {}, {
+      createObjectURL: vi.fn((blob: Blob) => {
+        currentBlob = blob
+        return 'blob:invitation-export'
+      }),
+      revokeObjectURL: vi.fn(),
+    })
+  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement
+  ) {
+    downloads.push({ filename: this.download, blob: currentBlob })
+  })
+  const exportedText = 'Launch invitations\tprivate-invitation-code\n'
+  const exportedFile = new Blob([exportedText], {
+    type: 'text/plain;charset=utf-8',
+  })
+  const { get, removeItem } = await renderManager([item])
   const post = vi.spyOn(api, 'post').mockImplementation(async () => {
     removeItem()
     return { data: { success: true } }
@@ -461,11 +531,37 @@ it('exports the current page and requires confirmation before deleting a code', 
   const user = userEvent.setup()
   await screen.findByText(item.name)
   await user.click(screen.getByRole('button', { name: 'Export current page' }))
-  const dialog = await screen.findByRole('dialog')
-  expect(within(dialog).getByText(item.key)).toBeVisible()
-  expect(within(dialog).getByRole('button', { name: /Copy/ })).toBeEnabled()
+  const dialog = await screen.findByRole('dialog', { name: 'Export codes' })
+  expect(dialog).toHaveTextContent('1 selected codes')
+  expect(dialog).not.toHaveTextContent(item.key)
+  expect(
+    within(dialog).getByRole('checkbox', { name: 'Include name' })
+  ).toBeChecked()
   expect(within(dialog).getByRole('button', { name: 'Download' })).toBeEnabled()
-  await user.keyboard('{Escape}')
+  get.mockResolvedValueOnce({
+    data: exportedFile,
+    headers: { 'content-type': 'text/plain;charset=utf-8' },
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Download' }))
+  await waitFor(() => expect(downloads).toHaveLength(1))
+  expect(get).toHaveBeenCalledWith(
+    '/api/invitation/export?ids=7&format=txt&include_quota=false',
+    { responseType: 'blob' }
+  )
+  expect(downloads[0]?.filename).toMatch(/^invitation-codes-\d+\.txt$/)
+  const downloadedText = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result)), {
+      once: true,
+    })
+    reader.addEventListener('error', () => reject(reader.error), { once: true })
+    reader.readAsText(downloads[0].blob)
+  })
+  expect(downloadedText).toBe(exportedText)
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:invitation-export')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Export codes' })).toBeNull()
+  )
   await user.click(screen.getByRole('button', { name: 'Delete' }))
   const confirm = await screen.findByRole('alertdialog')
   expect(post).not.toHaveBeenCalled()

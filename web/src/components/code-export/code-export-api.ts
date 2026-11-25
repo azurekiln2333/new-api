@@ -52,11 +52,15 @@ export type CodeBatchSummary = {
 }
 
 function exportPath(scope: CodeExportScope): string {
-  return scope === 'invitation' ? '/api/invitation/export' : '/api/redemption/export'
+  return scope === 'invitation'
+    ? '/api/invitation/export'
+    : '/api/redemption/export'
 }
 
 function batchPath(scope: CodeExportScope): string {
-  return scope === 'invitation' ? '/api/invitation/batches' : '/api/redemption/batches'
+  return scope === 'invitation'
+    ? '/api/invitation/batches'
+    : '/api/redemption/batches'
 }
 
 /**
@@ -89,9 +93,12 @@ export async function downloadCodeExport(
     params.set('include_quota', 'false')
   }
 
-  const response = await api.get(`${exportPath(request.scope)}?${params.toString()}`, {
-    responseType: 'blob',
-  })
+  const response = await api.get(
+    `${exportPath(request.scope)}?${params.toString()}`,
+    {
+      responseType: 'blob',
+    }
+  )
 
   const contentType = String(response.headers?.['content-type'] ?? '')
   if (contentType.includes('application/json')) {

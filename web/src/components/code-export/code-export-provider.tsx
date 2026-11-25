@@ -20,7 +20,10 @@ import React, { useState } from 'react'
 
 import { CodeBatchHistoryDialog } from './code-batch-history-dialog'
 import type { CodeExportScope } from './code-export-api'
-import { CodeExportDialog, type CodeExportSelection } from './code-export-dialog'
+import {
+  CodeExportDialog,
+  type CodeExportSelection,
+} from './code-export-dialog'
 
 type CodeExportContextValue = {
   /** Export an explicit selection, from the current page or across pages. */
@@ -57,8 +60,7 @@ export function CodeExportProvider(props: {
       setHistoryOpen(false)
       setSelection({ kind: 'batch', operationId })
     },
-    exportFiltered: (filters) =>
-      setSelection({ kind: 'filter', ...filters }),
+    exportFiltered: (filters) => setSelection({ kind: 'filter', ...filters }),
     openHistory: () => setHistoryOpen(true),
   }
 
