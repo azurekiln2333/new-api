@@ -34,10 +34,9 @@ import { useChannels } from './channels-provider'
 const SENSITIVE_MASK = '••••'
 
 /**
- * Bespoke channel card for the card view. Reuses every column's existing cell
- * renderer via `flexRender`, so the table's information and interactions are
- * preserved: row selection, provider/multi-key/IO.NET type badge, id,
- * name/remark + warning icons, status (with tooltips), inline
+ * Bespoke channel card for the card view. Reuses the existing cell renderers
+ * via `flexRender`, omitting the table-only type cell while preserving row
+ * selection, id, name/remark + warning icons, status (with tooltips), inline
  * priority/weight spinners, balance refresh, response/test times, tag
  * expand-collapse, and the per-row (or per-tag) actions menu. Channel groups
  * and the models each group reaches live in the details drawer.
@@ -73,7 +72,6 @@ function ChannelCardComponent({
 
   const reorderCell = reorderEnabled ? renderCell('reorder') : null
   const selectCell = renderCell('select')
-  const typeCell = renderCell('type')
   const nameCell = renderCell('name')
   const statusCell = renderCell('status')
   const actionsCell = renderCell('actions')
@@ -88,9 +86,14 @@ function ChannelCardComponent({
 
   const labelClass = 'text-muted-foreground text-[11px] font-medium select-none'
   const valueClass = 'min-w-0 text-sm tabular-nums'
-  // Inline cell badges already sit in a labelled slot, so drop their leading
-  // margin and let them wrap inside a narrow card.
-  const statusValueClass = cn(valueClass, '[&_[data-slot=status-badge]]:!ml-0')
+  // Shared badges truncate both the root and inner label. Override both only
+  // in card metric values so response and relative test time remain readable.
+  const statusValueClass = cn(
+    valueClass,
+    'max-w-full wrap-anywhere',
+    '[&_[data-slot=status-badge]]:!ml-0 [&_[data-slot=status-badge]]:whitespace-normal',
+    '[&_[data-slot=status-badge]>span]:overflow-visible [&_[data-slot=status-badge]>span]:text-clip [&_[data-slot=status-badge]>span]:whitespace-normal'
+  )
 
   // In card view the enable/disable state is already conveyed by the inline
   // power toggle, so the plain "Enabled"/"Disabled" badge is redundant. Keep
@@ -109,15 +112,14 @@ function ChannelCardComponent({
         data-activates-channel-details={interactive ? true : undefined}
         className='focus-visible:ring-ring flex min-w-0 flex-col gap-2 rounded-sm focus-visible:ring-2 focus-visible:outline-none'
       >
-        {/* Row 1: selection, type logo (its name shows on hover), channel name
-          and id, then concurrency and the status/action icons. */}
+        {/* Row 1: selection, channel name and id, then concurrency and the
+          status/action icons. The type cell belongs only to table view. */}
         <div className='flex items-start justify-between gap-2'>
           <div className='flex min-w-0 flex-1 items-center gap-2'>
             {reorderCell}
             {!isTagRow && selectCell && (
               <span className='shrink-0'>{selectCell}</span>
             )}
-            <div className='min-w-0 shrink-0 overflow-hidden'>{typeCell}</div>
             <div className='min-w-0 flex-1 overflow-hidden text-sm'>
               {nameCell}
               {!isTagRow && (
@@ -138,9 +140,8 @@ function ChannelCardComponent({
           </div>
         </div>
 
-        {/* Metrics: the left column holds used tokens then the quota region
-          (an enabled local budget fills Remaining / Total, otherwise the
-          upstream balance renders), the right column the response and
+        {/* Metrics: the left column holds used tokens then billed used quota
+          over the configured local total, the right column the response and
           last-test readings. The columns wrap below their own narrow
           threshold, so a narrow card stacks instead of overflowing. */}
         <StatusBadgeTypeContext.Provider value='text'>
@@ -161,7 +162,9 @@ function ChannelCardComponent({
                 </dd>
               </div>
               <div className='flex min-w-0 flex-col gap-0.5'>
-                <dt className={labelClass}>{t('Remaining / Total')}</dt>
+                <dt className={labelClass}>
+                  {t('Used')} / {t('Total')}
+                </dt>
                 <dd
                   className={cn(
                     valueClass,
@@ -171,6 +174,7 @@ function ChannelCardComponent({
                 >
                   <ChannelQuotaCell
                     channelId={row.original.id}
+                    usedQuota={row.original.used_quota}
                     aggregate={isTagRow}
                     fallback={
                       balanceCell ?? (
@@ -186,17 +190,21 @@ function ChannelCardComponent({
               data-card-metric-column='state'
               className='flex min-w-0 flex-[1_1_8rem] flex-col gap-1.5'
             >
-              <div className='flex min-w-0 items-baseline gap-1.5'>
-                <dt className={labelClass}>{t('Response')}</dt>
+              <div className='flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5'>
+                <dt className={cn(labelClass, 'min-w-0 wrap-anywhere')}>
+                  {t('Response')}
+                </dt>
                 <dd className={statusValueClass}>
                   {responseCell ?? (
                     <span className='text-muted-foreground'>-</span>
                   )}
                 </dd>
               </div>
-              <div className='flex min-w-0 items-baseline gap-1.5'>
-                <dt className={labelClass}>{t('Last Tested')}</dt>
-                <dd className={valueClass}>
+              <div className='flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5'>
+                <dt className={cn(labelClass, 'min-w-0 wrap-anywhere')}>
+                  {t('Last Tested')}
+                </dt>
+                <dd className={statusValueClass}>
                   {testTimeCell ?? (
                     <span className='text-muted-foreground'>-</span>
                   )}
