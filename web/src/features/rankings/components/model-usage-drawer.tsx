@@ -18,9 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
-import { ErrorState } from '@/components/error-state'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
-import { Skeleton } from '@/components/ui/skeleton'
+import { ErrorState } from '@/components/error-state'
 import {
   Sheet,
   SheetContent,
@@ -28,6 +27,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Skeleton } from '@/components/ui/skeleton'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { getLobeIcon } from '@/lib/lobe-icon'
@@ -70,9 +70,7 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
       >
         <SheetHeader className='border-border/70 bg-background/95 border-b px-4 py-3 backdrop-blur sm:px-6 sm:py-4'>
           <SheetTitle className='flex items-center gap-2'>
-            <span className='shrink-0'>
-              {getLobeIcon(props.vendorIcon, 20)}
-            </span>
+            <span className='shrink-0'>{getLobeIcon(props.vendorIcon, 20)}</span>
             <span className='truncate font-mono text-sm font-semibold'>
               {props.modelName || t('Model usage')}
             </span>
@@ -87,12 +85,13 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
         </SheetHeader>
 
         <div className='flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5'>
-          {query.isLoading ? (
+          {query.isLoading && (
             <div className='flex flex-col gap-3'>
               <Skeleton className='h-20 w-full rounded-lg' />
               <Skeleton className='h-40 w-full rounded-lg' />
             </div>
-          ) : query.isError ? (
+          )}
+          {!query.isLoading && query.isError && (
             // A failed request must never be rendered as zero usage. The shared
             // error state keeps the retry action consistent with the rest of
             // the console.
@@ -101,12 +100,16 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
               onRetry={() => void query.refetch()}
               className='min-h-[240px]'
             />
-          ) : (
+          )}
+          {!query.isLoading && !query.isError && (
             <div className='flex flex-col gap-6'>
               <section className='grid grid-cols-3 gap-2'>
                 <SummaryStat
                   label={t('Requests')}
-                  value={formatRankingTokens(usage?.totals.requests ?? 0, locale)}
+                  value={formatRankingTokens(
+                    usage?.totals.requests ?? 0,
+                    locale
+                  )}
                 />
                 <SummaryStat
                   label={t('Tokens')}
@@ -164,10 +167,7 @@ function SummaryStat(props: { label: string; value: string }) {
   )
 }
 
-function UserRankingRow(props: {
-  row: RankingModelUsageUser
-  locale?: string
-}) {
+function UserRankingRow(props: { row: RankingModelUsageUser; locale?: string }) {
   const { t } = useTranslation()
   const { row, locale } = props
   return (

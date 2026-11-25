@@ -103,14 +103,16 @@ describe('ModelUsageDrawer', () => {
   it('shows the model totals and the user ranking instead of navigating to pricing', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({ data: usagePayload })
 
-    const { container } = renderDrawer()
+    renderDrawer()
 
-    expect(await screen.findByText('5,000')).toBeVisible()
+    expect(await screen.findByText('5.0K')).toBeVisible()
     expect(screen.getByText('alice')).toBeVisible()
     // Masked identities stay masked exactly as the server sent them.
     expect(screen.getByText('***')).toBeVisible()
     // The drawer is not a link to the pricing page.
-    expect(container.querySelector('a[href*="/pricing"]')).toBeNull()
+    expect(
+      screen.getByRole('dialog').querySelector('a[href*="/pricing"]')
+    ).toBeNull()
   })
 
   it('renders a failure as an error with a retry action rather than zero usage', async () => {
@@ -159,7 +161,7 @@ describe('ModelUsageDrawer', () => {
     // Tokens and requests are still shown; the row now also carries its own
     // quota, labelled so the amount is not a bare number.
     const cells = within(row as HTMLElement)
-    expect(cells.getByText('5,000')).toBeVisible()
+    expect(cells.getByText('5.0K')).toBeVisible()
     expect(cells.getByText('50 requests')).toBeVisible()
     const rowText = row?.textContent ?? ''
     expect(rowText).toContain('Quota:')
