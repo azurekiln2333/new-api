@@ -373,8 +373,13 @@ func GetAllUsers(c *gin.Context) {
 		return
 	}
 
+	items, _, err := model.BuildUserListItems(c.Request.Context(), users)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(items)
 
 	common.ApiSuccess(c, pageInfo)
 	return
@@ -403,8 +408,13 @@ func SearchUsers(c *gin.Context) {
 		return
 	}
 
+	items, _, err := model.BuildUserListItems(c.Request.Context(), users)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
 	return
 }

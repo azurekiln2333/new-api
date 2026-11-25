@@ -116,6 +116,44 @@ type User struct {
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 }
 
+type UserListItem struct {
+	*User
+	SubscriptionBalanceUsedQuota int64 `json:"subscription_balance_used_quota"`
+}
+
+// BuildUserListItems enriches a page of users with the recorded wallet quota
+// spent on successful balance-method subscription orders. The aggregate is
+// page-scoped and remains a read-only response projection.
+func BuildUserListItems(ctx context.Context, users []*User) ([]UserListItem, int, error) {
+	items := make([]UserListItem, 0, len(users))
+	if len(users) == 0 {
+		return items, 0, nil
+	}
+	ids := make([]int, 0, len(users))
+	for _, user := range users {
+		if user != nil {
+			ids = append(ids, user.Id)
+		}
+	}
+	used, malformed, err := GetSubscriptionBalanceUsedQuota(ctx, ids)
+	if err != nil {
+		return nil, malformed, err
+	}
+	if malformed > 0 {
+		common.SysLog(common.LogText("skipped %d malformed subscription balance order payloads", malformed))
+	}
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		items = append(items, UserListItem{
+			User:                         user,
+			SubscriptionBalanceUsedQuota: used[user.Id],
+		})
+	}
+	return items, malformed, nil
+}
+
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
 		Id:          user.Id,
