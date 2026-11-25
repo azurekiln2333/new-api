@@ -44,6 +44,11 @@ relay.access_token_unsupported: "暂不支持使用 access token"
 relay.request_rejected: "请求被策略拒绝"
 relay.request_plugin_failed: "请求处理插件执行失败"
 relay.response_rejected: "回复被策略中止"
+relay.upstream_rejected: "上游服务商拒绝了请求。"
+relay.upstream_quota_restriction: "上游服务商报告了额度限制。"
+relay.upstream_rate_limit: "上游服务商正在限制请求频率。"
+relay.upstream_unavailable: "上游服务商暂时不可用。"
+relay.upstream_error: "上游服务商返回了错误。"
 
 # Emails and the name of the token created at registration
 user.default_token_name: "{{.Username}}的初始令牌"
