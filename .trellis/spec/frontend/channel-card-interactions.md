@@ -53,9 +53,21 @@ This formatting contract is scoped to channel metrics. Usage-log table cells
 use `formatNumber` with the normalized locale: `41,258 / 115` and
 `Cache↓ 41,088`, without parenthesized abbreviations. Keep the token cell
 `whitespace-nowrap` and its cache line unwrapped so counts do not inflate row
-height. Expanded log cards and token breakdowns also show plain exact counts;
-the existing collapsed mobile rows retain their compact summaries. Cover the
-desktop example in the existing usage-log mobile-card/table-cell fixture.
+height. Expanded log cards, collapsed mobile rows and token breakdowns show
+plain exact counts. Mobile rows/cards lead with a wrapping model title, then
+stream status and real available TPS; Input/Output are separately labeled
+secondary values rather than one abbreviated sentence. Reuse `StreamTpsCell`
+with `compact={tokensPerSecond == null}` to retain shared rounding for both
+streaming modes and omit unavailable throughput. Keep the stream/error control
+outside the collapsed row's expansion Button. Desktop columns remain unchanged.
+Cover these contracts in the existing usage-log mobile-card/table-cell fixture.
+
+Mobile common-log summary badges use one compact nowrap row with exact values
+and horizontal overflow for extreme counts. The cache badge uses the existing
+Zap icon plus percentage and shared `QuotaDetailsPopover` for a fully named
+tap/keyboard explanation; desktop retains its full label and spacing. Match-mode
+selection uses the actual Base UI `aria-pressed` state with unambiguous theme
+colors; Contains remains fuzzy and Exact remains exact in URL/API semantics.
 
 Do not apply the channel exact-plus-abbreviation formatter to other features.
 Dashboard summaries and user rankings keep their prior compact displays;
