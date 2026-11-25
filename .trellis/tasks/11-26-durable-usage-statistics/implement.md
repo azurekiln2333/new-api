@@ -6,7 +6,7 @@
 - All local tests, builds, formatters, lint/typecheck, database probes and executable validation are prohibited. Source reads/edits, task bookkeeping, Git and remote Actions inspection are allowed.
 - Workers are sharing the workspace. Preserve peers' saved edits; no file ownership expansion without root coordination. Never stage/commit/push from a worker.
 - Read AGENTS.md and `.agents/rules/billing.md` in full before accounting work; frontend work additionally reads web/AGENTS.md and the project UI/i18n skills when relevant.
-- No production deletion/settings/compaction. Parent remains active while this child is planning.
+- No production deletion/settings/compaction. Parent remains the root coordination task; this child is activated for the accepted foundation.
 
 ## Research and design gate
 
@@ -14,9 +14,15 @@
 - [x] pJ: `research/write-backfill-architecture.md` — concrete source/API proposal saved; residual gates remain explicit.
 - [x] p5: `research/schema-claim-contract.md` — schema/claim proposal saved; index/collation/capacity addenda remain pending.
 - [x] p6: `research/frontend-statistics-inventory.md` — every dashboard/ranking/model/log-summary UI reader and cache/access boundary.
-- [ ] p4: `research/architecture-review.md` — independent failure/overlap/cross-store pressure test.
-- [ ] Root converges PRD/design, records rejected alternatives and resolves every architecture gate.
-- [ ] Curated implement/check JSONLs include final research. Activate child only after this gate; existing user authorization covers implementation.
+- [x] p4: `research/architecture-review.md` — independent failure/overlap/cross-store pressure test, frozen.
+- [x] Root converges foundation PRD/design, records accepted cleanup/index/text/capacity clauses and scopes later integration gates separately.
+- [x] Curated implement/check JSONLs include frozen research and final root overrides. Existing user authorization covers foundation activation.
+
+## First implementation ownership — 2026-11-26
+
+w5D:p4 owns only new `model/usage_event.go`, new `model/usage_event_apply.go`, the primary migration call in `model/main.go`, new consolidated `model/usage_event_test.go`, and existing `model/migration_dialector_test.go`. Read curated context, PRD, design and this plan before edits. Publish exported model signatures early for the next source owner. Freeze and read back before independent review. Do not edit source callers, log writers, readers, scheduler, backfill, cleanup, UI/locales or peer-owned files. Foundation source review will be assigned to a different existing Pi worker; no local checks or Git are authorized to workers.
+
+Root owns exact-SHA hosted workflow coverage including fresh and latest-release migration twice. A passing foundation run is storage evidence only, not whole-task completion or permission to resume cleanup. Next source/read/backfill owners are assigned after the model API is frozen; deployment footprint proof is required before operational activation, not before writing software.
 
 ## Ordered delivery
 

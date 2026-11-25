@@ -4,7 +4,7 @@
 
 Deleting usage logs must not reduce business statistics, model token totals, channel totals, dashboards or rankings. Persist the numeric facts and necessary dimensions in the primary database, independent of optional diagnostic logs, and recover the available history without double counting.
 
-The user explicitly requested all statistics, a Trellis plan before implementation, existing Pi implementation/review, and hosted-only validation. This child implements R24 of the parent task. Existing authorization covers implementation and the normal commit/push/review process once the technical design passes review; no repeated process approval is needed. The child remains planning until the architecture issues in design.md are resolved.
+The user explicitly requested all statistics, a Trellis plan before implementation, existing Pi implementation/review, and hosted-only validation. This child implements R24 of the parent task. Existing authorization covers implementation and the normal commit/push/review process once the technical design passes review; no repeated process approval is needed. Root accepted the reviewed storage foundation on 2026-11-26. Implementation proceeds in separately owned slices; source capture, readers, backfill and cleanup retain the later gates in design.md.
 
 ## Confirmed background
 
@@ -38,7 +38,7 @@ The user explicitly requested all statistics, a Trellis plan before implementati
 - [ ] Mixed raw/Anthropic usage, zero-token fees, diagnostics, asynchronous submit/positive adjustment/refund and repeated request IDs preserve their existing measures and event cardinality.
 - [ ] Inclusive second boundaries, recent 60-second intersections, fuzzy/exact filters, historical names, renamed/deleted entities and server self scoping remain correct.
 - [ ] Historical backfill is repeatable after interrupted reads/commits, interleaved live writes and late events. Legacy aggregate overlap and missing coverage are explicit and tested; neither blind addition nor destructive replacement is accepted.
-- [ ] Cleanup readiness is false while source coverage or required delivery is incomplete. Native ClickHouse TTL prerequisites and outside-system deletion limits are documented accurately.
+- [ ] Each relational row can be deleted only after exact source linkage/full-payload verification and all applicable projections are committed, using only verified row IDs. Unrelated active writer epochs do not block that proven row. Whole-history coverage remains partial/unknown for unresolved losses. ClickHouse broad-range cleanup requires complete multiset coverage and a no-late-write fence for that range; native TTL remains separate.
 - [ ] Real SQLite/MySQL/PostgreSQL fresh and released-upgrade startup twice, separate-log-store cases, ClickHouse source identity/multiplicity and focused race tests pass on the final exact hosted SHA. Record versions, commands and results; skips are not passes.
 - [ ] User receives a clear completion/readiness statement before returning to the separate production cleanup session. No completion or cleanup-ready claim while any required gate remains open.
 
@@ -46,6 +46,6 @@ The user explicitly requested all statistics, a Trellis plan before implementati
 
 No production access or cleanup, no pricing/reward arithmetic changes, no arbitrary wallet/accounting redesign, no body backfill, and no request-content sweeper throughput change. Integrating numeric events with existing business transaction boundaries is in scope where needed for durability; altering monetary outcomes is not. Independently retained performance/audit/storage facts do not become lifetime usage totals.
 
-## Technical decisions still under review
+## Accepted delivery boundary
 
-The requested product scope is settled. Event enqueue boundaries, historical overlap reconciliation, ClickHouse identity and the all-writer cutover must pass architecture review before implementation. Their concrete design and rejected alternatives belong in design.md, not implicit coding choices.
+The requested product scope is settled. The first slice implements primary numeric facts, idempotent prepare/confirm/apply, three projections, bounded recovery and additive migration. It does not yet supply the end-to-end retention guarantee. Durability starts after finalized Prepare commits; a pre-Prepare loss without surviving evidence remains unknown and cannot be reconstructed or filled with zero. Deployment capacity measurements gate production capture/backfill, not software implementation. Later source, read and backfill contracts require separate integration review before their owned edits.
