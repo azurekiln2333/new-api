@@ -1,5 +1,31 @@
 # Model selector ordering
 
+## Ranking viewer labels and privileged chart cache
+
+`GET /api/rankings/model-usage` projects names on the server through
+`model.BuildUserRankingView`. ADMIN and ROOT see full current names, a signed-in
+ordinary user sees their own full name and partial names for others, and an
+anonymous viewer sees `***`. Partial masking operates on Unicode code points:
+one becomes `*`, two become first + `***`, and three or more become first +
+`***` + last. Missing non-self names stay `***`; masked rows omit `user_id`.
+Resolve names once for the bounded top-20 leaderboard, never fetch a full user
+catalog or return hidden real-name metadata. Responses remain no-store.
+
+The separate administrator dashboard user chart requires live ADMIN-or-higher
+authorization. Its query key is `['dashboard', 'user-quota', timeRange, userId,
+role]`, its API consumes AbortSignal, and it immediately hides cached chart data
+after demotion/logout. A disabled query alone is insufficient because cached
+results can remain available.
+
+Existing instance-resource/router ranking tests cover role/self/anonymous,
+Unicode masks and omitted IDs. Existing model-usage-drawer and dashboard chart
+tests cover identity/role cache isolation and cancellation. Prefix QueryCache
+lookups must explicitly pass `exact: false`; full-key lookups use `exact: true`.
+Do not remask names in the frontend or infer administrative capability from a
+chosen row filter.
+
+## Model option order
+
 `ModelGroupSelector` sorts a copy of model options by display name before
 filtering. Use `Intl.Collator('en', { numeric: true, sensitivity: 'base' })`
 and compare raw model IDs lexically when names collate equally. Fixed valid
@@ -78,6 +104,12 @@ never silently send an explicit-Key test through a different Key. Automatic
 selection remains available as its own explicit mode. The channel-test dialog
 defaults to streaming on open, still prohibits it on unsupported endpoints, and
 uses one model-list scroll region rather than nested dialog/body/list scrollers.
+Keep explicit selection tied to a stable allocation ID and configuration revision,
+not only its mutable array position. Send that identity to the manual test API;
+reject an unavailable or revised allocation before dispatch and after capacity
+admission. Existing index-only clients remain compatible. Clear or scope diagnostic
+results when changing Keys so overlapping model names cannot reuse another Key's
+failure or drive Delete failed models from stale results.
 
 Per-Key upstream discovery is read-only. Its editor can select newly discovered
 models outside the current channel catalog, then explicitly Save. The server
@@ -87,6 +119,10 @@ models, other Keys and existing ordering; an empty allowlist remains deny-all an
 never shrinks the catalog. Consume the successful response's authoritative
 `channel_models` so reopening the editor sees the committed options. Never replace
 this operation with an implicit all-Key fetch or a second channel update.
+Invalidate in-flight discovery generations when the editor unmounts or its channel,
+Key ID/index or revision changes. Guard success, rejection, conflict callbacks and
+loading cleanup; an obsolete conflict must never reload the previous channel into
+the current manager.
 
 ### 4. Validation & Error Matrix
 

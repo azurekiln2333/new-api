@@ -735,12 +735,15 @@ func TestRankingModelUsageMasksIdentitiesPerViewer(t *testing.T) {
 	// A viewer-scoped payload is never stored in a shared cache.
 	assert.Equal(t, "no-store", anonymous.Header().Get("Cache-Control"))
 
-	// An ordinary user sees exactly one identity: their own.
+	// An ordinary viewer sees their own full name and only partial labels for
+	// other current users; deleted accounts remain opaque.
 	ordinary := fixture.request(http.MethodGet, path, fixture.ordinarySession, "")
 	require.Equal(t, http.StatusOK, ordinary.Code, ordinary.Body.String())
 	ordinaryBody := ordinary.Body.String()
 	assert.Contains(t, ordinaryBody, "surface-ordinary")
 	assert.NotContains(t, ordinaryBody, "surface-admin")
+	assert.Contains(t, ordinaryBody, `"display_name":"s***n"`)
+	assert.NotContains(t, ordinaryBody, `"user_id":`+strconv.Itoa(fixture.adminId))
 	assert.NotContains(t, ordinaryBody, "987654")
 	assert.Contains(t, ordinaryBody, `"masked":true`)
 	assert.Equal(t, "no-store", ordinary.Header().Get("Cache-Control"))
@@ -760,6 +763,26 @@ func TestRankingModelUsageMasksIdentitiesPerViewer(t *testing.T) {
 	// The same URL must never serve one viewer's payload to another: the admin
 	// response carries names the anonymous one must not contain.
 	assert.NotEqual(t, anonymousBody, adminBody)
+
+	// A root and an administrator receive full names. A same-session demotion
+	// returns to full-self/partial-other labels immediately.
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	root := fixture.request(http.MethodGet, path, fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, root.Code, root.Body.String())
+	assert.Contains(t, root.Body.String(), "surface-admin")
+	assert.Contains(t, root.Body.String(), "surface-ordinary")
+
+	// A same-session demotion returns to full-self/partial-other labels.
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleCommonUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	demoted := fixture.request(http.MethodGet, path, fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, demoted.Code, demoted.Body.String())
+	assert.Contains(t, demoted.Body.String(), "surface-admin")
+	assert.Contains(t, demoted.Body.String(), `"display_name":"s***y"`)
+	assert.NotContains(t, demoted.Body.String(), "surface-ordinary")
+	assert.NotContains(t, demoted.Body.String(), `"user_id":`+strconv.Itoa(fixture.ordinaryId))
+	assert.Equal(t, "no-store", demoted.Header().Get("Cache-Control"))
 }
 
 // TestRankingModelUsageRequiresModelAndHonoursModulePolicy pins the request

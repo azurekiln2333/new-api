@@ -161,9 +161,9 @@ export type RankingModelUsageTotals = {
 /**
  * One user's ranking row inside the model usage drawer.
  *
- * When `masked` is true the server withheld the identity: `user_id` is absent
- * from the payload entirely and `display_name` is an opaque placeholder, so a
- * masked row cannot be joined back to an account.
+ * When `masked` is true, `user_id` is absent. Signed-in viewers receive a
+ * partial `display_name` for other users; anonymous viewers receive an opaque
+ * placeholder. Full non-self names are restricted to administrators.
  */
 export type RankingModelUsageUser = {
   rank: number

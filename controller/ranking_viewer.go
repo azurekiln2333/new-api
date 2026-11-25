@@ -82,9 +82,9 @@ func GetRankingModelUsage(c *gin.Context) {
 	})
 }
 
-// resolveRankingNames batch-resolves current display names for only the user
-// ids the viewer may see. Masked viewers resolve nothing, so other identities
-// are never looked up, let alone returned.
+// resolveRankingNames batch-resolves current names for the bounded leaderboard.
+// Anonymous viewers resolve nothing. BuildUserRankingView applies the viewer's
+// full/partial policy before any resolved name enters the response.
 func resolveRankingNames(ctx context.Context, viewer model.RankingViewer, rows []model.UserRankingRow) (map[int]string, error) {
 	ids := model.VisibleUserIDs(viewer, rows)
 	if len(ids) == 0 {

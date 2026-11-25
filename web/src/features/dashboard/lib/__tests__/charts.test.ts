@@ -16,13 +16,58 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { describe, expect, test } from 'vitest'
+import { createElement } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-import type { QuotaDataItem } from '@/features/dashboard/types'
+import { UserCharts } from '@/features/dashboard/components/users/user-charts'
+import type { QuotaDataItem, UserChartsFilters } from '@/features/dashboard/types'
+import { api } from '@/lib/api'
 import { formatCompactNumber } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import type { TimeGranularity } from '@/lib/time'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { processChartData, processUserChartData } from '../charts'
+
+vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
+vi.mock('@visactor/vchart', () => ({
+  ThemeManager: { setCurrentTheme: vi.fn() },
+}))
+
+let client: QueryClient
+
+const userChartsFilters: UserChartsFilters = {
+  timeGranularity: 'day',
+  selectedRange: 7,
+  topUserLimit: 10,
+}
+
+beforeEach(() => {
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  useAuthStore.getState().auth.setUser(null)
+})
+
+afterEach(() => {
+  cleanup()
+  client.clear()
+  vi.restoreAllMocks()
+  useAuthStore.getState().auth.setUser(null)
+})
+
+function renderUserCharts() {
+  return render(
+    createElement(
+      QueryClientProvider,
+      { client },
+      createElement(UserCharts, {
+        filters: userChartsFilters,
+        onFiltersChange: vi.fn(),
+      })
+    )
+  )
+}
 
 const cases: Array<{
   granularity: TimeGranularity
@@ -242,23 +287,86 @@ describe('dashboard chart metric', () => {
     )
   })
 
-  test('keeps user chart token totals and labels compact in the selected locale', () => {
-    const result = processUserChartData(
-      [{ ...data[0], token_used: 318574217 }],
-      'day',
-      undefined,
-      10,
-      'tokens',
-      'zh-CN'
+  test('keeps the user ranking endpoint closed for non-admins', async () => {
+    const request = vi.spyOn(api, 'get')
+    useAuthStore.getState().auth.setUser({
+      id: 22,
+      username: 'ordinary-user',
+      role: ROLE.USER,
+    })
+
+    const view = renderUserCharts()
+
+    await waitFor(() => expect(request).not.toHaveBeenCalled())
+    expect(view.container).toBeEmptyDOMElement()
+  })
+
+  test('keys user charts by identity and role and hides data immediately on demotion', async () => {
+    const payload: QuotaDataItem[] = [
+      {
+        created_at: 1_767_225_600,
+        model_name: 'fixture-model',
+        username: 'other-user-full-name',
+        quota: 100,
+        count: 1,
+        token_used: 10,
+      },
+    ]
+    const request = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: payload },
+    })
+    useAuthStore.getState().auth.setUser({
+      id: 11,
+      username: 'admin-user',
+      role: ROLE.ADMIN,
+    })
+
+    const view = renderUserCharts()
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    const config = request.mock.calls[0]?.[1]
+    expect(config?.signal).toBeInstanceOf(AbortSignal)
+    const adminQuery = client.getQueryCache().find({
+      queryKey: ['dashboard', 'user-quota'],
+      exact: false,
+    })
+    expect(adminQuery?.queryKey.slice(-2)).toEqual([11, ROLE.ADMIN])
+
+    await act(async () => {
+      useAuthStore.getState().auth.setUser({
+        id: 12,
+        username: 'second-admin',
+        role: ROLE.ADMIN,
+      })
+    })
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+    const secondAdminQuery = client.getQueryCache().getAll().find(
+      (query) =>
+        query.queryKey[0] === 'dashboard' &&
+        query.queryKey[1] === 'user-quota' &&
+        query.queryKey[3] === 12 &&
+        query.queryKey[4] === ROLE.ADMIN
     )
-    const datum = result.spec_user_rank.data[0].values[0]
-    expect(datum.rawValue).toBe(318574217)
-    expect(result.spec_user_rank.title.subtext).toContain('3.2亿')
-    expect(result.spec_user_rank.tooltip.mark.content[0].value(datum)).toBe(
-      '3.2亿'
+    expect(secondAdminQuery?.queryKey.slice(-2)).toEqual([12, ROLE.ADMIN])
+
+    await act(async () => {
+      useAuthStore.getState().auth.setUser({
+        id: 12,
+        username: 'second-admin',
+        role: ROLE.USER,
+      })
+    })
+
+    expect(view.container).toBeEmptyDOMElement()
+    const ordinaryQuery = client.getQueryCache().getAll().find(
+      (query) =>
+        query.queryKey[0] === 'dashboard' &&
+        query.queryKey[1] === 'user-quota' &&
+        query.queryKey[3] === 12 &&
+        query.queryKey[4] === ROLE.USER
     )
-    expect(result.spec_user_rank.label.formatMethod(datum.rawValue)).toBe(
-      '3.2亿'
-    )
+    expect(ordinaryQuery?.queryKey.slice(-2)).toEqual([12, ROLE.USER])
+    expect(request).toHaveBeenCalledTimes(2)
   })
 })
