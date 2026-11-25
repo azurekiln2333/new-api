@@ -148,7 +148,10 @@ export function RateLimitDialog(props: RateLimitDialogProps) {
       <Form {...form}>
         <form
           id={RATE_LIMIT_FORM_ID}
-          onSubmit={form.handleSubmit(handleSubmit)}
+          onSubmit={(event) => {
+            event.stopPropagation()
+            void form.handleSubmit(handleSubmit)(event)
+          }}
           className='space-y-4'
         >
           <FormField
