@@ -32,6 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
+        id: backend_checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
@@ -42,6 +43,7 @@ jobs:
         run: bash .github/scripts/check-scope.sh
 
       - name: Set up Go
+        id: backend_setup_go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -51,6 +53,7 @@ jobs:
             tokenkit/go.sum
 
       - name: Create frontend embed placeholder
+        id: backend_embed
         run: |
           mkdir -p web/dist
           touch web/dist/index.html
@@ -75,28 +78,35 @@ jobs:
           fi
 
       - name: Vet root module
+        if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' && steps.backend_embed.outcome == 'success' }}
         run: go vet ./...
 
       - name: Vet relaykit independently
+        if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' }}
         working-directory: relaykit
         run: go vet ./...
 
       - name: Vet tokenkit independently
+        if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' }}
         working-directory: tokenkit
         run: go vet ./...
 
       - name: Build root module
+        if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' && steps.backend_embed.outcome == 'success' }}
         run: go build ./...
 
       - name: Build relaykit independently
+        if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' }}
         working-directory: relaykit
         run: go build ./...
 
       - name: Build tokenkit independently
+        if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' }}
         working-directory: tokenkit
         run: go build ./...
 
       - name: Test root, relaykit, and tokenkit modules
+        if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' && steps.backend_embed.outcome == 'success' }}
         run: |
           LOG_FILE="$RUNNER_TEMP/backend-tests.log"
           set +e
@@ -207,12 +217,14 @@ jobs:
           --health-retries=12
     steps:
       - name: Checkout
+        id: integration_checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
           ref: ${{ github.sha }}
 
       - name: Set up Go
+        id: integration_setup_go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -316,7 +328,7 @@ jobs:
       # These packages use process-wide fixtures. Keep them sequential against
       # the isolated service databases, and require configured external engines.
       - name: Verify database contracts, channel settings and relay policies
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           AUDIT_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
           AUDIT_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
@@ -376,6 +388,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Verify scheduled channel locks on MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for DIALECT in mysql postgres; do
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run 'TestScheduledChannel'
@@ -383,18 +396,21 @@ jobs:
           done
 
       - name: Verify model availability observations on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for DIALECT in sqlite mysql postgres; do
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestChannelModelUnavailability$'
           done
 
       - name: Verify channel configuration and key binding on MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
             TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestPlaygroundChannelNavigationAuthorizationAndRouting|TestFingerprintResponsesOnlyChannelProbe'
           done
 
       - name: Verify console management credentials and policy reloads on MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
             TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestCodexWhamChannelManagement|TestChannelManagement|TestPricingSyncChannelManagement|TestChannelDiagnostic|TestFingerprintDiagnostic|TestOllamaChannelManagement'
@@ -405,28 +421,33 @@ jobs:
           done
 
       - name: Verify bounded channel reads and atomic channel publication on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
             TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSearch|TestGetChannelOptions|TestChannelCreate|TestChannelUpdate|TestChannelCacheReload|TestChannelBoundIndex'
           done
 
       - name: Verify management operation migrations and durable audit delivery
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: >-
           go test -p 1 -count=1 -v ./model
           -run '^(TestManagementMutationOutboxDatabaseMatrix|TestConcurrentCodeBatchSubmitCollapsesToOneBatch|TestAuditOutboxReplayAfterLostAcknowledgement|TestAuditOutboxClickHouseDelivery|TestCodeOperationRecoveryRequiresAuthorization|TestCodeRequestDigestIsUnambiguous|TestCodeExportContractsAcrossDatabase|TestRecordManagementAuditFallsBackWithSameEventIdentity)$'
 
       - name: Verify invitation registration and code replay on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for DIALECT in sqlite mysql postgres; do
             TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestInvitation|TestManagementCodeCreateReplaySurvivesExpiry|TestRedemptionBatch'
           done
 
       - name: Check invitation registration races
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 -v ./controller -run 'TestInvitationAtomicRegistration|TestInvitationAffiliate'
 
       - name: Check management operation and audit delivery races
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: >-
@@ -434,12 +455,14 @@ jobs:
           -run '^(TestManagementMutationOutboxDatabaseMatrix|TestConcurrentCodeBatchSubmitCollapsesToOneBatch|TestAuditOutboxReplayAfterLostAcknowledgement|TestCodeOperationRecoveryRequiresAuthorization)$'
 
       - name: Verify allocation identity and quota management on MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
             TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^(TestChannelAllocations|TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions|TestManagedKeyAllocation)'
           done
 
       - name: Verify option batch writes and management settings on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch'
           for DIALECT in sqlite mysql postgres; do
@@ -447,61 +470,74 @@ jobs:
           done
 
       - name: Verify recorded subscription balance spending on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: go test -p 1 -count=1 -v ./model -run '^(TestSubscriptionBalanceChargedQuota|TestSubscriptionBalanceUsedQuotaDatabaseMatrix)$'
 
       - name: Verify channel priority transactions and local routing on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: go test -p 1 -count=1 -v ./model -run '^TestChannelPriorityDatabaseMatrix$'
 
       - name: Verify log retention across relational and ClickHouse log stores
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: go test -p 1 -count=1 -v ./model -run '^TestLogRequestDetailRetentionDatabaseMatrix$'
 
       - name: Check request-content settings, retention scheduling and storage access races
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 -v ./common ./service ./router -run 'TestRequestContentCapture|TestSystemTaskLogRetention|TestPersonalAccessTokenLogStorageScope'
 
       - name: Check budget accounting and request log storage races
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 ./model -run 'TestChannelBudget|TestLogRequestDetail'
 
       - name: Check panel critical rate-limit isolation races
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 ./middleware ./router -run 'TestCriticalRateLimit|TestPanelCriticalRateLimit|TestRedis.*RateLimiter|TestRedisFixedWindow|TestRedisFailurePolicies|TestGlobalWebRateLimit'
 
       - name: Check declared text endpoints and administrator channel boundaries
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 ./relay ./router -run 'TestChannelSupportedEndpoints|TestChannelEndpoint|TestMessagesEndpoint|TestAdminChannel|TestRankingModelUsage|TestStatusInstances|TestOptionBatch|TestAccessTokenRouteRules'
 
       - name: Check console forwarding, ingress proof and origin guards
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 ./middleware ./service/passkey ./router -run 'TestConfigureTrustedProxies|TestLoadConsoleForwardConfig|TestVerifiedConsoleIngress|TestEffectiveRequestScheme|TestConsoleIngress|TestConsoleForwarder|TestSessionCookieOriginGuard|TestPasskeyOrigin'
 
       - name: Verify update-source repository configuration
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: go test -p 1 -count=1 -v ./setting/system_setting -run 'TestUpdateSource|TestValidateUpdateSourceRepository'
 
       - name: Verify login avatar updates on MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for DIALECT in mysql postgres; do
             TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestOAuthLogin.*Avatar|TestUserSettingsPreserveProviderAvatar|TestSecurityLogin'
           done
 
       - name: Verify API key rotation and custom keys on MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for DIALECT in mysql postgres; do
             TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestNormalizeCustomTokenKey|TestRotateTokenKey|TestAddToken.*CustomKey|TestTokenKeyUniquenessErrorsStayValueFree'
           done
 
       - name: Verify per-turn goal routing and channel waiting on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for RESPONSES_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
             TEST_RESPONSES_SQL_DSN="$RESPONSES_TEST_DSN" TEST_RESPONSES_LOG_SQL_DSN="$RESPONSES_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestResponsesWebSocketGoalPolicyIsPerTurn|TestGoalTurnPolicyRouting|TestRequestPolicyUpstreamHTTPFailover|TestChannelWaitRouting|TestChannelCapacityFailover|TestChannelBudget'
           done
 
       - name: Check admission, waiting, streaming and timeout races
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 ./service ./controller ./relay/channel ./relay/helper ./relay/channel/openai ./relay/channel/gemini ./relay/channel/ollama ./pkg/perf_metrics -run 'RetryAvoidsFailedChannelsAcrossPrioritiesAndGroups|ChannelCapacity|ChannelWait|ChannelBudget|LedgerTaskSubmission|LegacyTaskSubmission|TaskSubmissionCommits|RelayKeepAliveDuringImagePreparation|ChannelDiagnostic|ChannelManagement|ChannelBalanceManagement|MultiKeyModel|StreamCommit|StreamComment|OaiResponsesStreamHandler|OaiResponsesToChatBufferedStreamHandler|ConvertedStream|ResponsesFailedWork|ResponsesPostOutputTruncation|UpstreamFirstByte|FirstByteTimeout|APIAndFormRequestsInheritClientCancellation|Fingerprint|RecordRedisUsesBackendSnapshotBeforeScheduling|GeminiModel|Ollama'
