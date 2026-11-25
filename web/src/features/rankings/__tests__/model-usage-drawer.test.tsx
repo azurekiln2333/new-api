@@ -232,7 +232,14 @@ describe('ModelUsageDrawer', () => {
       client
         .getQueryCache()
         .find({
-          queryKey: ['rankings', 'model-usage', 'gpt-fixture', 'week', 11, ROLE.USER],
+          queryKey: [
+            'rankings',
+            'model-usage',
+            'gpt-fixture',
+            'week',
+            11,
+            ROLE.USER,
+          ],
           exact: true,
         })
         ?.queryKey.slice(-2)
@@ -254,7 +261,14 @@ describe('ModelUsageDrawer', () => {
       client
         .getQueryCache()
         .find({
-          queryKey: ['rankings', 'model-usage', 'gpt-fixture', 'week', 22, ROLE.USER],
+          queryKey: [
+            'rankings',
+            'model-usage',
+            'gpt-fixture',
+            'week',
+            22,
+            ROLE.USER,
+          ],
           exact: true,
         })
         ?.queryKey.slice(-2)

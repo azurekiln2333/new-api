@@ -263,7 +263,9 @@ it('shows the existing check-in card in Wallet and refreshes authoritative balan
   await user.click(checkin)
 
   expect(await screen.findByText(formatQuota(1250000))).toBeVisible()
-  expect(await screen.findByRole('button', { name: 'Checked in' })).toBeDisabled()
+  expect(
+    await screen.findByRole('button', { name: 'Checked in' })
+  ).toBeDisabled()
   expect(post).toHaveBeenCalledWith('/api/user/checkin')
   expect(
     get.mock.calls.filter(([url]) => url === '/api/user/self')
@@ -282,9 +284,9 @@ it('keeps Wallet check-in hidden without requesting check-in data when the featu
   expect(
     get.mock.calls.some(([url]) => url.startsWith('/api/user/checkin'))
   ).toBe(false)
-  expect(
-    post.mock.calls.some(([url]) => url === '/api/user/checkin')
-  ).toBe(false)
+  expect(post.mock.calls.some(([url]) => url === '/api/user/checkin')).toBe(
+    false
+  )
 })
 
 it('keeps the Wallet balance unchanged and permits retry when check-in is rejected', async () => {

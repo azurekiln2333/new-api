@@ -85,7 +85,7 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
       role='article'
       aria-label={item.route}
       size='sm'
-      className='relative min-w-0 transition-colors hover:bg-muted/40'
+      className='hover:bg-muted/40 relative min-w-0 transition-colors'
     >
       {/* One native button covers the card; controls are sibling buttons above
           it, so copy/test activation never opens the detail dialog. */}
@@ -211,7 +211,9 @@ function ResourceMeters(props: { resources: InstanceResourceUsage | null }) {
           aria-label={resource.label}
           className='flex flex-col gap-1'
         >
-          <span className='text-muted-foreground text-xs'>{resource.label}</span>
+          <span className='text-muted-foreground text-xs'>
+            {resource.label}
+          </span>
           <ResourceUsage value={resource.value} unknownLabel={t('Unknown')} />
         </div>
       ))}

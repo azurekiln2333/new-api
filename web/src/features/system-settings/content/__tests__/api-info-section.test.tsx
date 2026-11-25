@@ -416,9 +416,10 @@ describe('ApiInfoSection', () => {
     'does not request or expose cached instance choices for role %s',
     async (role) => {
       useAuthStore.getState().auth.setUser({ id: 2, username: 'viewer', role })
-      client.setQueryData(['system-info', 'instances', 2, role, false], [
-        { node_name: 'private-node', status: 'online' },
-      ])
+      client.setQueryData(
+        ['system-info', 'instances', 2, role, false],
+        [{ node_name: 'private-node', status: 'online' }]
+      )
       const user = userEvent.setup()
       renderSection(JSON.stringify([configuredEntries[0]]))
 

@@ -124,7 +124,7 @@ export function CommonLogMobileRow<TData>(props: {
           {timing && props.cells.has('is_stream') && (
             <StreamTpsCell
               compact={tokensPerSecond == null}
-              className='max-w-full min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1 text-sm [&>span+span]:text-foreground [&>span+span]:font-semibold'
+              className='[&>span+span]:text-foreground max-w-full min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1 text-sm [&>span+span]:font-semibold'
               isStream={log.is_stream}
               isTask={other?.is_task === true}
               isSyncTask={other?.task_sync === true}
@@ -167,13 +167,13 @@ export function CommonLogMobileRow<TData>(props: {
             <dl className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-1'>
               <div className='min-w-0'>
                 <dt>{t('Input')}</dt>
-                <dd className='text-foreground font-medium tabular-nums [overflow-wrap:anywhere]'>
+                <dd className='text-foreground font-medium [overflow-wrap:anywhere] tabular-nums'>
                   {formatNumber(log.prompt_tokens, locale)}
                 </dd>
               </div>
               <div className='min-w-0'>
                 <dt>{t('Output')}</dt>
-                <dd className='text-foreground font-medium tabular-nums [overflow-wrap:anywhere]'>
+                <dd className='text-foreground font-medium [overflow-wrap:anywhere] tabular-nums'>
                   {formatNumber(log.completion_tokens, locale)}
                 </dd>
               </div>

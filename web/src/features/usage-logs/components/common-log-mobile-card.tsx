@@ -194,7 +194,7 @@ export function CommonLogMobileCard<TData>(props: {
         {timing && props.cells.has('is_stream') && (
           <StreamTpsCell
             compact={tokensPerSecond == null}
-            className='max-w-full min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1 text-sm [&>span+span]:text-foreground [&>span+span]:font-semibold'
+            className='[&>span+span]:text-foreground max-w-full min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1 text-sm [&>span+span]:font-semibold'
             isStream={log.is_stream}
             isTask={other?.is_task === true}
             isSyncTask={other?.task_sync === true}

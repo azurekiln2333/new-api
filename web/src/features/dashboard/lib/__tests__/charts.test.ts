@@ -16,13 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createElement } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { UserCharts } from '@/features/dashboard/components/users/user-charts'
-import type { QuotaDataItem, UserChartsFilters } from '@/features/dashboard/types'
+import type {
+  QuotaDataItem,
+  UserChartsFilters,
+} from '@/features/dashboard/types'
 import { api } from '@/lib/api'
 import { formatCompactNumber } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
@@ -341,13 +344,16 @@ describe('dashboard chart metric', () => {
     })
 
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
-    const secondAdminQuery = client.getQueryCache().getAll().find(
-      (query) =>
-        query.queryKey[0] === 'dashboard' &&
-        query.queryKey[1] === 'user-quota' &&
-        query.queryKey[3] === 12 &&
-        query.queryKey[4] === ROLE.ADMIN
-    )
+    const secondAdminQuery = client
+      .getQueryCache()
+      .getAll()
+      .find(
+        (query) =>
+          query.queryKey[0] === 'dashboard' &&
+          query.queryKey[1] === 'user-quota' &&
+          query.queryKey[3] === 12 &&
+          query.queryKey[4] === ROLE.ADMIN
+      )
     expect(secondAdminQuery?.queryKey.slice(-2)).toEqual([12, ROLE.ADMIN])
 
     await act(async () => {
@@ -359,13 +365,16 @@ describe('dashboard chart metric', () => {
     })
 
     expect(view.container).toBeEmptyDOMElement()
-    const ordinaryQuery = client.getQueryCache().getAll().find(
-      (query) =>
-        query.queryKey[0] === 'dashboard' &&
-        query.queryKey[1] === 'user-quota' &&
-        query.queryKey[3] === 12 &&
-        query.queryKey[4] === ROLE.USER
-    )
+    const ordinaryQuery = client
+      .getQueryCache()
+      .getAll()
+      .find(
+        (query) =>
+          query.queryKey[0] === 'dashboard' &&
+          query.queryKey[1] === 'user-quota' &&
+          query.queryKey[3] === 12 &&
+          query.queryKey[4] === ROLE.USER
+      )
     expect(ordinaryQuery?.queryKey.slice(-2)).toEqual([12, ROLE.USER])
     expect(request).toHaveBeenCalledTimes(2)
   })

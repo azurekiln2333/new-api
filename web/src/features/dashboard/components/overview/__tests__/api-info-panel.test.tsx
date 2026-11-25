@@ -182,9 +182,9 @@ describe('ApiInfoPanel', () => {
       expect(metric.querySelector('svg circle')).not.toBeNull()
     }
     const knownValue = within(card).getByText('12.3%')
-    const unknownValue = within(
-      screen.getByRole('article', { name: 'Backup' })
-    ).getAllByText('Unknown').at(-1)
+    const unknownValue = within(screen.getByRole('article', { name: 'Backup' }))
+      .getAllByText('Unknown')
+      .at(-1)
     expect(knownValue).toHaveClass('text-[11px]')
     expect(unknownValue).toHaveClass('text-[11px]')
     // The second, unbound card knows nothing and says so.
@@ -278,16 +278,16 @@ describe('ApiInfoPanel', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(trigger).toHaveFocus())
     await user.keyboard(' ')
-    expect(
-      await screen.findByRole('dialog', { name: 'CN2 GIA' })
-    ).toBeVisible()
+    expect(await screen.findByRole('dialog', { name: 'CN2 GIA' })).toBeVisible()
   })
 
   it('keeps copy and latency controls independent of the whole-card dialog trigger', async () => {
     mockStatusAndInstances([], true)
     const user = userEvent.setup()
     const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
-    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response)
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({} as Response)
     const external = vi.spyOn(window, 'open').mockReturnValue(null)
     renderPanel()
 

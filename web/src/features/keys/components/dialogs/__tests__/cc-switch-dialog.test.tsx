@@ -74,9 +74,10 @@ describe('CC Switch model selection', () => {
         }
       }
       expect(models).toEqual(['model-10', 'model-2', 'Alpha'])
-      expect(
-        queryClient.getQueryData(['user-models-ccswitch'])
-      ).toEqual({ success: true, data: models })
+      expect(queryClient.getQueryData(['user-models-ccswitch'])).toEqual({
+        success: true,
+        data: models,
+      })
       await act(async () => {
         queryClient.setQueryData(['user-models-ccswitch'], {
           success: true,

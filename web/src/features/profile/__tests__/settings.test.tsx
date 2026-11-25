@@ -144,9 +144,9 @@ describe('sidebar personalization card visibility', () => {
       expect(put).not.toHaveBeenCalled()
       expect(screen.queryByText('Daily Check-in')).not.toBeInTheDocument()
       expect(
-        vi.mocked(api.get).mock.calls.some(([url]) =>
-          String(url).includes('/checkin')
-        )
+        vi
+          .mocked(api.get)
+          .mock.calls.some(([url]) => String(url).includes('/checkin'))
       ).toBe(false)
     }
   )

@@ -294,7 +294,9 @@ it.each([MOBILE_LOG_VIEW_MODES.CARD, MOBILE_LOG_VIEW_MODES.COMPACT])(
   async (viewMode) => {
     const user = userEvent.setup()
     renderWithViewMode({}, viewMode)
-    await user.click(screen.getByRole('button', { name: 'Hide sensitive data' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Hide sensitive data' })
+    )
     expect(screen.queryByText('production-admin')).not.toBeInTheDocument()
     expect(
       screen.queryByText('backend-production-token')

@@ -576,9 +576,7 @@ test('switching overlapping keys clears the previous key failure and delete acti
     await screen.findByRole('option', { name: '2 · …67 · Enabled' })
   )
 
-  expect(
-    (await testModelRow('model-a')).getByText('Not tested')
-  ).toBeVisible()
+  expect((await testModelRow('model-a')).getByText('Not tested')).toBeVisible()
   expect(
     screen.queryByRole('button', { name: /Delete failed models/ })
   ).not.toBeInTheDocument()
