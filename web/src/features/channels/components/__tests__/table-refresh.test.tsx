@@ -171,7 +171,9 @@ it.each([
       release = resolve
     })
 
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Refresh' }))
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Refresh' }))
     const listCalls = () => get.mock.calls.filter(([url]) => url === endpoint)
     await waitFor(() => expect(listCalls()).toHaveLength(2))
     const signal = listCalls()[1][1]?.signal

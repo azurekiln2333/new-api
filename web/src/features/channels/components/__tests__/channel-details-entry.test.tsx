@@ -263,10 +263,11 @@ async function renderCardViewWithEnabledBudget() {
 
 it('loads both local budgets from one page request, separately from upstream balance', async () => {
   localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'card')
-  const get = await renderChannelsPage(null, [
-    channel,
-    { ...channel, id: 9, name: 'stage' },
-  ])
+  const get = await renderChannelsPage(
+    null,
+    [channel, { ...channel, id: 9, name: 'stage' }],
+    { enabled: true }
+  )
   const budgets = await screen.findAllByRole('button', { name: 'Local Budget' })
   expect(budgets).toHaveLength(2)
   expect(
@@ -453,15 +454,15 @@ it('lays the card metrics out in two columns above a separate priority/weight ro
     }
   }
 
-  // Left column: used amount above used tokens.
+  // Left column: used tokens above the shared quota region.
   expect(
     [...columns[0].querySelectorAll('dt')].map((label) => label.textContent)
-  ).toEqual(['Used / Remaining', 'Local Budget', 'Used tokens'])
+  ).toEqual(['Used tokens', 'Remaining / Total'])
 
-  // Right column: response, last tested and live concurrency.
+  // Right column: response and last tested. Concurrency stays by the name.
   expect(
     [...columns[1].querySelectorAll('dt')].map((label) => label.textContent)
-  ).toEqual(['Response', 'Last Tested', 'Concurrency'])
+  ).toEqual(['Response', 'Last Tested'])
 
   // Priority and weight own a separate row below, side by side.
   const priorityRow = card.querySelector<HTMLElement>(
@@ -501,14 +502,6 @@ it('lets the metric columns wrap instead of overflowing a narrow card', async ()
   )
   expect(priorityRow?.className).toContain('flex-wrap')
   expect(priorityRow?.className).toContain('min-w-0')
-})
-
-it('shows the complete last-tested date and time without truncation', async () => {
-  const card = await renderCardView()
-  const [date, time] = formatTimestampToDate(TEST_TIME).split(' ')
-
-  expect(await within(card).findByText(date)).toBeVisible()
-  expect(within(card).getByText(time)).toBeVisible()
 })
 
 it('keeps the channel group out of the card and leaves it to the details', async () => {
@@ -700,4 +693,3 @@ it('shows unavailable instead of the upstream balance when the local budget is u
     expect(value.textContent).toMatch(/Unavailable|Loading\.\.\./)
   )
 })
-

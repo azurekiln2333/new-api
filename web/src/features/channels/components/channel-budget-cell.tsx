@@ -23,9 +23,9 @@ import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 
+import type { ChannelBudgetView } from '../types'
 import { ChannelBudgetContext } from './channel-budget-context'
 import { useChannels } from './channels-provider'
-import type { ChannelBudgetView } from '../types'
 
 /** Reads the single visible-page request; never performs a per-row fetch. */
 export function ChannelBudgetCell(props: {

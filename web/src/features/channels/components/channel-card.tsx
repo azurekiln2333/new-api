@@ -117,9 +117,7 @@ function ChannelCardComponent({
             {!isTagRow && selectCell && (
               <span className='shrink-0'>{selectCell}</span>
             )}
-            <div className='min-w-0 shrink-0 overflow-hidden'>
-              {typeCell}
-            </div>
+            <div className='min-w-0 shrink-0 overflow-hidden'>{typeCell}</div>
             <div className='min-w-0 flex-1 overflow-hidden text-sm'>
               {nameCell}
               {!isTagRow && (
