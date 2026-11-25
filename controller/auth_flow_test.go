@@ -158,7 +158,14 @@ func TestSecurityLoginRejectsChangedOrExpiredAuthorization(t *testing.T) {
 			assert.Empty(t, response.Header().Values("Set-Cookie"))
 			count, err := model.CountActiveUserSessions(user.Id, time.Now().Unix())
 			require.NoError(t, err)
-			assert.EqualValues(t, 1, count)
+			if change == "auth version" {
+				assert.Zero(t, count, "a stale auth version must not count as an active session")
+			} else {
+				assert.EqualValues(t, 1, count)
+			}
+			var total int64
+			require.NoError(t, model.DB.Model(&model.UserSession{}).Where("user_id = ?", user.Id).Count(&total).Error)
+			assert.EqualValues(t, 1, total, "rejected verification must not create another session")
 		})
 	}
 }
@@ -266,6 +273,120 @@ func TestSecurityLoginPasskeyConcurrentCompletionCreatesOneSession(t *testing.T)
 	count, err := model.CountActiveUserSessions(user.Id, time.Now().Unix())
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
+}
+
+func TestSecurityLoginSessionLimitPolicy(t *testing.T) {
+	for _, verified := range []bool{false, true} {
+		for _, test := range []struct {
+			name          string
+			activeLimit   int
+			issuanceLimit int
+			sessions      int
+			status        int
+			code          string
+		}{
+			{name: "default unlimited", issuanceLimit: 100, sessions: 51, status: http.StatusOK},
+			{name: "positive cap ignores unusable sessions", activeLimit: 2, issuanceLimit: 100, sessions: 5, status: http.StatusOK},
+			{name: "positive cap", activeLimit: 1, issuanceLimit: 100, sessions: 1, status: http.StatusConflict, code: "AUTH_SESSION_LIMIT"},
+			{name: "issuance limit", issuanceLimit: 1, sessions: 1, status: http.StatusTooManyRequests, code: "AUTH_SESSION_ISSUANCE_LIMIT"},
+		} {
+			t.Run(fmt.Sprintf("verified=%t/%s", verified, test.name), func(t *testing.T) {
+				user, _ := setupSecurityEnrollmentTest(t)
+				previousActive, previousIssuance := common.UserSessionActiveLimit, common.UserSessionIssuanceLimit
+				previousPassword := common.PasswordLoginEnabled
+				common.UserSessionActiveLimit, common.UserSessionIssuanceLimit = test.activeLimit, test.issuanceLimit
+				common.PasswordLoginEnabled = true
+				common.LoginVerificationRequiredEnabled = verified
+				t.Cleanup(func() {
+					common.UserSessionActiveLimit, common.UserSessionIssuanceLimit = previousActive, previousIssuance
+					common.PasswordLoginEnabled = previousPassword
+				})
+				if test.sessions > 1 {
+					require.Zero(t, common.DefaultUserSessionActiveLimit)
+					now := time.Now().Unix()
+					rows := make([]model.UserSession, test.sessions-1)
+					for i := range rows {
+						rows[i] = model.UserSession{
+							SID: fmt.Sprintf("session-policy-%02d", i), UserID: user.Id, Version: 1,
+							UserAuthVersion: user.AuthVersion, Status: model.UserSessionStatusActive,
+							RefreshHash: fmt.Sprintf("session-policy-hash-%02d", i), LoginMethod: "password",
+							CreatedAt: now - int64(i), LastActiveAt: now - int64(i), ExpiresAt: now + 3600,
+						}
+					}
+					rows[0].UserAuthVersion++
+					if test.activeLimit > 0 {
+						rows[1].ExpiresAt = now
+						rows[2].Status, rows[2].RevokedAt = model.UserSessionStatusRevoked, now
+						rows[3].RevokedAt = now
+					}
+					require.NoError(t, model.DB.Create(&rows).Error)
+				}
+				activeCountQueries := 0
+				callbackName := "test:login_session_policy_active_count"
+				require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+					query := strings.ToLower(tx.Statement.SQL.String())
+					if tx.Statement.Table == "user_sessions" && strings.Contains(query, "count(") && strings.Contains(query, "status") {
+						activeCountQueries++
+					}
+				}))
+				t.Cleanup(func() { _ = model.DB.Callback().Query().Remove(callbackName) })
+				var response *httptest.ResponseRecorder
+				if verified {
+					key := newSecurityLoginPasskey(t, user.Id)
+					pending, err := service.StartLoginVerification(user, "password", nil)
+					require.NoError(t, err)
+					token, challenge := beginSecurityLoginPasskey(t, pending.FlowToken)
+					body, err := common.Marshal(map[string]any{
+						"flow_token": pending.FlowToken, "passkey_flow_token": token,
+						"credential": securityPasskeyResponse(t, key, challenge, false, 0),
+					})
+					require.NoError(t, err)
+					response = securityEnrollmentRequest("POST", "/api/user/login/passkey/finish", string(body), "", service.AuthIdentity{}, LoginPasskeyFinish)
+					_, err = model.GetAuthFlow(pending.FlowToken, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeLoginVerification})
+					if test.code == "" {
+						assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
+						replay := securityEnrollmentRequest("POST", "/api/user/login/passkey/finish", string(body), "", service.AuthIdentity{}, LoginPasskeyFinish)
+						assert.False(t, decodeSecurityEnrollmentResponse(t, replay).Success)
+						assert.Empty(t, replay.Header().Values("Set-Cookie"))
+					} else {
+						require.NoError(t, err, "a rejected session must not consume the parent login authorization")
+					}
+				} else {
+					response = securityEnrollmentRequest("POST", "/api/user/login", `{"username":"enrollment-user","password":"enrollment-password"}`, "", service.AuthIdentity{}, Login)
+				}
+				assert.Equal(t, test.status, response.Code, response.Body.String())
+				var result struct {
+					Success bool   `json:"success"`
+					Code    string `json:"code"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				assert.Equal(t, test.code == "", result.Success, response.Body.String())
+				assert.Equal(t, test.code, result.Code)
+				if test.activeLimit == 0 {
+					assert.Zero(t, activeCountQueries, "unlimited logins must not query the active-session count")
+				} else {
+					assert.Equal(t, 1, activeCountQueries)
+				}
+				var count int64
+				require.NoError(t, model.DB.Model(&model.UserSession{}).Count(&count).Error)
+				expectedCount := test.sessions
+				if test.code == "" {
+					expectedCount++
+					assert.NotEmpty(t, response.Header().Values("Set-Cookie"))
+				} else {
+					assert.Empty(t, response.Header().Values("Set-Cookie"))
+				}
+				assert.EqualValues(t, expectedCount, count)
+				var revoked int64
+				require.NoError(t, model.DB.Model(&model.UserSession{}).Where("status <> ?", model.UserSessionStatusActive).Count(&revoked).Error)
+				expectedRevoked := 0
+				if test.activeLimit > 0 && test.sessions > 1 {
+					expectedRevoked = 1
+				}
+				assert.EqualValues(t, expectedRevoked, revoked, "login must preserve existing session states without eviction")
+			})
+		}
+	}
 }
 
 func TestSecurityLoginSessionFailureRollsBackChallengeConsumption(t *testing.T) {

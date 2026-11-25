@@ -95,47 +95,84 @@ func cachedLoginSessionKey(t *testing.T, server *miniredis.Miniredis) string {
 	return ""
 }
 
-func TestCreateLoginSessionEnforcesActiveLimitAcrossAuthVersions(t *testing.T) {
+func TestCreateLoginSessionDefaultUnlimitedSkipsActiveCount(t *testing.T) {
 	useTestSessionSecret(t)
 	user := setupAuthSessionTestDB(t)
-	common.UserSessionActiveLimit = 50
+	require.Zero(t, common.UserSessionActiveLimit)
+	now := time.Now().Unix()
+	rows := make([]model.UserSession, 51)
+	for i := range rows {
+		rows[i] = model.UserSession{
+			SID: fmt.Sprintf("unlimited-session-%02d", i), UserID: user.Id, Version: 1,
+			UserAuthVersion: user.AuthVersion, Status: model.UserSessionStatusActive,
+			RefreshHash: fmt.Sprintf("unlimited-hash-%02d", i), LoginMethod: "password",
+			CreatedAt: now - int64(i), LastActiveAt: now - int64(i), ExpiresAt: now + 3600,
+		}
+	}
+	rows[0].UserAuthVersion++
+	require.NoError(t, model.DB.Create(&rows).Error)
+
+	activeCountQueries := 0
+	callbackName := "test:unlimited_session_active_count"
+	require.NoError(t, model.DB.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		query := strings.ToLower(tx.Statement.SQL.String())
+		if tx.Statement.Table == "user_sessions" && strings.Contains(query, "count(") && strings.Contains(query, "status") {
+			activeCountQueries++
+		}
+	}))
+	t.Cleanup(func() { _ = model.DB.Callback().Query().Remove(callbackName) })
+
+	bundle, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "new-browser")
+	require.NoError(t, err, "the default must allow more than 50 active sessions, including stale auth versions")
+	identity, err := ParseAccessToken(bundle.AccessToken)
+	require.NoError(t, err)
+	_, _, err = ValidateLoginSession(identity)
+	require.NoError(t, err)
+	assert.Zero(t, activeCountQueries, "an unlimited active cap must skip the active-count query")
+	var count int64
+	require.NoError(t, model.DB.Model(&model.UserSession{}).Count(&count).Error)
+	assert.EqualValues(t, 52, count)
+	var original model.UserSession
+	require.NoError(t, model.DB.First(&original, "sid = ?", rows[0].SID).Error)
+	assert.Equal(t, model.UserSessionStatusActive, original.Status, "login must not evict existing sessions")
+	assert.Equal(t, rows[0].UserAuthVersion, original.UserAuthVersion)
+}
+
+func TestCreateLoginSessionPositiveCapCountsOnlyUsableSessions(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	common.UserSessionActiveLimit = 2
 	common.UserSessionIssuanceLimit = 100
 	now := time.Now().Unix()
-	rows := make([]model.UserSession, 0, 49)
-	for i := range 49 {
-		authVersion := user.AuthVersion
-		if i == 0 {
-			authVersion++
+	rows := make([]model.UserSession, 5)
+	for i := range rows {
+		rows[i] = model.UserSession{
+			SID: fmt.Sprintf("active-limit-%02d", i), UserID: user.Id, Version: 1,
+			UserAuthVersion: user.AuthVersion, Status: model.UserSessionStatusActive,
+			RefreshHash: fmt.Sprintf("hash-%02d", i), LoginMethod: "password",
+			CreatedAt: now - int64(i), LastActiveAt: now - int64(i), ExpiresAt: now + 3600,
 		}
-		rows = append(rows, model.UserSession{
-			SID:             fmt.Sprintf("active-limit-%02d", i),
-			UserID:          user.Id,
-			Version:         1,
-			UserAuthVersion: authVersion,
-			Status:          model.UserSessionStatusActive,
-			RefreshHash:     fmt.Sprintf("hash-%02d", i),
-			LoginMethod:     "password",
-			CreatedAt:       now - int64(i),
-			LastActiveAt:    now - int64(i),
-			ExpiresAt:       now + 3600,
-		})
 	}
+	rows[1].UserAuthVersion++
+	rows[2].ExpiresAt = now
+	rows[3].Status, rows[3].RevokedAt = model.UserSessionStatusRevoked, now
+	rows[4].RevokedAt = now
 	require.NoError(t, model.DB.Create(&rows).Error)
 
 	_, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
-	require.NoError(t, err, "49 active sessions must allow creation of the 50th")
+	require.NoError(t, err, "stale, expired and revoked sessions must not consume the opt-in cap")
 
 	_, err = CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
-	assert.ErrorIs(t, err, model.ErrUserSessionLimit)
+	assert.ErrorIs(t, err, model.ErrUserSessionLimit, "current usable sessions still enforce the opt-in cap")
 	var count int64
 	require.NoError(t, model.DB.Model(&model.UserSession{}).Count(&count).Error)
-	assert.Equal(t, int64(50), count)
+	assert.EqualValues(t, 6, count, "admission must preserve historical session rows")
 }
 
 func TestCreateLoginSessionEnforcesIssuanceLimitAcrossAllStatuses(t *testing.T) {
 	useTestSessionSecret(t)
 	user := setupAuthSessionTestDB(t)
-	common.UserSessionActiveLimit = 10
+	common.UserSessionActiveLimit = 0
 	common.UserSessionIssuanceLimit = 3
 	common.UserSessionIssuanceWindowSeconds = 60
 	now := time.Now().Unix()

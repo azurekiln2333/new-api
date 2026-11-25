@@ -183,9 +183,11 @@ func CountActiveUserSessions(userID int, now int64) (int64, error) {
 	if now <= 0 {
 		now = time.Now().Unix()
 	}
+	// Only sessions at the current account security version remain usable.
 	var count int64
 	err := DB.Model(&UserSession{}).
-		Where("user_id = ? AND status = ? AND expires_at > ?", userID, UserSessionStatusActive, now).
+		Where("user_id = ? AND status = ? AND revoked_at = ? AND expires_at > ?", userID, UserSessionStatusActive, 0, now).
+		Where("user_auth_version = (?)", DB.Model(&User{}).Select("auth_version").Where("id = ?", userID)).
 		Count(&count).Error
 	return count, err
 }
@@ -432,10 +434,11 @@ func ListActiveUserSessions(userID int, currentSID string, now int64) ([]UserSes
 	if currentSID != "" {
 		var current []UserSession
 		if err := DB.Where(
-			"user_id = ? AND user_auth_version = ? AND status = ? AND expires_at > ? AND sid = ?",
+			"user_id = ? AND user_auth_version = ? AND status = ? AND revoked_at = ? AND expires_at > ? AND sid = ?",
 			userID,
 			authVersion,
 			UserSessionStatusActive,
+			0,
 			now,
 			currentSID,
 		).Limit(1).Find(&current).Error; err != nil {
@@ -448,10 +451,11 @@ func ListActiveUserSessions(userID int, currentSID string, now int64) ([]UserSes
 	remainingLimit := userSessionListLimit - len(sessions)
 
 	otherQuery := DB.Where(
-		"user_id = ? AND user_auth_version = ? AND status = ? AND expires_at > ?",
+		"user_id = ? AND user_auth_version = ? AND status = ? AND revoked_at = ? AND expires_at > ?",
 		userID,
 		authVersion,
 		UserSessionStatusActive,
+		0,
 		now,
 	)
 	if currentSID != "" {

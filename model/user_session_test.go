@@ -389,7 +389,7 @@ func TestRevokeUserSessionByRefreshHashRequiresSecret(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUserSessionInactive)
 }
 
-func TestUserSessionGrowthCountsUseBroadActiveAndStrictIssuancePredicates(t *testing.T) {
+func TestUserSessionGrowthCountsUseUsableActiveAndStrictIssuancePredicates(t *testing.T) {
 	setupUserSessionTest(t)
 	now := time.Now().Unix()
 	createUserSessionTestUser(t, 1006, 7)
@@ -399,6 +399,8 @@ func TestUserSessionGrowthCountsUseBroadActiveAndStrictIssuancePredicates(t *tes
 		*newTestUserSession("count-expired", 1006, now-8),
 		*newTestUserSession("count-revoked", 1006, now-7),
 		*newTestUserSession("count-cutoff", 1006, now-3600),
+		*newTestUserSession("count-active-revoked-at", 1006, now-6),
+		*newTestUserSession("count-revoking", 1006, now-5),
 	}
 	rows[0].UserAuthVersion = 7
 	rows[1].UserAuthVersion = 2
@@ -410,15 +412,19 @@ func TestUserSessionGrowthCountsUseBroadActiveAndStrictIssuancePredicates(t *tes
 	rows[4].UserAuthVersion = 7
 	rows[4].CreatedAt = now - 3600
 	rows[4].ExpiresAt = now
+	rows[5].UserAuthVersion = 7
+	rows[5].RevokedAt = now - 1
+	rows[6].UserAuthVersion = 7
+	rows[6].Status = UserSessionStatusRevoking
 	require.NoError(t, DB.Create(&rows).Error)
 
 	activeCount, err := CountActiveUserSessions(1006, now)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), activeCount, "active count includes stale auth versions but excludes expired and revoked rows")
+	assert.Equal(t, int64(1), activeCount, "only current-auth-version, unexpired active sessions without a revocation timestamp count")
 
 	issuedCount, err := CountUserSessionsCreatedSince(1006, now-3600)
 	require.NoError(t, err)
-	assert.Equal(t, int64(4), issuedCount, "issuance count includes every status and uses a strict cutoff")
+	assert.Equal(t, int64(6), issuedCount, "issuance still includes stale, expired, revoking and revoked sessions with a strict cutoff")
 	globalCount, err := CountUserSessionsCreatedSince(0, now-3600)
 	require.NoError(t, err)
 	assert.Equal(t, issuedCount, globalCount)
@@ -430,7 +436,7 @@ func TestListActiveUserSessionsKeepsCurrentAndBoundsOtherSessions(t *testing.T) 
 	createUserSessionTestUser(t, 1007, 7)
 	current := newTestUserSession("list-current", 1007, now-1000)
 	current.UserAuthVersion = 7
-	rows := make([]UserSession, 0, 107)
+	rows := make([]UserSession, 0, 108)
 	rows = append(rows, *current)
 	for i := range 105 {
 		session := newTestUserSession(fmt.Sprintf("list-other-%03d", i), 1007, now-int64(i))
@@ -440,6 +446,10 @@ func TestListActiveUserSessionsKeepsCurrentAndBoundsOtherSessions(t *testing.T) 
 	stale := newTestUserSession("list-stale-auth-version", 1007, now+1)
 	stale.UserAuthVersion = 6
 	rows = append(rows, *stale)
+	revoked := newTestUserSession("list-active-with-revoked-at", 1007, now+2)
+	revoked.UserAuthVersion = 7
+	revoked.RevokedAt = now - 1
+	rows = append(rows, *revoked)
 	require.NoError(t, DB.CreateInBatches(rows, 100).Error)
 
 	sessions, err := ListActiveUserSessions(1007, current.SID, now)
@@ -449,6 +459,14 @@ func TestListActiveUserSessionsKeepsCurrentAndBoundsOtherSessions(t *testing.T) 
 	for _, session := range sessions {
 		assert.Equal(t, int64(7), session.UserAuthVersion)
 		assert.NotEqual(t, stale.SID, session.SID)
+		assert.Zero(t, session.RevokedAt)
+	}
+
+	sessionsWithRevokedCurrent, err := ListActiveUserSessions(1007, revoked.SID, now)
+	require.NoError(t, err)
+	assert.Len(t, sessionsWithRevokedCurrent, userSessionListLimit)
+	for _, session := range sessionsWithRevokedCurrent {
+		assert.NotEqual(t, revoked.SID, session.SID, "the current-session shortcut must also exclude revoked timestamps")
 	}
 
 	sessionsWithoutCurrent, err := ListActiveUserSessions(1007, "missing-current", now)

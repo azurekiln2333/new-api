@@ -116,13 +116,19 @@ func CreateUserSessionFromLoginFlow(token string, session *UserSession, validate
 			return err
 		}
 		now := time.Now().Unix()
-		var activeCount, issuanceCount int64
-		if err := tx.Model(&UserSession{}).Where("user_id = ? AND status = ? AND expires_at > ?", session.UserID, UserSessionStatusActive, now).Count(&activeCount).Error; err != nil {
-			return err
+		if limit := common.UserSessionActiveLimit; limit > 0 {
+			var activeCount int64
+			if err := tx.Model(&UserSession{}).
+				Where("user_id = ? AND user_auth_version = ? AND status = ? AND revoked_at = ? AND expires_at > ?",
+					session.UserID, state.AuthVersion, UserSessionStatusActive, 0, now).
+				Count(&activeCount).Error; err != nil {
+				return err
+			}
+			if activeCount >= int64(limit) {
+				return ErrUserSessionLimit
+			}
 		}
-		if activeCount >= int64(common.UserSessionActiveLimit) {
-			return ErrUserSessionLimit
-		}
+		var issuanceCount int64
 		if err := tx.Model(&UserSession{}).Where("user_id = ? AND created_at > ?", session.UserID, now-common.UserSessionIssuanceWindowSeconds).Count(&issuanceCount).Error; err != nil {
 			return err
 		}
