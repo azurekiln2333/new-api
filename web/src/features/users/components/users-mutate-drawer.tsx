@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
-import { Pencil } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -76,7 +75,12 @@ import {
   type AdminPermissionMatrix,
 } from '@/lib/admin-permissions'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
-import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import {
+  formatQuota,
+  getEditableQuotaStep,
+  parseQuotaFromDollars,
+  quotaUnitsToDollars,
+} from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { accountPasswordSchema } from '@/lib/password-policy'
 import { ROLE } from '@/lib/roles'
@@ -90,6 +94,7 @@ import {
   getUser,
   getGroups,
   getPermissionCatalog,
+  adjustUserQuota,
 } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
@@ -100,7 +105,6 @@ import {
   transformUserToFormDefaults,
 } from '../lib'
 import type { User } from '../types'
-import { UserQuotaDialog } from './user-quota-dialog'
 import { UserRateLimitSection } from './user-rate-limit-section'
 import { useUsers } from './users-provider'
 
@@ -120,16 +124,20 @@ export function UsersMutateDrawer({
   const { triggerRefresh, requestVerification } = useUsers()
   const currentUser = useAuthStore((s) => s.auth.user)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
   // Matrix as loaded from the server; an unchanged matrix is not resubmitted so
   // routine edits of an administrator do not require step-up verification.
   const loadedPermissions = useRef<AdminPermissionMatrix | undefined>(undefined)
   const activeUserId = useRef<number | undefined>(undefined)
+  const loadedQuota = useRef<{ id: number; value: number } | undefined>(undefined)
   const [userLoadState, setUserLoadState] = useState<{
     id: number | undefined
     status: 'idle' | 'loading' | 'ready' | 'error'
   }>({ id: undefined, status: 'idle' })
   const [reloadUser, setReloadUser] = useState(0)
+  const [isAdjustingQuota, setIsAdjustingQuota] = useState(false)
+  // A state update is not visible to a click handler fired in the same tick, so
+  // the button label alone cannot stop a double submit of the quota change.
+  const quotaSubmitLock = useRef(false)
 
   // Fetch groups
   const { data: groupsData } = useQuery({
@@ -162,6 +170,7 @@ export function UsersMutateDrawer({
     if (!open) {
       form.reset(USER_FORM_DEFAULT_VALUES)
       loadedPermissions.current = undefined
+      loadedQuota.current = undefined
       setUserLoadState({ id: undefined, status: 'idle' })
       return () => {
         active = false
@@ -171,6 +180,7 @@ export function UsersMutateDrawer({
     if (!isUpdate || !currentRow) {
       form.reset(USER_FORM_DEFAULT_VALUES)
       loadedPermissions.current = undefined
+      loadedQuota.current = undefined
       setUserLoadState({ id: undefined, status: 'ready' })
       return () => {
         active = false
@@ -179,6 +189,7 @@ export function UsersMutateDrawer({
 
     form.reset(transformUserToFormDefaults(currentRow))
     loadedPermissions.current = undefined
+    loadedQuota.current = { id: currentRow.id, value: currentRow.quota }
     setUserLoadState({ id: targetId, status: 'loading' })
 
     void getUser(currentRow.id)
@@ -193,6 +204,10 @@ export function UsersMutateDrawer({
         // The baseline comes from this detail response, never from the list
         // row: an unchanged matrix must compare against what the server holds.
         loadedPermissions.current = result.data.admin_permissions
+        loadedQuota.current = {
+          id: result.data.id,
+          value: result.data.quota,
+        }
         form.reset(transformUserToFormDefaults(result.data))
         setUserLoadState({ id: targetId, status: 'ready' })
       })
@@ -320,18 +335,76 @@ export function UsersMutateDrawer({
     }
   }
 
-  const refreshUserData = async () => {
-    const targetId = currentRow?.id
-    if (targetId === undefined || !isUserReady) return
+  const handleConfirmQuota = async () => {
+    if (!currentRow || !isUserReady || quotaSubmitLock.current) return
+    const targetId = currentRow.id
+    const originalQuota = loadedQuota.current
+    if (!originalQuota || originalQuota.id !== targetId) return
+    const desiredQuota = parseQuotaFromDollars(currentQuotaRaw)
+    const delta = desiredQuota - originalQuota.value
+    if (delta === 0) return
+
+    // Send the committed difference rather than an absolute balance: the server
+    // applies the delta under a row lock, so concurrent consumption is kept
+    // instead of being overwritten by a value the operator read earlier.
+    quotaSubmitLock.current = true
+    setIsAdjustingQuota(true)
     try {
-      const result = requireServerSuccess(await getUser(targetId))
-      if (result.data?.id === targetId && activeUserId.current === targetId) {
-        loadedPermissions.current = result.data.admin_permissions
-        form.reset(transformUserToFormDefaults(result.data))
+      const result = await adjustUserQuota({
+        id: targetId,
+        action: 'add_quota',
+        mode: delta > 0 ? 'add' : 'subtract',
+        value: Math.abs(delta),
+      })
+      if (!result.success) {
+        handleServerError(result, t('Failed to adjust quota'))
+        return
       }
+
+      toast.success(t('Quota adjusted successfully'))
       triggerRefresh()
+      if (open && activeUserId.current === targetId) {
+        // Keep the baseline on the same rounded unit the form shows, otherwise a
+        // non-integral display amount would leave Confirm enabled forever.
+        loadedQuota.current = {
+          id: targetId,
+          value: parseQuotaFromDollars(quotaUnitsToDollars(desiredQuota)),
+        }
+        form.resetField('quota_dollars', {
+          defaultValue: quotaUnitsToDollars(desiredQuota),
+        })
+      }
+
+      // Reconcile with the balance that other traffic may have moved. This is
+      // best effort: the change is already committed, so a failed read must not
+      // be reported as a failed adjustment.
+      try {
+        const refreshed = requireServerSuccess(await getUser(targetId))
+        if (
+          refreshed.success &&
+          refreshed.data?.id === targetId &&
+          open &&
+          activeUserId.current === targetId
+        ) {
+          loadedQuota.current = {
+            id: targetId,
+            // Same display-unit rounding as the optimistic baseline above.
+            value: parseQuotaFromDollars(
+              quotaUnitsToDollars(refreshed.data.quota)
+            ),
+          }
+          form.resetField('quota_dollars', {
+            defaultValue: quotaUnitsToDollars(refreshed.data.quota),
+          })
+        }
+      } catch {
+        // Keep the reconciled-by-delta baseline shown above.
+      }
     } catch (error) {
-      handleServerError(error, t('Failed to load'))
+      handleServerError(error, t('Failed to adjust quota'))
+    } finally {
+      quotaSubmitLock.current = false
+      setIsAdjustingQuota(false)
     }
   }
 
@@ -344,6 +417,7 @@ export function UsersMutateDrawer({
           if (!v) {
             activeUserId.current = undefined
             loadedPermissions.current = undefined
+            loadedQuota.current = undefined
             setUserLoadState({ id: undefined, status: 'idle' })
             form.reset(USER_FORM_DEFAULT_VALUES)
           }
@@ -377,7 +451,7 @@ export function UsersMutateDrawer({
               id='user-form'
               onSubmit={form.handleSubmit(onSubmit)}
               aria-busy={isUserLoading}
-              inert={!isUserReady || isSubmitting ? true : undefined}
+              inert={!isUserReady || isSubmitting || isAdjustingQuota ? true : undefined}
               className={sideDrawerFormClassName()}
             >
               {/* Basic Information */}
@@ -541,23 +615,33 @@ export function UsersMutateDrawer({
                         <div className='flex gap-2'>
                           <FormControl>
                             <Input
-                              value={
-                                tokensOnly
-                                  ? String(field.value || 0)
-                                  : (field.value || 0).toFixed(6)
+                              {...field}
+                              type='number'
+                              step={tokensOnly ? 1 : getEditableQuotaStep()}
+                              value={field.value ?? 0}
+                              onChange={(event) =>
+                                field.onChange(
+                                  Number.parseFloat(event.target.value) || 0
+                                )
                               }
-                              readOnly
                               className='flex-1'
                             />
                           </FormControl>
                           <Button
                             type='button'
                             variant='outline'
-                            disabled={!isUserReady}
-                            onClick={() => setQuotaDialogOpen(true)}
+                            disabled={
+                              !isUserReady ||
+                              isAdjustingQuota ||
+                              loadedQuota.current?.id !== currentRow?.id ||
+                              parseQuotaFromDollars(currentQuotaRaw) ===
+                                loadedQuota.current?.value
+                            }
+                            onClick={handleConfirmQuota}
                           >
-                            <Pencil className='mr-1 h-4 w-4' />
-                            {t('Adjust Quota')}
+                            {isAdjustingQuota
+                              ? t('Processing...')
+                              : t('Confirm')}
                           </Button>
                         </div>
                         <FormDescription>
@@ -687,24 +771,13 @@ export function UsersMutateDrawer({
             <Button
               form='user-form'
               type='submit'
-              disabled={isSubmitting || !isUserReady}
+              disabled={isSubmitting || !isUserReady || isAdjustingQuota}
             >
               {isSubmitting ? t('Saving...') : t('Save changes')}
             </Button>
           </SheetFooter>
         </SheetContent>
       </Sheet>
-
-      {/* Adjust Quota Dialog */}
-      {currentRow && isUserReady && (
-        <UserQuotaDialog
-          open={quotaDialogOpen}
-          onOpenChange={setQuotaDialogOpen}
-          userId={currentRow.id}
-          currentQuota={parseQuotaFromDollars(currentQuotaRaw || 0)}
-          onSuccess={refreshUserData}
-        />
-      )}
     </>
   )
 }

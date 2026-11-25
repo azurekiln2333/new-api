@@ -212,6 +212,108 @@ it('keeps Retry accessible after a failed detail load and enables saving only af
   expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 })
 
+it('applies an edited quota as a delta and refreshes only the matching quota field', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  const detail = { ...target, quota: 1_000_000 }
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/authz/catalog') return { data: { success: true, data: { resources: [], roles: [] } } }
+    if (url === '/api/group/') return { data: { success: true, data: ['default'] } }
+    return { data: { success: true, data: detail } }
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { success: true } })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={detail} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  await screen.findByDisplayValue('Managed admin')
+  const quota = screen.getByLabelText(/Remaining Quota/)
+  await userEvent.clear(quota)
+  await userEvent.type(quota, '3')
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/user/manage', { id: 2, action: 'add_quota', mode: 'add', value: 500000 }))
+})
+
+it('sends one quota request when Confirm is pressed twice, then reconciles with the server balance', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  let serverQuota = 1_000_000
+  const detail = () => ({ ...target, quota: serverQuota })
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/authz/catalog') return { data: { success: true, data: { resources: [], roles: [] } } }
+    if (url === '/api/group/') return { data: { success: true, data: ['default'] } }
+    return { data: { success: true, data: detail() } }
+  })
+  let resolveAdjustment!: (value: { data: { success: boolean } }) => void
+  const adjustment = new Promise<{ data: { success: boolean } }>((resolve) => {
+    resolveAdjustment = resolve
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(() => {
+    // Concurrent consumption lands before the requested delta is committed.
+    serverQuota = serverQuota - 100_000 + 500_000
+    return adjustment
+  })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={detail()} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  await screen.findByDisplayValue('Managed admin')
+  const quota = screen.getByLabelText(/Remaining Quota/)
+  await userEvent.clear(quota)
+  await userEvent.type(quota, '3')
+  const confirm = screen.getByRole('button', { name: 'Confirm' })
+  await userEvent.click(confirm)
+  await userEvent.click(confirm)
+  expect(post).toHaveBeenCalledTimes(1)
+  expect(post).toHaveBeenCalledWith('/api/user/manage', { id: 2, action: 'add_quota', mode: 'add', value: 500000 })
+  resolveAdjustment({ data: { success: true } })
+  // The delta survives concurrent consumption: 1000000 - 100000 + 500000.
+  // The displayed form follows that reconciled balance, not the requested 3.
+  await waitFor(() => expect(quota).toHaveValue(1_400_000 / 500_000))
+  // The reconciled baseline matches what the form shows, so nothing is pending.
+  expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled()
+})
+
+it("keeps the delta baseline when the reconciliation read reports a server failure", async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role: 100 })
+  let detailReads = 0
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/authz/catalog') return { data: { success: true, data: { resources: [], roles: [] } } }
+    if (url === '/api/group/') return { data: { success: true, data: ['default'] } }
+    detailReads += 1
+    // A failed body must never seed the baseline, even if it carries data.
+    if (detailReads > 1) {
+      return { data: { success: false, data: { ...target, quota: 0 } } }
+    }
+    return { data: { success: true, data: { ...target, quota: 1_000_000 } } }
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { success: true } })
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <UsersProvider>
+        <UsersMutateDrawer open onOpenChange={() => undefined} currentRow={target} />
+      </UsersProvider>
+    </QueryClientProvider>
+  )
+  await waitFor(() => expect(detailReads).toBe(1))
+  const quota = screen.getByLabelText(/Remaining Quota/)
+  await userEvent.clear(quota)
+  await userEvent.type(quota, '3')
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/user/manage', { id: 2, action: 'add_quota', mode: 'add', value: 500000 }))
+  await waitFor(() => expect(detailReads).toBe(2))
+  // A failed reconciliation must not replace the committed baseline with zero
+  // or leave the same delta available to submit again.
+  expect(quota).toHaveValue(3)
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled()
+  )
+})
+
 it('treats a saved matrix as changed when the loaded baseline came from a user that was replaced', async () => {
   // The baseline must come from the fetched detail, never from a previous row:
   // comparing against the wrong matrix drops a real permission change silently.
