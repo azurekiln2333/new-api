@@ -17,7 +17,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
+| [Quality Guidelines](./quality-guidelines.md) | Async quota fixture boundaries; other conventions pending | Partially defined |
 | [Logging Guidelines](./logging-guidelines.md) | Original relay request capture, protected stores, privileged reads and retention | Defined |
 | [CORS Origins](./cors-origins.md) | Exact credentialed browser origins and preflight behavior | Defined |
 | [Merge and Release Contract](./merge-release-contract.md) | Preserve both merge parents and verify actual release artifacts | Defined |
