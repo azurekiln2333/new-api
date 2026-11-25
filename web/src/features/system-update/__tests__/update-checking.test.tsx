@@ -733,7 +733,10 @@ describe('update cache and scheduling', () => {
         update_source_repository: 'azurekiln2333/new-api',
       })
     )
-    expect(hook.result.current.release).toBeNull()
+    await waitFor(() => {
+      expect(hook.result.current.repository).toBe('azurekiln2333/new-api')
+      expect(hook.result.current.release).toBeNull()
+    })
     await waitFor(() =>
       expect(hook.result.current.snapshot?.error).toBe('rate-limit')
     )
@@ -747,7 +750,9 @@ describe('update cache and scheduling', () => {
     act(() =>
       client.setQueryData(STATUS_QUERY_KEY, { version: 'v1.0.0-rc.35' })
     )
-    expect(hook.result.current.release?.tag_name).toBe(release.tag_name)
+    await waitFor(() =>
+      expect(hook.result.current.release?.tag_name).toBe(release.tag_name)
+    )
     expect(hook.result.current.hasUpdate).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
