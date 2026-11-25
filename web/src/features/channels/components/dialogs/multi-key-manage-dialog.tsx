@@ -194,6 +194,7 @@ export function MultiKeyManageDialog({
   const confirmOpenerRef = useRef<HTMLElement | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const statusRequest = useRef(0)
+  const editorSession = useRef(0)
 
   const openConfirm = (action: MultiKeyConfirmAction) => {
     const opener = document.activeElement
@@ -279,6 +280,10 @@ export function MultiKeyManageDialog({
   // Reset and load data when dialog opens
   useEffect(() => {
     setAppendKey('')
+    setUserEditor(null)
+    setQuotaEditor(null)
+    setIsSavingAssignment(false)
+    setIsSavingQuota(false)
     if (open && currentRow && !singleKey) {
       setKeys([])
       setTotal(0)
@@ -289,8 +294,6 @@ export function MultiKeyManageDialog({
       setRevision(undefined)
       setQuotaSupported(false)
       setModelsEditor(null)
-      setUserEditor(null)
-      setQuotaEditor(null)
       setResetQuotaTarget(null)
       setConfirmAction(null)
       setUnbindTarget(null)
@@ -303,9 +306,10 @@ export function MultiKeyManageDialog({
     }
     return () => {
       statusRequest.current += 1
+      editorSession.current += 1
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, currentRow?.id, singleKey])
+  }, [open, currentRow?.id, singleKey, currentUser?.id, canEditSensitive])
 
   const loadKeyStatus = async (
     page: number = currentPage,
@@ -465,13 +469,25 @@ export function MultiKeyManageDialog({
 
   // Owner and model-scope changes both rebuild abilities on the server.
   const saveKeyAssignment = async (
-    request: () => Promise<{ success: boolean; message?: string }>
+    request: () => Promise<{
+      success: boolean
+      message?: string
+      data?: { revision?: number; channel_models?: string[] }
+    }>
   ) => {
     if (!canEditSensitive || isSavingAssignment) return
+    const session = editorSession.current
     setIsSavingAssignment(true)
     try {
       const response = await request()
+      if (session !== editorSession.current) return
       if (response.success) {
+        if (response.data?.channel_models && currentRow) {
+          setCurrentRow({
+            ...currentRow,
+            models: response.data.channel_models.join(','),
+          })
+        }
         toast.success(getServerMessage(response) || t('Operation successful'))
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
         setModelsEditor(null)
@@ -483,13 +499,14 @@ export function MultiKeyManageDialog({
         handleServerError(response, t('Operation failed'))
       }
     } catch (error: unknown) {
+      if (session !== editorSession.current) return
       if (isQuotaConflict(error)) {
         await reloadAfterConflict()
       } else {
         handleServerError(error, t('Operation failed'))
       }
     } finally {
-      setIsSavingAssignment(false)
+      if (session === editorSession.current) setIsSavingAssignment(false)
     }
   }
 
@@ -625,6 +642,7 @@ export function MultiKeyManageDialog({
     ) {
       return
     }
+    const session = editorSession.current
     setIsSavingQuota(true)
     try {
       const response = await setMultiKeyQuota({
@@ -635,6 +653,7 @@ export function MultiKeyManageDialog({
         enabled: values.enabled,
         limitQuota: values.limitQuota,
       })
+      if (session !== editorSession.current) return
       if (response.success) {
         toast.success(getServerMessage(response) || t('Operation successful'))
         setQuotaEditor(null)
@@ -648,13 +667,14 @@ export function MultiKeyManageDialog({
       }
       handleServerError(response, t('Operation failed'))
     } catch (error: unknown) {
+      if (session !== editorSession.current) return
       if (isQuotaConflict(error)) {
         await reloadAfterConflict()
       } else {
         handleServerError(error, t('Operation failed'))
       }
     } finally {
-      setIsSavingQuota(false)
+      if (session === editorSession.current) setIsSavingQuota(false)
     }
   }
 
@@ -959,7 +979,8 @@ export function MultiKeyManageDialog({
       >
         <div
           ref={bodyRef}
-          className='flex min-h-0 flex-1 flex-col gap-3 overflow-hidden'
+          tabIndex={-1}
+          className='flex min-h-0 flex-1 flex-col gap-3 overflow-hidden outline-none'
         >
           {/* Statistics stay pinned above the scrolling key list */}
           <div className='grid shrink-0 grid-cols-3 gap-3'>
@@ -1169,9 +1190,19 @@ export function MultiKeyManageDialog({
             </div>
           )}
 
-          {/* Per-key budget, edited in place beside the key list */}
-          {quotaEditor && (
-            <div className='shrink-0'>
+          {/* Keep editors in the modal tree, but outside the fixed-height
+              key-list layout so their fields remain scrollable and focused. */}
+          <Dialog
+            open={open && canEditSensitive && quotaEditor !== null}
+            onOpenChange={(next) => {
+              if (!next && !isSavingQuota) setQuotaEditor(null)
+            }}
+            onOpenChangeComplete={(next) => {
+              if (!next && open) bodyRef.current?.focus()
+            }}
+            title={t('Set Quota')}
+          >
+            {quotaEditor && (
               <MultiKeyQuotaEditor
                 key={`${quotaEditor.id ?? quotaEditor.index}:${quotaEditor.quota?.config_version ?? 0}`}
                 keyStatus={quotaEditor}
@@ -1179,62 +1210,74 @@ export function MultiKeyManageDialog({
                 onCancel={() => setQuotaEditor(null)}
                 onSave={(values) => void saveQuota(values)}
               />
-            </div>
-          )}
+            )}
+          </Dialog>
 
-          {/* Per-key owner */}
-          {userEditor && (
-            <div className='shrink-0 space-y-2 rounded-md border p-3'>
-              <div className='flex items-center justify-between gap-2'>
-                <p className='text-sm font-medium'>
-                  {t('Bind User')} #{userEditor.keyStatus.index + 1}
+          <Dialog
+            open={open && canEditSensitive && userEditor !== null}
+            onOpenChange={(next) => {
+              if (!next && !isSavingAssignment) setUserEditor(null)
+            }}
+            onOpenChangeComplete={(next) => {
+              if (!next && open) bodyRef.current?.focus()
+            }}
+            title={t('Bind User')}
+            description={
+              userEditor
+                ? `${t('Index')}: ${userEditor.keyStatus.index + 1}`
+                : undefined
+            }
+            footer={
+              <>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={isSavingAssignment}
+                  onClick={() => setUserEditor(null)}
+                >
+                  {t('Cancel')}
+                </Button>
+                <Button
+                  type='button'
+                  disabled={isSavingAssignment || !userIdValid}
+                  onClick={saveUser}
+                >
+                  {isSavingAssignment && (
+                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                  )}
+                  {t('Save')}
+                </Button>
+              </>
+            }
+          >
+            {userEditor && (
+              <div className='space-y-2'>
+                <Input
+                  type='number'
+                  min={1}
+                  value={userEditor.userId}
+                  onChange={(event) =>
+                    setUserEditor((current) =>
+                      current
+                        ? { ...current, userId: event.target.value }
+                        : current
+                    )
+                  }
+                  placeholder={t('User ID')}
+                  aria-label={t('User ID')}
+                  disabled={isSavingAssignment}
+                />
+                <p className='text-muted-foreground text-xs'>
+                  {t('User ID must be a positive integer.')}
                 </p>
-                <div className='flex items-center gap-2'>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    disabled={isSavingAssignment}
-                    onClick={() => setUserEditor(null)}
-                  >
-                    {t('Cancel')}
-                  </Button>
-                  <Button
-                    size='sm'
-                    disabled={isSavingAssignment || !userIdValid}
-                    onClick={saveUser}
-                  >
-                    {isSavingAssignment && (
-                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                    )}
-                    {t('Save')}
-                  </Button>
-                </div>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'The key is used only by this user and leaves the public key pool.'
+                  )}
+                </p>
               </div>
-              <Input
-                type='number'
-                min={1}
-                value={userEditor.userId}
-                onChange={(event) =>
-                  setUserEditor((current) =>
-                    current
-                      ? { ...current, userId: event.target.value }
-                      : current
-                  )
-                }
-                placeholder={t('User ID')}
-                aria-label={t('User ID')}
-                disabled={isSavingAssignment}
-              />
-              <p className='text-muted-foreground text-xs'>
-                {t('User ID must be a positive integer.')}
-              </p>
-              <p className='text-muted-foreground text-xs'>
-                {t(
-                  'The key is used only by this user and leaves the public key pool.'
-                )}
-              </p>
-            </div>
-          )}
+            )}
+          </Dialog>
 
           {/* Table: the only scrolling region of the dialog body */}
           <div
