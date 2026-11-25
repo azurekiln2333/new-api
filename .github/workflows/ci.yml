@@ -317,7 +317,16 @@ jobs:
       # the isolated service databases, and require configured external engines.
       - name: Verify database contracts, channel settings and relay policies
         if: ${{ !cancelled() }}
+        env:
+          AUDIT_MYSQL_DSN: ${{ env.TEST_MYSQL_DSN }}
+          AUDIT_POSTGRES_DSN: ${{ env.TEST_POSTGRES_DSN }}
+          AUDIT_CLICKHOUSE_DSN: ${{ env.TEST_CLICKHOUSE_DSN }}
         run: |
+          # Audit fixtures use their own names; missing aliases must fail this
+          # required hosted matrix rather than silently skipping real engines.
+          : "${AUDIT_MYSQL_DSN:?Required MySQL audit fixture DSN is missing}"
+          : "${AUDIT_POSTGRES_DSN:?Required PostgreSQL audit fixture DSN is missing}"
+          : "${AUDIT_CLICKHOUSE_DSN:?Required ClickHouse audit fixture DSN is missing}"
           LOG_FILE="$RUNNER_TEMP/database-integration-tests.log"
           set +e
           go test -p 1 -count=1 -v ./model ./service ./controller 2>&1 | tee "$LOG_FILE"
