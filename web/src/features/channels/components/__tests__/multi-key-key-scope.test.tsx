@@ -552,9 +552,7 @@ test.each(['application failure', 'request rejection'])(
         },
         expect.objectContaining({ singleUseAuthorization: true })
       )
-      expect(
-        within(confirm).getByRole('button', { name: 'Add' })
-      ).toBeEnabled()
+      expect(within(confirm).getByRole('button', { name: 'Add' })).toBeEnabled()
     })
     expect(confirm).toBeVisible()
     expect(input).toHaveAttribute('type', 'password')

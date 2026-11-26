@@ -89,3 +89,18 @@ inside `act` for the existing closed interval: Base UI completes close after an
 animation frame and a Promise continuation, even when `getAnimations` returns an
 empty array. Do not increase the interval, disable animations or replace DOM
 absence with a weaker closed-state assertion. Reopening must reset the demo.
+
+Multi-Key management displays the server's `key_preview`; clients must not load
+raw credentials to identify a row. Long scalar `sk-` keys show `sk-abcd…wxyz`,
+with at least eight characters hidden; other long scalar keys show four at
+each end. Very short, pipe-delimited and multiline credentials stay masked.
+Structured credentials expose only the established approved identifiers.
+Keep stable allocation ID/revision as mutation identity, never the preview.
+
+Adding credentials is independent of quota-ledger activation. Preserve write
+permission, sensitive-action verification and revision conflicts. Inactive
+quota accounting permits opening the existing explanation, not saving limits
+or resetting usage. Reset requires active accounting, permission and positive
+period usage; its disabled reason must be available to keyboard users.
+The existing multi-key dialog/scope suites cover these boundaries, and
+`TestMultiKeyStatusKeyPreview` covers scalar and structured redaction.

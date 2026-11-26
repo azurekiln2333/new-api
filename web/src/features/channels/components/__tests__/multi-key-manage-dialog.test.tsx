@@ -635,7 +635,10 @@ test('an inactive ledger explains both quota icons without allowing a budget mut
     name: 'Reset used amount',
   })
   expect(reset).toHaveAttribute('aria-disabled', 'true')
-  expect(reset).toHaveAttribute('title', 'Channel budget accounting is not enabled')
+  expect(reset).toHaveAttribute(
+    'title',
+    'Channel budget accounting is not enabled'
+  )
   act(() => quota.focus())
   await user.tab()
   expect(reset).toHaveFocus()
