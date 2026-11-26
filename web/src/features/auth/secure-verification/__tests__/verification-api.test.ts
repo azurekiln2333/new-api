@@ -350,13 +350,19 @@ it.each(['password', '2fa', 'session'] as const)(
     useAuthStore.getState().auth.setBundle(sessionBundle)
     const refresh = mockRefreshResponse(sessionBundle)
     const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
-      throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, undefined, {
-        status: 401,
-        statusText: 'Unauthorized',
+      throw new AxiosError(
+        'Unauthorized',
+        'ERR_BAD_REQUEST',
         config,
-        headers: {},
-        data: { code: 'AUTH_SESSION_REVOKED' },
-      })
+        undefined,
+        {
+          status: 401,
+          statusText: 'Unauthorized',
+          config,
+          headers: {},
+          data: { code: 'AUTH_SESSION_REVOKED' },
+        }
+      )
     })
     api.defaults.adapter = adapter
     let input: VerificationInput = { method: 'session' }
@@ -450,11 +456,7 @@ it('bounds a blocked browser refresh lock and permits a later fresh refresh', as
   let lockSignal: AbortSignal | undefined
   let grantLock: (() => Promise<unknown>) | undefined
   const request = vi.fn(
-    (
-      _name: string,
-      options: LockOptions,
-      callback: () => Promise<unknown>
-    ) => {
+    (_name: string, options: LockOptions, callback: () => Promise<unknown>) => {
       lockSignal = options.signal
       grantLock = callback
       return new Promise(() => {})
@@ -551,7 +553,10 @@ it('cancels a method-query 401 refresh wait without dispatching its replay', asy
   api.defaults.adapter = adapter
   vi.useFakeTimers()
   const controller = new AbortController()
-  const methods = checkVerificationMethods('admin.user.manage', controller.signal)
+  const methods = checkVerificationMethods(
+    'admin.user.manage',
+    controller.signal
+  )
   const rejected = expect(methods).rejects.toBeInstanceOf(Error)
   await vi.advanceTimersByTimeAsync(0)
   expect(send).toHaveBeenCalledTimes(1)

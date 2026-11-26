@@ -221,37 +221,34 @@ export async function verify(
       case 'session':
       case '2fa':
       case 'password':
-        proof = await withAuthRequestDeadline(
-          async (requestSignal) => {
-            let credentials: Record<string, string> = {}
-            if (input.method === 'password') {
-              if (passwordEncryptionEnabled) {
-                const encrypted = await encryptPassword(
-                  input.password,
-                  requestSignal
-                )
-                credentials = { ...encrypted }
-              } else {
-                credentials = { password: input.password }
-              }
-            } else if (input.method === '2fa') {
-              credentials = { code: input.code.trim() }
-            }
-            requestSignal.throwIfAborted()
-            return authResult<SecurityProof>(
-              api.post(
-                '/api/verify',
-                { method: input.method, ...operationFields, ...credentials },
-                {
-                  ...authRequestOptions,
-                  singleUseAuthorization: true,
-                  signal: requestSignal,
-                }
+        proof = await withAuthRequestDeadline(async (requestSignal) => {
+          let credentials: Record<string, string> = {}
+          if (input.method === 'password') {
+            if (passwordEncryptionEnabled) {
+              const encrypted = await encryptPassword(
+                input.password,
+                requestSignal
               )
+              credentials = { ...encrypted }
+            } else {
+              credentials = { password: input.password }
+            }
+          } else if (input.method === '2fa') {
+            credentials = { code: input.code.trim() }
+          }
+          requestSignal.throwIfAborted()
+          return authResult<SecurityProof>(
+            api.post(
+              '/api/verify',
+              { method: input.method, ...operationFields, ...credentials },
+              {
+                ...authRequestOptions,
+                singleUseAuthorization: true,
+                signal: requestSignal,
+              }
             )
-          },
-          signal
-        )
+          )
+        }, signal)
         break
       case 'passkey':
         proof = await verifyPasskey(operation, signal, input.rpID, onDomains)

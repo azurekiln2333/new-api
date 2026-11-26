@@ -408,7 +408,9 @@ it('releases a timed-out verification submission without granting a late proof o
     await vi.advanceTimersByTimeAsync(AUTH_REQUEST_TIMEOUT_MS)
   })
   expect(screen.getByRole('alert')).toHaveTextContent('Request failed')
-  expect(screen.getByLabelText('Password', { selector: 'input' })).toHaveValue('')
+  expect(screen.getByLabelText('Password', { selector: 'input' })).toHaveValue(
+    ''
+  )
   expect(result).not.toHaveBeenCalled()
   expect(posts).toHaveBeenCalledTimes(1)
   await act(async () => {

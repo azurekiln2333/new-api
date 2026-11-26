@@ -46,22 +46,15 @@ export async function encryptPassword(
   signal?: AbortSignal
 ): Promise<EncryptedPassword> {
   try {
-    return await withAuthRequestDeadline(
-      async (requestSignal) => {
-        const key = await getPasswordEncryptionKey(requestSignal)
-        const ciphertext = await rsaOaepEncrypt(
-          password,
-          key.public_key,
-          key.kid
-        )
-        requestSignal.throwIfAborted()
-        return {
-          password_encrypted: ciphertext,
-          encryption_key_id: key.kid,
-        }
-      },
-      signal
-    )
+    return await withAuthRequestDeadline(async (requestSignal) => {
+      const key = await getPasswordEncryptionKey(requestSignal)
+      const ciphertext = await rsaOaepEncrypt(password, key.public_key, key.kid)
+      requestSignal.throwIfAborted()
+      return {
+        password_encrypted: ciphertext,
+        encryption_key_id: key.kid,
+      }
+    }, signal)
   } catch (error: unknown) {
     clearPasswordEncryptionCache()
     throw new Error(t('Login failed'), { cause: error })
