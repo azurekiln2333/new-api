@@ -1,4 +1,26 @@
 # Execution
+## Release boundary correction — 2026-11-26
+
+PR #4 merged as `60928d8f207d1f874a2d64886a96a73c11d78469`. The fork release
+workflow `45813059715` succeeded and published `custom-20261126-60928d8` and
+the GHCR `latest` image at 12:23 UTC. The user deploys via Watchtower; publication
+is the authorized delivery mechanism. No SSH/server rollout is required here.
+
+That release did not contain every requested feature. The accepted R37 masked
+preview and direct append deltas remained uncommitted in the original worktree.
+They are being isolated on `fix/multikey-preview-actions-20261126`, based on the
+released main, alongside the reported quota/reset affordance correction. Root
+owns capture, hosted CI, merge and image publication. No local validation runs.
+
+Remaining work is still active: R5 preview/frontend completion and individual
+retry/progress follow-up; R33 admin log scopes/channel search; R34 safe error
+projection; R36 runtime/UI beyond persistence; R37 all-Key discovery/mapping
+integration; R38 explicit out-of-scope diagnostics and opt-in scope extension;
+R39 site/channel case-insensitive identity; R40 security-verification spinner;
+R24 source integration/backfill/readers beyond its foundation; remaining R27
+capabilities and R29 monitoring. R32 workspace migration remains last. Older
+snapshots below are historical and do not describe the current published scope.
+
 ## Live continuation — 2026-11-26
 
 - Narrow role-query correction is frozen, independently accepted and captured in2aab94859; string accessible-name equality is retained and the unsupported option removed. It is not yet pushed while root collects the running frontend test result. Current locale artifact45779078819 has an empty locales.patch at source3a974518b3eb7b3a98dca49ab18336d4d56c344e. A fresh read of all12 task Pi panes shows p2 resumed direct reads after /new; the others show frozen handoffs or fresh idle sessions, with no additional current100-turn error. No healthy session was reset.
@@ -145,3 +167,11 @@ After pJ identified the positional-Key race, pJ owns the narrow manual-test back
 - R26's original reviewer found cached administrator rows surviving same-session demotion. Owner corrected only its API/table/existing suite and re-froze exact11; pH owns final read-only review. Prior PAT/footer fixes remain accepted.
 - R5 backend froze6, but pH found arbitrary upstream code/type leaking through public retained errors. pJ reopens only its controller/existing controller suite for fixed-safe projection and malicious-refusal replay coverage. Root also requires the preview-to-final-wire prompt contract to account for configured overrides before claiming actual dispatched prompt identity. UI remains separately owned/unfrozen.
 - Native `plugin_submit_trace` traces the hosted plugin chip assertion without production edits; an empty queried list is not proof of state loss or a submit root cause. Preserve callback/full ordered payload assertions and establish actual component interaction first.
+
+## Hotfix capture and ongoing ownership — 2026-11-27
+
+Root captured and pushed hotfix `94862b39f` in the isolated multikey-hotfix worktree, PR #5. Independent source review accepted the redaction/append/quota-explanation and card/address slices. CI run `45870882405` checks merge `448075a9aec2af33cd88f983da2d1a6f6958c494`: backend succeeded; frontend typecheck, lint, all 3724 tests across 289 files and build succeeded, but two exact test-formatting hunks failed. Integration was still running at this record. pJ owns only those logged wraps; no local executable validation is authorized.
+
+Separate console-followups ownership: p6 fixes repeated allocation reconciliation/transaction, whole-channel budget reads and per-row username lookups in get_key_status; native mapping author fixes missing legacy alias abilities and p6 wires its one startup call. pH fixes the bounded secure-verification spinner; p3 finishes fingerprint progress/single-probe retry; p5 finishes R33 privacy/abort/search corrections. Native mapping exact3 is not accepted until existing-data repair and real-dialect checks pass. R5 is partial until its new tests and independent freeze review complete.
+
+Other isolated worktrees: p2 finishes R34 safe upstream sinks, p5 finishes R36 runtime/UI, p4 integrates durable statistics, w6E:p2 owns R37/R38 discovery/manual diagnostics. Root exclusively owns Git, hosted CI, merge and release. Original dirty source stays preserved. Confirmed tool-loss/interrupted sessions were restarted with /new and gpt-6.1-sol restored; terminal working status alone is never completion evidence. Watchtower deployment authorization remains in effect; publish the reviewed image after required hosted checks, without SSH or production configuration changes.

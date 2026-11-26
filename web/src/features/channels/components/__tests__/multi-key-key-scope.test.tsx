@@ -112,7 +112,7 @@ function OpenWithRow(props: { channel: Channel }) {
   return <MultiKeyManageDialog open onOpenChange={() => {}} />
 }
 
-function mockKeyStatus(keys: KeyStatus[]) {
+function mockKeyStatus(keys: KeyStatus[], revision?: number) {
   return vi.spyOn(api, 'post').mockImplementation(async (url) => {
     if (url === '/api/channel/multi_key/manage') {
       return {
@@ -120,6 +120,7 @@ function mockKeyStatus(keys: KeyStatus[]) {
           success: true,
           data: {
             keys,
+            revision,
             total: keys.length,
             page: 1,
             page_size: 10,
@@ -154,8 +155,12 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function renderDialog(keys: KeyStatus[], currentChannel = channel) {
-  const post = mockKeyStatus(keys)
+async function renderDialog(
+  keys: KeyStatus[],
+  currentChannel = channel,
+  revision?: number
+) {
+  const post = mockKeyStatus(keys, revision)
   render(
     <I18nextProvider i18n={i18n}>
       <DialogHarness channel={currentChannel} />
@@ -337,20 +342,258 @@ test('dedup apply submits only the explicitly confirmed server preview token', a
   )
 })
 
-test('inactive allocation ledger hides budget controls rather than offering a fake unlimited account', async () => {
-  await renderDialog([
-    keyStatus({
-      id: '1001',
-      rev: 1,
-      quota: { ledger_enabled: false, enabled: true } as ChannelBudgetView,
-    }),
-  ])
-  expect(screen.getByRole('button', { name: 'Set Quota' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Add allocation' })).toBeDisabled()
+test('inactive allocation ledger permits append and budget inspection but keeps reset and dedup unavailable', async () => {
+  await renderDialog(
+    [
+      keyStatus({
+        id: '1001',
+        rev: 1,
+        quota: {
+          ledger_enabled: false,
+          enabled: true,
+          period_used_quota: 30,
+        } as ChannelBudgetView,
+      }),
+    ],
+    channel,
+    10
+  )
+  expect(screen.getByRole('button', { name: 'Set Quota' })).toBeEnabled()
+  expect(
+    screen.getByRole('button', { name: 'Reset used amount' })
+  ).toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByRole('button', { name: 'Add allocation' })).toBeEnabled()
   expect(
     screen.getByRole('button', { name: 'Deduplicate Keys' })
   ).toBeDisabled()
   expect(screen.getByText('Not enabled')).toBeVisible()
+  expect(
+    screen.getByText('Channel budget accounting is not enabled')
+  ).toBeVisible()
+})
+
+test('a permitted administrator can append a distinct static credential with the ledger disabled and refresh the allocations', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 2,
+    username: 'operator',
+    role: ROLE.ADMIN,
+    permissions: {
+      admin_permissions: {
+        channel: { operate: true, write: true, sensitive_write: true },
+      },
+    },
+  })
+  const original = keyStatus({
+    id: '1001',
+    rev: 2,
+    key_preview: 'sk-orig...inal',
+    quota: { ledger_enabled: false } as ChannelBudgetView,
+  })
+  const added = keyStatus({
+    id: '1002',
+    rev: 1,
+    index: 1,
+    key_preview: 'sk-dist...inct',
+    quota: { ledger_enabled: false } as ChannelBudgetView,
+  })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true },
+  })
+  const post = await renderDialog([original], channel, 10)
+  post.mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: {
+        keys: [original, added],
+        revision: 11,
+        total: 2,
+        page: 1,
+        page_size: 10,
+        total_pages: 1,
+        enabled_count: 2,
+      },
+    },
+  })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Add allocation' }))
+  const confirm = await screen.findByRole('alertdialog', {
+    name: 'Add allocation',
+  })
+  const input = within(confirm).getByLabelText('Upstream Key')
+  expect(input).toHaveAttribute('type', 'password')
+  expect(within(confirm).getByRole('button', { name: 'Add' })).toBeDisabled()
+  await user.type(input, '  distinct-static-key  ')
+  expect(put).not.toHaveBeenCalled()
+  await user.click(within(confirm).getByRole('button', { name: 'Add' }))
+
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Add allocation' })
+    ).not.toBeInTheDocument()
+  )
+  const manager = screen.getByRole('dialog', {
+    name: /Multi-Key Management.*multi/,
+  })
+  expect(await within(manager).findByText('1002')).toBeVisible()
+  expect(within(manager).getByText('1001')).toBeVisible()
+  expect(within(manager).getByText('2. sk-dist...inct')).toBeVisible()
+  expect(screen.queryByLabelText('Upstream Key')).not.toBeInTheDocument()
+  expect(put).toHaveBeenCalledExactlyOnceWith(
+    '/api/channel/',
+    {
+      id: 7,
+      key: 'distinct-static-key',
+      key_mode: 'append',
+      to_multi_key: undefined,
+      expected_revision: 10,
+    },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+  expect(post).toHaveBeenCalledTimes(2)
+})
+
+test.each(['operate', 'write', 'sensitive_write'] as const)(
+  'missing channel.%s permission prevents opening the append dialog',
+  async (permission) => {
+    useAuthStore.getState().auth.setUser({
+      id: 2,
+      username: 'operator',
+      role: ROLE.ADMIN,
+      permissions: {
+        admin_permissions: {
+          channel: {
+            operate: true,
+            write: true,
+            sensitive_write: true,
+            [permission]: false,
+          },
+        },
+      },
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true },
+    })
+    await renderDialog([keyStatus({ id: '1001', rev: 1 })], channel, 10)
+    expect(
+      screen.queryByRole('button', { name: 'Add allocation' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Upstream Key')).not.toBeInTheDocument()
+    expect(put).not.toHaveBeenCalled()
+  }
+)
+
+test.each([
+  { provider: 'Codex', type: 57, settings: '{}' },
+  {
+    provider: 'Vertex API key',
+    type: 41,
+    settings: '{"vertex_key_type":"api_key"}',
+  },
+  { provider: 'task plugin', type: 61, settings: '{}' },
+])(
+  '$provider credentials cannot use the static append shortcut',
+  async ({ type, settings }) => {
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true },
+    })
+    await renderDialog(
+      [keyStatus({ id: '1001', rev: 1 })],
+      { ...channel, type, settings },
+      10
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Add allocation' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Upstream Key')).not.toBeInTheDocument()
+    expect(put).not.toHaveBeenCalled()
+  }
+)
+
+test.each(['application failure', 'request rejection'])(
+  'append %s keeps the password and confirmation open without retrying',
+  async (outcome) => {
+    const put = vi.spyOn(api, 'put')
+    if (outcome === 'application failure') {
+      put.mockResolvedValue({
+        data: { success: false, message: 'Append unavailable' },
+      })
+    } else {
+      put.mockRejectedValue(new Error('Connection unavailable'))
+    }
+    const post = await renderDialog(
+      [
+        keyStatus({
+          id: '1001',
+          rev: 2,
+          quota: { ledger_enabled: false } as ChannelBudgetView,
+        }),
+      ],
+      channel,
+      10
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Add allocation' }))
+    const confirm = await screen.findByRole('alertdialog', {
+      name: 'Add allocation',
+    })
+    const input = within(confirm).getByLabelText('Upstream Key')
+    await user.type(input, 'distinct-static-key')
+    await user.click(within(confirm).getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledExactlyOnceWith(
+        '/api/channel/',
+        {
+          id: 7,
+          key: 'distinct-static-key',
+          key_mode: 'append',
+          to_multi_key: undefined,
+          expected_revision: 10,
+        },
+        expect.objectContaining({ singleUseAuthorization: true })
+      )
+      expect(within(confirm).getByRole('button', { name: 'Add' })).toBeEnabled()
+    })
+    expect(confirm).toBeVisible()
+    expect(input).toHaveAttribute('type', 'password')
+    expect(input).toHaveValue('distinct-static-key')
+    expect(input).toBeEnabled()
+    await user.type(input, '-edited')
+    expect(input).toHaveValue('distinct-static-key-edited')
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(post).toHaveBeenCalledTimes(1)
+  }
+)
+
+test('an append revision conflict closes confirmation and reloads without replaying the write', async () => {
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: false, error_code: 'channel_key_revision_conflict' },
+  })
+  const post = await renderDialog(
+    [keyStatus({ id: '1001', rev: 2 })],
+    channel,
+    10
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Add allocation' }))
+  const confirm = await screen.findByRole('alertdialog', {
+    name: 'Add allocation',
+  })
+  await user.type(within(confirm).getByLabelText('Upstream Key'), 'new-key')
+  await user.click(within(confirm).getByRole('button', { name: 'Add' }))
+
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('alertdialog', { name: 'Add allocation' })
+    ).not.toBeInTheDocument()
+  )
+  expect(await screen.findByText('1001')).toBeVisible()
+  expect(post).toHaveBeenCalledTimes(2)
+  expect(put).toHaveBeenCalledTimes(1)
+  await user.click(screen.getByRole('button', { name: 'Add allocation' }))
+  expect(await screen.findByLabelText('Upstream Key')).toHaveValue('')
+  expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled()
+  expect(put).toHaveBeenCalledTimes(1)
 })
 
 test('appending the original key to a single static channel preserves both allocation IDs', async () => {
@@ -405,6 +648,73 @@ test('appending the original key to a single static channel preserves both alloc
     },
     expect.objectContaining({ singleUseAuthorization: true })
   )
+})
+
+test('a single static channel converts to multiple allocations without requesting budget data when the ledger is disabled', async () => {
+  const single = {
+    ...channel,
+    channel_info: {
+      ...channel.channel_info,
+      is_multi_key: false,
+      key_entry_revision: 6,
+    },
+  }
+  const get = vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: { ledger_enabled: false } },
+  })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true },
+  })
+  const post = mockKeyStatus(
+    [
+      keyStatus({
+        id: '1001',
+        rev: 1,
+        key_preview: 'sk-orig...inal',
+        quota: { ledger_enabled: false } as ChannelBudgetView,
+      }),
+      keyStatus({
+        id: '1002',
+        rev: 1,
+        index: 1,
+        key_preview: 'sk-dist...inct',
+        quota: { ledger_enabled: false } as ChannelBudgetView,
+      }),
+    ],
+    7
+  )
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DialogHarness channel={single} />
+    </I18nextProvider>
+  )
+  const user = userEvent.setup()
+  const input = await screen.findByLabelText('Upstream Key')
+  expect(input).toHaveAttribute('type', 'password')
+  expect(input).toBeEnabled()
+  expect(post).not.toHaveBeenCalled()
+  await user.type(input, 'distinct-static-key')
+  await user.click(screen.getByRole('button', { name: 'Add' }))
+
+  const manager = await screen.findByRole('dialog', {
+    name: /Multi-Key Management.*multi/,
+  })
+  expect(await within(manager).findByText('1001')).toBeVisible()
+  expect(within(manager).getByText('1002')).toBeVisible()
+  expect(screen.queryByLabelText('Upstream Key')).not.toBeInTheDocument()
+  expect(put).toHaveBeenCalledExactlyOnceWith(
+    '/api/channel/',
+    {
+      id: 7,
+      key: 'distinct-static-key',
+      key_mode: 'append',
+      to_multi_key: true,
+      expected_revision: 6,
+    },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+  expect(post).toHaveBeenCalledTimes(1)
+  expect(get).not.toHaveBeenCalled()
 })
 
 test('an empty explicit allowlist means no models and is submitted with the stable identity', async () => {
