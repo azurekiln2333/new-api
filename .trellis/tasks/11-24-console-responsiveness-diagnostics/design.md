@@ -82,3 +82,16 @@ Runtime and UI are separate required follow-ups before feature capture: choose U
 ### R19 build-origin default
 
 Resolve update repository in order: explicit stored setting, validated nonempty `NEW_API_UPDATE_SOURCE_REPOSITORY`, validated nonempty build default, then the unchanged `QuantumNous/new-api` fallback. The build default is the exported string `github.com/QuantumNous/new-api/setting/system_setting.UpdateSourceBuildDefaultRepository`, set with Go `-X`. Fork image builds pass `github.repository` through Docker `UPDATE_SOURCE_REPOSITORY`; all four downloadable release binaries receive the same value. Ordinary builds with no binding retain upstream fallback. No production setting is overwritten.
+
+### R39 model identity setting boundary
+
+The user selected both site and channel controls. The site boolean defaults false;
+the channel override has inherit/enabled/disabled semantics. Exact model IDs take
+priority, then only one unambiguous case-folded catalog identity may resolve when
+the effective channel policy permits it. Preserve the requested spelling separately
+from the canonical identity used by authorization, routing, Key scope and billing.
+Attempt selection must retain the eligible-channel constraint through retries and
+authoritative admission. Preserve exact configured mapping hops and upstream
+spelling; never fold `deepseek-r1` to `DeepSeek-R1` into a self-cycle. Passthrough,
+WebSocket and task-plugin paths need explicit source-backed coverage before this
+feature is claimed complete. This design does not expand current worker writes.

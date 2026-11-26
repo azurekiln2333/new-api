@@ -1,5 +1,72 @@
 # Console responsiveness and diagnostics — integration report
 
+## Current continuation and urgent mapping defect — 2026-11-26
+
+Urgent mapping save is fixed and pushed in a2c1c30dd347c121ca9096ebab9a83a15e7023cf.
+The authoritative config merge now copies nonnil ModelMapping and audits the field
+name. TestChannelUpdatePersistsModelMappingAndPublishesCache passed add/edit/omit/
+null/clear and exact upstream-case assertions on SQLite3.50.4, MySQL8.4.13 and
+PostgreSQL16.16 in run45759710518. Actual checkout728efaf05a088619360e4df2f7320dc502ad284a
+and head have identical tree7121c161fdae62fbef7b1894e8a105364dae2aeb. Integration
+passed; backend vet/build/tests passed, with two format-only failures. Frontend
+had six assertion failures and nine formatting files; typecheck/lint/build passed.
+No production deployment or cross-node runtime observation is claimed.
+
+Reviewed formatting/status-disclosure corrections63a2f132c, hosted locale
+artifact2c81093cb and popup/dialog test corrections444d31352 are pushed. The locale
+patch contains266 additions across seven files, no removals; missing/extras0,
+aggregate untranslated ja8/ru9/zh7 remain. CI45779078756 now tests head444d31352;
+backend has succeeded, frontend found a new unsupported role-query option in the
+API-key test helper. That narrow typing correction is being finished; other checks
+remain in progress. Mapping is not yet released to the installed instance.
+
+R37 append/mask, R5 backend/frontend, R33 and the R24 probe/spec correction have
+independent source acceptance but remain uncaptured and unvalidated by these runs.
+R34 remains incomplete; its actual100-turn/tool-blocked session was replaced with
+a fresh gpt-6.1-sol/max session and restored exact ownership. User selected both
+global and per-channel case-insensitive controls, with global default disabled.
+This is recorded requirements/design, not an implemented matching feature.
+
+This section supersedes older pending/ownership snapshots below. Run45724415621
+integration139590507197 completed SUCCESS at2026-11-26T00:18:54Z on checkout
+9f053429d097cd17c4b0b7db236f53c2ea32dc88. Its backend also passed; frontend remains
+failed with seven assertions, four unhandled getAnimations errors and formatting.
+Later source-accepted captures include plugin correction ae1f00de5, pricing cards
+ed9f3dfbd, Playground corrections9296c1617, effective subscriptions57a174255 and
+official provider status766b38a8b. No earlier run validates these later commits.
+
+R24 foundation exact5 is source-accepted; held released-migration probe/workflow
+and foundation specification are under bounded review. Root added an explicit
+UsageEvent foundation race selector; execution and fresh/latest-release upgrade
+twice remain pending. R5 backend exact6 and frontend exact3 are frozen for separate
+independent reviews. R33 saved exact19 remains in final owner readback. R34 host
+regressions/readback remain incomplete. R36 persistence exact9 finished source
+review, while runtime/UI are still separate unfinished work.
+
+The user reports model mapping cannot be edited even on the main node, with
+deepseek-r1 mapped to DeepSeek-R1 as a concrete example. Read-only tracing found
+applyChannelConfigEdit in controller/channel.go omits ModelMapping when merging
+the submitted candidate into the locked authoritative row; PUT can report success
+while persisting/publishing the old mapping. Root reopened only that controller
+and existing controller/channel_create_test.go for native mapping_save_fix to
+repair and protect add/change/clear/omitted semantics. Adjacent omitted writable
+fields require bounded review. This is a source-confirmed cause, not evidence of
+successful production remediation. Optional case-insensitive model IDs are a
+separate requested feature, not a substitute for repairing save behavior.
+
+R37/R38/R39 record direct Key addition, all-Key discovery and catalog union,
+mapping entry, identifiable server-masked previews, an explicit manual-test scope
+switch with post-success opt-in model addition, and mapping/case behavior. These
+are authorized additions, not completed features. Automatic/ordinary relay model
+restrictions remain in effect; explicit diagnostics must retain all other guards.
+
+At the user's request root inspected12 task Pi panes, cancelled stuck compactions,
+and reset11 sessions after actual turn-limit/tool-blocker evidence, confirming new
+session IDs and gpt-6.1-sol/max. The remaining p3 session was healthy/frozen. Saved
+files were preserved, exact owners restored, and no target files were touched.
+Native R34 and held-foundation reviewers separately hit429 and were reassigned;
+those failures are not source dispositions. No local executable validation ran.
+
 ## Current release and R21 status — 2026-11-26 (Asia/Shanghai)
 
 The console integration was merged into `main` at `370bd0847906fabc795d1140cb2d0987f3dd26a7`. Release workflow [`45632007544`](https://github.com/azurekiln2333/new-api/actions/runs/45632007544) completed **all 12 jobs successfully**, including frontend/backend/database validation, both image architectures, multi-platform publication and release downloads. Release [`custom-20261125-370bd08`](https://github.com/azurekiln2333/new-api/releases/tag/custom-20261125-370bd08) was published at **2026-11-25T14:49:39Z** with **7 assets** (four platform binaries and three checksum files). This verifies publication, not production deployment or resolution of the live login incident. Earlier “no merge/release” and failed-CI snapshots below are historical, superseded for this release.
@@ -19,7 +86,9 @@ The console integration was merged into `main` at `370bd0847906fabc795d1140cb2d0
 
 **New UI corrections in progress:** `fix/channel-card-invitation-layout-20261126` starts from the R21 merge. Current user requirements supersede the old card quota/type presentation: name replaces type, billed used quota remains visible with configured total or known zero, metric text wraps completely, invitation actions use a compact menu, and channel testing/multi-key controls follow R22 in the parent PRD. These follow-up changes require their own exact-SHA hosted checks before merge/release.
 
-**Latest source capture (2026-11-26):** `e3f89b145` contains the pH-accepted refund/cache fixture correction plus its backend contract; `b143ace59` contains the pH-accepted plugin TS2532 correction and submit-state diagnostics plus its frontend contract. These require a new hosted run. The plugin diagnostics do not establish or repair the historical `onSave=0` cause. All worker drafts and held R24 migration workflow/probe changes remain outside these captures. pM's observed 100-turn blocker was followed by actual compaction completion from 442,593 tokens; the same R5 three-file implementation is visibly resumed, not frozen or accepted.
+**Latest hosted snapshot (2026-11-26):** root pushed `fa8d52fe2b0972f3ddaa8fc535dfe40b0beb6edb`, including accepted refund correction `e3f89b145` and plugin diagnostics `b143ace59`. Run `45724415621` actually checks out merge `9f053429d097cd17c4b0b7db236f53c2ea32dc88`; its tree `60375a32d0d69847f024a1c5b33df6a41a4a4827` matches the head. Backend `139590507054` passed formatting, root/independent-module vet/build and tests. Nonverbose package success is not a named-subtest repeatability claim. Frontend `139590506698` passed typecheck, both lints and build, but failed formatting in five test files and seven assertions (3658/3665 passed, 285/288 files passed), plus four unhandled Base UI ScrollArea `viewport.getAnimations` errors. The plugin test stops at the scoped model-chip assertion with `[]`, before later native-form/Save/callback checks; the historical `onSave=0` cause is still not established. Five Playground failures concern accessible project-name spacing, and one concerns persisted quota-failure state. Integration remains pending at this snapshot. Its successful released-migration step still uses baseline `53a71f88`, not the uncaptured latest-release R24 gate.
+
+**Later source captures:** root applied pH-accepted locale artifact `45724415656`, exactly42 additions on the verified same source/tree, in `966f46b18`. Missing/extras are zero; pre-existing untranslated ja7/ru8/zh6 remain. `732232aca` captures only three of the five exact hosted formatter path corrections. `b70f19e4e` captures the pH-accepted seven R5 error keys in all seven script dictionaries; these49 additions await hosted generation. These later commits are not covered by run `45724415621`. Unfinished feature slices and held R24 migration workflow/probe changes remain uncommitted.
 
 **Earlier PR #4 hosted evidence:** run `45714039810` targets head `b543392cfcd175fe23a05b90a46e99d0dd2d13db`; checkout and `git log` confirm actual synthetic merge `1e1e0c845eac32d386d4af2a59b96fa3c60c03e6`. Backend job `139555425422` succeeded. Frontend job `139555425821` completed failure: typecheck, lint and production build succeeded, but 12 files need the exact formatting diffs printed by the hosted protected-header formatter and one model-limit regression failed (`api-keys-mutate-drawer.test.tsx:237`, offered `alpha` absent at assertion). Tests: 3644 passed, one failed across 288 files. The next push superseded this run and cancelled integration job `139555426012` during the per-turn goal-routing/channel-waiting gate; startup migration, full database contracts and the actual linked-build-default fixture had succeeded. This is not a completed integration pass. Root assigned p6 only the 12 reported formatting hunks and p5 only the existing model-limit test for source-backed diagnosis; neither correction is covered by this run. No local executable validation was run.
 

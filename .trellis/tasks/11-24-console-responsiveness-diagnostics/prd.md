@@ -122,6 +122,26 @@ The user supplied the rendered body of `https://lm.ikale.io/` and explicitly req
 
 Fix the slow/incomplete channel selector and confusing standalone Previous/Next paging controls. Include a selectable Key for multi-Key channels; model scope and effective endpoint/request follow the selected channel and stable Key identity/revision. Supported conversion remains available and stale selections never silently choose another Key. Compare against the user's installed `custom-20261126-37a4174`; do not explain an already-released defect as merely unpublished work.
 
+## R37 — Multi-key management, discovery and identifiable previews (2026-11-26)
+
+Add credentials directly from multi-key management without returning to channel edit. Ordinary distinct-key addition must not depend on enabling the quota ledger; preserve sensitive permissions, supported credential types, revision conflicts and duplicate-allocation rules.
+
+Expose model mapping alongside upstream discovery in multi-key management using the existing editor and the authoritative mapping scope. Channel edit must also fetch models across all of that channel's Keys and deduplicate their union. After explicit confirmation, models added to a Key must also join the channel's total catalog, preserving existing models and other Keys. Fetch alone must not silently save; partial failures remain visible and cannot erase previously configured models.
+
+In multi-key management and channel testing, show a server-masked prefix plus suffix with useful identifying characters, for example `sk-abcd...wxyz`. Never return a complete short credential or structured credential secrets, and never fetch raw credentials solely to format the preview. Selection identity remains stable Key ID/revision, not the preview.
+
+## R38 — Explicit connectivity testing beyond a Key's configured model scope (2026-11-26)
+
+This supersedes R22's unconditional restriction of the manual test model list. Add a switch between all channel models and the selected Key's configured models. In all-model mode, an administrator explicitly selecting a stable Key may test a model outside that Key's configured scope. The explicit diagnostic request must still enforce authentication, credential identity/revision, channel/Key availability, capacity, quota and supported endpoint controls; never silently switch to another Key. Automatic Key selection and ordinary API relay continue to enforce the configured model scope.
+
+After an observed successful test of an out-of-scope model, offer an explicit one-click action to add that model to the selected Key's scope and channel catalog. Test success alone never writes configuration. Save must check current identity/revision and report conflicts, with no lost existing models. Fingerprint preview contracts remain separately owned unless a later explicit integration is required.
+
+## R39 — Effective model mapping and optional case-insensitive model IDs (2026-11-26)
+
+The user reports that saving `deepseek-r1` mapped to upstream `DeepSeek-R1` does not take effect on both another node and the main node. Trace form submission, persisted mapping, local publication, cross-node synchronization and the actual upstream model value; do not presume replication is the cause. Preserve case-only mappings exactly and verify them through an observable request regression.
+
+Add configurable case-insensitive model-ID matching. The user confirmed both a site-wide setting and a per-channel setting, with the site-wide setting disabled by default. Channels inherit that setting by default and can explicitly enable or disable it. Preserve the configured canonical/upstream spelling, give exact matches priority, and explicitly handle case-fold collisions rather than selecting an arbitrary model. Authentication/model scopes, routing and billing must agree on the resolved identity; this option must not widen permissions or substitute pricing silently. Establish the configuration boundary from source before implementation.
+
 ## R36 — Multiple upstream addresses and per-Key upstream protocols
 
 The user confirmed one OpenAI or Anthropic channel can contain multiple upstream Base URLs with random request selection. The URL pool is independent of the existing multi-Key pool. Add an optional homepage URL; when empty, the first configured Base URL is the homepage destination.
