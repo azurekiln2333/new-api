@@ -204,9 +204,7 @@ async function selectComboboxOption(
   if (!popup) {
     throw new Error('Expected popup controlled by combobox')
   }
-  await user.click(
-    within(popup).getByRole('option', { name: optionName, exact: true })
-  )
+  await user.click(within(popup).getByRole('option', { name: optionName }))
   await waitFor(() => expect(popup).not.toBeInTheDocument())
 }
 

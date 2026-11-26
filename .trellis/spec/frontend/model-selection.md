@@ -70,6 +70,8 @@ popup before opening another picker. A closed Base UI popover can remain mounted
 until its animation Promise completes; document-wide command-item queries can
 invoke a departing picker's handler. Preserve exact group transitions, selected
 order and submitted payload assertions rather than waiting for a wrong selection.
+For `getByRole`, a string `name` already matches the exact accessible name;
+`exact` is not a supported role-query option. Do not copy it from `getByText`.
 
 Request-plugin model scope opts into the same display comparator, including saved
 values absent from the offered catalog. Model-value autocomplete and matched
