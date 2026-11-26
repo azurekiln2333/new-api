@@ -121,13 +121,7 @@ test('a new row focuses naturally sorted searchable choices without reordering c
   expect(source).toHaveAttribute('aria-expanded', 'true')
   expect(
     screen.getAllByRole('option').map((option) => option.textContent)
-  ).toEqual([
-    'Alpha-model',
-    'alpha-model',
-    'beta-model',
-    'model-2',
-    'model-10',
-  ])
+  ).toEqual(['Alpha-model', 'alpha-model', 'beta-model', 'model-2', 'model-10'])
   expect(onChange).toHaveBeenCalledExactlyOnceWith(
     '{\n  "z-alias": "z-upstream",\n  "a-alias": "a-upstream"\n}'
   )
@@ -159,14 +153,14 @@ test('a new row focuses naturally sorted searchable choices without reordering c
     '{\n  "z-alias": "z-upstream",\n  "a-alias": "a-upstream",\n  "model-2": "upstream-10"\n}'
   )
   expect(
-    screen.getAllByRole('combobox', { name: 'Request Model Name' }).map(
-      (input) => (input as HTMLInputElement).value
-    )
+    screen
+      .getAllByRole('combobox', { name: 'Request Model Name' })
+      .map((input) => (input as HTMLInputElement).value)
   ).toEqual(['z-alias', 'a-alias', 'model-2'])
   expect(
-    screen.getAllByRole('combobox', { name: 'Upstream Model Name' }).map(
-      (input) => (input as HTMLInputElement).value
-    )
+    screen
+      .getAllByRole('combobox', { name: 'Upstream Model Name' })
+      .map((input) => (input as HTMLInputElement).value)
   ).toEqual(['z-upstream', 'a-upstream', 'upstream-10'])
   expect(sourceModels).toEqual([
     'model-10',

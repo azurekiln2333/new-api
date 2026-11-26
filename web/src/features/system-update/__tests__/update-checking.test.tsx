@@ -469,10 +469,7 @@ describe('update source settings', () => {
         })
       )
       await waitFor(() => {
-        expect(input).toHaveAttribute(
-          'placeholder',
-          'deployment-owner/new-api'
-        )
+        expect(input).toHaveAttribute('placeholder', 'deployment-owner/new-api')
         expect(input).toHaveValue('draft-owner/new-api')
       })
       expect(put).not.toHaveBeenCalled()

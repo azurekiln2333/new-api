@@ -188,17 +188,17 @@ test('sorting suggestions preserves saved row order and a custom model missing f
     'us-east-1'
   )
   const secondRow = screen.getByRole('group', { name: 'Region per model 2' })
-  expect(within(secondRow).getByRole('combobox', { name: 'Model' })).toHaveValue(
-    'retired-model'
-  )
+  expect(
+    within(secondRow).getByRole('combobox', { name: 'Model' })
+  ).toHaveValue('retired-model')
   await user.click(within(secondRow).getByRole('combobox', { name: 'Model' }))
   expect(
     screen.getAllByRole('option').map((option) => option.textContent)
   ).toEqual(['claude-opus-4-7', 'custom-model', 'gpt-2', 'gpt-10'])
   await user.keyboard('{Escape}')
-  expect(within(secondRow).getByRole('combobox', { name: 'Model' })).toHaveValue(
-    'retired-model'
-  )
+  expect(
+    within(secondRow).getByRole('combobox', { name: 'Model' })
+  ).toHaveValue('retired-model')
   expect(savedConfig()).toEqual({
     regions: { 'gpt-5': 'us-east-1', 'retired-model': 'eu-west-1' },
   })
