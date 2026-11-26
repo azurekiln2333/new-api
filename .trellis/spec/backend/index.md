@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Async quota fixture boundaries; other conventions pending | Partially defined |
 | [Logging Guidelines](./logging-guidelines.md) | Original relay request capture, protected stores, privileged reads and retention | Defined |
 | [CORS Origins](./cors-origins.md) | Exact credentialed browser origins and preflight behavior | Defined |
+| [Secure verification](./secure-verification.md) | Durable audit before proof, bounded waits and non-replayable factors | Defined |
 | [Merge and Release Contract](./merge-release-contract.md) | Preserve both merge parents and verify actual release artifacts | Defined |
 
 ---

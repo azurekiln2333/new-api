@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { t } from 'i18next'
 
 import { api } from '@/lib/api'
+import { withAuthRequestDeadline } from '@/lib/auth-session'
 
 interface PasswordEncryptionKey {
   kid: string
@@ -41,22 +42,36 @@ export function clearPasswordEncryptionCache(): void {
 }
 
 export async function encryptPassword(
-  password: string
+  password: string,
+  signal?: AbortSignal
 ): Promise<EncryptedPassword> {
   try {
-    const key = await getPasswordEncryptionKey()
-    const ciphertext = await rsaOaepEncrypt(password, key.public_key, key.kid)
-    return {
-      password_encrypted: ciphertext,
-      encryption_key_id: key.kid,
-    }
+    return await withAuthRequestDeadline(
+      async (requestSignal) => {
+        const key = await getPasswordEncryptionKey(requestSignal)
+        const ciphertext = await rsaOaepEncrypt(
+          password,
+          key.public_key,
+          key.kid
+        )
+        requestSignal.throwIfAborted()
+        return {
+          password_encrypted: ciphertext,
+          encryption_key_id: key.kid,
+        }
+      },
+      signal
+    )
   } catch (error: unknown) {
     clearPasswordEncryptionCache()
     throw new Error(t('Login failed'), { cause: error })
   }
 }
 
-async function getPasswordEncryptionKey(): Promise<PasswordEncryptionKey> {
+async function getPasswordEncryptionKey(
+  signal: AbortSignal
+): Promise<PasswordEncryptionKey> {
+  signal.throwIfAborted()
   const now = Date.now()
   if (cachedKey && now - cachedAt < KEY_CACHE_TTL_MS) {
     return cachedKey
@@ -65,7 +80,8 @@ async function getPasswordEncryptionKey(): Promise<PasswordEncryptionKey> {
   const response = await api.get<{
     success: boolean
     data?: PasswordEncryptionKey
-  }>('/api/user/login/encryption-key')
+  }>('/api/user/login/encryption-key', { signal })
+  signal.throwIfAborted()
   const key = response.data?.data
   if (!response.data?.success || !key?.kid || !key.public_key) {
     throw new Error('Password encryption key is unavailable')

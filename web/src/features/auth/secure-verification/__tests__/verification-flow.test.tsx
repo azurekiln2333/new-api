@@ -23,6 +23,7 @@ import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { AUTH_REQUEST_TIMEOUT_MS } from '@/lib/auth-session'
 import type { AuthBundle } from '@/stores/auth-store'
 
 import { OAUTH_POPUP_CALLBACK_MESSAGE } from '../../constants'
@@ -99,6 +100,7 @@ function pendingResponse<T>() {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   window.sessionStorage.clear()
 })
@@ -319,6 +321,115 @@ it('shows query errors and reloads requirements only when the user retries', asy
   expect(requests).toHaveBeenCalledTimes(2)
   await user.click(screen.getByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(result).toHaveBeenCalledWith(null))
+})
+
+it('releases a timed-out method load for explicit retry and ignores its late result', async () => {
+  const stale = pendingResponse<{
+    data: { success: boolean; data: VerificationRequirements }
+  }>()
+  const requests = vi
+    .spyOn(api, 'get')
+    .mockReturnValueOnce(stale.promise)
+    .mockResolvedValue({ data: { success: true, data: passwordRequirements } })
+  const result = vi.fn()
+  render(<Harness onResult={result} />)
+  vi.useFakeTimers()
+  fireEvent.click(screen.getByText('Protected action'))
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Loading verification methods...'
+  )
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(AUTH_REQUEST_TIMEOUT_MS)
+  })
+  expect(screen.getByRole('alert')).toHaveTextContent('Request failed')
+  expect(result).not.toHaveBeenCalled()
+  const retry = screen.getByRole('button', { name: 'Retry' })
+  fireEvent.click(retry)
+  fireEvent.click(retry)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+  expect(requests).toHaveBeenCalledTimes(2)
+  expect(screen.getByLabelText('Password', { selector: 'input' })).toBeVisible()
+  await act(async () => {
+    stale.resolve({
+      data: {
+        success: true,
+        data: { ...passwordRequirements, methods: [] },
+      },
+    })
+    await stale.promise
+  })
+  expect(screen.getByLabelText('Password', { selector: 'input' })).toBeVisible()
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  })
+  expect(result).toHaveBeenCalledExactlyOnceWith(null)
+})
+
+it('releases a timed-out verification submission without granting a late proof or retrying automatically', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: passwordRequirements },
+  })
+  const stale = pendingResponse<{
+    data: { success: boolean; data: SecurityProof }
+  }>()
+  const proof: SecurityProof = {
+    proof_token: 'fresh-proof',
+    method: 'password',
+    scope: 'passkey.register',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+  }
+  const posts = vi
+    .spyOn(api, 'post')
+    .mockReturnValueOnce(stale.promise)
+    .mockResolvedValue({ data: { success: true, data: proof } })
+  const result = vi.fn()
+  const user = userEvent.setup()
+  render(<Harness onResult={result} />)
+  await user.click(screen.getByText('Protected action'))
+  await user.type(
+    await screen.findByLabelText('Password', { selector: 'input' }),
+    'first-attempt'
+  )
+  vi.useFakeTimers()
+  const verify = screen.getByRole('button', { name: 'Verify' })
+  fireEvent.click(verify)
+  fireEvent.click(verify)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+  expect(verify).toBeDisabled()
+  expect(posts).toHaveBeenCalledTimes(1)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(AUTH_REQUEST_TIMEOUT_MS)
+  })
+  expect(screen.getByRole('alert')).toHaveTextContent('Request failed')
+  expect(screen.getByLabelText('Password', { selector: 'input' })).toHaveValue('')
+  expect(result).not.toHaveBeenCalled()
+  expect(posts).toHaveBeenCalledTimes(1)
+  await act(async () => {
+    stale.resolve({
+      data: {
+        success: true,
+        data: { ...proof, proof_token: 'discarded-proof' },
+      },
+    })
+    await stale.promise
+  })
+  expect(result).not.toHaveBeenCalled()
+  vi.useRealTimers()
+  await user.type(
+    screen.getByLabelText('Password', { selector: 'input' }),
+    'explicit-new-attempt'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  await waitFor(() => expect(result).toHaveBeenCalledExactlyOnceWith(proof))
+  expect(posts).toHaveBeenCalledTimes(2)
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
 it('returns a proof only after successful verification and clears a rejected password', async () => {

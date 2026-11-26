@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { QueryClient } from '@tanstack/react-query'
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { t } from 'i18next'
 
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
@@ -75,6 +75,52 @@ const authClient = axios.create({
     'Cache-Control': 'no-cache, no-store',
   },
 })
+
+export const AUTH_REQUEST_TIMEOUT_MS = 30_000
+
+type AuthRequestSignal = NonNullable<AxiosRequestConfig['signal']> & {
+  readonly reason?: unknown
+}
+
+// Bound one network/auth-coordination stage, not time spent entering a factor.
+// A caller cancels its own wait; shared refresh ownership has a separate signal.
+export async function withAuthRequestDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  signal?: AuthRequestSignal
+): Promise<T> {
+  const controller = new AbortController()
+  const cancel = () =>
+    controller.abort(signal?.reason ?? new axios.CanceledError())
+  if (signal?.aborted) cancel()
+  else signal?.addEventListener?.('abort', cancel, { once: true })
+  const timer = globalThis.setTimeout(
+    () =>
+      controller.abort(new axios.AxiosError(t('Request failed'), 'ETIMEDOUT')),
+    AUTH_REQUEST_TIMEOUT_MS
+  )
+  let rejectAborted: (() => void) | undefined
+  try {
+    controller.signal.throwIfAborted()
+    return await new Promise<T>((resolve, reject) => {
+      rejectAborted = () => reject(controller.signal.reason)
+      controller.signal.addEventListener('abort', rejectAborted, { once: true })
+      Promise.resolve()
+        .then(() => {
+          controller.signal.throwIfAborted()
+          return operation(controller.signal)
+        })
+        .then(resolve, reject)
+    })
+  } finally {
+    globalThis.clearTimeout(timer)
+    signal?.removeEventListener?.('abort', cancel)
+    if (rejectAborted) {
+      controller.signal.removeEventListener('abort', rejectAborted)
+    }
+    // Also stop a sibling request left pending after Promise.all rejects.
+    if (!controller.signal.aborted) controller.abort(new axios.CanceledError())
+  }
+}
 
 const refreshRaceDelays = [80, 200, 500] as const
 let refreshPromise: Promise<RefreshOutcome> | null = null
@@ -274,7 +320,8 @@ export function createRefreshRunner(
 }
 
 async function requestRefresh(
-  expectedSID?: string
+  expectedSID?: string,
+  signal?: AbortSignal
 ): Promise<AuthRefreshHTTPResponse> {
   try {
     const response = await authClient.post(
@@ -282,6 +329,8 @@ async function requestRefresh(
       undefined,
       {
         headers: expectedSID ? { 'X-Auth-Session': expectedSID } : undefined,
+        signal,
+        timeout: AUTH_REQUEST_TIMEOUT_MS,
       }
     )
     return { status: response.status, data: response.data }
@@ -295,9 +344,12 @@ async function requestRefresh(
   }
 }
 
-function runRefresh(refreshEpoch: number): Promise<RefreshOutcome> {
+function runRefresh(
+  refreshEpoch: number,
+  signal: AbortSignal
+): Promise<RefreshOutcome> {
   return createRefreshRunner({
-    request: requestRefresh,
+    request: (expectedSID) => requestRefresh(expectedSID, signal),
     getExpectedSID: () => useAuthStore.getState().auth.session?.sid,
     parseBundle: (value) => (isAuthBundle(value) ? value : null),
     acceptBundle: (bundle) => applyAuthBundle(bundle, false),
@@ -309,8 +361,9 @@ function runRefresh(refreshEpoch: number): Promise<RefreshOutcome> {
       clearAuthentication(synchronizeTabs, bootstrapState)
     },
     markTransient: () => useAuthStore.getState().auth.setBootstrapState('idle'),
-    wait: waitForRefreshRace,
-    isCurrent: () => authEpoch === refreshEpoch,
+    wait: (delay) =>
+      withAuthRequestDeadline(() => waitForRefreshRace(delay), signal),
+    isCurrent: () => authEpoch === refreshEpoch && !signal.aborted,
   })()
 }
 
@@ -318,28 +371,38 @@ async function performRefreshWithBrowserLock(
   refreshEpoch: number
 ): Promise<RefreshOutcome> {
   try {
-    if (typeof navigator === 'undefined' || !navigator.locks) {
-      return runRefresh(refreshEpoch)
-    }
-    return navigator.locks.request(
-      'new-api:auth-refresh',
-      { mode: 'exclusive' },
-      () => runRefresh(refreshEpoch)
-    )
+    return await withAuthRequestDeadline((signal) => {
+      if (typeof navigator === 'undefined' || !navigator.locks) {
+        return runRefresh(refreshEpoch, signal)
+      }
+      return navigator.locks.request(
+        'new-api:auth-refresh',
+        { mode: 'exclusive', signal },
+        () => runRefresh(refreshEpoch, signal)
+      )
+    })
   } catch (error: unknown) {
-    useAuthStore.getState().auth.setBootstrapState('idle')
+    if (authEpoch === refreshEpoch) {
+      useAuthStore.getState().auth.setBootstrapState('idle')
+    }
     return { kind: 'transient_error', error }
   }
 }
 
-export function refreshAuthentication(): Promise<RefreshOutcome> {
+export function refreshAuthentication(
+  signal?: AuthRequestSignal
+): Promise<RefreshOutcome> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? new axios.CanceledError())
+  }
   if (!refreshPromise) {
     const refreshEpoch = authEpoch
     refreshPromise = performRefreshWithBrowserLock(refreshEpoch).finally(() => {
       refreshPromise = null
     })
   }
-  return refreshPromise
+  const shared = refreshPromise
+  return signal ? withAuthRequestDeadline(() => shared, signal) : shared
 }
 
 function currentValidAuthBundle(): AuthBundle | null {
@@ -418,7 +481,10 @@ export function getCommonHeaders(): Record<string, string> {
   return headers
 }
 
-export async function getFreshAuthHeaders(): Promise<Record<string, string>> {
+export async function getFreshAuthHeaders(
+  signal?: AuthRequestSignal
+): Promise<Record<string, string>> {
+  if (signal?.aborted) throw signal.reason ?? new axios.CanceledError()
   const auth = useAuthStore.getState().auth
   const refreshBefore = Math.floor(Date.now() / 1000) + 60
   if (
@@ -429,9 +495,17 @@ export async function getFreshAuthHeaders(): Promise<Record<string, string>> {
     return getCommonHeaders()
   }
 
-  const outcome = await refreshAuthentication()
+  const outcome = await refreshAuthentication(signal)
+  if (signal?.aborted) throw signal.reason ?? new axios.CanceledError()
   if (outcome.kind === 'authenticated') {
     return getCommonHeaders()
+  }
+  if (
+    outcome.kind === 'transient_error' &&
+    axios.isAxiosError(outcome.error) &&
+    outcome.error.code === 'ETIMEDOUT'
+  ) {
+    throw outcome.error
   }
 
   const current = useAuthStore.getState().auth

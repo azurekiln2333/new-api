@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // setupAdminUserTest promotes the enrolled operator to root and creates a
@@ -322,6 +325,97 @@ func TestAdminUserBindingProofDistinguishesBuiltInAndCustomBindings(t *testing.T
 	providerID, err := common.Marshal(audit.Other.Op.Params["provider_id"])
 	require.NoError(t, err)
 	assert.JSONEq(t, "7", string(providerID))
+}
+
+func TestAdminUserVerificationAuditIsDurableBeforeReturningProof(t *testing.T) {
+	for _, stage := range []string{"log unavailable", "outbox unavailable", "both unavailable", "cancelled"} {
+		t.Run(stage, func(t *testing.T) {
+			operator, identity, target := setupAdminUserTest(t)
+			logDB := model.LOG_DB
+			var outboxAttempts, directAttempts int
+			const callback = "r40:verification-audit"
+			if stage == "outbox unavailable" || stage == "both unavailable" {
+				require.NoError(t, model.DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+					if tx.Statement.Table == "audit_event_outbox" {
+						outboxAttempts++
+						tx.AddError(errors.New("private audit outbox failure"))
+					}
+				}))
+				t.Cleanup(func() { require.NoError(t, model.DB.Callback().Create().Remove(callback)) })
+			}
+			require.NoError(t, logDB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table == "audit_logs" {
+					directAttempts++
+					if stage == "log unavailable" || stage == "both unavailable" {
+						tx.AddError(errors.New("private audit sink failure"))
+					}
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, logDB.Callback().Create().Remove(callback)) })
+
+			payload := fmt.Sprintf(`{"scope":"admin.user.manage","method":"password","password":"enrollment-password","context":{"user_id":%d,"action":"disable"}}`, target.Id)
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if stage == "cancelled" {
+				cancel()
+			}
+			c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/verify", strings.NewReader(payload))
+			c.Set("id", operator.Id)
+			c.Set("username", operator.Username)
+			c.Set("role", operator.Role)
+			c.Set("session_id", identity.SessionID)
+			c.Set("auth_version", identity.UserAuthVersion)
+			c.Set("session_version", identity.SessionVersion)
+			c.Set(common.RequestIdKey, "r40-verification-request")
+			UniversalVerify(c)
+			var result securityEnrollmentResponse
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			if stage == "both unavailable" || stage == "cancelled" {
+				assert.Equal(t, http.StatusInternalServerError, response.Code)
+				assert.False(t, result.Success)
+				assert.NotContains(t, response.Body.String(), "proof_token")
+				assert.NotContains(t, response.Body.String(), "private")
+				return
+			}
+			require.True(t, result.Success, response.Body.String())
+			var proof service.SecurityProof
+			require.NoError(t, common.Unmarshal(result.Data, &proof))
+			require.NotEmpty(t, proof.ProofToken)
+			if stage == "log unavailable" {
+				assert.Zero(t, directAttempts, "normal verification never waits for the remote audit sink")
+				var event model.AuditEventOutbox
+				require.NoError(t, model.DB.Where("action = ?", "user.security_verify").First(&event).Error)
+				assert.Equal(t, model.AuditCategorySecurity, event.Category)
+				assert.Equal(t, operator.Id, event.ActorUserId)
+				assert.Equal(t, operator.Username, event.ActorUsername)
+				assert.Equal(t, "r40-verification-request", event.RequestId)
+				assert.Zero(t, event.DeliveredAt)
+				encoded, err := common.Marshal(event)
+				require.NoError(t, err)
+				assert.NotContains(t, string(encoded), "enrollment-password")
+				assert.NotContains(t, string(encoded), proof.ProofToken)
+				require.NoError(t, logDB.Callback().Create().Remove(callback))
+				drainControllerAuditOutbox(t)
+			} else {
+				assert.Equal(t, 1, outboxAttempts)
+				assert.Equal(t, 1, directAttempts, "enqueue failure retains one bounded durable direct fallback")
+			}
+			var audit model.AuditLog
+			require.NoError(t, logDB.Where("action = ?", "user.security_verify").First(&audit).Error)
+			assert.Equal(t, model.AuditCategorySecurity, audit.Category)
+			assert.Equal(t, operator.Id, audit.UserId)
+			assert.Equal(t, "r40-verification-request", audit.RequestId)
+			require.NotNil(t, audit.Other.Op)
+			params, err := common.Marshal(audit.Other.Op.Params)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"method":"password","scope":"admin.user.manage"}`, string(params))
+			stored, err := model.GetUserById(target.Id, false)
+			require.NoError(t, err)
+			assert.Equal(t, common.UserStatusEnabled, stored.Status, "verification alone never disables the target")
+		})
+	}
 }
 
 func TestAdminUserVerificationPolicy(t *testing.T) {
