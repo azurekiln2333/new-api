@@ -2395,20 +2395,31 @@ func ManageMultiKeys(c *gin.Context) {
 		return
 	}
 
-	// Key status shares channel_info with the polling cursor and
-	// UpdateChannelStatus; read and write it under the same lock.
+	// Mutations retain the polling lock. Status reads use a fresh database
+	// snapshot and must not hold this mutex through budget/name enrichment.
 	lock := model.GetChannelPollingLock(request.ChannelId)
-	lock.Lock()
-	locked := true
+	locked := request.Action != "get_key_status"
+	if locked {
+		lock.Lock()
+	}
 	defer func() {
 		if locked {
 			lock.Unlock()
 		}
 	}()
 
-	channel, err := model.GetChannelById(request.ChannelId, true)
+	var channel *model.Channel
+	if request.Action == "get_key_status" {
+		channel, err = model.ReadChannelKeyEntriesSnapshot(c.Request.Context(), request.ChannelId)
+	} else {
+		channel, err = model.GetChannelById(request.ChannelId, true)
+	}
 	if err != nil {
-		common.ApiErrorT(c, "Channel does not exist")
+		if request.Action == "get_key_status" && !errors.Is(err, gorm.ErrRecordNotFound) && !errors.Is(err, model.ErrChannelKeyEntryNotFound) {
+			channelKeyManageError(c, err)
+		} else {
+			common.ApiErrorT(c, "Channel does not exist")
+		}
 		return
 	}
 
@@ -2416,9 +2427,11 @@ func ManageMultiKeys(c *gin.Context) {
 		common.ApiErrorT(c, "This channel is not in multi-key mode")
 		return
 	}
-	if err := model.EnsureChannelKeyEntries(channel); err != nil {
-		channelKeyManageError(c, err)
-		return
+	if request.Action != "get_key_status" {
+		if err := model.EnsureChannelKeyEntries(channel); err != nil {
+			channelKeyManageError(c, err)
+			return
+		}
 	}
 	if handleChannelKeyAllocationAction(c, channel, request) {
 		return
@@ -2436,11 +2449,6 @@ func ManageMultiKeys(c *gin.Context) {
 	switch request.Action {
 	case "get_key_status":
 		keys := channel.GetKeys()
-		quotaViews, err := model.ReadChannelBudgetViews(c.Request.Context(), model.BudgetScopeKey, channel.KeyEntryIDs)
-		if err != nil {
-			channelKeyManageError(c, err)
-			return
-		}
 
 		// Default pagination parameters
 		page := request.Page
@@ -2451,13 +2459,14 @@ func ManageMultiKeys(c *gin.Context) {
 		if pageSize <= 0 {
 			pageSize = 50 // Default page size
 		}
+		pageSize = min(pageSize, 100)
 
 		// Statistics for all keys (unchanged by filtering)
 		var enabledCount, manualDisabledCount, autoDisabledCount int
 
 		// Build all key status data first
 		var allKeyStatusList []KeyStatus
-		for i, key := range keys {
+		for i := range keys {
 			status := 1 // default enabled
 			var disabledTime int64
 			var reason string
@@ -2495,12 +2504,10 @@ func ManageMultiKeys(c *gin.Context) {
 				Id:           strconv.FormatInt(channel.ChannelKeyEntryID(i), 10),
 				Rev:          channel.KeyEntryRevisions[i],
 				ScopeMode:    scopeMode,
-				Quota:        quotaViews[channel.ChannelKeyEntryID(i)],
 				Index:        i,
 				Status:       status,
 				DisabledTime: disabledTime,
 				Reason:       reason,
-				KeyPreview:   maskKeyPreview(key),
 				Models:       channel.ChannelInfo.MultiKeyModels[i],
 				UserId:       channel.ChannelInfo.MultiKeyUsers[i],
 			})
@@ -2537,14 +2544,32 @@ func ManageMultiKeys(c *gin.Context) {
 		if start < filteredTotal {
 			pageKeyStatusList = filteredKeyStatusList[start:end]
 		}
+		allocationIDs := make([]int64, 0, len(pageKeyStatusList))
+		userIDs := make([]int, 0, len(pageKeyStatusList))
 		for i := range pageKeyStatusList {
-			if pageKeyStatusList[i].UserId == 0 {
-				continue
+			keyStatus := &pageKeyStatusList[i]
+			allocationIDs = append(allocationIDs, channel.ChannelKeyEntryID(keyStatus.Index))
+			if keyStatus.UserId > 0 && !slices.Contains(userIDs, keyStatus.UserId) {
+				userIDs = append(userIDs, keyStatus.UserId)
 			}
-			username, err := model.GetUsernameById(pageKeyStatusList[i].UserId, false)
-			if err == nil {
-				pageKeyStatusList[i].Username = username
-			}
+			keyStatus.KeyPreview = maskKeyPreview(keys[keyStatus.Index])
+		}
+		quotaViews, quotaSupported, err := model.ReadChannelBudgetViewsWithActivation(c.Request.Context(), model.BudgetScopeKey, allocationIDs)
+		if err != nil {
+			channelKeyManageError(c, err)
+			return
+		}
+		// Display names remain best-effort, as before; missing users or a name
+		// lookup failure must not discard authoritative allocation/budget data.
+		usernames, _ := model.GetUsernamesByIDs(c.Request.Context(), userIDs)
+		if err := c.Request.Context().Err(); err != nil {
+			channelKeyManageError(c, err)
+			return
+		}
+		for i := range pageKeyStatusList {
+			keyStatus := &pageKeyStatusList[i]
+			keyStatus.Quota = quotaViews[channel.ChannelKeyEntryID(keyStatus.Index)]
+			keyStatus.Username = usernames[keyStatus.UserId]
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -2552,7 +2577,7 @@ func ManageMultiKeys(c *gin.Context) {
 			"message": "",
 			"data": MultiKeyStatusResponse{
 				Revision:            channel.ChannelInfo.KeyEntryRevision,
-				QuotaSupported:      model.ChannelBudgetsEnabled(),
+				QuotaSupported:      quotaSupported,
 				Keys:                pageKeyStatusList,
 				Total:               filteredTotal, // Total of filtered results
 				Page:                page,

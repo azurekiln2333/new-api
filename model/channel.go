@@ -424,7 +424,8 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int, exclu
 }
 
 // KeyServesModel reports whether the key at idx may serve modelName. A key
-// without a configured scope serves every model of the channel.
+// without a configured scope serves every model of the channel. Explicit
+// scopes may name the request alias or the channel's exact upstream target.
 func (channel *Channel) KeyServesModel(idx int, modelName string) bool {
 	if modelName == "" {
 		return true
@@ -432,11 +433,25 @@ func (channel *Channel) KeyServesModel(idx int, modelName string) bool {
 	scope := channel.ChannelInfo.MultiKeyModels[idx]
 	if mode := channel.ChannelInfo.MultiKeyScopeModes[idx]; mode != "" {
 		if mode == "allowlist" {
-			return slices.Contains(scope, modelName)
+			return channel.keyScopeServesModel(scope, modelName)
 		}
 		return mode == "all"
 	}
-	return len(scope) == 0 || slices.Contains(scope, modelName)
+	return len(scope) == 0 || channel.keyScopeServesModel(scope, modelName)
+}
+
+// keyScopeServesModel matches an allocation's upstream capability without
+// changing the request namespace used by channel, token or group authorization.
+// Direct aliases remain supported; only the final mapped target is a fallback.
+func (channel *Channel) keyScopeServesModel(scope []string, modelName string) bool {
+	if len(scope) == 0 {
+		return false
+	}
+	if slices.Contains(scope, modelName) {
+		return true
+	}
+	upstreamModel, ok := channel.RoutingUpstreamModelName(modelName)
+	return ok && upstreamModel != modelName && slices.Contains(scope, upstreamModel)
 }
 
 // Evidence values of a stored model-unavailability observation. They are fixed
