@@ -265,7 +265,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </Tooltip>
       )}
 
-      {layout === 'card' && addressUrl && (
+      {addressUrl && (
         <Tooltip>
           <TooltipTrigger
             render={

@@ -1237,20 +1237,43 @@ func TestDistributeRoutesBoundKeyAndFallsBackWhenNoKeyServes(t *testing.T) {
 }
 
 // TestMultiKeyStatusKeyPreview pins the masked preview of every key: a short key
-// keeps only its tail, a plain key keeps three and four characters, a JSON key
-// shows a non-secret identifier, and the response never carries a full key.
+// keeps at most its tail, long keys show an identifying prefix and suffix, and
+// structured credentials expose only approved identifiers, never secret fields.
 func TestMultiKeyStatusKeyPreview(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
-	const (
-		shortKey   = "sk1234567" // 9 characters, below the 12 character threshold
-		plainKey   = "sk-abcdefghijklmnop"
-		jsonKey    = `{"type":"service_account","client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----secret"}`
-		projectKey = `{"type":"service_account","project_id":"vertex-project","private_key":"secret"}`
-	)
+	cases := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{name: "short", key: "sk1234567", want: "…67"},
+		{name: "short auth in compound", key: "abc|integration-app-id", want: "…"},
+		{name: "baidu client credentials", key: "client-id|client-secret", want: "…"},
+		{name: "one character", key: "x", want: "…"},
+		{name: "two characters", key: "yz", want: "…"},
+		{name: "three characters", key: "qrs", want: "…rs"},
+		{name: "sk threshold", key: "sk-abcdefghijklmnop", want: "sk-abcd…mnop"},
+		{name: "sk below threshold", key: "sk-abcdefghijklmno", want: "…no"},
+		{name: "plain threshold", key: "abcd12345678wxyz", want: "abcd…wxyz"},
+		{name: "plain below threshold", key: "abcd1234567wxyz", want: "…yz"},
+		{name: "unicode threshold", key: "甲乙丙丁一二三四五六七八天地玄黄", want: "甲乙丙丁…天地玄黄"},
+		{name: "email", key: `{"type":"service_account","client_email":"svc@example.iam.gserviceaccount.com","private_key":"private-key-secret"}`, want: "svc@example.iam.gserviceaccount.com"},
+		{name: "project", key: `{"type":"service_account","project_id":"vertex-project","private_key":"private-key-secret"}`, want: "vertex-project"},
+		{name: "unknown object", key: `{"access_token":"unknown-object-secret"}`, want: "…"},
+		{name: "malformed object", key: `{"access_token":"malformed-secret"`, want: "…"},
+		{name: "array", key: `["array-secret"]`, want: "…"},
+		{name: "quoted string", key: `"quoted-secret"`, want: "…"},
+		{name: "plugin label", key: `{"type":"plugin_credential","plugin":"preview-fixture","label":"demo account","account_id":"account-1","data":{"token":"plugin-data-secret"},"headers":{"Authorization":"Bearer plugin-header-secret"},"query":{"token":"plugin-query-secret"}}`, want: "demo account"},
+		{name: "plugin account", key: `{"type":"plugin_credential","plugin":"preview-fixture","account_id":"account-2","data":{"token":"plugin-data-secret"}}`, want: "account-2"},
+	}
+	keys := make([]string, len(cases))
+	for i, tc := range cases {
+		keys[i] = tc.key
+	}
 	channel := &model.Channel{Name: "multi-key-preview", Type: constant.ChannelTypeVertexAi, Other: `{"default":"us-central1"}`,
 		Models: "model-a", Group: "default",
-		Key:         strings.Join([]string{shortKey, plainKey, jsonKey, projectKey}, "\n"),
-		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 4, MultiKeyMode: constant.MultiKeyModeRandom},
+		Key:         strings.Join(keys, "\n"),
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: len(keys), MultiKeyMode: constant.MultiKeyModeRandom},
 	}
 	require.NoError(t, channel.Insert())
 	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
@@ -1264,15 +1287,19 @@ func TestMultiKeyStatusKeyPreview(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
 	require.True(t, result.Success, recorder.Body.String())
-	require.Len(t, result.Data.Keys, 4)
-	for i, want := range []string{"…67", "sk-…mnop", "svc@example.iam.gserviceaccount.com", "vertex-project"} {
-		assert.Equal(t, want, result.Data.Keys[i].KeyPreview, "key #%d", i+1)
-		assert.LessOrEqual(t, len([]rune(want)), 40)
+	require.Len(t, result.Data.Keys, len(cases))
+	for i, tc := range cases {
+		preview := result.Data.Keys[i].KeyPreview
+		assert.Equal(t, tc.want, preview, tc.name)
+		assert.NotContains(t, preview, tc.key, "the preview must never expose a complete credential: %s", tc.name)
+		assert.LessOrEqual(t, len([]rune(preview)), 40)
 	}
 	body := recorder.Body.String()
-	for _, fullKey := range []string{shortKey, plainKey, jsonKey, projectKey, "private_key"} {
-		assert.NotContains(t, body, fullKey, "the response must not carry the full key")
+	for _, secret := range []string{"sk1234567", "sk-abcdefghijklmnop", "abc|integration-app-id", "client-id|client-secret", "private_key", "private-key-secret", "unknown-object-secret", "malformed-secret", "array-secret", "quoted-secret", "plugin-data-secret", "plugin-header-secret", "plugin-query-secret"} {
+		assert.NotContains(t, body, secret, "the response must not carry credentials or structured secret fields")
 	}
+	assert.NotContains(t, result.Data.Keys[1].KeyPreview, "abc", "the complete short authentication component must remain hidden")
+	assert.Equal(t, "…", maskKeyPreview("-----BEGIN PRIVATE KEY-----\nprivate-key-secret\n-----END PRIVATE KEY-----"), "a multiline credential must not expose raw fragments")
 }
 
 // TestChannelTestKeySelection pins how a channel test chooses its key: an

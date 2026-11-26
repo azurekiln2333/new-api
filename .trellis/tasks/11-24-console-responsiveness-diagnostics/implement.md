@@ -1,4 +1,26 @@
 # Execution
+## Release boundary correction — 2026-11-26
+
+PR #4 merged as `60928d8f207d1f874a2d64886a96a73c11d78469`. The fork release
+workflow `45813059715` succeeded and published `custom-20261126-60928d8` and
+the GHCR `latest` image at 12:23 UTC. The user deploys via Watchtower; publication
+is the authorized delivery mechanism. No SSH/server rollout is required here.
+
+That release did not contain every requested feature. The accepted R37 masked
+preview and direct append deltas remained uncommitted in the original worktree.
+They are being isolated on `fix/multikey-preview-actions-20261126`, based on the
+released main, alongside the reported quota/reset affordance correction. Root
+owns capture, hosted CI, merge and image publication. No local validation runs.
+
+Remaining work is still active: R5 preview/frontend completion and individual
+retry/progress follow-up; R33 admin log scopes/channel search; R34 safe error
+projection; R36 runtime/UI beyond persistence; R37 all-Key discovery/mapping
+integration; R38 explicit out-of-scope diagnostics and opt-in scope extension;
+R39 site/channel case-insensitive identity; R40 security-verification spinner;
+R24 source integration/backfill/readers beyond its foundation; remaining R27
+capabilities and R29 monitoring. R32 workspace migration remains last. Older
+snapshots below are historical and do not describe the current published scope.
+
 ## Live continuation — 2026-11-26
 
 - Narrow role-query correction is frozen, independently accepted and captured in2aab94859; string accessible-name equality is retained and the unsupported option removed. It is not yet pushed while root collects the running frontend test result. Current locale artifact45779078819 has an empty locales.patch at source3a974518b3eb7b3a98dca49ab18336d4d56c344e. A fresh read of all12 task Pi panes shows p2 resumed direct reads after /new; the others show frozen handoffs or fresh idle sessions, with no additional current100-turn error. No healthy session was reset.

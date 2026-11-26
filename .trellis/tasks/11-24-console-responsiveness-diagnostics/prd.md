@@ -1,7 +1,7 @@
 # Console responsiveness and diagnostics
 ## Goal and authorization
 Make channel reads and management writes responsive, unify batch-code operations, and expose useful diagnostic/usage information in existing console surfaces.
-The user explicitly authorized task planning, immediate implementation by FOUR existing Pi workers, review, commit, push, tag and CI/CD on 2026-11-24. No additional planning approval is required. No direct production deployment.
+The user explicitly authorized task planning, immediate implementation by FOUR existing Pi workers, review, commit, push, tag and CI/CD on 2026-11-24. No additional planning approval is required. On 2026-11-26 the user clarified that production updates use Watchtower: publish the verified fork image/`latest` through the existing release workflow. No server login or manual restart is needed for this delivery. Publication alone does not prove the running container has updated.
 **NO LOCAL TESTS, BUILDS, VET, LINT, TYPECHECKS, GOFMT CHECKS, DATABASE PROBES, BENCHMARKS OR EXECUTABLE VALIDATION. All validation runs only in GitHub Actions.**
 ## Requirements
 | ID | Observable requirement | Owner |
@@ -9,7 +9,7 @@ The user explicitly authorized task planning, immediate implementation by FOUR e
 | R1 | Refresh/open channel management and fingerprint channel dropdown without full-table/per-row query amplification; correct SQL pagination/filter totals, authoritative allocation state and cancellation | pi-keys |
 | R2 | Management create/save must not appear frozen. Persisted success closes dialog and updates visible state promptly; background propagation/refetch does not block it. Pending/error/unknown outcomes are visible; retry cannot silently duplicate code batches. Preserve durable audit and immediate local routing correctness | pi-billing + pi-keys |
 | R3 | Invitation and registration/redemption code management share selection/export/action patterns: entire newly created batch downloadable/copyable, historical batch recoverable, current-page and cross-page filtered selection/export supported. Invitation rows use redemption's compact density and shared row-action menu; long names and wrapping inline actions must not inflate row height. Preserve distinct business semantics and confirmation/disabled states | pi-billing |
-| R4 | Card header omits the entire channel-type badge/slot; the existing channel name renderer occupies that position, with ID below. Concurrency 0/limit plus icons next; used Tokens, billed used quota / total, response and last-test follow; priority/weight last. Numerator is channel.used_quota even when local quota is disabled; known ledger-off/disabled/unconfigured total is 0; only ledger-enabled and budget-enabled configured total is limit_quota. Unknown loading/failure must not masquerade as 0. Response and relative last-test labels/values display completely without clipping. Preserve privacy, aggregate rows, details and table type display | pi-ui |
+| R4 | User clarification 2026-11-27: keep the channel-type icon immediately before the channel name; remove only the type text. Preserve every other current card position, metric, action and ID display. Table/list layout must expose the same existing channel-address jump icon and destination as cards. Numerator is channel.used_quota even when local quota is disabled; known ledger-off/disabled/unconfigured total is 0; only ledger-enabled and budget-enabled configured total is limit_quota. Unknown loading/failure must not masquerade as 0. Preserve privacy, aggregate rows, details and table type display | pi-ui |
 | R5 | Fingerprint shows three prompt/output cards below controls, actual prompts and actual replies, live queued/running/complete/error states; preserve score/cancel/limits, admin-only access, do not launch extra paid probes | pi-ui |
 | R6 | Common log columns: time, user, model, stream, Token usage, duration, cost, channel, processing node; remaining fields afterward | pi-ui |
 | R7 | Public homepage signed-in avatar navigates directly to console; console avatar opens menu. Hide overview onboarding guide for admins, including entry/reminder; preserve initial installer | pi-logs |
@@ -123,6 +123,12 @@ The user supplied the rendered body of `https://lm.ikale.io/` and explicitly req
 Fix the slow/incomplete channel selector and confusing standalone Previous/Next paging controls. Include a selectable Key for multi-Key channels; model scope and effective endpoint/request follow the selected channel and stable Key identity/revision. Supported conversion remains available and stale selections never silently choose another Key. Compare against the user's installed `custom-20261126-37a4174`; do not explain an already-released defect as merely unpublished work.
 
 ## R37 — Multi-key management, discovery and identifiable previews (2026-11-26)
+
+The user again reported unchanged masking and the two icons to the right of Bind
+User after the `custom-20261126-60928d8` release. Those icons are Set Quota and
+Reset used amount. Make their availability understandable and let quota
+inspection explain inactive accounting; retain server accounting/revision guards.
+Static credential append must not depend on enabling the quota ledger.
 
 Add credentials directly from multi-key management without returning to channel edit. Ordinary distinct-key addition must not depend on enabling the quota ledger; preserve sensitive permissions, supported credential types, revision conflicts and duplicate-allocation rules.
 

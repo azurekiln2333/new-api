@@ -12,9 +12,13 @@ Keep explicit name/detail buttons usable. Regression coverage in
 opening details, focused card Enter/Space opens details, and explicit name
 activation still works.
 
-The card header starts with the existing channel name renderer after optional
-selection/reorder controls, with ID on the second line. Do not render the type
-badge, provider logo or an empty type spacer in cards; table type cells remain.
+The card header starts with the existing channel-type icon immediately before
+the channel name renderer, after optional selection/reorder controls, with ID
+on the second line. The user's 2026-11-27 clarification removes only type text;
+retain the existing provider/type icon and every other current card element.
+Table/list row actions also expose the existing channel-address jump action,
+using the same URL resolver and new-tab/security behavior as cards. Invalid
+addresses and aggregate rows keep their established unavailable behavior.
 Place the shared concurrency `current / limit` display and status/action icons next, then used
 Tokens, billed used/total quota, response time and last test. Priority and weight
 share the final row. The last-test value uses the existing relative-time

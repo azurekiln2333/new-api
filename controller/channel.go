@@ -2329,11 +2329,11 @@ type KeyStatus struct {
 }
 
 // maskKeyPreview renders just enough of a key to tell it apart from the other
-// keys of the same channel. A plain key keeps its first three and last four
-// characters, or only its last two when it is shorter than twelve, and never
-// shows more than eight characters in total. A JSON key such as a Vertex AI
-// service account shows no key characters at all: only one of its non-secret
-// identifiers, falling back to the plain rule when it carries none. The result
+// keys of the same channel. Long sk- keys keep that prefix plus four identifying
+// characters and their last four; other long keys keep four at each end. Both
+// leave at least eight characters hidden. Short keys keep at most their last
+// two, and keys of two characters or fewer are fully masked. Structured keys
+// show only approved identifiers and never fall back to raw fragments. The result
 // is only returned to the caller as key_preview, never logged or audited.
 func maskKeyPreview(key string) string {
 	if preview, ok := service.PluginCredentialPreview(key); ok {
@@ -2349,12 +2349,30 @@ func maskKeyPreview(key string) string {
 				}
 			}
 		}
+		return "…"
+	}
+	if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, `"`) {
+		return "…"
+	}
+	// Compound provider credentials use a pipe-delimited format (for example,
+	// Baidu client-id|client-secret and Xunfei app-id|api-key|secret). A
+	// multiline credential such as a PEM bundle is likewise not a scalar key;
+	// never expose a fragment of either form in an identifying preview.
+	if strings.ContainsAny(trimmed, "|\r\n") {
+		return "…"
 	}
 	runes := []rune(trimmed)
-	if len(runes) < 12 {
-		return "…" + string(runes[max(0, len(runes)-2):])
+	if strings.HasPrefix(trimmed, "sk-") {
+		if len(runes) >= 19 {
+			return string(runes[:7]) + "…" + string(runes[len(runes)-4:])
+		}
+	} else if len(runes) >= 16 {
+		return string(runes[:4]) + "…" + string(runes[len(runes)-4:])
 	}
-	return string(runes[:3]) + "…" + string(runes[len(runes)-4:])
+	if len(runes) <= 2 {
+		return "…"
+	}
+	return "…" + string(runes[len(runes)-2:])
 }
 
 func truncateRunes(value string, limit int) string {
