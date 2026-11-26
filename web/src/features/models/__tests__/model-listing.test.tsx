@@ -120,6 +120,7 @@ async function renderList(
   ],
   options: {
     pricing?: ModelPricingEntry[] | Promise<ModelPricingConfig>
+    detail?: Model
     waitForPricing?: boolean
     initialUrl?: string
     total?: number
@@ -136,7 +137,7 @@ async function renderList(
       }
     }
     if (url === '/api/models/7') {
-      return { data: { success: true, data: metadata } }
+      return { data: { success: true, data: options.detail ?? metadata } }
     }
     if (url === '/api/option/model_pricing') {
       return {
@@ -345,6 +346,82 @@ it('prefills and creates metadata only when the user explicitly saves it', async
       expect.anything()
     )
   )
+})
+
+it('sorts matched-model display choices without changing the source catalog, current model or unsaved pricing confirmation', async () => {
+  const matchedModels = ['gpt-10', 'gpt-2', 'GPT-2', 'claude-1']
+  Object.freeze(matchedModels)
+  const matchedModel: Model = {
+    ...metadata,
+    name_rule: 1,
+    matched_models: matchedModels,
+  }
+  await renderList([matchedModel], {
+    detail: matchedModel,
+    pricing: [
+      {
+        model_name: 'gpt-10',
+        version: 'v1',
+        configured: { ModelPrice: 1.5 },
+        effective: { ModelPrice: 1.5 },
+      },
+    ],
+  })
+  const patch = vi.spyOn(api, 'patch')
+  const put = vi.spyOn(api, 'put')
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: metadata.model_name }))
+  const drawer = await screen.findByRole('dialog', {
+    name: metadata.model_name,
+  })
+  await user.click(within(drawer).getByRole('tab', { name: 'Pricing' }))
+  const picker = await within(drawer).findByRole('combobox', {
+    name: 'Select model',
+  })
+  expect(picker).toHaveValue('')
+  expect(
+    within(drawer).queryByRole('button', { name: 'Save model prices' })
+  ).not.toBeInTheDocument()
+  await user.click(picker)
+  expect(
+    (await screen.findAllByRole('option')).map((option) => option.textContent)
+  ).toEqual(['claude-1', 'GPT-2', 'gpt-2', 'gpt-10'])
+  await user.click(screen.getByRole('option', { name: 'gpt-10' }))
+  const price = await within(drawer).findByPlaceholderText('0.01')
+  await waitFor(() => expect(price).toHaveValue('1.5'))
+
+  await user.click(picker)
+  expect(
+    (await screen.findAllByRole('option')).map((option) => option.textContent)
+  ).toEqual(['claude-1', 'GPT-2', 'gpt-2', 'gpt-10'])
+  expect(screen.getByRole('option', { name: 'gpt-10' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await user.keyboard('{Escape}')
+  expect(picker).toHaveValue('gpt-10')
+  expect(price).toHaveValue('1.5')
+
+  await user.clear(price)
+  await user.type(price, '2')
+  await user.click(picker)
+  await user.type(picker, 'gpt-2')
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['GPT-2', 'gpt-2'])
+  await user.click(screen.getByRole('option', { name: 'gpt-2' }))
+  const confirm = await screen.findByRole('alertdialog', {
+    name: 'Discard unsaved changes?',
+  })
+  await user.click(within(confirm).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(picker).toHaveValue('gpt-10')
+  expect(price).toHaveValue('2')
+  expect(matchedModels).toEqual(['gpt-10', 'gpt-2', 'GPT-2', 'claude-1'])
+  expect(patch).not.toHaveBeenCalled()
+  expect(put).not.toHaveBeenCalled()
 })
 
 it('keeps prices and channel explanations readable in the mobile card and detail drawer', async () => {

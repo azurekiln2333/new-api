@@ -32,10 +32,11 @@ type LogSetting struct {
 }
 
 var logSetting = LogSetting{
-	UserExportEnabled:      true,
-	MaxRangeDays:           365,
-	RequestContentEnabled:  true,
-	RequestContentMaxBytes: common.RequestContentDefaultMaxBytes,
+	UserExportEnabled:           true,
+	MaxRangeDays:                365,
+	RequestContentRetentionDays: 3,
+	RequestContentEnabled:       true,
+	RequestContentMaxBytes:      common.RequestContentDefaultMaxBytes,
 }
 
 func init() {

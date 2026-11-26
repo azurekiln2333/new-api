@@ -17,7 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -88,10 +94,14 @@ afterEach(() => {
   cleanup()
   useAuthStore.setState({ auth: originalAuth })
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 async function endpointOptions() {
   const user = userEvent.setup()
+  if (!screen.queryByRole('combobox', { name: 'Endpoint Type' })) {
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+  }
   await user.click(
     await screen.findByRole('combobox', { name: 'Endpoint Type' })
   )
@@ -157,17 +167,18 @@ test('Auto on a Responses-only channel leaves endpoint resolution to the server'
     </QueryClientProvider>
   )
 
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Settings' }))
   const endpoint = await screen.findByRole('combobox', {
     name: 'Endpoint Type',
   })
   expect(endpoint).toHaveValue('Auto detect (default)')
-  await userEvent
-    .setup()
-    .click(await screen.findByRole('button', { name: 'Test Connection' }))
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Test Connection' }))
   await vi.waitFor(() =>
     expect(api.get).toHaveBeenCalledWith(
       '/api/channel/test/9',
-      expect.objectContaining({ params: { model: 'model-a' } })
+      expect.objectContaining({ params: { model: 'model-a', stream: true } })
     )
   )
   const options = await endpointOptions()
@@ -245,6 +256,123 @@ test.each([
   }
 )
 
+test.each([
+  [
+    'OpenAI Response Compaction (/v1/responses/compact)',
+    'openai-response-compact',
+  ],
+  ['Embeddings (/v1/embeddings)', 'embeddings'],
+  ['Image Generation (/v1/images/generations)', 'image-generation'],
+  ['Jina Rerank (/v1/rerank)', 'jina-rerank'],
+])(
+  'the %s endpoint forbids streaming even when it defaults on',
+  async (label, endpoint) => {
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChannelsProvider>
+          <OpenDialog channel={channel(1)} />
+        </ChannelsProvider>
+      </QueryClientProvider>
+    )
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+    const stream = await screen.findByRole('switch', { name: 'Stream Mode' })
+    expect(stream).toBeChecked()
+
+    await user.click(screen.getByRole('combobox', { name: 'Endpoint Type' }))
+    await user.click(await screen.findByRole('option', { name: label }))
+
+    expect(stream).not.toBeChecked()
+    expect(stream).toHaveAttribute('aria-disabled', 'true')
+    await user.click(stream)
+    expect(stream).not.toBeChecked()
+    fireEvent.keyDown(stream, { key: ' ' })
+    fireEvent.keyUp(stream, { key: ' ' })
+    expect(stream).not.toBeChecked()
+    fireEvent.keyDown(stream, { key: 'Enter' })
+    fireEvent.keyUp(stream, { key: 'Enter' })
+    expect(stream).not.toBeChecked()
+    expect(api.get).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Test Connection' }))
+    await vi.waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        '/api/channel/test/9',
+        expect.objectContaining({
+          params: { model: 'model-a', endpoint_type: endpoint },
+        })
+      )
+    )
+  }
+)
+
+test('only the model list scrolls while test controls and the footer stay outside it', async () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channel(1)} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+
+  const dialog = await screen.findByRole('dialog')
+  const region = within(dialog).getByRole('region', { name: 'Channel models' })
+  const scroller = region.querySelector('.overflow-auto') as HTMLElement
+  const footer = dialog.querySelector(
+    '[data-slot="dialog-footer"]'
+  ) as HTMLElement
+
+  expect(dialog).toHaveClass(
+    'overflow-hidden',
+    '[&>div.overscroll-contain]:overflow-hidden'
+  )
+  expect(scroller).toHaveClass('min-h-0', 'flex-1')
+  expect(dialog.querySelectorAll('.overflow-auto')).toHaveLength(1)
+  expect(scroller).toContainElement(within(region).getByRole('table'))
+  expect(region.querySelector('[data-slot="table-container"]')).toBeNull()
+  expect(dialog).toHaveClass('[&>div.overscroll-contain]:flex-1')
+  expect(scroller).not.toContainElement(
+    within(dialog).getByRole('button', { name: 'Settings' })
+  )
+  expect(
+    screen.queryByRole('combobox', { name: 'Endpoint Type' })
+  ).not.toBeInTheDocument()
+  expect(footer).toHaveClass('flex-shrink-0')
+  expect(within(footer).getByRole('button', { name: 'Close' })).toBeVisible()
+})
+
+test('a short viewport keeps secondary settings out of the model list and footer', async () => {
+  vi.stubGlobal('innerWidth', 360)
+  vi.stubGlobal('innerHeight', 400)
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channel(1)} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  const dialog = await screen.findByRole('dialog')
+  const region = within(dialog).getByRole('region', { name: 'Channel models' })
+  const footer = dialog.querySelector(
+    '[data-slot="dialog-footer"]'
+  ) as HTMLElement
+  // jsdom covers the compact interaction/layout contract, not pixel geometry.
+  expect(dialog).toHaveClass('h-[min(90dvh,var(--dialog-available-height))]')
+  expect(within(dialog).getByPlaceholderText('Filter models...')).toBeVisible()
+  expect(region.querySelector('table')).not.toBeNull()
+  await user.click(within(dialog).getByRole('button', { name: 'Settings' }))
+  const endpoint = await screen.findByRole('combobox', {
+    name: 'Endpoint Type',
+  })
+  expect(dialog).not.toContainElement(endpoint)
+  expect(screen.getByRole('switch', { name: 'Stream Mode' })).toBeChecked()
+  await user.keyboard('{Escape}')
+  await user.click(within(footer).getByRole('button', { name: 'Close' }))
+  expect(within(footer).getByRole('button', { name: 'Close' })).toBeVisible()
+  expect(api.get).not.toHaveBeenCalled()
+})
+
 test.each([false, true])(
   'a Messages-only channel submits HTTP Responses with streaming=%s',
   async (stream) => {
@@ -259,6 +387,7 @@ test.each([false, true])(
       </QueryClientProvider>
     )
 
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
     await user.click(
       await screen.findByRole('combobox', { name: 'Endpoint Type' })
     )
@@ -269,11 +398,12 @@ test.each([false, true])(
     )
     const streamSwitch = screen.getByRole('switch', { name: 'Stream Mode' })
     expect(streamSwitch).toBeEnabled()
-    expect(streamSwitch).not.toBeChecked()
-    if (stream) {
+    expect(streamSwitch).toBeChecked()
+    if (!stream) {
       await user.click(streamSwitch)
-      expect(streamSwitch).toBeChecked()
+      expect(streamSwitch).not.toBeChecked()
     }
+    await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: 'Test Connection' }))
     await vi.waitFor(() =>
       expect(api.get).toHaveBeenCalledWith(

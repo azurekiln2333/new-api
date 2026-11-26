@@ -993,6 +993,58 @@ func GetAllUserSubscriptions(userId int) ([]SubscriptionSummary, error) {
 	return buildSubscriptionSummaries(subs), nil
 }
 
+// ActiveUserSubscriptionListItem is the minimal joined projection used by the
+// administrator's read-only effective-subscription listing. One item represents
+// one subscription row; a user may therefore appear more than once.
+type ActiveUserSubscriptionListItem struct {
+	SubscriptionId int    `json:"subscription_id"`
+	UserId         int    `json:"user_id"`
+	Username       string `json:"username"`
+	DisplayName    string `json:"display_name"`
+	PlanId         int    `json:"plan_id"`
+	PlanTitle      string `json:"plan_title"`
+	StartTime      int64  `json:"start_time"`
+	EndTime        int64  `json:"end_time"`
+}
+
+// ListEffectiveUserSubscriptions returns a bounded page of subscription rows
+// matching the same temporal predicate as GetAllActiveUserSubscriptions.
+// The count and data query share one application-clock snapshot.
+func ListEffectiveUserSubscriptions(ctx context.Context, now int64, offset, limit int) ([]ActiveUserSubscriptionListItem, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
+	if offset < 0 || limit <= 0 {
+		return nil, 0, errors.New("invalid effective subscription page")
+	}
+
+	query := func() *gorm.DB {
+		return DB.WithContext(ctx).Model(&UserSubscription{}).
+			Where("user_subscriptions.status = ? AND user_subscriptions.end_time > ?", "active", now)
+	}
+	var total int64
+	if err := query().Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]ActiveUserSubscriptionListItem, 0, limit)
+	if total == 0 || int64(offset) >= total {
+		return items, total, nil
+	}
+	if err := query().
+		Select("user_subscriptions.id AS subscription_id, user_subscriptions.user_id, COALESCE(users.username, '') AS username, COALESCE(users.display_name, '') AS display_name, user_subscriptions.plan_id, COALESCE(subscription_plans.title, '') AS plan_title, user_subscriptions.start_time, user_subscriptions.end_time").
+		Joins("LEFT JOIN users ON users.id = user_subscriptions.user_id").
+		Joins("LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id").
+		Order("user_subscriptions.end_time ASC, user_subscriptions.id ASC").
+		Offset(offset).Limit(limit).Scan(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
 func buildSubscriptionSummaries(subs []UserSubscription) []SubscriptionSummary {
 	if len(subs) == 0 {
 		return []SubscriptionSummary{}

@@ -19,10 +19,28 @@ For commercial licensing, please contact support@quantumnous.com
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
-import { beforeAll, describe, expect, test, vi } from 'vitest'
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from 'vitest'
 
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { useAuthStore } from '@/stores/auth-store'
+
+import { usePlaygroundState } from '../../../hooks/use-playground-state'
 import type { PlaygroundConversation, PlaygroundProject } from '../../../types'
 import { ConversationList } from '../conversation-list'
+import { ConversationPanel } from '../conversation-panel'
 
 const keys = {
   Archived: 'Archived',
@@ -35,6 +53,9 @@ const keys = {
   'This chat will be permanently deleted. This cannot be undone.':
     'This chat will be permanently deleted. This cannot be undone.',
   'New chat': 'New chat',
+  Chats: 'Chats',
+  'Chat history': 'Chat history',
+  'No chats yet': 'No chats yet',
   Cancel: 'Cancel',
   'Move to project': 'Move to project',
   Ungrouped: 'Ungrouped',
@@ -81,7 +102,6 @@ function renderList(
     onDelete: vi.fn(),
     onArchive: vi.fn(),
     onMoveToProject: vi.fn(),
-    onCreateProject: vi.fn(),
     onRenameProject: vi.fn(),
     onDeleteProject: vi.fn(),
   }
@@ -92,7 +112,6 @@ function renderList(
       conversations={conversations}
       projects={projects}
       onArchive={handlers.onArchive}
-      onCreateProject={handlers.onCreateProject}
       onDelete={handlers.onDelete}
       onDeleteProject={handlers.onDeleteProject}
       onMoveToProject={handlers.onMoveToProject}
@@ -105,8 +124,152 @@ function renderList(
   return handlers
 }
 
+function StatefulConversationPanel() {
+  const state = usePlaygroundState()
+  if (state.isLoadingMessages) return null
+
+  return (
+    <ConversationPanel
+      activeConversationId={state.activeConversationId}
+      conversations={state.conversations}
+      projects={state.projects}
+      onArchive={state.archiveConversation}
+      onCreate={state.createConversation}
+      onCreateProject={state.createProject}
+      onDelete={state.deleteConversation}
+      onDeleteProject={state.deleteProject}
+      onMoveToProject={state.moveConversationToProject}
+      onRename={state.renameConversation}
+      onRenameProject={state.renameProject}
+      onSelect={state.switchConversation}
+    />
+  )
+}
+
+function renderPanel(host: 'desktop' | 'mobile' = 'desktop') {
+  if (host === 'desktop') {
+    return render(
+      <aside>
+        <StatefulConversationPanel />
+      </aside>
+    )
+  }
+
+  return render(
+    <Sheet open>
+      <SheetContent side='left'>
+        <SheetHeader>
+          <SheetTitle>Chat history</SheetTitle>
+        </SheetHeader>
+        <StatefulConversationPanel />
+      </SheetContent>
+    </Sheet>
+  )
+}
+
 beforeAll(() => {
   i18next.addResourceBundle('en', 'translation', keys)
+})
+
+beforeEach(() => {
+  localStorage.clear()
+  useAuthStore.getState().auth.reset()
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'A', role: 1 })
+})
+
+afterEach(() => {
+  localStorage.clear()
+  useAuthStore.getState().auth.reset()
+})
+
+describe('ConversationPanel', () => {
+  test.each(['desktop', 'mobile'] as const)(
+    'creates an empty project above New chat in the %s host, supports moving a chat, and restores the project',
+    async (host) => {
+      const user = userEvent.setup()
+      const view = renderPanel(host)
+      const createProject = await screen.findByRole('button', {
+        name: 'New project',
+      })
+      const createChat = screen.getByRole('button', { name: 'New chat' })
+
+      expect(
+        screen.getAllByRole('button', { name: 'New project' })
+      ).toHaveLength(1)
+      expect(
+        createProject.compareDocumentPosition(createChat) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+
+      await user.click(createProject)
+      const dialog = await screen.findByRole('dialog', {
+        name: 'New project',
+      })
+      await user.type(within(dialog).getByLabelText('Project name'), 'Research')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(
+        await screen.findByRole('button', { name: 'Research0' })
+      ).toBeInTheDocument()
+      await user.click(
+        screen
+          .getAllByRole('button', { name: 'More options' })
+          .at(-1) as HTMLElement
+      )
+      await user.click(
+        await screen.findByRole('menuitem', { name: 'Move to project' })
+      )
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Research' }))
+      expect(
+        await screen.findByRole('button', { name: 'Research1' })
+      ).toBeInTheDocument()
+      view.unmount()
+
+      renderPanel(host)
+      expect(
+        await screen.findByRole('button', { name: 'Research1' })
+      ).toBeInTheDocument()
+    }
+  )
+
+  test('opens New project by keyboard and saves a nonblank name with Enter', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    const createProject = await screen.findByRole('button', {
+      name: 'New project',
+    })
+
+    createProject.focus()
+    await user.keyboard('{Enter}')
+    const dialog = await screen.findByRole('dialog', { name: 'New project' })
+    const name = within(dialog).getByLabelText('Project name')
+    const save = within(dialog).getByRole('button', { name: 'Save' })
+    expect(save).toBeDisabled()
+    await user.type(name, '   ')
+    expect(save).toBeDisabled()
+
+    await user.clear(name)
+    await user.type(name, 'Keyboard project{Enter}')
+
+    expect(
+      await screen.findByRole('button', { name: 'Keyboard project0' })
+    ).toBeInTheDocument()
+  })
+
+  test('cancelling project creation leaves no project and reopens a blank name', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    await user.click(await screen.findByRole('button', { name: 'New project' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New project' })
+    await user.type(within(dialog).getByLabelText('Project name'), 'Cancelled')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(
+      screen.queryByRole('button', { name: 'Cancelled0' })
+    ).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'New project' }))
+    expect(await screen.findByLabelText('Project name')).toHaveValue('')
+  })
 })
 
 describe('ConversationList', () => {
@@ -232,7 +395,11 @@ describe('ConversationList', () => {
     const user = userEvent.setup()
     const handlers = renderList([conversation('a')], 'a', [project('p1')])
 
-    await user.click(screen.getByRole('button', { name: 'More options' }))
+    await user.click(
+      screen
+        .getAllByRole('button', { name: 'More options' })
+        .at(-1) as HTMLElement
+    )
     await user.click(
       await screen.findByRole('menuitem', { name: 'Move to project' })
     )
@@ -260,32 +427,76 @@ describe('ConversationList', () => {
     expect(handlers.onMoveToProject).toHaveBeenCalledWith('a', null)
   })
 
-  test('creates a project from the project name dialog', async () => {
+  test('keeps empty project rows and rename actions visible when there are no chats', async () => {
     const user = userEvent.setup()
-    const handlers = renderList([conversation('a')], 'a')
+    const handlers = renderList([], null, [project('p1')])
 
-    await user.click(screen.getByRole('button', { name: 'New project' }))
-    await user.type(await screen.findByLabelText('Project name'), 'Research')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(screen.getByText('No chats yet')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Project p10' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'New project' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'More options' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Rename' }))
+    const name = await screen.findByLabelText('Project name')
+    await user.clear(name)
+    await user.type(name, 'Renamed{Enter}')
 
-    expect(handlers.onCreateProject).toHaveBeenCalledWith('Research')
+    expect(handlers.onRenameProject).toHaveBeenCalledWith('p1', 'Renamed')
   })
 
-  test('asks for confirmation before deleting a project', async () => {
+  test('keeps an all-archived project visible with a zero open count and keyboard collapse', async () => {
     const user = userEvent.setup()
-    const handlers = renderList([conversation('a', { projectId: 'p1' })], 'a', [
-      project('p1'),
-    ])
+    renderList(
+      [conversation('archived', { projectId: 'p1', archived: true })],
+      null,
+      [project('p1')]
+    )
+    const projectHeader = screen.getByRole('button', {
+      name: 'Project p10',
+    })
+    expect(projectHeader).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      screen.queryByRole('button', { name: /Chat archived/ })
+    ).not.toBeInTheDocument()
 
-    await user.click(screen.getAllByRole('button', { name: 'More options' })[0])
-    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    projectHeader.focus()
+    await user.keyboard(' ')
+    expect(projectHeader).toHaveAttribute('aria-expanded', 'false')
+    await user.click(screen.getByRole('button', { name: /Archived/ }))
 
-    expect(handlers.onDeleteProject).not.toHaveBeenCalled()
-    expect(await screen.findByText('Delete project?')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Delete' }))
-
-    expect(handlers.onDeleteProject).toHaveBeenCalledWith('p1')
-    expect(handlers.onDelete).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('button', { name: /Chat archived/ })
+    ).toBeInTheDocument()
+    expect(projectHeader).toHaveTextContent('0')
   })
+
+  test.each([
+    { name: 'empty project', conversations: [] },
+    {
+      name: 'populated project',
+      conversations: [conversation('a', { projectId: 'p1' })],
+    },
+  ])(
+    'asks for confirmation before deleting an $name',
+    async ({ conversations }) => {
+      const user = userEvent.setup()
+      const handlers = renderList(conversations, null, [project('p1')])
+
+      await user.click(
+        screen.getAllByRole('button', { name: 'More options' })[0]
+      )
+      await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+
+      expect(handlers.onDeleteProject).not.toHaveBeenCalled()
+      expect(await screen.findByText('Delete project?')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+      expect(handlers.onDeleteProject).toHaveBeenCalledWith('p1')
+      expect(handlers.onDelete).not.toHaveBeenCalled()
+    }
+  )
 })

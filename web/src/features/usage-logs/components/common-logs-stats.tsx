@@ -18,9 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
+import { Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatLogQuota, formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -40,8 +43,10 @@ function StatBadge(props: {
   accent: string
 }) {
   return (
-    <span className='border-border/60 bg-muted/25 inline-flex h-7 items-center gap-2 rounded-md border px-2.5 text-xs shadow-xs'>
-      <span className={cn('h-3.5 w-0.5 rounded-full', props.accent)} />
+    <span className='border-border/60 bg-muted/25 inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[10px] whitespace-nowrap shadow-xs sm:gap-2 sm:px-2.5 sm:text-xs'>
+      <span
+        className={cn('h-3.5 w-0.5 rounded-full max-sm:hidden', props.accent)}
+      />
       <span className='text-muted-foreground'>{props.label}</span>
       <span className='text-foreground/85 font-mono font-semibold tabular-nums'>
         {props.value}
@@ -52,6 +57,7 @@ function StatBadge(props: {
 
 export function CommonLogsStats() {
   const { t, i18n } = useTranslation()
+  const isMobile = useMediaQuery('(max-width: 640px)')
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { isAdminView: isAdmin } = useLogsViewScope()
   const searchParams = route.useSearch()
@@ -79,19 +85,32 @@ export function CommonLogsStats() {
     placeholderData: (previousData) => previousData,
   })
 
+  const rowClassName =
+    'flex max-w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto sm:flex-wrap sm:gap-2 sm:overflow-visible'
+
   if (isLoading) {
     return (
-      <div className='flex items-center gap-2'>
-        <Skeleton className='h-7 w-[150px] rounded-md' />
-        <Skeleton className='h-7 w-[100px] rounded-md' />
-        <Skeleton className='h-7 w-[120px] rounded-md' />
-        <Skeleton className='h-7 w-[130px] rounded-md' />
+      <div
+        role='group'
+        aria-label={t('Usage')}
+        aria-busy='true'
+        className={cn(rowClassName, 'sm:flex-nowrap')}
+      >
+        <Skeleton className='h-7 w-24 shrink-0 rounded-md sm:w-[150px]' />
+        <Skeleton className='h-7 w-14 shrink-0 rounded-md sm:w-[100px]' />
+        <Skeleton className='h-7 w-16 shrink-0 rounded-md sm:w-[120px]' />
+        <Skeleton className='h-7 w-16 shrink-0 rounded-md sm:w-[130px]' />
       </div>
     )
   }
 
+  const cacheHitRate = formatCacheHitRate(
+    stats?.cache_read_tokens,
+    stats?.input_tokens
+  )
+
   return (
-    <div className='flex flex-wrap items-center gap-2'>
+    <div role='group' aria-label={t('Usage')} className={rowClassName}>
       <StatBadge
         label={t('Usage')}
         value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
@@ -107,14 +126,36 @@ export function CommonLogsStats() {
         value={formatNumber(stats?.tpm ?? 0, locale)}
         accent='bg-slate-400/70'
       />
-      <StatBadge
-        label={t('Cache Hit Rate')}
-        value={formatCacheHitRate(
-          stats?.cache_read_tokens,
-          stats?.input_tokens
-        )}
-        accent='bg-emerald-500/70'
-      />
+      {isMobile ? (
+        <QuotaDetailsPopover
+          title={t('Cache Hit Rate')}
+          triggerLabel={`${t('Cache Hit Rate')} ${cacheHitRate}`}
+          className='w-auto shrink-0'
+          triggerClassName='border-border/60 bg-muted/25 text-foreground/85 h-7 w-auto justify-center gap-1 rounded-md border px-1.5 py-0 text-[10px] shadow-xs'
+          details={[
+            { label: t('Cache Hit Rate'), value: cacheHitRate },
+            {
+              label: t('Cache Read'),
+              value: formatNumber(stats?.cache_read_tokens ?? 0, locale),
+            },
+            {
+              label: t('Input Tokens'),
+              value: formatNumber(stats?.input_tokens ?? 0, locale),
+            },
+          ]}
+        >
+          <Zap className='size-3 text-emerald-500/70' aria-hidden='true' />
+          <span className='font-mono font-semibold tabular-nums'>
+            {cacheHitRate}
+          </span>
+        </QuotaDetailsPopover>
+      ) : (
+        <StatBadge
+          label={t('Cache Hit Rate')}
+          value={cacheHitRate}
+          accent='bg-emerald-500/70'
+        />
+      )}
     </div>
   )
 }

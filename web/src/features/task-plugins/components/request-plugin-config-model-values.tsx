@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/field'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { resolveLocalizedText } from '@/lib/localized-text'
+import { compareModelOptions } from '@/lib/model-options'
 import { resolveModelProvider } from '@/lib/model-provider'
 import { cn } from '@/lib/utils'
 
@@ -75,14 +76,16 @@ export function RequestPluginConfigModelValues(
     resolveLocalizedText(valueField?.title, i18n.language) || t('Value')
   const modelOptions = useMemo(
     () =>
-      [...new Set(props.models ?? [])].map((model) => {
-        const provider = resolveModelProvider(model)
-        return {
-          value: model,
-          label: model,
-          icon: provider ? getLobeIcon(provider.icon, 16) : undefined,
-        }
-      }),
+      [...new Set(props.models ?? [])]
+        .map((model) => {
+          const provider = resolveModelProvider(model)
+          return {
+            value: model,
+            label: model,
+            icon: provider ? getLobeIcon(provider.icon, 16) : undefined,
+          }
+        })
+        .sort(compareModelOptions),
     [props.models]
   )
 

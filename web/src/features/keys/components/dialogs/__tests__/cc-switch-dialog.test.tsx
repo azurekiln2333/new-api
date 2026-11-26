@@ -49,6 +49,50 @@ function renderDialog(models = ['gpt-5.4', 'claude-sonnet-4-6']) {
 
 describe('CC Switch model selection', () => {
   it.each(['Claude', 'Codex', 'Gemini'])(
+    'sorts %s model choices without changing the selected model or cached source order',
+    async (app) => {
+      const models = ['model-10', 'model-2', 'Alpha']
+      Object.freeze(models)
+      renderDialog(models)
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('radio', { name: app }))
+      const primary = screen.getByRole('combobox', { name: 'Primary Model' })
+      await user.click(primary)
+      expect(
+        screen.getAllByRole('option').map((option) => option.textContent)
+      ).toEqual(['Alpha', 'model-2', 'model-10'])
+      await user.click(screen.getByRole('option', { name: 'model-10' }))
+      expect(primary).toHaveValue('model-10')
+      if (app === 'Claude') {
+        for (const name of ['Haiku Model', 'Sonnet Model', 'Opus Model']) {
+          const field = screen.getByRole('combobox', { name })
+          await user.click(field)
+          expect(
+            screen.getAllByRole('option').map((option) => option.textContent)
+          ).toEqual(['Alpha', 'model-2', 'model-10'])
+          await user.keyboard('{Escape}')
+        }
+      }
+      expect(models).toEqual(['model-10', 'model-2', 'Alpha'])
+      expect(queryClient.getQueryData(['user-models-ccswitch'])).toEqual({
+        success: true,
+        data: models,
+      })
+      await act(async () => {
+        queryClient.setQueryData(['user-models-ccswitch'], {
+          success: true,
+          data: ['zeta', 'model-10', 'model-2', 'alpha'],
+        })
+      })
+      expect(primary).toHaveValue('model-10')
+      await user.click(primary)
+      expect(
+        screen.getAllByRole('option').map((option) => option.textContent)
+      ).toEqual(['alpha', 'model-2', 'model-10', 'zeta'])
+    }
+  )
+
+  it.each(['Claude', 'Codex', 'Gemini'])(
     'opens %s models outside the clipping dialog and keeps the dialog open after selection',
     async (app) => {
       renderDialog()

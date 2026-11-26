@@ -45,9 +45,11 @@ import type {
   UserChartsFilters,
 } from '@/features/dashboard/types'
 import { toIntlLocale } from '@/i18n/languages'
+import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 import { VCHART_OPTION } from '@/lib/vchart'
+import { useAuthStore } from '@/stores/auth-store'
 
 let themeManagerPromise: Promise<
   (typeof import('@visactor/vchart'))['ThemeManager']
@@ -81,6 +83,8 @@ export function UserCharts(props: UserChartsProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { resolvedTheme } = useTheme()
+  const user = useAuthStore((state) => state.auth.user)
+  const isAdmin = Boolean(user?.id && user.role >= ROLE.ADMIN)
   const [themeReady, setThemeReady] = useState(false)
   const themeManagerRef = useRef<
     (typeof import('@visactor/vchart'))['ThemeManager'] | null
@@ -160,25 +164,43 @@ export function UserCharts(props: UserChartsProps) {
   }, [resolvedTheme])
 
   const { data: userData, isLoading } = useQuery({
-    queryKey: ['dashboard', 'user-quota', timeRange],
-    queryFn: async () =>
-      requireServerSuccess(await getUserQuotaDataByUsers(timeRange)),
+    queryKey: [
+      'dashboard',
+      'user-quota',
+      timeRange,
+      user?.id ?? 'anon',
+      user?.role ?? 0,
+    ],
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(await getUserQuotaDataByUsers(timeRange, signal)),
     select: (res) => (res.success ? res.data : []),
+    enabled: isAdmin,
     staleTime: 60_000,
   })
 
   const chartData = useMemo(
     () =>
       processUserChartData(
-        isLoading ? [] : (userData ?? []),
+        !isAdmin || isLoading ? [] : (userData ?? []),
         timeGranularity,
         t,
         topUserLimit,
         metric,
         locale
       ),
-    [userData, isLoading, timeGranularity, t, topUserLimit, metric, locale]
+    [
+      userData,
+      isAdmin,
+      isLoading,
+      timeGranularity,
+      t,
+      topUserLimit,
+      metric,
+      locale,
+    ]
   )
+
+  if (!isAdmin) return null
 
   return (
     <div className='space-y-3'>

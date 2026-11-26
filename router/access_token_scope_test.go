@@ -612,6 +612,72 @@ func TestAdminChannelSurfaceAdmitsOnlyAuthorizedAdmins(t *testing.T) {
 	}
 }
 
+// TestActiveSubscriptionListRequiresBillingReadAndAdminRole exercises the real
+// route guards: a PAT's billing:read grant never replaces the account role.
+// ASVS 5.0.0 V8.2.1 / V8.3.1: enforce function access in trusted middleware.
+func TestActiveSubscriptionListRequiresBillingReadAndAdminRole(t *testing.T) {
+	fixture := setupAdminChannelSurfaceFixture(t)
+	const path = "/api/subscription/admin/active-users"
+	rule, declared := middleware.AccessTokenRouteRule(http.MethodGet + " " + path)
+	require.True(t, declared, "the admin read must declare its PAT scope")
+	assert.Equal(t, "scope", rule.Kind())
+	assert.Equal(t, "billing:read", rule.Scope())
+
+	require.NoError(t, fixture.database.AutoMigrate(&model.SubscriptionPlan{}, &model.UserSubscription{}))
+	plan := &model.SubscriptionPlan{Title: "surface-active-plan", PriceAmount: 1,
+		DurationUnit: model.SubscriptionDurationMonth, DurationValue: 1}
+	require.NoError(t, fixture.database.Create(plan).Error)
+	now := common.GetTimestamp()
+	subscription := &model.UserSubscription{UserId: fixture.ordinaryId, PlanId: plan.Id,
+		StartTime: now - 60, EndTime: now + 3600, Status: "active"}
+	require.NoError(t, fixture.database.Create(subscription).Error)
+
+	billingRead := authz.Permission{Resource: "billing", Action: authz.ActionRead}
+	readPAT := createAdminSurfacePAT(t, fixture.adminId, billingRead)
+	writePAT := createAdminSurfacePAT(t, fixture.adminId, authz.Permission{Resource: "billing", Action: authz.ActionWrite})
+	ordinaryReadPAT := createAdminSurfacePAT(t, fixture.ordinaryId, billingRead)
+	for _, test := range []struct {
+		name, credential string
+		status           int
+		code             string
+	}{
+		{name: "anonymous", status: http.StatusUnauthorized, code: "AUTH_UNAUTHORIZED"},
+		{name: "admin session", credential: fixture.adminSession, status: http.StatusOK},
+		{name: "admin billing read PAT", credential: readPAT, status: http.StatusOK},
+		{name: "admin unrelated PAT", credential: fixture.adminPAT, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED"},
+		{name: "admin write-only PAT", credential: writePAT, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED"},
+		{name: "ordinary session", credential: fixture.ordinarySession, status: http.StatusForbidden, code: "AUTH_INSUFFICIENT_PRIVILEGE"},
+		{name: "ordinary billing read PAT", credential: ordinaryReadPAT, status: http.StatusForbidden, code: "AUTH_INSUFFICIENT_PRIVILEGE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := fixture.request(http.MethodGet, path+"?p=1&page_size=20", test.credential, "")
+			require.Equal(t, test.status, response.Code, response.Body.String())
+			var body struct {
+				Success bool   `json:"success"`
+				Code    string `json:"code"`
+				Data    struct {
+					Total int64                                  `json:"total"`
+					Items []model.ActiveUserSubscriptionListItem `json:"items"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(response.Body.String(), &body))
+			if test.status != http.StatusOK {
+				assert.False(t, body.Success)
+				assert.Equal(t, test.code, body.Code)
+				assert.Empty(t, body.Data.Items)
+				assert.NotContains(t, response.Body.String(), plan.Title)
+				return
+			}
+			assert.True(t, body.Success)
+			assert.EqualValues(t, 1, body.Data.Total)
+			require.Len(t, body.Data.Items, 1)
+			assert.Equal(t, subscription.Id, body.Data.Items[0].SubscriptionId)
+			assert.Equal(t, fixture.ordinaryId, body.Data.Items[0].UserId)
+			assert.Equal(t, plan.Title, body.Data.Items[0].PlanTitle)
+		})
+	}
+}
+
 func TestPersonalAccessTokenLogStorageScope(t *testing.T) {
 	fixture := setupAdminChannelSurfaceFixture(t)
 	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleRootUser).Error)
@@ -735,12 +801,15 @@ func TestRankingModelUsageMasksIdentitiesPerViewer(t *testing.T) {
 	// A viewer-scoped payload is never stored in a shared cache.
 	assert.Equal(t, "no-store", anonymous.Header().Get("Cache-Control"))
 
-	// An ordinary user sees exactly one identity: their own.
+	// An ordinary viewer sees their own full name and only partial labels for
+	// other current users; deleted accounts remain opaque.
 	ordinary := fixture.request(http.MethodGet, path, fixture.ordinarySession, "")
 	require.Equal(t, http.StatusOK, ordinary.Code, ordinary.Body.String())
 	ordinaryBody := ordinary.Body.String()
 	assert.Contains(t, ordinaryBody, "surface-ordinary")
 	assert.NotContains(t, ordinaryBody, "surface-admin")
+	assert.Contains(t, ordinaryBody, `"display_name":"s***n"`)
+	assert.NotContains(t, ordinaryBody, `"user_id":`+strconv.Itoa(fixture.adminId))
 	assert.NotContains(t, ordinaryBody, "987654")
 	assert.Contains(t, ordinaryBody, `"masked":true`)
 	assert.Equal(t, "no-store", ordinary.Header().Get("Cache-Control"))
@@ -760,6 +829,26 @@ func TestRankingModelUsageMasksIdentitiesPerViewer(t *testing.T) {
 	// The same URL must never serve one viewer's payload to another: the admin
 	// response carries names the anonymous one must not contain.
 	assert.NotEqual(t, anonymousBody, adminBody)
+
+	// A root and an administrator receive full names. A same-session demotion
+	// returns to full-self/partial-other labels immediately.
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	root := fixture.request(http.MethodGet, path, fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, root.Code, root.Body.String())
+	assert.Contains(t, root.Body.String(), "surface-admin")
+	assert.Contains(t, root.Body.String(), "surface-ordinary")
+
+	// A same-session demotion returns to full-self/partial-other labels.
+	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleCommonUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(fixture.adminId))
+	demoted := fixture.request(http.MethodGet, path, fixture.adminSession, "")
+	require.Equal(t, http.StatusOK, demoted.Code, demoted.Body.String())
+	assert.Contains(t, demoted.Body.String(), "surface-admin")
+	assert.Contains(t, demoted.Body.String(), `"display_name":"s***y"`)
+	assert.NotContains(t, demoted.Body.String(), "surface-ordinary")
+	assert.NotContains(t, demoted.Body.String(), `"user_id":`+strconv.Itoa(fixture.ordinaryId))
+	assert.Equal(t, "no-store", demoted.Header().Get("Cache-Control"))
 }
 
 // TestRankingModelUsageRequiresModelAndHonoursModulePolicy pins the request

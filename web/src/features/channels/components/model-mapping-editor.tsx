@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button'
 import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { compareModelOptions } from '@/lib/model-options'
 
 type MappingField = 'from' | 'to'
 
@@ -115,18 +116,22 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
   const duplicateSources = useMemo(() => getDuplicateSources(rows), [rows])
   const sourceOptions = useMemo(
     () =>
-      (props.sourceModelOptions ?? []).map((model) => ({
-        value: model,
-        label: model,
-      })),
+      (props.sourceModelOptions ?? [])
+        .map((model) => ({
+          value: model,
+          label: model,
+        }))
+        .sort(compareModelOptions),
     [props.sourceModelOptions]
   )
   const targetOptions = useMemo(
     () =>
-      (props.targetModelOptions ?? []).map((model) => ({
-        value: model,
-        label: model,
-      })),
+      (props.targetModelOptions ?? [])
+        .map((model) => ({
+          value: model,
+          label: model,
+        }))
+        .sort(compareModelOptions),
     [props.targetModelOptions]
   )
 

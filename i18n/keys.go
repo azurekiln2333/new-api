@@ -52,6 +52,11 @@ const (
 	MsgRelayRequestRejected              = "relay.request_rejected"
 	MsgRelayRequestPluginFailed          = "relay.request_plugin_failed"
 	MsgRelayResponseRejected             = "relay.response_rejected"
+	MsgRelayUpstreamRejected             = "relay.upstream_rejected"
+	MsgRelayUpstreamQuotaRestriction     = "relay.upstream_quota_restriction"
+	MsgRelayUpstreamRateLimit            = "relay.upstream_rate_limit"
+	MsgRelayUpstreamUnavailable          = "relay.upstream_unavailable"
+	MsgRelayUpstreamError                = "relay.upstream_error"
 )
 
 // Emails and the name of the token created at registration, in the

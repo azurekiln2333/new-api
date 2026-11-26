@@ -21,6 +21,11 @@ const UpdateSourceRepositoryOption = "system_update_setting.repository"
 // open the console.
 const UpdateSourceRepositoryEnv = "NEW_API_UPDATE_SOURCE_REPOSITORY"
 
+// UpdateSourceBuildDefaultRepository optionally binds a release build to its
+// repository through the Go linker's -X flag. It is empty in unbound builds;
+// explicit stored and environment settings always take precedence.
+var UpdateSourceBuildDefaultRepository string
+
 // ErrUpdateSourceRepositoryInvalid rejects anything that is not a bare
 // "owner/repo" pair on github.com.
 var ErrUpdateSourceRepositoryInvalid = errors.New("Enter the repository as owner/repo, for example owner/new-api.")
@@ -29,7 +34,7 @@ var updateSourceRepositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z
 
 type UpdateSourceSetting struct {
 	// Repository is "owner/repo" on github.com. An empty value follows the
-	// upstream release channel.
+	// deployment's environment or build default, then the upstream channel.
 	Repository string `json:"repository"`
 }
 
@@ -61,14 +66,18 @@ func ValidateUpdateSourceRepository(value string) error {
 }
 
 // UpdateSourceRepository returns the effective release repository. The stored
-// setting wins; the environment variable provides a startup default; the
-// upstream repository remains the fallback so existing deployments are
-// unchanged until an administrator opts in.
+// setting wins, followed by valid environment and build defaults. The upstream
+// repository remains the fallback for builds without a valid bound default.
 func UpdateSourceRepository() string {
 	if repository := strings.TrimSpace(updateSourceSetting.Repository); repository != "" {
 		return repository
 	}
 	if repository := strings.TrimSpace(os.Getenv(UpdateSourceRepositoryEnv)); repository != "" {
+		if ValidateUpdateSourceRepository(repository) == nil {
+			return repository
+		}
+	}
+	if repository := strings.TrimSpace(UpdateSourceBuildDefaultRepository); repository != "" {
 		if ValidateUpdateSourceRepository(repository) == nil {
 			return repository
 		}

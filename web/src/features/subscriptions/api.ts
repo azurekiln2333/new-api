@@ -23,6 +23,7 @@ import type {
   PlanRecord,
   PlanPayload,
   UserSubscriptionRecord,
+  EffectiveSubscriptionPage,
   CreateUserSubscriptionRequest,
   ResetUserSubscriptionsRequest,
   ResetPlanSubscriptionsRequest,
@@ -69,6 +70,17 @@ export async function patchPlanStatus(
 // ============================================================================
 // Admin User Subscription Management
 // ============================================================================
+
+export async function getEffectiveSubscriptionUsers(
+  params: { p: number; page_size: number },
+  signal?: AbortSignal
+): Promise<ApiResponse<EffectiveSubscriptionPage>> {
+  const res = await api.get('/api/subscription/admin/active-users', {
+    params,
+    signal,
+  })
+  return res.data
+}
 
 export async function getUserSubscriptions(
   userId: number

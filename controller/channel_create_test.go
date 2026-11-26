@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,6 +79,122 @@ func setupChannelCreateTest(t *testing.T) int {
 	require.NoError(t, database.Raw(versionQuery).Scan(&version).Error)
 	t.Logf("database=%s version=%s", common.MainDatabaseType(), version)
 	return root.Id
+}
+
+func TestChannelUpdatePersistsModelMappingAndPublishesCache(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	common.MemoryCacheEnabled = true
+	const clientModel = "deepseek-r1"
+	payload, err := common.Marshal(AddChannelRequest{Mode: "single", Channel: &model.Channel{
+		Name: t.Name(), Type: constant.ChannelTypeOpenAI, Key: "sk-mapping-save-fixture",
+		Models: clientModel, Group: "default",
+	}})
+	require.NoError(t, err)
+	response := postAddChannel(t, rootID, common.RoleRootUser, string(payload))
+	require.Equal(t, http.StatusOK, response.Code)
+	var created struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID int `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &created))
+	require.True(t, created.Success, response.Body.String())
+	require.Positive(t, created.Data.ID)
+	t.Cleanup(func() {
+		_, err := model.BatchDeleteChannels([]int{created.Data.ID})
+		require.NoError(t, err)
+	})
+	initial, err := model.GetChannelById(created.Data.ID, true)
+	require.NoError(t, err)
+	require.NotEmpty(t, initial.KeyEntryIDs)
+	model.InitChannelCache()
+
+	const firstMapping = `{"deepseek-r1":"DeepSeek-R1"}`
+	const updatedMapping = `{"deepseek-r1":"DeepSeek-R1-Updated"}`
+	for step, tc := range []struct {
+		name        string
+		mapping     *string
+		omit        bool
+		wantMapping string
+		wantModel   string
+		changed     bool
+	}{
+		{name: "add case-sensitive target", mapping: common.GetPointer(firstMapping), wantMapping: firstMapping, wantModel: "DeepSeek-R1", changed: true},
+		{name: "edit existing mapping", mapping: common.GetPointer(updatedMapping), wantMapping: updatedMapping, wantModel: "DeepSeek-R1-Updated", changed: true},
+		{name: "omitted mapping preserves value", omit: true, wantMapping: updatedMapping, wantModel: "DeepSeek-R1-Updated"},
+		{name: "null mapping preserves value", wantMapping: updatedMapping, wantModel: "DeepSeek-R1-Updated"},
+		{name: "empty object clears redirect", mapping: common.GetPointer(`{}`), wantMapping: `{}`, wantModel: clientModel, changed: true},
+		{name: "restore redirect", mapping: common.GetPointer(firstMapping), wantMapping: firstMapping, wantModel: "DeepSeek-R1", changed: true},
+		{name: "empty string clears redirect", mapping: common.GetPointer(""), wantModel: clientModel, changed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			patch := map[string]any{"id": initial.Id, "name": tc.name}
+			if !tc.omit {
+				patch["model_mapping"] = tc.mapping
+			}
+			payload, err := common.Marshal(patch)
+			require.NoError(t, err)
+			response := putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
+			require.Equal(t, http.StatusOK, response.Code)
+			var result struct {
+				Success bool          `json:"success"`
+				Data    model.Channel `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.True(t, result.Success, response.Body.String())
+			assert.Equal(t, tc.wantMapping, result.Data.GetModelMapping())
+			assert.Equal(t, tc.name, result.Data.Name)
+			assert.NotContains(t, response.Body.String(), initial.Key)
+
+			stored, err := model.GetChannelById(initial.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMapping, stored.GetModelMapping())
+			assert.Equal(t, tc.name, stored.Name)
+			assert.Equal(t, initial.Models, stored.Models)
+			assert.Equal(t, initial.Key, stored.Key)
+			assert.Equal(t, initial.KeyEntryIDs, stored.KeyEntryIDs)
+			assert.Equal(t, initial.KeyEntryRevisions, stored.KeyEntryRevisions)
+			cached, err := model.CacheGetChannel(initial.Id)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantMapping, cached.GetModelMapping(), "the edit must publish before returning success")
+
+			// Use the published mapping through the relay's real mapping helper.
+			// The client spelling stays intact while the outgoing DTO uses the
+			// administrator's exact upstream spelling, including case-only changes.
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Set("model_mapping", cached.GetModelMapping())
+			request := &dto.GeneralOpenAIRequest{Model: clientModel}
+			info := &relaycommon.RelayInfo{
+				OriginModelName: clientModel,
+				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: clientModel},
+			}
+			require.NoError(t, helper.ModelMappedHelper(context, info, request))
+			assert.Equal(t, clientModel, info.OriginModelName)
+			assert.Equal(t, tc.wantModel != clientModel, info.IsModelMapped)
+			assert.Equal(t, tc.wantModel, info.UpstreamModelName)
+			encoded, err := common.Marshal(request)
+			require.NoError(t, err)
+			var outgoing struct {
+				Model string `json:"model"`
+			}
+			require.NoError(t, common.Unmarshal(encoded, &outgoing))
+			assert.Equal(t, tc.wantModel, outgoing.Model)
+
+			var audits []model.AuditEventOutbox
+			require.NoError(t, model.DB.Where("action = ?", "channel.update").Order("id").Find(&audits).Error)
+			require.Len(t, audits, step+1, "each PUT must enqueue exactly one durable audit")
+			changedFields := []string{}
+			if tc.changed {
+				changedFields = append(changedFields, "model_mapping")
+			}
+			expectedAudit, err := common.Marshal(map[string]any{
+				"id": initial.Id, "name": tc.name, "changed_fields": changedFields,
+			})
+			require.NoError(t, err)
+			assert.JSONEq(t, string(expectedAudit), audits[step].ParamsJson, "audit records field names, not mapping contents or credentials")
+		})
+	}
 }
 
 func TestChannelSupportedEndpointsPersistThroughCreateAndUpdate(t *testing.T) {

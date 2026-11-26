@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -86,13 +87,47 @@ func TestUpdateOptionPersistsAcrossDialects(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			db := optionTestDB(t, dialect)
+			consoleSettings := console_setting.GetConsoleSetting()
+			common.OptionMapRWMutex.RLock()
+			previousConsoleSettings := *consoleSettings
+			common.OptionMapRWMutex.RUnlock()
+			t.Cleanup(func() {
+				common.OptionMapRWMutex.Lock()
+				*consoleSettings = previousConsoleSettings
+				common.OptionMapRWMutex.Unlock()
+			})
+			assert.True(t, previousConsoleSettings.SidebarPersonalSettingsEnabled, "personal sidebar settings default to enabled")
+			require.NoError(t, LoadOptionsFromDatabase())
+			assert.True(t, consoleSettings.SidebarPersonalSettingsEnabled, "an absent stored override keeps personal sidebar settings enabled")
+			const sidebarSettingsKey = "console_setting.sidebar_personal_settings_enabled"
+			require.NoError(t, UpdateOption(sidebarSettingsKey, "false"))
+			var persistedSidebar Option
+			require.NoError(t, db.Where(&Option{Key: sidebarSettingsKey}).First(&persistedSidebar).Error)
+			assert.Equal(t, "false", persistedSidebar.Value)
+			common.OptionMapRWMutex.Lock()
+			consoleSettings.SidebarPersonalSettingsEnabled = true
+			common.OptionMapRWMutex.Unlock()
+			require.NoError(t, LoadOptionsFromDatabase())
+			assert.False(t, consoleSettings.SidebarPersonalSettingsEnabled, "stored false overrides the default when options are reloaded")
+			require.NoError(t, db.Where(&Option{Key: sidebarSettingsKey}).First(&persistedSidebar).Error)
+			assert.Equal(t, "false", persistedSidebar.Value, "reload must not overwrite the persisted choice")
+
 			settings := operation_setting.GetLogSetting()
 			previousSettings := *settings
+			assert.Equal(t, 3, previousSettings.RequestContentRetentionDays, "a fresh configuration defaults request content to three days")
 			t.Cleanup(func() {
 				common.OptionMapRWMutex.Lock()
 				*settings = previousSettings
 				common.OptionMapRWMutex.Unlock()
 			})
+			common.OptionMapRWMutex.Lock()
+			settings.RetentionDays = 0
+			settings.RequestContentRetentionDays = 3
+			common.OptionMapRWMutex.Unlock()
+			require.NoError(t, LoadOptionsFromDatabase())
+			usageDays, contentDays := operation_setting.LogRetentionDays()
+			assert.Zero(t, usageDays)
+			assert.Equal(t, 3, contentDays, "an absent stored override retains the request-content default")
 			for _, option := range []Option{
 				{Key: "log_setting.retention_days", Value: "0"},
 				{Key: "log_setting.request_content_retention_days", Value: "7"},
@@ -104,9 +139,21 @@ func TestUpdateOptionPersistsAcrossDialects(t *testing.T) {
 				require.NoError(t, db.Where(&Option{Key: option.Key}).First(&persisted).Error)
 				assert.Equal(t, option.Value, persisted.Value)
 			}
-			usageDays, contentDays := operation_setting.LogRetentionDays()
+			usageDays, contentDays = operation_setting.LogRetentionDays()
 			assert.Zero(t, usageDays)
 			assert.Equal(t, 7, contentDays)
+			const contentRetentionKey = "log_setting.request_content_retention_days"
+			require.NoError(t, UpdateOption(contentRetentionKey, "0"))
+			common.OptionMapRWMutex.Lock()
+			settings.RequestContentRetentionDays = 3
+			common.OptionMapRWMutex.Unlock()
+			require.NoError(t, LoadOptionsFromDatabase())
+			usageDays, contentDays = operation_setting.LogRetentionDays()
+			assert.Zero(t, usageDays)
+			assert.Zero(t, contentDays, "an explicitly stored zero remains keep-forever")
+			var persistedRetention Option
+			require.NoError(t, db.Where(&Option{Key: contentRetentionKey}).First(&persistedRetention).Error)
+			assert.Equal(t, "0", persistedRetention.Value)
 			const key = "TestUpsertKey"
 
 			require.NoError(t, UpdateOption(key, "first"))

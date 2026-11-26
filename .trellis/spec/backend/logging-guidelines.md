@@ -60,9 +60,10 @@ It does not authorize request bodies in audit events or process logs.
 - Cleanup checks renewable ingress leases, surviving logs and durable task
   liveness, including terminal `BudgetPending` and unresolved refunds, using the
   primary transaction. Storage errors never mean no references.
-- Independent expiration is opt-in: `log_setting.retention_days` and
-  `log_setting.request_content_retention_days` default to 0 (keep forever), with
-  whole-day bounds 0–36500. Master-only scheduled usage cleanup selects bounded
+- `log_setting.retention_days` defaults to 0 (keep forever). An absent
+  `log_setting.request_content_retention_days` defaults to 3 days; explicitly
+  persisted 0 remains keep-forever, and positive overrides remain unchanged.
+  Both retain whole-day bounds 0–36500. Master-only scheduled usage cleanup selects bounded
   relational ID pages; content expiry preserves usage rows and active task/writer
   protections. `expire_pending` / `retired` fences reject reads and delayed writes
   even while an old usage link survives. Never treat age alone as permission to
@@ -75,6 +76,27 @@ It does not authorize request bodies in audit events or process logs.
   never fabricated zero; SQLite must not scan payloads for per-table sizes.
   PostgreSQL deletion only makes space reusable; VACUUM FULL / pg_repack is a
   separate authorized operational action, never automatic application cleanup.
+- Stored request payloads may use `newapi-request-content:gzip:v1:` followed by
+  base64 of a gzip BestSpeed stream. `REQUEST_CONTENT_LOG_COMPRESSION_ENABLED`
+  defaults to true and controls new encoding only. Try payloads at least 4096
+  bytes and keep the encoded form only when the complete marker/base64 value
+  saves at least one eighth of the original bytes. `captured_bytes`, truncation
+  and immutable request snapshots always describe the original JSON.
+- Decode only in `GetLogRequestDetail` after the surviving-link, user/request
+  identity and protection/tombstone checks. Reading is independent of the write
+  flag and today's capture limit. Enforce the historical 128 MiB bound, strict
+  base64, one gzip member, at most captured_bytes+1 decoded bytes, exact original
+  length, checksum/end-of-stream/no trailing data and a valid JSON object.
+  Legacy plain JSON and historical captured_bytes=0 remain readable. Corruption
+  returns the fixed value-free storage error through the existing empty404;
+  never expose the encoded envelope, partial body or raw codec error.
+- Compression rollout requires all readers to support the decoder. Set the
+  compression flag false on initial upgraded nodes during a rolling upgrade,
+  then enable after all readers are compatible. An older binary cannot read
+  compressed rows; false does not convert them. Roll back only to a compatible
+  decoder build unless a separately authorized conversion/restore is performed.
+  PostgreSQL TOAST and ClickHouse already have engine compression: application
+  byte savings are not evidence of a specific physical-disk saving.
 
 ### 4. Validation & Error Matrix
 
@@ -90,6 +112,9 @@ It does not authorize request bodies in audit events or process logs.
 | Retention days outside 0–36500, fractional days, non-boolean capture or bytes outside 256–134217728 | Reject single/batch settings before persistence/publication |
 | Expired/retired content with a surviving usage link or delayed remote bytes | Empty 404; keep the value-free tombstone and reclaim late bytes safely |
 | Storage metadata unavailable or not cheaply supported | Return null bytes; no payload/count scan and no invented empty table |
+| Absent content retention / explicit stored 0 | Use 3 days / preserve keep-forever respectively |
+| Corrupt, oversized, unknown-version or multi-member compressed payload | Fixed value-free storage failure; no envelope or partial JSON response |
+| Compression flag becomes false after encoded history exists | New writes stay plain; existing encoded history still reads correctly |
 
 ### 5. Good / Base / Bad Cases
 
@@ -97,11 +122,11 @@ It does not authorize request bodies in audit events or process logs.
   retry preserves the success-linked body. HK submission and US refund retain
   distinct submission/processing nodes.
 - Base: old logs remain readable summaries without invented content or nodes;
-  default-zero retention leaves their history untouched.
-- Good: an administrator explicitly enables content retention; unpinned payloads
+  explicit zero retention leaves their history untouched.
+- Good: the absent content setting uses three days; unpinned payloads
   expire independently while logs remain and active tasks retain their payload.
-- Bad: serialize a snapshot into consume parameters, fetch by display ID, enable
-  deletion on upgrade, or expire an uncertain fence merely because time passed.
+- Bad: serialize a snapshot into consume parameters, fetch by display ID, overwrite
+  an explicit zero on upgrade, or expire an uncertain fence merely because time passed.
 
 ### 6. Tests Required
 
@@ -114,6 +139,13 @@ It does not authorize request bodies in audit events or process logs.
 - `TestLogRequestPayloadIsAStringDriverValue`: the installed ClickHouse String
   converter must accept the actual payload type and preserve its bytes. This
   local driver regression complements the real server storage matrix.
+- `TestLogRequestDetailPayloadCodec`: beneficial compression, tiny/incompressible
+  fallback, flag-independent decode and all bounded corruption failures.
+  The real storage matrix also inspects the raw stored column and reads both
+  legacy/new history after lowering today's capture cap. Driver coverage includes
+  an actual compressed string. Test byte ratios are fixture-only observations.
+- `TestUpdateOptionPersistsAcrossDialects`: absent content retention is3; persist0,
+  reset the live field to3, then reload0 from actual SQLite/MySQL/PostgreSQL.
 - `TestLogRequestDetailConfiguredSQLiteAlias`: actual configured
   `SQL_DSN=local` / `LOG_SQL_DSN=local` startup and persisted payload/link.
 - `TestLogRequestDetailIndependentStoreRecovery` and
@@ -149,6 +181,12 @@ another pool to that file; or clear `link_pending` because any retry shares its 
 
 Correct: reuse the same-store transaction/handle; for independent stores retain
 operation identity and require its exact link before releasing the fence.
+
+Wrong: enable compressed writes while an old reader is still serving, or use
+today's smaller capture cap to reject valid historical data.
+
+Correct: stage all-reader decoding first and keep a fixed historical read bound;
+toggle new writes independently from decoding and from retention.
 
 Wrong: weaken production activation/storage checks to repair a fresh fixture.
 

@@ -71,6 +71,7 @@ import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
+import { compareModelOptions } from '@/lib/model-options'
 import {
   getServerErrorMessage,
   requireServerSuccess,
@@ -843,6 +844,7 @@ export function ApiKeysMutateDrawer({
                                 }))}
                                 selected={field.value}
                                 onChange={field.onChange}
+                                compareOptions={compareModelOptions}
                                 placeholder={t(
                                   'Select models (empty for allow all)'
                                 )}

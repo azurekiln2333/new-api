@@ -249,6 +249,7 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 	var budget *model.ChannelBudgetView
 	var preview channelKeyDedupPlan
 	var removedKeys []string
+	auditActor := snapshotAuditActor(c)
 	updated, err := model.MutateChannelKeyEntries(c.Request.Context(), channel.Id, expected, func(tx *gorm.DB, current *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
 		if request.Action == "deduplicate_keys" {
 			var accounts map[int64]model.ChannelBudgetAccount
@@ -361,19 +362,22 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			retired := *entry
 			return append(entries[:index:index], entries[index+1:]...), []model.ChannelKeyEntry{retired}, nil
 		case "set_key_models":
-			for _, name := range request.Models {
-				if !slices.Contains(current.GetModels(), strings.TrimSpace(name)) {
-					return nil, nil, common.NewMessage("Model {{model}} is not served by this channel", map[string]any{"model": name})
-				}
+			if request.ScopeMode != nil && *request.ScopeMode != "all" && *request.ScopeMode != "allowlist" {
+				return nil, nil, common.NewMessage("invalid channel key model scope")
 			}
-			if err := entry.SetKeyModels(request.Models); err != nil {
+			models := normalizeModelNames(request.Models)
+			if err := entry.SetKeyModels(models); err != nil {
 				return nil, nil, err
 			}
 			if request.ScopeMode != nil {
-				if *request.ScopeMode != "all" && *request.ScopeMode != "allowlist" {
-					return nil, nil, common.NewMessage("invalid channel key model scope")
-				}
+				// SetKeyModels infers legacy empty selections as all. An explicit
+				// empty allowlist instead stays deny-all.
 				entry.ScopeMode = *request.ScopeMode
+			}
+			if entry.ScopeMode == "allowlist" && len(models) > 0 {
+				// Preserve manual models and their order; only the selected Key's
+				// explicit allowlist adds names to the shared catalog.
+				current.Models = strings.Join(mergeModelNames(current.GetModels(), models), ",")
 			}
 		case "set_key_user":
 			if request.UserId == nil || *request.UserId < 0 {
@@ -410,6 +414,20 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			return nil, nil, nil
 		}
 		entry.ConfigRevision++
+		if request.Action == "set_key_models" {
+			// persistKeyEntries advances the list revision once after this callback.
+			// The audit, catalog, scope and abilities share its transaction, so any
+			// later persistence failure also removes this audit obligation.
+			draft := buildAuditDraft(auditActor, "channel.multi_key_manage", map[string]any{
+				"id":       current.Id,
+				"action":   request.Action,
+				"entry_id": strconv.FormatInt(entry.Id, 10),
+				"revision": current.ChannelInfo.KeyEntryRevision + 1,
+			})
+			if _, err := model.EnqueueAuditEventTx(tx, draft); err != nil {
+				return nil, nil, err
+			}
+		}
 		return entries, nil, nil
 	})
 	if err != nil {
@@ -421,7 +439,11 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 		common.ApiSuccess(c, preview)
 		return true
 	}
-	recordManageAudit(c, "channel.multi_key_manage", map[string]any{"id": channel.Id, "action": request.Action, "entry_id": request.KeyEntryID, "revision": updated.ChannelInfo.KeyEntryRevision})
+	if request.Action == "set_key_models" {
+		markAuditLogged(c)
+	} else {
+		recordManageAudit(c, "channel.multi_key_manage", map[string]any{"id": channel.Id, "action": request.Action, "entry_id": request.KeyEntryID, "revision": updated.ChannelInfo.KeyEntryRevision})
+	}
 	closeActiveChannelWebSockets([]int{channel.Id})
 	if len(removedKeys) > 0 {
 		service.RevokeRemovedChannelCredentials(updated, channel.Key, updated.Key)
@@ -430,6 +452,8 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 		common.ApiSuccess(c, budget)
 	} else if request.Action == "deduplicate_keys" {
 		common.ApiSuccess(c, preview)
+	} else if request.Action == "set_key_models" {
+		common.ApiSuccess(c, gin.H{"revision": updated.ChannelInfo.KeyEntryRevision, "channel_models": normalizeModelNames(updated.GetModels())})
 	} else {
 		common.ApiSuccess(c, gin.H{"revision": updated.ChannelInfo.KeyEntryRevision})
 	}

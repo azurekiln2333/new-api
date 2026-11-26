@@ -66,9 +66,11 @@ func TestChannelWaitRouting(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, i18n.Init())
 			user, token := setupResponsesWSRequestTest(t)
-			require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelKeyEntry{}))
-			require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
-			require.NoError(t, model.DB.Model(user).Update("setting", `{"billing_preference":"wallet_only"}`).Error)
+			db, logDB := model.DB, model.LOG_DB
+			require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.ChannelKeyEntry{}))
+			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+			// These routing cases do not exercise asynchronous quota notifications.
+			require.NoError(t, db.Model(user).Update("setting", `{"billing_preference":"wallet_only","quota_warning_enabled":false}`).Error)
 			previousRetries, previousLogs, previousErrors := common.RetryTimes, common.LogConsumeEnabled, constant.ErrorLogEnabled
 			previousCount, previousBatch, previousTimeout := constant.CountToken, common.BatchUpdateEnabled, constant.StreamingTimeout
 			previousPrices, previousGroups := ratio_setting.ModelPrice2JSONString(), ratio_setting.GroupRatio2JSONString()
@@ -99,7 +101,7 @@ func TestChannelWaitRouting(t *testing.T) {
 				*affinity = previousAffinity
 				require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(previousPrices))
 				require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups))
-				require.NoError(t, model.LOG_DB.Where("token_id = ?", token.Id).Delete(&model.Log{}).Error)
+				require.NoError(t, logDB.Where("token_id = ?", token.Id).Delete(&model.Log{}).Error)
 			})
 			service.InitHttpClient()
 			var calls [2]atomic.Int32
@@ -111,7 +113,8 @@ func TestChannelWaitRouting(t *testing.T) {
 			for i := range channels {
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					attempt := calls[i].Add(1)
-					quota, err := model.GetUserQuota(user.Id, false)
+					var quota int
+					err := db.Model(user).Select("quota").Scan(&quota).Error
 					assert.NoError(t, err)
 					reserved <- quota
 					if attempt == 1 && tc.upstream != "" {
@@ -140,9 +143,9 @@ func TestChannelWaitRouting(t *testing.T) {
 				}
 				require.NoError(t, channels[i].Insert())
 				t.Cleanup(func() {
-					require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.ChannelKeyEntry{}).Error)
-					require.NoError(t, model.DB.Where("channel_id = ?", channels[i].Id).Delete(&model.Ability{}).Error)
-					require.NoError(t, model.DB.Delete(&channels[i]).Error)
+					require.NoError(t, db.Where("channel_id = ?", channels[i].Id).Delete(&model.ChannelKeyEntry{}).Error)
+					require.NoError(t, db.Where("channel_id = ?", channels[i].Id).Delete(&model.Ability{}).Error)
+					require.NoError(t, db.Delete(&channels[i]).Error)
 				})
 			}
 			var held []*service.ChannelCapacityLease
@@ -154,9 +157,14 @@ func TestChannelWaitRouting(t *testing.T) {
 					t.Cleanup(lease.Release)
 				}
 			}
+			started := make(chan struct{})
 			finished := make(chan struct{})
 			engine := gin.New()
-			engine.Use(func(c *gin.Context) { defer close(finished); c.Next() })
+			engine.Use(func(c *gin.Context) {
+				close(started)
+				defer close(finished)
+				c.Next()
+			})
 			engine.POST("/v1/responses", middleware.TokenAuth(), func(c *gin.Context) {
 				if tc.pinned {
 					service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: channels[0].Id, Source: dto.PinSourceToken, Rank: dto.PinRankToken, RetryMode: dto.PinRetrySingleAttempt})
@@ -167,9 +175,45 @@ func TestChannelWaitRouting(t *testing.T) {
 				Relay(c, types.RelayFormatOpenAIResponses)
 			})
 			gateway := httptest.NewServer(engine)
-			t.Cleanup(gateway.Close)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
+			// Registered last so failures also stop the request and observe its SQL
+			// accounting before channel deletion or fixture globals are restored.
+			t.Cleanup(func() {
+				cancel()
+				gateway.CloseClientConnections()
+				gateway.Close()
+				select {
+				case <-started:
+				default:
+					return
+				}
+				select {
+				case <-finished:
+				case <-time.After(3 * time.Second):
+					t.Error("relay did not finish during cleanup")
+					return
+				}
+				cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancelCleanup()
+				// Cancellation may precede the expected success. Only cleanup follows
+				// the committed logs; normal assertions still require tc.wantCharge.
+				require.Eventually(t, func() bool {
+					var logs []model.Log
+					if err := logDB.WithContext(cleanupCtx).Where("token_id = ? AND type = ?", token.Id, model.LogTypeConsume).Find(&logs).Error; err != nil {
+						return false
+					}
+					charge := 0
+					for _, log := range logs {
+						charge += log.Quota
+					}
+					var currentUser model.User
+					var currentToken model.Token
+					return db.WithContext(cleanupCtx).First(&currentUser, user.Id).Error == nil &&
+						db.WithContext(cleanupCtx).First(&currentToken, token.Id).Error == nil &&
+						currentUser.Quota == user.Quota-charge && currentToken.RemainQuota == token.RemainQuota-charge
+				}, 3*time.Second, 10*time.Millisecond, "cleanup must observe the persisted wallet and token accounting")
+			})
 			body := `{"model":"channel-wait-routing-test","input":"hello","stream":true}`
 			if tc.revoke == "goal" {
 				body = `{"model":"channel-wait-routing-test","input":"hello","stream":true,"client_metadata":{"x-codex-turn-metadata":"{\"turn_trigger\":\"goal\"}"}}`
@@ -188,18 +232,18 @@ func TestChannelWaitRouting(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, ": keepalive\n", line)
 				assert.Zero(t, calls[0].Load(), "waiting must not contact the upstream")
-				quota, err := model.GetUserQuota(user.Id, false)
-				require.NoError(t, err)
+				var quota int
+				require.NoError(t, db.Model(user).Select("quota").Scan(&quota).Error)
 				assert.Equal(t, user.Quota, quota, "initial admission waiting must not reserve quota")
 				switch tc.revoke {
 				case "group":
 					channels[0].SetOtherSettings(kitdto.ChannelOtherSettings{GroupModels: map[string][]string{"default": {"another-model"}}})
-					require.NoError(t, model.DB.Model(&channels[0]).Update("settings", channels[0].OtherSettings).Error)
+					require.NoError(t, db.Model(&channels[0]).Update("settings", channels[0].OtherSettings).Error)
 				case "goal":
 					settings := channels[0].GetSetting()
 					settings.DenyGoal = true
 					channels[0].SetSetting(settings)
-					require.NoError(t, model.DB.Model(&channels[0]).Update("setting", channels[0].Setting).Error)
+					require.NoError(t, db.Model(&channels[0]).Update("setting", channels[0].Setting).Error)
 				case "key":
 					_, err := model.MutateChannelKeyEntries(t.Context(), channels[0].Id, channels[0].ChannelInfo.KeyEntryRevision,
 						func(_ *gorm.DB, _ *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
@@ -254,14 +298,25 @@ func TestChannelWaitRouting(t *testing.T) {
 			for quota := range reserved {
 				assert.Equal(t, user.Quota-1, quota, "every upstream attempt must share one reservation")
 			}
-			quota, err := model.GetUserQuota(user.Id, false)
-			require.NoError(t, err)
+			// Handler completion only schedules a failed request's refund. With
+			// Redis and batching disabled, both SQL balances fence its quota work.
+			accountingCtx, cancelAccounting := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancelAccounting()
+			require.Eventually(t, func() bool {
+				var currentUser model.User
+				var currentToken model.Token
+				return db.WithContext(accountingCtx).First(&currentUser, user.Id).Error == nil &&
+					db.WithContext(accountingCtx).First(&currentToken, token.Id).Error == nil &&
+					currentUser.Quota == user.Quota-tc.wantCharge && currentToken.RemainQuota == token.RemainQuota-tc.wantCharge
+			}, 3*time.Second, 10*time.Millisecond, "wallet and token must reflect exactly one final charge or a full refund")
+			var quota int
+			require.NoError(t, db.Model(user).Select("quota").Scan(&quota).Error)
 			assert.Equal(t, user.Quota-tc.wantCharge, quota)
 			var tokenQuota int
-			require.NoError(t, model.DB.Model(token).Select("remain_quota").Scan(&tokenQuota).Error)
+			require.NoError(t, db.Model(token).Select("remain_quota").Scan(&tokenQuota).Error)
 			assert.Equal(t, token.RemainQuota-tc.wantCharge, tokenQuota)
 			var logs []model.Log
-			require.NoError(t, model.LOG_DB.Where("token_id = ? AND type = ?", token.Id, model.LogTypeConsume).Find(&logs).Error)
+			require.NoError(t, logDB.Where("token_id = ? AND type = ?", token.Id, model.LogTypeConsume).Find(&logs).Error)
 			assert.Len(t, logs, tc.wantCharge, "busy attempts and canceled waits must never settle")
 			for i, lease := range held {
 				lease.Release()

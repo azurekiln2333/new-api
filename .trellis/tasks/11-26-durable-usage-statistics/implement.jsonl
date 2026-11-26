@@ -1,0 +1,9 @@
+{"file":"AGENTS.md","reason":"Cross-dialect persistence, meaningful tests, protected boundaries and hosted-only session override"}
+{"file":".agents/rules/billing.md","reason":"Mandatory full accounting rules before numeric consume/settlement integration"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Database and shared authoritative transaction conventions"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Preserve independent log content lifecycle, authorization and cleanup fences"}
+{"file":".trellis/tasks/11-26-durable-usage-statistics/research/backend-statistics-inventory.md","reason":"Exact endpoint/filter/token/event semantics and legacy coverage gaps"}
+{"file":".trellis/tasks/11-26-durable-usage-statistics/design.md","reason":"Authoritative root foundation boundary and accepted review overrides"}
+{"file":".trellis/tasks/11-26-durable-usage-statistics/research/schema-claim-contract.md","reason":"Finalized canonical identity, typed bounds, claim/locking/checked apply proposal as narrowed by design"}
+{"file":".trellis/tasks/11-26-durable-usage-statistics/research/architecture-review.md","reason":"Frozen independent cleanup, pending-index, collation, capacity and five-file foundation review"}
+{"file":".trellis/tasks/11-26-durable-usage-statistics/research/write-backfill-architecture.md","reason":"Later source/lineage contracts and pre-Prepare loss boundary; no source ownership in foundation"}

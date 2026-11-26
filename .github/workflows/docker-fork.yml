@@ -79,6 +79,8 @@ jobs:
         with:
           context: .
           platforms: linux/${{ matrix.arch }}
+          build-args: |
+            UPDATE_SOURCE_REPOSITORY=${{ github.repository }}
           push: true
           tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
           labels: |

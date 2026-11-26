@@ -159,7 +159,7 @@ test('unavailable browser storage does not block the guide or repeat it within t
 
 test.each(['table', 'card'] as const)(
   '%s guide automatically plays both distinct demos and loops after showing each result',
-  (viewMode) => {
+  async (viewMode) => {
     const original = window.matchMedia
     vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
       ...original(query),
@@ -226,7 +226,7 @@ test.each(['table', 'card'] as const)(
       'Priority 0'
     )
     fireEvent.click(guide.getByRole('button', { name: 'Got it' }))
-    act(() => vi.advanceTimersByTime(10000))
+    await act(() => vi.advanceTimersByTimeAsync(10000))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Drag mode help' }))
     const reopened = within(screen.getByRole('dialog'))

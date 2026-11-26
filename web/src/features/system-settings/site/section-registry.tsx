@@ -87,6 +87,9 @@ const SITE_SECTIONS = [
         <SidebarModulesSection
           config={sidebarConfig}
           initialSerialized={sidebarSerialized}
+          personalSettingsEnabled={
+            settings['console_setting.sidebar_personal_settings_enabled']
+          }
         />
       )
     },

@@ -123,6 +123,7 @@ import {
 } from '@/lib/channel-connection-info'
 import { handleServerError } from '@/lib/handle-server-error'
 import { resolveLocalizedText } from '@/lib/localized-text'
+import { compareModelOptions } from '@/lib/model-options'
 import { ROLE } from '@/lib/roles'
 import {
   requireServerSuccess,
@@ -3660,6 +3661,7 @@ export function ChannelMutateDrawer({
                   <FormControl>
                     <MultiSelect
                       options={modelOptions}
+                      compareOptions={compareModelOptions}
                       selected={currentModelsArray}
                       onChange={handleModelsChange}
                       placeholder={t('Select models or add custom ones')}
@@ -4047,6 +4049,7 @@ export function ChannelMutateDrawer({
                                 value: model,
                                 label: model,
                               }))}
+                              compareOptions={compareModelOptions}
                               selected={currentGroupModels[group] ?? []}
                               onChange={(visible) =>
                                 handleGroupModelsChange(group, visible)

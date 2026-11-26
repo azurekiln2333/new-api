@@ -36,7 +36,7 @@ export type MessageStateUpdater =
 
 /**
  * One section of the chat list: a project with its open chats, or the chats
- * that have no project. Projects keep their stored order (oldest first).
+ * that have no project. Empty projects remain visible, oldest first.
  */
 export type ConversationGroup = {
   /** Project id, or null for the ungrouped section. */
@@ -70,12 +70,10 @@ export function groupConversationsByProject(
   for (const project of [...projects].sort(
     (left, right) => left.createdAt - right.createdAt
   )) {
-    const projectConversations = byProject.get(project.id)
-    if (!projectConversations) continue
     groups.push({
       projectId: project.id,
       name: project.name,
-      conversations: projectConversations,
+      conversations: byProject.get(project.id) ?? [],
     })
   }
 

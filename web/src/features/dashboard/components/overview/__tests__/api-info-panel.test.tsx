@@ -107,7 +107,7 @@ function renderPanel() {
 }
 
 describe('ApiInfoPanel', () => {
-  it('renders every configured API card while the instance summary is still loading', async () => {
+  it('renders distinct API cards in configured order while the instance summary is still loading', async () => {
     // Resource loading must never block the API cards: the routes are the
     // primary content and their controls stay usable.
     mockStatusAndInstances([], true)
@@ -117,12 +117,22 @@ describe('ApiInfoPanel', () => {
     expect(await screen.findByText('CN2 GIA')).toBeVisible()
     expect(screen.getByText('Backup')).toBeVisible()
     expect(screen.getByText('https://api.example.com')).toBeVisible()
+    const cards = screen.getAllByRole('article')
+    expect(cards).toHaveLength(2)
+    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+      'CN2 GIA',
+      'Backup',
+    ])
+    expect(within(cards[0]).queryByText('Backup')).not.toBeInTheDocument()
+    expect(within(cards[0]).queryByRole('link')).not.toBeInTheDocument()
     // No resource sample yet, so the explicit unknown state is shown instead
     // of a fabricated 0%.
-    expect(screen.getAllByText('Unknown').length).toBeGreaterThan(0)
+    expect(within(cards[0]).getAllByText('Unknown')).toHaveLength(4)
+    expect(within(cards[0]).queryByText('0%')).not.toBeInTheDocument()
   })
 
-  it('shows the bound instance resources on the matching API card', async () => {
+  it('keeps fractional resources readable under the transparent card hover and in its dialog', async () => {
+    const user = userEvent.setup()
     mockStatusAndInstances({
       instances: [
         {
@@ -131,7 +141,7 @@ describe('ApiInfoPanel', () => {
           status: 'healthy',
           domains: ['https://api.example.com'],
           resources: {
-            cpu_percent: 12,
+            cpu_percent: 12.34,
             memory_percent: 34,
             storage_percent: 56,
           },
@@ -146,11 +156,52 @@ describe('ApiInfoPanel', () => {
 
     renderPanel()
 
-    expect(await screen.findByText('12%')).toBeVisible()
+    expect(await screen.findByText('12.3%')).toBeVisible()
     expect(screen.getByText('34%')).toBeVisible()
     expect(screen.getByText('56%')).toBeVisible()
+    const card = screen.getByRole('article', { name: 'CN2 GIA' })
+    const trigger = within(card).getByRole('button', { name: 'CN2 GIA' })
+    // jsdom cannot paint hover layers; protect the transparent overlay contract
+    // in both themes as well as the visible labels under real hover events.
+    expect(card).toHaveClass('hover:bg-muted/40')
+    expect(trigger).toHaveClass(
+      'bg-transparent',
+      'hover:bg-transparent',
+      'dark:hover:bg-transparent'
+    )
+    expect(trigger).not.toHaveClass('hover:bg-muted')
+    expect(trigger).not.toHaveClass('dark:hover:bg-muted/50')
+    await user.hover(trigger)
+    expect(within(card).getByText('https://api.example.com')).toBeVisible()
+    expect(within(card).getByText('12.3%')).toBeVisible()
+    expect(within(card).getByText('34%')).toBeVisible()
+    expect(within(card).getByText('56%')).toBeVisible()
+    expect(within(card).getByText('Online')).toBeVisible()
+    for (const label of ['CPU', 'Memory', 'Storage']) {
+      const metric = within(card).getByRole('group', { name: label })
+      expect(metric.querySelector('svg circle')).not.toBeNull()
+    }
+    const knownValue = within(card).getByText('12.3%')
+    const unknownValue = within(screen.getByRole('article', { name: 'Backup' }))
+      .getAllByText('Unknown')
+      .at(-1)
+    expect(knownValue).toHaveClass('text-[11px]')
+    expect(unknownValue).toHaveClass('text-[11px]')
     // The second, unbound card knows nothing and says so.
     expect(screen.getAllByText('Unknown').length).toBeGreaterThan(0)
+
+    await user.click(trigger)
+    const detail = within(
+      await screen.findByRole('dialog', { name: 'CN2 GIA' })
+    )
+    const percentage = detail.getByText('12.3%')
+    expect(percentage).toBeVisible()
+    expect(percentage).toHaveClass('text-[11px]')
+    expect(percentage.previousElementSibling).toHaveAttribute(
+      'aria-hidden',
+      'true'
+    )
+    expect(detail.queryByText('12.34%')).not.toBeInTheDocument()
   })
 
   it('renders a legitimate zero percent reading as 0% rather than unknown', async () => {
@@ -180,7 +231,7 @@ describe('ApiInfoPanel', () => {
     expect(await screen.findByText('0%')).toBeVisible()
   })
 
-  it('opens the filtered node detail when a configured route is clicked', async () => {
+  it('opens a centered dialog from the whole API card and returns keyboard focus on close', async () => {
     const user = userEvent.setup()
     mockStatusAndInstances({
       instances: [
@@ -205,16 +256,62 @@ describe('ApiInfoPanel', () => {
 
     renderPanel()
 
-    await user.click(await screen.findByRole('button', { name: 'CN2 GIA' }))
+    const trigger = await screen.findByRole('button', { name: 'CN2 GIA' })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(trigger).toHaveClass('absolute', 'inset-0')
+    trigger.focus()
+    await user.keyboard('{Enter}')
 
-    // The detail surface states the approved fields for this entry.
-    const detail = within(screen.getByRole('dialog'))
+    // The detail surface states only the approved fields for this entry.
+    const dialog = screen.getByRole('dialog', { name: 'CN2 GIA' })
+    expect(dialog).toHaveAttribute('data-slot', 'dialog-content')
+    expect(dialog).toHaveClass('left-1/2')
+    expect(dialog).not.toHaveAttribute('data-slot', 'sheet-content')
+    const detail = within(dialog)
     await waitFor(() => {
       expect(detail.getByText('Domains')).toBeVisible()
     })
     expect(detail.getByText('Primary route')).toBeVisible()
-    // Percentages go through the shared formatter, not a hand-rolled toFixed.
     expect(detail.getByText('12%')).toBeVisible()
+    expect(detail.queryByText('Standby route')).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(trigger).toHaveFocus())
+    await user.keyboard(' ')
+    expect(await screen.findByRole('dialog', { name: 'CN2 GIA' })).toBeVisible()
+  })
+
+  it('keeps copy and latency controls independent of the whole-card dialog trigger', async () => {
+    mockStatusAndInstances([], true)
+    const user = userEvent.setup()
+    const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({} as Response)
+    const external = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderPanel()
+
+    const card = await screen.findByRole('article', { name: 'CN2 GIA' })
+    const copyButton = within(card).getByRole('button', { name: 'Copy URL' })
+    copyButton.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(copy).toHaveBeenCalledWith('https://api.example.com')
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: 'Test Latency' }))
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.click(
+      within(card).getByRole('button', { name: 'External Speed Test' })
+    )
+    expect(external).toHaveBeenCalledWith(
+      'https://www.tcptest.cn/http/https%3A%2F%2Fapi.example.com',
+      '_blank',
+      'noopener,noreferrer'
+    )
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('keeps a legacy route selected when entries sharing its URL are reordered', async () => {
@@ -279,7 +376,51 @@ describe('ApiInfoPanel', () => {
 
     renderPanel()
 
-    expect(await screen.findByText('Disabled')).toBeVisible()
+    const card = await screen.findByRole('article', { name: 'CN2 GIA' })
+    expect(await within(card).findByText('Disabled')).toBeVisible()
+    expect(within(card).queryByText('Offline')).not.toBeInTheDocument()
+    expect(within(card).getByRole('group', { name: 'CPU' })).toHaveTextContent(
+      'Unknown'
+    )
+    expect(within(card).getByText('40%')).toBeVisible()
+  })
+
+  it('shows a stale heartbeat as offline without replacing its last sample with zero', async () => {
+    mockStatusAndInstances({
+      instances: [
+        {
+          key: 'api-1',
+          name: 'CN2 GIA',
+          status: 'stale',
+          domains: ['https://api.example.com', 'https://api2.example.com'],
+          resources: {
+            cpu_percent: 12,
+            memory_percent: null,
+            storage_percent: 56,
+          },
+          observed_at: 1000,
+          stale: true,
+          disabled: false,
+        },
+      ],
+      generated_at: 2000,
+      monitoring: 'enabled',
+    })
+    renderPanel()
+
+    for (const label of ['CN2 GIA', 'Backup']) {
+      const card = await screen.findByRole('article', { name: label })
+      expect(await within(card).findByText('Offline')).toBeVisible()
+      expect(within(card).getByText('12%')).toBeVisible()
+      expect(within(card).getByText('56%')).toBeVisible()
+      expect(
+        within(within(card).getByRole('group', { name: 'Memory' })).getByText(
+          'Unknown'
+        )
+      ).toHaveClass('text-[11px]')
+      expect(within(card).queryByText('0%')).not.toBeInTheDocument()
+      expect(within(card).queryByText('Disabled')).not.toBeInTheDocument()
+    }
   })
 
   it('keeps the open node detail on the newest sample after a refetch', async () => {
@@ -330,7 +471,7 @@ describe('ApiInfoPanel', () => {
       expect(detail.getByText('12%')).toBeVisible()
     })
 
-    // Force the next poll; the open drawer must not keep the old snapshot.
+    // Force the next poll; the open dialog must not keep the old snapshot.
     await act(async () => {
       await client.refetchQueries({
         queryKey: ['dashboard', 'overview', 'instance-resources'],

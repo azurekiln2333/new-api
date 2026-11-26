@@ -52,7 +52,7 @@ const defaultOperationsSettings: OperationsSettings = {
   'log_setting.user_export_enabled': true,
   'log_setting.max_range_days': 365,
   'log_setting.retention_days': 0,
-  'log_setting.request_content_retention_days': 0,
+  'log_setting.request_content_retention_days': 3,
   'log_setting.request_content_enabled': true,
   'log_setting.request_content_max_bytes': 262144,
   'system_task_setting.retention_days': 30,

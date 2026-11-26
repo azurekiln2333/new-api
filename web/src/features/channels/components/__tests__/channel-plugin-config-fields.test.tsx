@@ -58,7 +58,8 @@ const schema: RequestPluginConfigSchema = {
   },
 }
 
-const models = ['gpt-5', 'claude-opus-4-7', 'custom-model']
+const models = ['gpt-10', 'gpt-5', 'gpt-2', 'claude-opus-4-7', 'custom-model']
+Object.freeze(models)
 
 let form: ReturnType<typeof useForm<ChannelFormValues>>
 
@@ -114,7 +115,7 @@ test('an address field shows its default as the example and saves only what is t
   })
 })
 
-test('a value per model offers the channel models with their icons and saves each model with its value', async () => {
+test('a value per model offers naturally sorted suggestions with their icons and saves each model with its value', async () => {
   const user = userEvent.setup()
   render(<Harness />)
   expect(screen.getByText('None added yet')).toBeInTheDocument()
@@ -123,9 +124,35 @@ test('a value per model offers the channel models with their icons and saves eac
   const firstRow = screen.getByRole('group', { name: 'Region per model 1' })
   await user.click(within(firstRow).getByRole('combobox', { name: 'Model' }))
   const options = screen.getAllByRole('option')
-  expect(options.map((option) => option.textContent)).toEqual(models)
-  expect(within(options[0]).getByTestId(/^icon-OpenAI/)).toBeInTheDocument()
-  expect(within(options[1]).getByTestId(/^icon-Claude/)).toBeInTheDocument()
+  expect(options.map((option) => option.textContent)).toEqual([
+    'claude-opus-4-7',
+    'custom-model',
+    'gpt-2',
+    'gpt-5',
+    'gpt-10',
+  ])
+  expect(
+    within(screen.getByRole('option', { name: 'gpt-5' })).getByTestId(
+      /^icon-OpenAI/
+    )
+  ).toBeInTheDocument()
+  expect(
+    within(screen.getByRole('option', { name: 'claude-opus-4-7' })).getByTestId(
+      /^icon-Claude/
+    )
+  ).toBeInTheDocument()
+  expect(within(firstRow).getByRole('combobox', { name: 'Model' })).toHaveValue(
+    ''
+  )
+  // An unfinished row has no model/value pair, so the parser omits the field.
+  expect(savedConfig()).toEqual({})
+  expect(models).toEqual([
+    'gpt-10',
+    'gpt-5',
+    'gpt-2',
+    'claude-opus-4-7',
+    'custom-model',
+  ])
 
   await user.click(screen.getByRole('option', { name: 'gpt-5' }))
   await user.type(
@@ -140,15 +167,15 @@ test('a value per model offers the channel models with their icons and saves eac
   await user.click(within(secondRow).getByRole('combobox', { name: 'Model' }))
   expect(
     screen.getAllByRole('option').map((option) => option.textContent)
-  ).toEqual(['claude-opus-4-7', 'custom-model'])
+  ).toEqual(['claude-opus-4-7', 'custom-model', 'gpt-2', 'gpt-10'])
 })
 
-test('saved values per model are shown for editing and a deleted model is left out', async () => {
+test('sorting suggestions preserves saved row order and a custom model missing from the catalog until explicitly deleted', async () => {
   const user = userEvent.setup()
   render(
     <Harness
       config={{
-        regions: { 'gpt-5': 'us-east-1', 'custom-model': 'eu-west-1' },
+        regions: { 'gpt-5': 'us-east-1', 'retired-model': 'eu-west-1' },
       }}
     />
   )
@@ -160,11 +187,26 @@ test('saved values per model are shown for editing and a deleted model is left o
   expect(within(firstRow).getByRole('textbox', { name: 'Region' })).toHaveValue(
     'us-east-1'
   )
+  const secondRow = screen.getByRole('group', { name: 'Region per model 2' })
+  expect(
+    within(secondRow).getByRole('combobox', { name: 'Model' })
+  ).toHaveValue('retired-model')
+  await user.click(within(secondRow).getByRole('combobox', { name: 'Model' }))
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['claude-opus-4-7', 'custom-model', 'gpt-2', 'gpt-10'])
+  await user.keyboard('{Escape}')
+  expect(
+    within(secondRow).getByRole('combobox', { name: 'Model' })
+  ).toHaveValue('retired-model')
+  expect(savedConfig()).toEqual({
+    regions: { 'gpt-5': 'us-east-1', 'retired-model': 'eu-west-1' },
+  })
 
   await user.click(
     screen.getByRole('button', { name: 'Delete Region per model 1' })
   )
-  expect(savedConfig()).toEqual({ regions: { 'custom-model': 'eu-west-1' } })
+  expect(savedConfig()).toEqual({ regions: { 'retired-model': 'eu-west-1' } })
 })
 
 test('the same model set twice is marked on its line', async () => {
@@ -202,6 +244,9 @@ test('a choice left empty shows the default that applies to it', async () => {
   expect(savedConfig()).toEqual({})
 
   await user.click(region)
-  await user.click(await screen.findByRole('option', { name: 'US East' }))
+  expect(
+    (await screen.findAllByRole('option')).map((option) => option.textContent)
+  ).toEqual(['China North', 'US East'])
+  await user.click(screen.getByRole('option', { name: 'US East' }))
   expect(savedConfig()).toEqual({ region: 'us-east' })
 })

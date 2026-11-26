@@ -643,6 +643,179 @@ func takeChannelDiagnostic(t *testing.T, requests <-chan channelDiagnosticWire) 
 	}
 }
 
+func TestChannelTestStableKeyIdentityAdmissionFence(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	const firstKey, secondKey = "test-identity-first", "test-identity-second"
+	requests := make(chan channelDiagnosticWire, 4)
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		requests <- captureChannelDiagnostic(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, channelDiagnosticChatReply)
+	}))
+	t.Cleanup(upstream.Close)
+	selected := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "diagnostic-stable-key", Key: firstKey + "\n" + secondKey,
+		Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+		Setting:     lo.ToPtr(`{"max_concurrent_requests":1,"supported_endpoints":["chat"]}`),
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling},
+	}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	selected, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	allocation, ok := selected.ChannelAllocationByPosition(1)
+	require.True(t, ok)
+	require.Positive(t, allocation.EntryID)
+	require.Positive(t, allocation.Revision)
+	id, revision := fmt.Sprint(allocation.EntryID), fmt.Sprint(allocation.Revision)
+	pair := "key_entry_id=" + id + "&expected_rev=" + revision
+	const staleMessage = "Channel key configuration changed, reload and retry"
+	for _, tc := range []struct {
+		name, query, wantKey, wantMessage string
+	}{
+		{name: "selected identity and index", query: "key_index=1&" + pair, wantKey: secondKey},
+		{name: "identity without index", query: pair, wantKey: secondKey},
+		{name: "legacy index only", query: "key_index=1", wantKey: secondKey},
+		{name: "missing revision", query: "key_entry_id=" + id, wantMessage: "Invalid parameters"},
+		{name: "missing identity", query: "expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "empty identity", query: "key_entry_id=&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "empty revision", query: "key_entry_id=" + id + "&expected_rev=", wantMessage: "Invalid parameters"},
+		{name: "repeated identity", query: pair + "&key_entry_id=" + id, wantMessage: "Invalid parameters"},
+		{name: "repeated revision", query: pair + "&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "invalid escapes must not become automatic selection", query: "key_entry_id=%ZZ&expected_rev=%ZZ", wantMessage: "Invalid parameters"},
+		{name: "semicolon must not discard the identity pair", query: "key_entry_id=" + id + ";expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "malformed identity", query: "key_entry_id=invalid&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "malformed revision", query: "key_entry_id=" + id + "&expected_rev=1.0", wantMessage: "Invalid parameters"},
+		{name: "noncanonical identity", query: "key_entry_id=0" + id + "&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "noncanonical revision", query: "key_entry_id=" + id + "&expected_rev=0" + revision, wantMessage: "Invalid parameters"},
+		{name: "signed identity", query: "key_entry_id=%2B" + id + "&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "whitespace revision", query: "key_entry_id=" + id + "&expected_rev=%20" + revision, wantMessage: "Invalid parameters"},
+		{name: "zero identity", query: "key_entry_id=0&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "zero revision", query: "key_entry_id=" + id + "&expected_rev=0", wantMessage: "Invalid parameters"},
+		{name: "negative identity", query: "key_entry_id=-1&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "negative revision", query: "key_entry_id=" + id + "&expected_rev=-1", wantMessage: "Invalid parameters"},
+		{name: "identity overflow", query: "key_entry_id=9223372036854775808&expected_rev=" + revision, wantMessage: "Invalid parameters"},
+		{name: "revision overflow", query: "key_entry_id=" + id + "&expected_rev=9223372036854775808", wantMessage: "Invalid parameters"},
+		{name: "stale revision", query: "key_entry_id=" + id + "&expected_rev=" + fmt.Sprint(allocation.Revision+1), wantMessage: staleMessage},
+		{name: "missing allocation", query: "key_entry_id=9223372036854775807&expected_rev=" + revision, wantMessage: staleMessage},
+		{name: "index belongs to another allocation", query: "key_index=0&" + pair, wantMessage: staleMessage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := calls.Load()
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/channel/test/"+fmt.Sprint(selected.Id)+"?model=gpt-4.1&endpoint_type=openai&"+tc.query, nil)
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(selected.Id)}}
+			c.Set("id", userID)
+			TestChannel(c)
+			require.Equal(t, http.StatusOK, w.Code)
+			var response struct {
+				Success   bool            `json:"success"`
+				Message   string          `json:"message"`
+				ErrorCode types.ErrorCode `json:"error_code"`
+			}
+			require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+			assert.Equal(t, tc.wantKey != "", response.Success, w.Body.String())
+			assert.Equal(t, tc.wantMessage, response.Message)
+			if tc.wantKey == "" {
+				assert.Equal(t, before, calls.Load(), "invalid selections must not fall back to another credential")
+				assert.Empty(t, requests)
+				if tc.wantMessage == staleMessage {
+					assert.Equal(t, types.ErrorCodeInvalidRequest, response.ErrorCode)
+				}
+				return
+			}
+			assert.Equal(t, before+1, calls.Load())
+			wire := takeChannelDiagnostic(t, requests)
+			assert.Equal(t, "/v1/chat/completions", wire.path)
+			assert.Equal(t, "Bearer "+tc.wantKey, wire.headers.Get("Authorization"))
+			assert.Equal(t, "gpt-4.1", gjson.GetBytes(wire.body, "model").String())
+			assert.Empty(t, requests, "a selected-key test dispatches only once")
+		})
+	}
+
+	t.Run("automatic selection remains unchanged", func(t *testing.T) {
+		before := calls.Load()
+		// Use the existing automatic caller, without the handler's asynchronous
+		// channel-latency write, so teardown cannot race a detached DB update.
+		result := testChannel(t.Context(), selected, userID, "gpt-4.1", "openai", false, -1)
+		require.NoError(t, result.localErr)
+		require.Nil(t, result.newAPIError)
+		assert.Equal(t, before+1, calls.Load())
+		wire := takeChannelDiagnostic(t, requests)
+		assert.Equal(t, "Bearer "+firstKey, wire.headers.Get("Authorization"))
+		assert.Empty(t, requests)
+	})
+
+	for _, tc := range []struct {
+		name           string
+		legacy, revise bool
+	}{
+		{name: "identity reorder after admission"},
+		{name: "legacy index reorder after admission", legacy: true},
+		{name: "configuration revision after admission", revise: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot, err := model.GetChannelById(selected.Id, true)
+			require.NoError(t, err)
+			allocation, ok := snapshot.ChannelAllocationByPosition(1)
+			require.True(t, ok)
+			spec := channelTestSpec{
+				userID: userID, model: "gpt-4.1", endpoint: "openai", keyIndex: 1,
+				keyEntryID: allocation.EntryID, keyEntryRevision: allocation.Revision,
+			}
+			if tc.legacy {
+				spec.keyEntryID, spec.keyEntryRevision = 0, 0
+			}
+			pinned, err := pinChannelTestKey(snapshot, spec.keyIndex, spec.keyEntryID, spec.keyEntryRevision, spec.model)
+			require.NoError(t, err)
+			require.NotNil(t, pinned)
+			lease, apiErr := service.AcquireChannelCapacity(t.Context(), snapshot.Id, snapshot.GetSetting())
+			require.Nil(t, apiErr)
+			t.Cleanup(lease.Release)
+			_, err = model.UpdateChannelKeyAllocations(snapshot.Id, snapshot.ChannelInfo.KeyEntryRevision, func(entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+				if tc.revise {
+					// Keep the same credential, index and permitted model. Only the
+					// selected allocation's configuration revision becomes stale.
+					entries[1].ScopeMode = "allowlist"
+					if err := entries[1].SetKeyModels([]string{"gpt-4.1"}); err != nil {
+						return nil, nil, err
+					}
+					entries[1].ConfigRevision++
+				} else {
+					entries[0], entries[1] = entries[1], entries[0]
+				}
+				return entries, nil, nil
+			})
+			require.NoError(t, err)
+			current, err := model.GetChannelById(snapshot.Id, true)
+			require.NoError(t, err)
+			if tc.revise {
+				require.Equal(t, allocation.EntryID, current.ChannelKeyEntryID(1))
+				require.Equal(t, allocation.Key, current.GetKeys()[1])
+				require.Greater(t, current.KeyEntryRevisions[1], allocation.Revision)
+			} else {
+				require.Equal(t, allocation.EntryID, current.ChannelKeyEntryID(0))
+				require.Equal(t, allocation.Revision, current.KeyEntryRevisions[0])
+				require.NotEqual(t, allocation.Key, current.GetKeys()[1])
+			}
+			before := calls.Load()
+			result := runAdmittedChannelTest(t.Context(), lease, current, spec, pinned, true)
+			require.EqualError(t, result.localErr, staleMessage)
+			var keyErr *channelTestKeyError
+			require.ErrorAs(t, result.localErr, &keyErr)
+			assert.Equal(t, types.ErrorCodeInvalidRequest, keyErr.code)
+			assert.Equal(t, before, calls.Load(), "the admitted request must not use the moved key or its replacement")
+			assert.Empty(t, requests)
+			sample := service.ReadChannelConcurrency(t.Context(), []int{selected.Id})[selected.Id]
+			require.NotNil(t, sample.Current)
+			assert.Zero(t, *sample.Current, "stale selection rejection releases the admitted capacity")
+		})
+	}
+}
+
 func TestChannelDiagnosticEndpointPolicy(t *testing.T) {
 	userID := setupChannelDiagnosticRequests(t)
 	for _, tc := range []struct {

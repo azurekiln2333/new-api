@@ -157,11 +157,22 @@ export function CommonLogMobileCard<TData>(props: {
       cacheRead > 0 ||
       cacheWrite > 0)
 
+  const tokensPerSecond =
+    log.use_time > 0 && log.completion_tokens > 0
+      ? log.completion_tokens / log.use_time
+      : null
+
   return (
-    <div className='min-w-0 space-y-2.5 text-sm leading-5'>
-      <div className='flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2'>
+    <div
+      className='min-w-0 space-y-2.5 text-sm leading-5'
+      data-slot='mobile-log-card'
+    >
+      <div
+        className='flex min-w-0 flex-col gap-1.5'
+        data-slot='mobile-log-primary'
+      >
         {fields.model.visible && (
-          <div className='min-w-0 flex-[1_1_10rem]'>
+          <div className='min-w-0'>
             {model.name ? (
               <ModelBadge
                 modelName={model.name}
@@ -180,67 +191,67 @@ export function CommonLogMobileCard<TData>(props: {
             )}
           </div>
         )}
-        {fields.cost.visible && costCell && (
-          <div className='ml-auto max-w-full min-w-0 self-center [overflow-wrap:anywhere] [&_.inline-flex]:h-auto [&_.inline-flex]:min-h-6 [&_.inline-flex]:max-w-full [&_.inline-flex]:flex-wrap'>
-            {flexRender(costCell.column.columnDef.cell, costCell.getContext())}
-          </div>
+        {timing && props.cells.has('is_stream') && (
+          <StreamTpsCell
+            compact={tokensPerSecond == null}
+            className='[&>span+span]:text-foreground max-w-full min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1 text-sm [&>span+span]:font-semibold'
+            isStream={log.is_stream}
+            isTask={other?.is_task === true}
+            isSyncTask={other?.task_sync === true}
+            tokensPerSecond={tokensPerSecond}
+            streamStatus={other?.stream_status}
+          />
         )}
       </div>
       <div
         className='grid min-w-0 grid-cols-2 items-stretch gap-x-3'
         data-slot='log-time-and-timing'
       >
-        {fields.time.visible && (
+        {(fields.time.visible || (fields.cost.visible && costCell)) && (
           <div className='flex min-w-0 flex-col items-start justify-between gap-1'>
-            <StatusBadge
-              label={t(config.label)}
-              variant={config.color as StatusVariant}
-              copyable={false}
-              showDot
-              className='h-5 px-0 text-xs'
-            />
-            <Button
-              variant='ghost'
-              aria-label={`${t('Time')}: ${fields.time.value}`}
-              aria-haspopup='dialog'
-              onClick={() => setSelectedField('time')}
-              className='text-muted-foreground h-auto min-h-6 px-0 py-0 text-xs font-normal whitespace-normal tabular-nums'
-            >
-              {dayjs.unix(log.created_at).format('MM-DD HH:mm:ss')}
-            </Button>
+            {fields.time.visible && (
+              <>
+                <StatusBadge
+                  label={t(config.label)}
+                  variant={config.color as StatusVariant}
+                  copyable={false}
+                  showDot
+                  className='h-5 px-0 text-xs'
+                />
+                <Button
+                  variant='ghost'
+                  aria-label={`${t('Time')}: ${fields.time.value}`}
+                  aria-haspopup='dialog'
+                  onClick={() => setSelectedField('time')}
+                  className='text-muted-foreground h-auto min-h-6 px-0 py-0 text-xs font-normal whitespace-normal tabular-nums'
+                >
+                  {dayjs.unix(log.created_at).format('MM-DD HH:mm:ss')}
+                </Button>
+              </>
+            )}
+            {fields.cost.visible && costCell && (
+              <div className='max-w-full min-w-0 [overflow-wrap:anywhere] [&_.inline-flex]:h-auto [&_.inline-flex]:min-h-6 [&_.inline-flex]:max-w-full [&_.inline-flex]:flex-wrap'>
+                {flexRender(
+                  costCell.column.columnDef.cell,
+                  costCell.getContext()
+                )}
+              </div>
+            )}
           </div>
         )}
-        {timing &&
-          (props.cells.has('use_time') || props.cells.has('is_stream')) && (
-            <div className='col-start-2 flex min-w-0 flex-col items-end gap-1 [overflow-wrap:anywhere]'>
-              {props.cells.has('is_stream') && (
-                <StreamTpsCell
-                  compact
-                  className='min-h-5 max-w-full min-w-0 justify-end'
-                  isStream={log.is_stream}
-                  isTask={other?.is_task === true}
-                  isSyncTask={other?.task_sync === true}
-                  tokensPerSecond={
-                    log.use_time > 0 && log.completion_tokens > 0
-                      ? log.completion_tokens / log.use_time
-                      : null
-                  }
-                  streamStatus={other?.stream_status}
-                />
-              )}
-              {props.cells.has('use_time') && (
-                <TimingMetricsCell
-                  useTimeSec={log.use_time}
-                  completionTokens={log.completion_tokens}
-                  frtMs={other?.frt}
-                  isStream={log.is_stream}
-                  indicator='dot'
-                  compact
-                  className='min-h-6 max-w-full min-w-0 items-center justify-end [&>div]:justify-end'
-                />
-              )}
-            </div>
-          )}
+        {timing && props.cells.has('use_time') && (
+          <div className='col-start-2 flex min-w-0 flex-col items-end gap-1 [overflow-wrap:anywhere]'>
+            <TimingMetricsCell
+              useTimeSec={log.use_time}
+              completionTokens={log.completion_tokens}
+              frtMs={other?.frt}
+              isStream={log.is_stream}
+              indicator='dot'
+              compact
+              className='min-h-6 max-w-full min-w-0 items-center justify-end [&>div]:justify-end'
+            />
+          </div>
+        )}
       </div>
       {visibleMetadata.length > 0 && (
         <div className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-0.5'>

@@ -64,6 +64,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ModelPricingPanel } from '@/features/model-pricing/model-pricing-panel'
+import { compareModelOptions } from '@/lib/model-options'
 import {
   requireServerSuccess,
   createServerError,
@@ -684,10 +685,9 @@ export function ModelMutateDrawer(props: {
                         setPricingName(value ?? '')
                       }
                     }}
-                    options={(savedModel.matched_models ?? []).map((name) => ({
-                      value: name,
-                      label: name,
-                    }))}
+                    options={(savedModel.matched_models ?? [])
+                      .map((name) => ({ value: name, label: name }))
+                      .sort(compareModelOptions)}
                     aria-label={t('Select model')}
                     className='w-full'
                     placeholder={t('Select model')}

@@ -23,9 +23,13 @@ import {
   useReactTable,
   type VisibilityState,
 } from '@tanstack/react-table'
-import { render, screen, within, waitFor } from '@testing-library/react'
+import { act, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { beforeEach, expect, it, vi } from 'vitest'
+
+import { formatNumber } from '@/lib/format'
 
 import { usageLogSchema, type UsageLog } from '../../data/schema'
 import {
@@ -150,11 +154,8 @@ it('shows the processing node in compact and expanded cards without showing the 
       },
     ],
   })
-  const compact = screen.getByRole('button', {
-    expanded: false,
-    name: /processor-us/,
-  })
-  expect(within(compact).getByText('processor-us')).toBeVisible()
+  const compact = screen.getByRole('button', { expanded: false })
+  expect(screen.getByText('processor-us')).toBeVisible()
   await user.click(compact)
   expect(
     screen.getByRole('button', { name: 'Processing Node: processor-us' })
@@ -288,31 +289,56 @@ it.each([false, true])(
   }
 )
 
-it('hides sensitive names and disables full-text inspection when privacy is enabled', async () => {
-  const user = userEvent.setup()
-  renderLogs()
-  await user.click(screen.getByRole('button', { name: 'Hide sensitive data' }))
-  expect(screen.queryByText('production-admin')).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: /Channel:/ })
-  ).not.toBeInTheDocument()
-  expect(
-    screen.queryByRole('button', { name: /Token:/ })
-  ).not.toBeInTheDocument()
-})
+it.each([MOBILE_LOG_VIEW_MODES.CARD, MOBILE_LOG_VIEW_MODES.COMPACT])(
+  'hides sensitive names and full-text inspection in the %s view when privacy is enabled',
+  async (viewMode) => {
+    const user = userEvent.setup()
+    renderWithViewMode({}, viewMode)
+    await user.click(
+      screen.getByRole('button', { name: 'Hide sensitive data' })
+    )
+    expect(screen.queryByText('production-admin')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('backend-production-token')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Channel:/ })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Token:/ })
+    ).not.toBeInTheDocument()
+  }
+)
 
-it('respects hidden columns and omits admin fields in the self view', () => {
-  renderLogs({
-    admin: false,
-    visibility: { token_name: false, model_name: false },
-  })
-  expect(
-    screen.queryByRole('button', {
-      name: /Channel:|User:|Token:|Group:|Model:/,
-    })
-  ).not.toBeInTheDocument()
-  expect(screen.queryByText('enterprise-production')).not.toBeInTheDocument()
-})
+it.each([MOBILE_LOG_VIEW_MODES.CARD, MOBILE_LOG_VIEW_MODES.COMPACT])(
+  'respects hidden model and metric columns and omits admin fields in the %s self view',
+  (viewMode) => {
+    renderWithViewMode(
+      {
+        admin: false,
+        visibility: {
+          token_name: false,
+          model_name: false,
+          is_stream: false,
+          prompt_tokens: false,
+          use_time: false,
+        },
+      },
+      viewMode
+    )
+    expect(
+      screen.queryByRole('button', {
+        name: /Channel:|User:|Token:|Group:|Model:/,
+      })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(longName)).not.toBeInTheDocument()
+    expect(screen.queryByText('enterprise-production')).not.toBeInTheDocument()
+    expect(screen.queryByText('production-admin')).not.toBeInTheDocument()
+    expect(screen.queryByText(/t\/s/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Non-stream')).not.toBeInTheDocument()
+    expect(screen.queryByText('Input')).not.toBeInTheDocument()
+  }
+)
 
 it('keeps input, output and cache quantities readable without empty metric cells', () => {
   renderLogs()
@@ -358,12 +384,32 @@ it.each([false, true])(
   }
 )
 
-it('retains the user avatar and model badge in the mobile summary', () => {
-  renderLogs()
-  expect(screen.getByText('P')).toBeVisible()
-  const modelButton = screen.getByRole('button', { name: `Model: ${longName}` })
-  expect(modelButton.querySelector('[data-slot="status-badge"]')).not.toBeNull()
-})
+it.each([false, true])(
+  'prioritises the model badge, mode and measured throughput in cards for streaming=%s',
+  (streaming) => {
+    renderLogs({ logs: [{ ...log, is_stream: streaming }] })
+    expect(screen.getByText('P')).toBeVisible()
+    const modelButton = screen.getByRole('button', {
+      name: `Model: ${longName}`,
+    })
+    expect(
+      modelButton.querySelector('[data-slot="status-badge"]')
+    ).not.toBeNull()
+    const primary = modelButton.closest('[data-slot="mobile-log-primary"]')
+    expect(primary).not.toBeNull()
+    expect(
+      within(primary as HTMLElement).getByText(
+        streaming ? 'Stream' : 'Non-stream'
+      )
+    ).toBeVisible()
+    expect(within(primary as HTMLElement).getByText('533 t/s')).toBeVisible()
+    expect(within(primary as HTMLElement).queryByText('Cost')).toBeNull()
+    expect(within(primary as HTMLElement).queryByText('Input')).toBeNull()
+    expect(
+      within(primary as HTMLElement).queryByRole('button', { name: /^Time:/ })
+    ).toBeNull()
+  }
+)
 
 it.each([
   { columnId: 'channel' as const, value: '-' },
@@ -485,44 +531,174 @@ it('shows loading placeholders without displaying stale log fields', () => {
   ).not.toBeInTheDocument()
 })
 
-it('summarises each log in a collapsed compact row by default', () => {
-  renderCompactLogs()
+it.each([false, true])(
+  'leads a collapsed row with a wrapping model, mode and measured throughput for streaming=%s',
+  (streaming) => {
+    renderCompactLogs({ logs: [{ ...log, is_stream: streaming }] })
+    const row = screen.getByRole('button', { expanded: false })
+    const model = within(row).getByText(longName)
+    expect(model).toHaveClass('[overflow-wrap:anywhere]')
+    expect(model).not.toHaveClass('truncate')
+    const primary = row.closest('[data-slot="mobile-log-primary"]')
+    expect(primary).not.toBeNull()
+    const stream = within(primary as HTMLElement).getByText(
+      streaming ? 'Stream' : 'Non-stream'
+    )
+    expect(stream).toBeVisible()
+    expect(row).not.toContainElement(stream)
+    expect(within(primary as HTMLElement).getByText('533 t/s')).toBeVisible()
+    expect(within(primary as HTMLElement).queryByText('Input')).toBeNull()
+    expect(within(primary as HTMLElement).queryByText('Cost')).toBeNull()
+    expect(screen.getByText('Input')).toBeVisible()
+    expect(screen.getByText('1,200')).toBeVisible()
+    expect(screen.getByText('Output')).toBeVisible()
+    expect(screen.getByText('800')).toBeVisible()
+    expect(screen.getByText('backend-production-token')).toBeVisible()
+    expect(screen.getByText('production-admin')).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: /Channel:/ })
+    ).not.toBeInTheDocument()
+  }
+)
 
-  const row = screen.getByRole('button', { expanded: false })
-  expect(row).toHaveTextContent(longName)
-  expect(row).toHaveTextContent('↑1.2K ↓800 · 1.5s')
-  expect(row).toHaveTextContent('backend-production-token')
-  expect(row).toHaveTextContent('production-admin')
+it.each([
+  { use_time: 0, completion_tokens: 800 },
+  { use_time: 1.5, completion_tokens: 0 },
+])(
+  'does not invent compact throughput from missing measurements: %j',
+  (metrics) => {
+    renderCompactLogs({ logs: [{ ...log, ...metrics, is_stream: true }] })
+    const primary = screen
+      .getByRole('button', { expanded: false })
+      .closest('[data-slot="mobile-log-primary"]')
+    expect(primary).not.toBeNull()
+    expect(within(primary as HTMLElement).getByText('Stream')).toBeVisible()
+    expect(within(primary as HTMLElement).queryByText(/t\/s|—/)).toBeNull()
+  }
+)
 
-  // Card-only detail stays collapsed until the row is expanded.
-  expect(
-    screen.queryByRole('button', { name: /Channel:/ })
-  ).not.toBeInTheDocument()
-  expect(screen.queryByText('Input')).not.toBeInTheDocument()
+it.each([false, true])(
+  'keeps task mode clear without fake TPS in compact rows for synchronous=%s',
+  (synchronous) => {
+    renderCompactLogs({
+      logs: [
+        {
+          ...log,
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          other: JSON.stringify({ is_task: true, task_sync: synchronous }),
+        },
+      ],
+    })
+    const primary = screen
+      .getByRole('button', { expanded: false })
+      .closest('[data-slot="mobile-log-primary"]')
+    expect(primary).not.toBeNull()
+    expect(
+      within(primary as HTMLElement).getByText(synchronous ? 'Sync' : 'Async')
+    ).toBeVisible()
+    expect(within(primary as HTMLElement).queryByText(/t\/s|—/)).toBeNull()
+    expect(screen.queryByText('Input')).not.toBeInTheDocument()
+  }
+)
+
+it('retains stream failure evidence outside the collapsed expand button', async () => {
+  const user = userEvent.setup()
+  renderCompactLogs({
+    logs: [
+      {
+        ...log,
+        is_stream: true,
+        other: JSON.stringify({
+          stream_status: {
+            status: 'error',
+            end_reason: 'upstream_closed',
+            error_count: 2,
+          },
+        }),
+      },
+    ],
+  })
+  const expand = screen.getByRole('button', { expanded: false })
+  const primary = expand.closest('[data-slot="mobile-log-primary"]')
+  expect(primary).not.toBeNull()
+  const indicator = primary?.querySelector('[data-slot="tooltip-trigger"]')
+  expect(indicator).not.toBeNull()
+  expect(expand).not.toContainElement(indicator as HTMLElement)
+  await user.hover(indicator as HTMLElement)
+  expect(await screen.findByText('Stream Status: Error')).toBeVisible()
+  expect(screen.getByText('upstream_closed')).toBeVisible()
+  expect(screen.getByText('Soft Errors: 2')).toBeVisible()
+  expect(expand).toHaveAttribute('aria-expanded', 'false')
 })
 
-it('expands a compact row into the full card', async () => {
+it('expands a compact row into the full card using the keyboard', async () => {
   const user = userEvent.setup()
   renderCompactLogs()
 
-  await user.click(screen.getByRole('button', { expanded: false }))
+  screen.getByRole('button', { expanded: false }).focus()
+  await user.keyboard('{Enter}')
 
   expect(screen.getByRole('button', { expanded: true })).toBeVisible()
-  expect(
-    screen.getByRole('button', { name: `Channel: ${longName} #372` })
-  ).toBeVisible()
-  expect(screen.getByText('Input')).toBeVisible()
+  const channel = screen.getByRole('button', {
+    name: `Channel: ${longName} #372`,
+  })
+  expect(channel).toBeVisible()
+  const card = channel.closest('[data-slot="mobile-log-card"]')
+  expect(card).not.toBeNull()
+  expect(within(card as HTMLElement).getByText('Input')).toBeVisible()
 })
 
-it('keeps large token summaries truncated in compact view', () => {
+it('keeps large compact token counts exact and separated by readable labels', () => {
   renderCompactLogs({
     logs: [{ ...log, prompt_tokens: 318574217, completion_tokens: 0 }],
   })
-  const row = screen.getByRole('button', { expanded: false })
-  const summary = within(row).getByText(/↑318\.57M ↓-/)
-  expect(summary).toBeVisible()
-  expect(summary).toHaveClass('truncate')
-  expect(summary).not.toHaveClass('break-words')
+  const input = screen.getByText('318,574,217')
+  expect(input).toBeVisible()
+  expect(input).toHaveClass('[overflow-wrap:anywhere]')
+  expect(input).not.toHaveClass('truncate')
+  expect(input).not.toHaveClass('whitespace-nowrap')
+  expect(input.closest('dl')).toHaveClass('grid-cols-2')
+  expect(screen.getByText('Output')).toBeVisible()
+  expect(screen.getByText('0')).toBeVisible()
+  expect(screen.queryByText(/318\.57M|↑318/)).not.toBeInTheDocument()
+})
+
+it('updates exact compact token counts with each interface language and invalid-locale fallback', async () => {
+  const i18n = createInstance()
+  await i18n.init({
+    lng: 'en',
+    fallbackLng: false,
+    resources: {},
+    initAsync: false,
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <UsageLogsProvider>
+          <Fixture logs={[{ ...log, prompt_tokens: 41258 }]} />
+        </UsageLogsProvider>
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+  for (const [language, value] of [
+    ['en', '41,258'],
+    ['zhCN', '41,258'],
+    ['zhTW', '41,258'],
+    ['fr', '41\u202f258'],
+    ['ru', '41\u00a0258'],
+    ['ja', '41,258'],
+    ['vi', '41.258'],
+    ['invalid_locale', formatNumber(41258)],
+  ]) {
+    await act(() => i18n.changeLanguage(language))
+    const input = screen.getByText('Input').parentElement
+    expect(input?.querySelector('dd')?.textContent).toBe(value)
+  }
 })
 
 it('switches to card view from the toggle and remembers the choice', async () => {
@@ -561,9 +737,9 @@ it('summarises an operation log with its content instead of token metrics', () =
     ],
   })
 
-  const row = screen.getByRole('button', { expanded: false })
-  expect(row).toHaveTextContent('Top-up granted by an administrator')
-  expect(row).not.toHaveTextContent('↑')
+  expect(screen.getByText('Top-up granted by an administrator')).toBeVisible()
+  expect(screen.queryByText('Input')).not.toBeInTheDocument()
+  expect(screen.queryByText(/t\/s/)).not.toBeInTheDocument()
 })
 
 it('reads the stored mobile list preference and ignores unknown values', () => {

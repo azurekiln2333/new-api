@@ -17,19 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Route } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { sideDrawerContentClassName } from '@/components/drawer-layout'
+import { Dialog } from '@/components/dialog'
+import { ResourceUsage } from '@/components/resource-usage'
 import { IconBadge } from '@/components/ui/icon-badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
 import { useInstanceResourceSummary } from '@/features/dashboard/hooks/use-instance-resources'
 import { useApiInfo } from '@/features/dashboard/hooks/use-status-data'
 import {
@@ -41,16 +34,11 @@ import type {
   ApiInfoItem,
   InstanceResourceSummary,
 } from '@/features/dashboard/types'
-import { formatPercent } from '@/lib/format'
 
 import { PanelWrapper } from '../ui/panel-wrapper'
 import { ApiInfoItemComponent } from './api-info-item'
 
-/**
- * Filtered node detail for one API entry. It shows only the approved fields the
- * public summary already carries: bound domains, coarse state and resource
- * percentages. Unknown values are stated explicitly rather than shown as 0.
- */
+/** Only the approved public summary fields enter this API-specific detail. */
 function NodeDetailPanel(props: {
   item: ApiInfoItem
   instance?: InstanceResourceSummary
@@ -59,57 +47,57 @@ function NodeDetailPanel(props: {
   const instance = props.instance
 
   let stateLabel = t('Unknown')
-  if (instance?.status === 'healthy') stateLabel = t('Healthy')
-  else if (instance?.status === 'stale') stateLabel = t('Stale')
+  if (instance?.status === 'healthy') stateLabel = t('Online')
+  else if (instance?.status === 'stale') stateLabel = t('Offline')
   else if (instance?.status === 'disabled') stateLabel = t('Disabled')
 
   return (
     <dl className='flex flex-col gap-3 text-sm'>
       <DetailRow label={t('API URL')} value={props.item.url} mono />
       <DetailRow label={t('Route')} value={props.item.route} mono />
-      {instance ? (
-        <>
-          <DetailRow label={t('Status')} value={stateLabel} />
-          <DetailRow
-            label={t('CPU')}
-            value={formatPercentValue(instance.resources.cpu_percent, t)}
+      <DetailRow label={t('Status')} value={stateLabel} />
+      <DetailRow
+        label={t('CPU')}
+        value={
+          <ResourceUsage
+            value={instance?.resources.cpu_percent}
+            unknownLabel={t('Unknown')}
           />
-          <DetailRow
-            label={t('Memory')}
-            value={formatPercentValue(instance.resources.memory_percent, t)}
+        }
+      />
+      <DetailRow
+        label={t('Memory')}
+        value={
+          <ResourceUsage
+            value={instance?.resources.memory_percent}
+            unknownLabel={t('Unknown')}
           />
-          <DetailRow
-            label={t('Storage')}
-            value={formatPercentValue(instance.resources.storage_percent, t)}
+        }
+      />
+      <DetailRow
+        label={t('Storage')}
+        value={
+          <ResourceUsage
+            value={instance?.resources.storage_percent}
+            unknownLabel={t('Unknown')}
           />
-          <DetailRow
-            label={t('Domains')}
-            value={
-              instance.domains.length > 0
-                ? instance.domains.join('\n')
-                : t('Unknown')
-            }
-            mono
-          />
-        </>
-      ) : (
-        <DetailRow label={t('Status')} value={t('Unknown')} />
-      )}
+        }
+      />
+      <DetailRow
+        label={t('Domains')}
+        value={
+          instance?.domains.length ? instance.domains.join('\n') : t('Unknown')
+        }
+        mono
+      />
     </dl>
   )
 }
 
-function formatPercentValue(
-  value: number | null,
-  t: (key: string) => string
-): string {
-  return value === null ? t('Unknown') : formatPercent(value)
-}
-
-function DetailRow(props: { label: string; value: string; mono?: boolean }) {
+function DetailRow(props: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className='flex flex-col gap-0.5'>
-      <dt className='text-muted-foreground/70 text-xs font-medium tracking-wide uppercase'>
+      <dt className='text-muted-foreground text-xs font-medium'>
         {props.label}
       </dt>
       <dd
@@ -144,9 +132,7 @@ export function ApiInfoPanel() {
     })
   }, [list])
 
-  // Each configured API entry is mapped to its instance by the configured
-  // public domain, which the summary already exposes. No stored node identity
-  // is involved, and reordering entries cannot re-associate resources.
+  // Map by configured public domain; no private node identity is requested.
   const instanceByDomain = useMemo(() => {
     const map = new Map<string, InstanceResourceSummary>()
     for (const instance of instances) {
@@ -174,65 +160,50 @@ export function ApiInfoPanel() {
   }, [])
 
   return (
-    <PanelWrapper
-      title={
-        <span className='flex items-center gap-2'>
-          <IconBadge tone='info' size='sm'>
-            <Route />
-          </IconBadge>
-          {t('API Info')}
-        </span>
-      }
-      description={t('Configured routes, latency checks, and node resources')}
-      loading={loading}
-      empty={!list.length}
-      emptyMessage={t('No API routes configured')}
-      height='h-72'
-      contentClassName='p-0'
-    >
-      <ScrollArea className='h-72'>
-        <div className='divide-border/60 divide-y'>
-          {entries.map(({ item, key }) => {
-            const instance = instanceByDomain.get(item.url)
-            return (
-              <div key={key}>
-                <ApiInfoItemComponent
-                  item={item}
-                  status={pingStatus[item.url] || getDefaultPingStatus()}
-                  onTest={handleTest}
-                  resources={instance?.resources ?? null}
-                  instanceStatus={instance?.status ?? null}
-                  onOpenDetail={() => setDetailKey(key)}
-                />
-              </div>
-            )
-          })}
-        </div>
-      </ScrollArea>
-
-      <Sheet
+    <>
+      <PanelWrapper
+        title={
+          <span className='flex items-center gap-2'>
+            <IconBadge tone='info' size='sm'>
+              <Route />
+            </IconBadge>
+            {t('API Info')}
+          </span>
+        }
+        description={t('Configured routes, latency checks, and node resources')}
+        loading={loading}
+        empty={!list.length}
+        emptyMessage={t('No API routes configured')}
+        height='h-72'
+        contentClassName='grid gap-3 sm:grid-cols-2'
+      >
+        {entries.map(({ item, key }) => {
+          const instance = instanceByDomain.get(item.url)
+          return (
+            <ApiInfoItemComponent
+              key={key}
+              item={item}
+              status={pingStatus[item.url] || getDefaultPingStatus()}
+              onTest={handleTest}
+              resources={instance?.resources ?? null}
+              instanceStatus={instance?.status ?? null}
+              onOpenDetail={() => setDetailKey(key)}
+            />
+          )
+        })}
+      </PanelWrapper>
+      <Dialog
         open={detailItem !== undefined}
         onOpenChange={(next) => {
           if (!next) setDetailKey(null)
         }}
+        title={detailItem?.route ?? t('API Info')}
+        description={detailItem?.description}
       >
-        <SheetContent
-          side='right'
-          className={sideDrawerContentClassName('sm:max-w-md')}
-        >
-          <SheetHeader>
-            <SheetTitle className='font-mono text-sm'>
-              {detailItem?.route}
-            </SheetTitle>
-            <SheetDescription>{detailItem?.description}</SheetDescription>
-          </SheetHeader>
-          <div className='flex-1 overflow-y-auto px-4 py-4'>
-            {detailItem ? (
-              <NodeDetailPanel item={detailItem} instance={detailInstance} />
-            ) : null}
-          </div>
-        </SheetContent>
-      </Sheet>
-    </PanelWrapper>
+        {detailItem && (
+          <NodeDetailPanel item={detailItem} instance={detailInstance} />
+        )}
+      </Dialog>
+    </>
   )
 }

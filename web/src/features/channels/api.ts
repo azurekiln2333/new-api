@@ -414,6 +414,8 @@ export async function testChannel(
     endpoint_type?: string
     stream?: boolean
     key_index?: number
+    key_entry_id?: string
+    expected_rev?: number
   }
 ): Promise<ChannelTestResponse> {
   const res = await api.get(
@@ -849,8 +851,9 @@ export async function deleteDisabledMultiKeys(
 }
 
 /**
- * Restrict a key to a subset of the channel models. An explicit empty
- * allowlist denies all models; only the legacy request treats it as all.
+ * Save a key's model scope, adding selected allowlist models to the channel
+ * catalog without removing existing models. An explicit empty allowlist denies
+ * all models; only the legacy request treats it as all.
  */
 export async function setMultiKeyModels(
   channelId: number,
@@ -859,7 +862,11 @@ export async function setMultiKeyModels(
   keyEntryId?: string,
   expectedRev?: number,
   scopeMode?: 'all' | 'allowlist'
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{
+  success: boolean
+  message?: string
+  data?: { revision?: number; channel_models?: string[] }
+}> {
   return manageMultiKeys({
     channel_id: channelId,
     action: 'set_key_models',
@@ -868,7 +875,11 @@ export async function setMultiKeyModels(
     expected_rev: expectedRev,
     scope_mode: scopeMode,
     models,
-  }) as Promise<{ success: boolean; message?: string }>
+  }) as Promise<{
+    success: boolean
+    message?: string
+    data?: { revision?: number; channel_models?: string[] }
+  }>
 }
 
 /**

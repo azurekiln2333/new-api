@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -28,18 +29,42 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { ApiInfoSection } from '../api-info-section'
 
 let client: QueryClient
+const rootUser = { id: 1, username: 'root', role: ROLE.SUPER_ADMIN }
+const instances = [
+  {
+    node_name: 'node-a',
+    status: 'online',
+    stale_after_seconds: 90,
+    started_at: 1,
+    last_seen_at: 2,
+  },
+  {
+    node_name: 'node-stale',
+    status: 'stale',
+    stale_after_seconds: 90,
+    started_at: 1,
+    last_seen_at: 1,
+  },
+]
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  useAuthStore.getState().auth.setUser(rootUser)
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, message: '', data: instances },
+  })
 })
 
 afterEach(() => {
   cleanup()
   client.clear()
+  useAuthStore.getState().auth.setUser(null)
   vi.restoreAllMocks()
 })
 
@@ -77,28 +102,38 @@ function savedApiInfo(payload: unknown) {
 }
 
 describe('ApiInfoSection', () => {
-  it('keeps one instance bound to multiple API domains and preserves existing ids', async () => {
-    // Two entries, one bound to a node and one unbound; the bound node is
-    // mentioned once but may serve several domains.
-    const entries = [
-      { ...configuredEntries[0], node_name: 'node-a' },
-      { ...configuredEntries[1], node_name: 'node-a' },
-    ]
+  it('selects one authorized instance for multiple API domains without changing ids', async () => {
     const put = savedApiInfo(null)
-    renderSection(JSON.stringify(entries))
+    const user = userEvent.setup()
+    renderSection()
 
     expect(await screen.findByText('https://primary.example.com')).toBeVisible()
     expect(screen.getByText('https://secondary.example.com')).toBeVisible()
+    expect(api.get).not.toHaveBeenCalled()
 
-    const primaryRow = screen
-      .getByText('https://primary.example.com')
+    const secondaryRow = screen
+      .getByText('https://secondary.example.com')
       .closest('tr')
-    expect(primaryRow).not.toBeNull()
-    await userEvent.click(
-      within(primaryRow as HTMLElement).getByRole('button', { name: 'Edit' })
+    expect(secondaryRow).not.toBeNull()
+    await user.click(
+      within(secondaryRow as HTMLElement).getByRole('button', { name: 'Edit' })
     )
-    await userEvent.click(screen.getByRole('button', { name: 'Update' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Edit API Shortcut',
+    })
+    const binding = within(dialog).getByRole('combobox', { name: 'Instance' })
+    expect(binding).toHaveTextContent('Unbound')
+    expect(
+      within(dialog).queryByRole('textbox', { name: 'Instance' })
+    ).toBeNull()
+    await user.click(binding)
+    await user.click(
+      await screen.findByRole('option', { name: 'node-a (Online)' })
+    )
+    expect(api.get).toHaveBeenCalledWith('/api/system-info/instances')
+    expect(binding).toHaveTextContent('node-a (Online)')
+    await user.click(within(dialog).getByRole('button', { name: 'Update' }))
+    await user.click(screen.getByRole('button', { name: 'Save Settings' }))
 
     await waitFor(() => {
       expect(put.spy).toHaveBeenCalled()
@@ -106,8 +141,6 @@ describe('ApiInfoSection', () => {
     const body = put.spy.mock.calls[0][1] as { key: string; value: string }
     expect(body.key).toBe('console_setting.api_info')
     const stored = JSON.parse(body.value) as Array<Record<string, unknown>>
-    // Both configured domains stay attached to the same instance, and the
-    // persistent ids are written back unchanged.
     expect(stored.map((entry) => entry.node_name)).toEqual(['node-a', 'node-a'])
     expect(stored.map((entry) => entry.id)).toEqual([7, 12])
   })
@@ -284,6 +317,170 @@ describe('ApiInfoSection', () => {
       'https://legacy-one.example.com',
     ])
     expect(stored[0].id).toBe(1)
+  })
+
+  it.each([
+    { nodeName: 'node-stale', label: 'node-stale (Stale)' },
+    { nodeName: 'node-missing', label: 'node-missing (Unavailable)' },
+  ])(
+    'preserves the configured $nodeName binding while editing',
+    async ({ nodeName, label }) => {
+      const put = savedApiInfo(null)
+      const user = userEvent.setup()
+      renderSection(
+        JSON.stringify([{ ...configuredEntries[0], node_name: nodeName }])
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Edit' }))
+      const binding = screen.getByRole('combobox', { name: 'Instance' })
+      await waitFor(() => expect(binding).toHaveTextContent(label))
+      await user.click(binding)
+      expect(await screen.findByRole('option', { name: label })).toBeVisible()
+      await user.keyboard('{Escape}')
+      await user.click(screen.getByRole('button', { name: 'Update' }))
+      await user.click(screen.getByRole('button', { name: 'Save Settings' }))
+      await waitFor(() => expect(put.spy).toHaveBeenCalled())
+      const body = put.spy.mock.calls[0][1] as { value: string }
+      expect(JSON.parse(body.value)[0]).toMatchObject({
+        id: 7,
+        node_name: nodeName,
+      })
+    }
+  )
+
+  it('clears a binding only when Unbound is explicitly chosen', async () => {
+    const put = savedApiInfo(null)
+    const user = userEvent.setup()
+    renderSection(JSON.stringify([configuredEntries[0]]))
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const binding = screen.getByRole('combobox', { name: 'Instance' })
+    await waitFor(() => expect(binding).toHaveTextContent('node-a (Online)'))
+    await user.click(binding)
+    await user.click(await screen.findByRole('option', { name: 'Unbound' }))
+    expect(binding).toHaveTextContent('Unbound')
+    await user.click(screen.getByRole('button', { name: 'Update' }))
+    await user.click(screen.getByRole('button', { name: 'Save Settings' }))
+    await waitFor(() => expect(put.spy).toHaveBeenCalled())
+    const body = put.spy.mock.calls[0][1] as { value: string }
+    expect(JSON.parse(body.value)[0]).not.toHaveProperty('node_name')
+  })
+
+  it('keeps the configured binding during loading and after a network failure', async () => {
+    let rejectList!: (reason: Error) => void
+    const pending = new Promise<never>((_resolve, reject) => {
+      rejectList = reject
+    })
+    vi.mocked(api.get).mockReturnValueOnce(pending)
+    const put = savedApiInfo(null)
+    const user = userEvent.setup()
+    renderSection(JSON.stringify([configuredEntries[0]]))
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const binding = screen.getByRole('combobox', { name: 'Instance' })
+    expect(await screen.findByText('Loading...')).toBeVisible()
+    expect(binding).toHaveTextContent('node-a (Unknown)')
+    await act(async () => {
+      rejectList(new Error('offline'))
+    })
+    expect(
+      await screen.findByText('We could not load instances.')
+    ).toBeVisible()
+    expect(binding).toHaveTextContent('node-a (Unknown)')
+    await user.click(screen.getByRole('button', { name: 'Update' }))
+    await user.click(screen.getByRole('button', { name: 'Save Settings' }))
+    await waitFor(() => expect(put.spy).toHaveBeenCalled())
+    const body = put.spy.mock.calls[0][1] as { value: string }
+    expect(JSON.parse(body.value)[0]).toMatchObject({ node_name: 'node-a' })
+  })
+
+  it('treats a rejected instance response as an error and retries without changing the binding', async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      data: { success: false, message: 'Unavailable', data: instances },
+    })
+    const user = userEvent.setup()
+    renderSection(JSON.stringify([configuredEntries[0]]))
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const binding = screen.getByRole('combobox', { name: 'Instance' })
+    expect(
+      await screen.findByText('We could not load instances.')
+    ).toBeVisible()
+    expect(binding).toHaveTextContent('node-a (Unknown)')
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(binding).toHaveTextContent('node-a (Online)'))
+    expect(screen.queryByText('We could not load instances.')).toBeNull()
+  })
+
+  it.each([ROLE.USER, ROLE.ADMIN])(
+    'does not request or expose cached instance choices for role %s',
+    async (role) => {
+      useAuthStore.getState().auth.setUser({ id: 2, username: 'viewer', role })
+      client.setQueryData(
+        ['system-info', 'instances', 2, role, false],
+        [{ node_name: 'private-node', status: 'online' }]
+      )
+      const user = userEvent.setup()
+      renderSection(JSON.stringify([configuredEntries[0]]))
+
+      await user.click(screen.getByRole('button', { name: 'Edit' }))
+      const binding = screen.getByRole('combobox', { name: 'Instance' })
+      expect(binding).toBeDisabled()
+      expect(binding).toHaveTextContent('node-a (Unknown)')
+      expect(screen.queryByText(/private-node/)).toBeNull()
+      expect(api.get).not.toHaveBeenCalled()
+    }
+  )
+
+  it('discards another root user instance choices and hides them after demotion', async () => {
+    let finishNext!: (response: {
+      data: { success: boolean; data: typeof instances }
+    }) => void
+    const nextList = new Promise<{
+      data: { success: boolean; data: typeof instances }
+    }>((resolve) => {
+      finishNext = resolve
+    })
+    const user = userEvent.setup()
+    renderSection(JSON.stringify([configuredEntries[0]]))
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    let binding = screen.getByRole('combobox', { name: 'Instance' })
+    await user.click(binding)
+    expect(
+      await screen.findByRole('option', { name: 'node-stale (Stale)' })
+    ).toBeVisible()
+    vi.mocked(api.get).mockReturnValueOnce(nextList)
+
+    act(() => {
+      useAuthStore.getState().auth.setUser({ ...rootUser, id: 2 })
+    })
+    binding = screen.getByRole('combobox', { name: 'Instance' })
+    expect(binding).toHaveTextContent('node-a (Unknown)')
+    await user.click(binding)
+    expect(
+      screen.queryByRole('option', { name: 'node-stale (Stale)' })
+    ).toBeNull()
+    await user.keyboard('{Escape}')
+    act(() => {
+      useAuthStore.getState().auth.setUser({
+        id: 2,
+        username: 'viewer',
+        role: ROLE.USER,
+      })
+    })
+    binding = screen.getByRole('combobox', { name: 'Instance' })
+    expect(binding).toBeDisabled()
+    await act(async () => {
+      finishNext({
+        data: {
+          success: true,
+          data: [{ ...instances[1], node_name: 'late-private-node' }],
+        },
+      })
+    })
+    expect(binding).toHaveTextContent('node-a (Unknown)')
+    expect(screen.queryByText(/late-private-node|node-stale/)).toBeNull()
+    expect(api.get).toHaveBeenCalledTimes(2)
   })
 
   it('shows the instance binding column and an unbound entry as unbound', async () => {

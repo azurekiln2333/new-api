@@ -51,8 +51,18 @@ export function LogsMatchModeToggle(props: LogsMatchModeToggleProps) {
         props.className
       )}
     >
-      <ToggleGroupItem value='fuzzy'>{t('Contains')}</ToggleGroupItem>
-      <ToggleGroupItem value='exact'>{t('Exact')}</ToggleGroupItem>
+      <ToggleGroupItem
+        value='fuzzy'
+        className='text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary aria-pressed:hover:text-primary-foreground'
+      >
+        {t('Contains')}
+      </ToggleGroupItem>
+      <ToggleGroupItem
+        value='exact'
+        className='text-muted-foreground aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary aria-pressed:hover:text-primary-foreground'
+      >
+        {t('Exact')}
+      </ToggleGroupItem>
     </ToggleGroup>
   )
 }

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -34,6 +34,7 @@ import {
   SettingsForm,
   SettingsSwitchContent,
   SettingsControlGroup,
+  SettingsSwitchField,
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
@@ -42,12 +43,14 @@ import { useUpdateOption } from '../hooks/use-update-option'
 import {
   SIDEBAR_MODULES_DEFAULT,
   type SidebarModulesAdminConfig,
+  parseSidebarModulesAdmin,
   serializeSidebarModulesAdmin,
 } from './config'
 
 type SidebarModulesSectionProps = {
   config: SidebarModulesAdminConfig
   initialSerialized: string
+  personalSettingsEnabled?: boolean
 }
 
 type SidebarFormValues = SidebarModulesAdminConfig
@@ -60,9 +63,14 @@ const toTitleCase = (value: string) =>
 export function SidebarModulesSection({
   config,
   initialSerialized,
+  personalSettingsEnabled = true,
 }: SidebarModulesSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const personalSettingsUpdate = useUpdateOption()
+  const [personalSettingsDraft, setPersonalSettingsDraft] = useState<
+    boolean | null
+  >(null)
 
   const sectionMeta: Record<string, { title: string; description: string }> = {
     chat: {
@@ -164,7 +172,12 @@ export function SidebarModulesSection({
       },
     },
   }
-  const formDefaults = useMemo(() => config, [config])
+  // Other option saves rebuild config objects without changing the saved menu.
+  // Reset drafts only when that serialized menu baseline actually changes.
+  const formDefaults = useMemo(
+    () => parseSidebarModulesAdmin(initialSerialized),
+    [initialSerialized]
+  )
 
   const form = useForm<SidebarFormValues>({
     defaultValues: formDefaults,
@@ -194,6 +207,24 @@ export function SidebarModulesSection({
 
   return (
     <SettingsSection title={t('Sidebar modules')}>
+      <SettingsSwitchField
+        controlId='sidebar-personal-settings-enabled'
+        checked={personalSettingsDraft ?? personalSettingsEnabled}
+        onCheckedChange={(checked) =>
+          personalSettingsUpdate.mutate(
+            {
+              key: 'console_setting.sidebar_personal_settings_enabled',
+              value: checked,
+            },
+            { onSuccess: () => setPersonalSettingsDraft(checked) }
+          )
+        }
+        disabled={personalSettingsUpdate.isPending}
+        label={t('Show sidebar personalization card to ordinary users')}
+        description={t(
+          'Hide only the sidebar personalization card in personal settings. Existing sidebar preferences and menu access remain unchanged.'
+        )}
+      />
       <Form {...form}>
         <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
           <SettingsPageFormActions

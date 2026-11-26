@@ -2,6 +2,9 @@ name: Release (Linux, macOS, Windows)
 permissions:
   contents: write
 
+env:
+  UPDATE_SOURCE_REPOSITORY: ${{ github.repository }}
+
 on:
   workflow_call:
     inputs:
@@ -58,12 +61,12 @@ jobs:
       - name: Build Backend (amd64)
         run: |
           go mod download
-          go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION' -extldflags '-static'" -o new-api-$VERSION
+          go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION' -X 'github.com/QuantumNous/new-api/setting/system_setting.UpdateSourceBuildDefaultRepository=$UPDATE_SOURCE_REPOSITORY' -extldflags '-static'" -o new-api-$VERSION
       - name: Build Backend (arm64)
         run: |
           sudo apt-get update
           DEBIAN_FRONTEND=noninteractive sudo apt-get install -y gcc-aarch64-linux-gnu
-          CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION' -extldflags '-static'" -o new-api-arm64-$VERSION
+          CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION' -X 'github.com/QuantumNous/new-api/setting/system_setting.UpdateSourceBuildDefaultRepository=$UPDATE_SOURCE_REPOSITORY' -extldflags '-static'" -o new-api-arm64-$VERSION
       - name: Generate checksums
         run: sha256sum new-api-* > checksums-linux.txt
 
@@ -125,7 +128,7 @@ jobs:
           CC: clang
         run: |
           go mod download
-          go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-X 'github.com/QuantumNous/new-api/common.Version=$VERSION'" -o new-api-macos-$VERSION
+          go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-X 'github.com/QuantumNous/new-api/common.Version=$VERSION' -X 'github.com/QuantumNous/new-api/setting/system_setting.UpdateSourceBuildDefaultRepository=$UPDATE_SOURCE_REPOSITORY'" -o new-api-macos-$VERSION
           file "new-api-macos-$VERSION"
           test "$(lipo -archs "new-api-macos-$VERSION")" = arm64
           go version -m "new-api-macos-$VERSION"
@@ -187,7 +190,7 @@ jobs:
       - name: Build Backend
         run: |
           go mod download
-          go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION'" -o new-api-$VERSION.exe
+          go build -pgo="$(go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo" -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION' -X 'github.com/QuantumNous/new-api/setting/system_setting.UpdateSourceBuildDefaultRepository=$UPDATE_SOURCE_REPOSITORY'" -o new-api-$VERSION.exe
       - name: Generate checksums
         run: sha256sum new-api-*.exe > checksums-windows.txt
 

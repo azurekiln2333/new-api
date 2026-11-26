@@ -139,6 +139,14 @@ export function DataTableRowActions<TData>({
     [resolveRealKey, apiKey.id, serverAddress, t]
   )
 
+  const handleImportConfig = async () => {
+    const realKey = await resolveRealKey(apiKey.id)
+    if (!realKey) return
+    setResolvedKey(realKey)
+    setCurrentRow(apiKey)
+    setOpen('cc-switch')
+  }
+
   const handleToggleStatus = async (
     event?: React.MouseEvent<HTMLButtonElement>
   ) => {
@@ -216,6 +224,28 @@ export function DataTableRowActions<TData>({
         <TooltipContent>{t('Edit')}</TooltipContent>
       </Tooltip>
 
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant='ghost'
+              size='icon-sm'
+              onClick={handleImportConfig}
+              disabled={isRealKeyLoading}
+              aria-busy={isRealKeyLoading}
+              aria-label={t('Import to CC Switch')}
+            />
+          }
+        >
+          {isRealKeyLoading ? (
+            <Loader2 className='animate-spin' aria-hidden='true' />
+          ) : (
+            <ArrowRightLeft aria-hidden='true' />
+          )}
+        </TooltipTrigger>
+        <TooltipContent>{t('Import to CC Switch')}</TooltipContent>
+      </Tooltip>
+
       <DataTableRowActionMenu
         ariaLabel={t('Open menu')}
         contentClassName='w-[200px]'
@@ -255,13 +285,8 @@ export function DataTableRowActions<TData>({
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onClick={async () => {
-            const realKey = await resolveRealKey(apiKey.id)
-            if (!realKey) return
-            setResolvedKey(realKey)
-            setCurrentRow(apiKey)
-            setOpen('cc-switch')
-          }}
+          disabled={isRealKeyLoading}
+          onClick={handleImportConfig}
         >
           {t('CC Switch')}
           <DropdownMenuShortcut>

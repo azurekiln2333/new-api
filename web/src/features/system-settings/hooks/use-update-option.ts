@@ -42,6 +42,7 @@ import type {
 const STATUS_RELATED_KEYS = new Set([
   'HeaderNavModules',
   'SidebarModulesAdmin',
+  'console_setting.sidebar_personal_settings_enabled',
   'Notice',
   'RegisterEnabled',
   'InviteRegisterEnabled',

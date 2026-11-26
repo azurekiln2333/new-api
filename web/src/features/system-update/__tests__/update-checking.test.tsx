@@ -435,6 +435,67 @@ describe('administrator update entry', () => {
 })
 
 describe('update source settings', () => {
+  test.each(['', 'administrator/new-api'])(
+    'shows the effective repository as a hint without replacing saved override %s or an unsaved edit',
+    async (repository) => {
+      const user = userEvent.setup()
+      const put = vi.spyOn(api, 'put')
+      client.setQueryData(STATUS_QUERY_KEY, {
+        version: 'v1.0.0-rc.35',
+        update_source_repository: 'azurekiln2333/new-api',
+      })
+      render(<UpdateSourceSettingsFixture repository={repository} />, {
+        wrapper: Wrapper,
+      })
+      const input = screen.getByRole('textbox', {
+        name: 'Update source repository',
+      })
+      expect(input).toHaveValue(repository)
+      expect(input).toHaveAttribute('placeholder', 'azurekiln2333/new-api')
+      expect(input).toHaveAccessibleDescription(
+        `Enter the repository as owner/repo. Leave blank to use the deployment default: environment setting, then build default, then ${DEFAULT_UPDATE_SOURCE_REPOSITORY}.`
+      )
+      await user.click(
+        screen.getByRole('button', { name: 'Save update source' })
+      )
+      expect(put).not.toHaveBeenCalled()
+
+      await user.clear(input)
+      await user.type(input, 'draft-owner/new-api')
+      act(() =>
+        client.setQueryData(STATUS_QUERY_KEY, {
+          version: 'v1.0.0-rc.35',
+          update_source_repository: 'deployment-owner/new-api',
+        })
+      )
+      await waitFor(() => {
+        expect(input).toHaveAttribute('placeholder', 'deployment-owner/new-api')
+        expect(input).toHaveValue('draft-owner/new-api')
+      })
+      expect(put).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([undefined, '', 'https://example.com/owner/repo', 'owner/..'])(
+    'uses a deployment-default hint when the effective repository is unavailable or unsafe: %s',
+    (repository) => {
+      const put = vi.spyOn(api, 'put')
+      client.setQueryData(STATUS_QUERY_KEY, {
+        version: 'v1.0.0-rc.35',
+        update_source_repository: repository,
+      })
+      render(<UpdateSourceSettingsFixture repository='' />, {
+        wrapper: Wrapper,
+      })
+      const input = screen.getByRole('textbox', {
+        name: 'Update source repository',
+      })
+      expect(input).toHaveValue('')
+      expect(input).toHaveAttribute('placeholder', 'Deployment default')
+      expect(put).not.toHaveBeenCalled()
+    }
+  )
+
   test.each([
     ['', 'azurekiln2333/new-api'],
     ['azurekiln2333/new-api', ''],

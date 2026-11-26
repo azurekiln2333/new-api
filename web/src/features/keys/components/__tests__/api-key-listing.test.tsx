@@ -53,6 +53,7 @@ import {
 import { apiKeySchema, type ApiKey } from '../../types'
 import { ApiKeyQuotaCell } from '../api-key-quota-cell'
 import { useApiKeysColumns } from '../api-keys-columns'
+import { ApiKeysDialogs } from '../api-keys-dialogs'
 import { ApiKeysProvider } from '../api-keys-provider'
 import { ApiKeysTable } from '../api-keys-table'
 
@@ -298,6 +299,7 @@ function KeysPage() {
   return (
     <ApiKeysProvider>
       <ApiKeysTable />
+      <ApiKeysDialogs />
       <Toaster />
     </ApiKeysProvider>
   )
@@ -306,6 +308,9 @@ function KeysPage() {
 async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url === '/api/user/models') {
+      return { data: { success: true, data: ['model-10', 'model-2'] } }
+    }
     if (url.startsWith('/api/token/')) {
       return {
         data: { success: true, data: { items: [currentKey], total: 1 } },
@@ -443,6 +448,116 @@ it.each([true, false])(
       await screen.findByText('Verification required')
       expect(copy).not.toHaveBeenCalled()
     }
+  }
+)
+
+it.each([
+  { viewport: 'desktop', mobile: false },
+  { viewport: 'mobile', mobile: true },
+])(
+  'opens the visible import icon on $viewport only after explicit credential resolution, then launches only from the dialog',
+  async ({ mobile }) => {
+    if (mobile) {
+      const matchMedia = window.matchMedia
+      vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+        ...matchMedia(query),
+        matches: query.includes('max-width'),
+      }))
+    }
+    const user = userEvent.setup()
+    const launch = vi.spyOn(window, 'open').mockReturnValue(null)
+    const { post } = await renderKeysPage()
+    let resolveKey!: (value: {
+      data: { success: boolean; data: { key: string } }
+    }) => void
+    const keyResponse = new Promise<{
+      data: { success: boolean; data: { key: string } }
+    }>((resolve) => {
+      resolveKey = resolve
+    })
+    post.mockReturnValueOnce(keyResponse)
+    const importButton = screen.getByRole('button', {
+      name: 'Import to CC Switch',
+    })
+    expect(importButton).toBeVisible()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+    await user.hover(importButton)
+    expect(post).not.toHaveBeenCalled()
+    act(() => importButton.focus())
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(post).toHaveBeenCalledOnce())
+    expect(post).toHaveBeenCalledWith('/api/token/7/key')
+    expect(importButton).toBeDisabled()
+    await user.click(importButton)
+    expect(post).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(launch).not.toHaveBeenCalled()
+    await act(async () =>
+      resolveKey({
+        data: { success: true, data: { key: 'import-test-only-secret' } },
+      })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Import to CC Switch',
+    })
+    expect(launch).not.toHaveBeenCalled()
+    expect(document.body.innerHTML).not.toContain('import-test-only-secret')
+    expect(document.body.innerHTML).not.toContain('ccswitch://')
+    const persistentValues = [localStorage, sessionStorage]
+      .flatMap((storage) =>
+        Array.from({ length: storage.length }, (_, index) =>
+          storage.getItem(storage.key(index) ?? '')
+        )
+      )
+      .join('\n')
+    expect(persistentValues).not.toContain('import-test-only-secret')
+    await user.click(
+      within(dialog).getByRole('combobox', { name: 'Primary Model' })
+    )
+    await user.click(screen.getByRole('option', { name: 'model-10' }))
+    expect(launch).not.toHaveBeenCalled()
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Open CC Switch' })
+    )
+    expect(launch).toHaveBeenCalledOnce()
+    const url = new URL(String(launch.mock.calls[0]?.[0]))
+    expect(url.protocol).toBe('ccswitch:')
+    expect(url.searchParams.get('apiKey')).toBe('sk-import-test-only-secret')
+    expect(url.searchParams.get('model')).toBe('model-10')
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  }
+)
+
+it.each(['denied', 'network failure'])(
+  'keeps the import dialog and local app closed when key resolution returns %s',
+  async (failure) => {
+    const user = userEvent.setup()
+    const launch = vi.spyOn(window, 'open').mockReturnValue(null)
+    const { post } = await renderKeysPage()
+    if (failure === 'denied') {
+      post.mockResolvedValueOnce({
+        data: { success: false, message: 'Credential reveal denied' },
+      })
+    } else {
+      post.mockRejectedValueOnce(new Error('Credential reveal unavailable'))
+    }
+    const importButton = screen.getByRole('button', {
+      name: 'Import to CC Switch',
+    })
+    await user.click(importButton)
+    await screen.findByText(
+      failure === 'denied'
+        ? 'Credential reveal denied'
+        : 'Credential reveal unavailable'
+    )
+    expect(post).toHaveBeenCalledExactlyOnceWith('/api/token/7/key')
+    expect(importButton).toBeEnabled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(launch).not.toHaveBeenCalled()
+    expect(document.body.innerHTML).not.toContain('ccswitch://')
   }
 )
 

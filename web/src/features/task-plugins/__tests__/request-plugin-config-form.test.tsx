@@ -25,7 +25,7 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, assert, beforeEach, expect, test, vi } from 'vitest'
 
 import type { TaskPluginOption } from '@/features/channels/api'
 
@@ -161,7 +161,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function openEditor(pluginName: string) {
+async function openEditor(pluginName: string, models: string[] = []) {
   const user = userEvent.setup()
   const onSave = vi.fn<(instance: RequestPluginInstance) => void>()
   render(
@@ -172,7 +172,7 @@ async function openEditor(pluginName: string) {
         plugins={[imagePlugin, filterPlugin, moderationPlugin]}
         instanceCounts={{}}
         groups={[]}
-        models={[]}
+        models={models}
         saving={false}
         onOpenChange={() => {}}
         onSave={onSave}
@@ -197,6 +197,174 @@ async function chooseMode(
   await user.click(within(dialog).getByRole('combobox', { name: 'Mode' }))
   await user.click(await screen.findByRole('option', { name: mode }))
 }
+
+test('chosen model options sort naturally including saved custom models without reordering groups or saved selections', async () => {
+  const user = userEvent.setup()
+  const onSave = vi.fn<(instance: RequestPluginInstance) => void>()
+  const models = ['gpt-10', 'gpt-2', 'GPT-2', 'claude-1']
+  Object.freeze(models)
+  const instance: RequestPluginInstance = {
+    id: 'image-scope',
+    name: 'Image scope',
+    plugin: imagePlugin.key,
+    enabled: true,
+    global: false,
+    groups: ['zeta-group', 'alpha-group'],
+    models: ['gpt-10', 'custom-3'],
+    config: {
+      mode: 'lossless',
+      minBytes: 512000,
+      maxSide: 2048,
+      quality: 85,
+    },
+  }
+  Object.freeze(instance.groups)
+  Object.freeze(instance.models)
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <RequestPluginInstanceEditor
+        open
+        instance={instance}
+        plugins={[imagePlugin]}
+        instanceCounts={{}}
+        groups={['zeta-group', 'alpha-group']}
+        models={models}
+        saving={false}
+        onOpenChange={() => {}}
+        onSave={onSave}
+      />
+    </QueryClientProvider>
+  )
+  const dialog = await screen.findByRole('dialog', { name: /Image scope/ })
+  expect(
+    within(dialog)
+      .getAllByText(/^(gpt-10|custom-3)$/)
+      .map((item) => item.textContent)
+  ).toEqual(['gpt-10', 'custom-3'])
+
+  const groupPicker = within(dialog).getByRole('combobox', {
+    name: 'Select groups',
+  })
+  await user.click(groupPicker)
+  expect(
+    (await screen.findAllByRole('option')).map((item) => item.textContent)
+  ).toEqual(['zeta-group', 'alpha-group'])
+  expect(screen.getByRole('option', { name: 'zeta-group' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(screen.getByRole('option', { name: 'alpha-group' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(groupPicker).toHaveAttribute('aria-expanded', 'true')
+  await user.keyboard('{Escape}')
+  expect(
+    within(dialog).getByRole('combobox', { name: 'Select groups' })
+  ).toHaveAttribute('aria-expanded', 'false')
+
+  const modelPicker = within(dialog).getByRole('combobox', {
+    name: 'Select models or add custom ones',
+  })
+  await user.click(modelPicker)
+  expect(
+    (await screen.findAllByRole('option')).map((item) => item.textContent)
+  ).toEqual(['claude-1', 'custom-3', 'GPT-2', 'gpt-2', 'gpt-10'])
+  expect(screen.getByRole('option', { name: 'gpt-10' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(screen.getByRole('option', { name: 'custom-3' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(onSave).not.toHaveBeenCalled()
+  await user.type(modelPicker, 'gpt-2')
+  expect(screen.getAllByRole('option').map((item) => item.textContent)).toEqual(
+    ['GPT-2', 'gpt-2']
+  )
+  await user.click(screen.getByRole('option', { name: 'gpt-2' }))
+  // The filtered choice closes the popup; another Escape clears selected models.
+  const currentModelPicker = within(dialog).getByRole('combobox', {
+    name: 'Select models or add custom ones',
+  })
+  expect(currentModelPicker).toHaveAttribute('aria-expanded', 'false')
+  const modelChips = currentModelPicker.closest<HTMLElement>(
+    '[data-slot="combobox-chips"]'
+  )
+  assert.isNotNull(modelChips)
+  expect(modelChips).toBeInTheDocument()
+  expect(
+    [...modelChips.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['gpt-10', 'custom-3', 'gpt-2'])
+  const groupChips = within(dialog)
+    .getByRole('combobox', { name: 'Select groups' })
+    .closest<HTMLElement>('[data-slot="combobox-chips"]')
+  assert.isNotNull(groupChips)
+  expect(groupChips).toBeInTheDocument()
+  expect(
+    [...groupChips.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['zeta-group', 'alpha-group'])
+  expect(
+    within(dialog).getByRole('radio', { name: /Chosen groups/ })
+  ).toBeChecked()
+  expect(
+    within(dialog).getByRole('radio', { name: /Chosen models/ })
+  ).toBeChecked()
+  expect(
+    within(dialog).getByRole('combobox', { name: 'Mode' })
+  ).toHaveTextContent('Lossless')
+  expect(
+    within(dialog).getByRole('spinbutton', { name: 'Minimum image size' })
+  ).toHaveValue(512)
+  expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+  const save = within(dialog).getByRole<HTMLButtonElement>('button', {
+    name: 'Save',
+  })
+  expect(save).toBeEnabled()
+  expect(save.form).not.toBeNull()
+  expect(save.form).toBeValid()
+  await user.click(save)
+  expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+
+  expect(onSave).toHaveBeenCalledExactlyOnceWith({
+    ...instance,
+    models: ['gpt-10', 'custom-3', 'gpt-2'],
+  })
+  expect(models).toEqual(['gpt-10', 'gpt-2', 'GPT-2', 'claude-1'])
+  expect(instance.models).toEqual(['gpt-10', 'custom-3'])
+})
+
+test('opening sorted choices does not pick a model or change the all-models default', async () => {
+  const models = ['gpt-10', 'gpt-2']
+  Object.freeze(models)
+  const { user, dialog, onSave } = await openEditor('Image compress', models)
+  expect(
+    within(dialog).getByRole('radio', { name: /All models/ })
+  ).toBeChecked()
+  await user.click(within(dialog).getByRole('radio', { name: /Chosen models/ }))
+  await user.click(
+    within(dialog).getByRole('combobox', {
+      name: 'Select models or add custom ones',
+    })
+  )
+  expect(
+    (await screen.findAllByRole('option')).map((item) => item.textContent)
+  ).toEqual(['gpt-2', 'gpt-10'])
+  await user.keyboard('{Escape}')
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(within(dialog).getByText('Pick at least one model')).toBeVisible()
+  expect(onSave).not.toHaveBeenCalled()
+
+  await user.click(within(dialog).getByRole('radio', { name: /All models/ }))
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(onSave.mock.calls[0][0].models).toEqual([])
+  expect(models).toEqual(['gpt-10', 'gpt-2'])
+})
 
 test('a byte field shows its default in KB and saves bytes in the unit picked', async () => {
   const { user, dialog, onSave } = await openEditor('Image compress')

@@ -1,17 +1,120 @@
 # Console responsiveness and diagnostics — integration report
 
+## Current continuation and urgent mapping defect — 2026-11-26
+
+Urgent mapping save is fixed and pushed in a2c1c30dd347c121ca9096ebab9a83a15e7023cf.
+The authoritative config merge now copies nonnil ModelMapping and audits the field
+name. TestChannelUpdatePersistsModelMappingAndPublishesCache passed add/edit/omit/
+null/clear and exact upstream-case assertions on SQLite3.50.4, MySQL8.4.13 and
+PostgreSQL16.16 in run45759710518. Actual checkout728efaf05a088619360e4df2f7320dc502ad284a
+and head have identical tree7121c161fdae62fbef7b1894e8a105364dae2aeb. Integration
+passed; backend vet/build/tests passed, with two format-only failures. Frontend
+had six assertion failures and nine formatting files; typecheck/lint/build passed.
+No production deployment or cross-node runtime observation is claimed.
+
+Reviewed formatting/status-disclosure corrections63a2f132c, hosted locale
+artifact2c81093cb and popup/dialog test corrections444d31352 are pushed. The locale
+patch contains266 additions across seven files, no removals; missing/extras0,
+aggregate untranslated ja8/ru9/zh7 remain. CI45779078756 now tests head444d31352;
+backend has succeeded, frontend found a new unsupported role-query option in the
+API-key test helper. That narrow typing correction is being finished; other checks
+remain in progress. Mapping is not yet released to the installed instance.
+
+R37 append/mask, R5 backend/frontend, R33 and the R24 probe/spec correction have
+independent source acceptance but remain uncaptured and unvalidated by these runs.
+R34 remains incomplete; its actual100-turn/tool-blocked session was replaced with
+a fresh gpt-6.1-sol/max session and restored exact ownership. User selected both
+global and per-channel case-insensitive controls, with global default disabled.
+This is recorded requirements/design, not an implemented matching feature.
+
+This section supersedes older pending/ownership snapshots below. Run45724415621
+integration139590507197 completed SUCCESS at2026-11-26T00:18:54Z on checkout
+9f053429d097cd17c4b0b7db236f53c2ea32dc88. Its backend also passed; frontend remains
+failed with seven assertions, four unhandled getAnimations errors and formatting.
+Later source-accepted captures include plugin correction ae1f00de5, pricing cards
+ed9f3dfbd, Playground corrections9296c1617, effective subscriptions57a174255 and
+official provider status766b38a8b. No earlier run validates these later commits.
+
+R24 foundation exact5 is source-accepted; held released-migration probe/workflow
+and foundation specification are under bounded review. Root added an explicit
+UsageEvent foundation race selector; execution and fresh/latest-release upgrade
+twice remain pending. R5 backend exact6 and frontend exact3 are frozen for separate
+independent reviews. R33 saved exact19 remains in final owner readback. R34 host
+regressions/readback remain incomplete. R36 persistence exact9 finished source
+review, while runtime/UI are still separate unfinished work.
+
+The user reports model mapping cannot be edited even on the main node, with
+deepseek-r1 mapped to DeepSeek-R1 as a concrete example. Read-only tracing found
+applyChannelConfigEdit in controller/channel.go omits ModelMapping when merging
+the submitted candidate into the locked authoritative row; PUT can report success
+while persisting/publishing the old mapping. Root reopened only that controller
+and existing controller/channel_create_test.go for native mapping_save_fix to
+repair and protect add/change/clear/omitted semantics. Adjacent omitted writable
+fields require bounded review. This is a source-confirmed cause, not evidence of
+successful production remediation. Optional case-insensitive model IDs are a
+separate requested feature, not a substitute for repairing save behavior.
+
+R37/R38/R39 record direct Key addition, all-Key discovery and catalog union,
+mapping entry, identifiable server-masked previews, an explicit manual-test scope
+switch with post-success opt-in model addition, and mapping/case behavior. These
+are authorized additions, not completed features. Automatic/ordinary relay model
+restrictions remain in effect; explicit diagnostics must retain all other guards.
+
+At the user's request root inspected12 task Pi panes, cancelled stuck compactions,
+and reset11 sessions after actual turn-limit/tool-blocker evidence, confirming new
+session IDs and gpt-6.1-sol/max. The remaining p3 session was healthy/frozen. Saved
+files were preserved, exact owners restored, and no target files were touched.
+Native R34 and held-foundation reviewers separately hit429 and were reassigned;
+those failures are not source dispositions. No local executable validation ran.
+
 ## Current release and R21 status — 2026-11-26 (Asia/Shanghai)
 
 The console integration was merged into `main` at `370bd0847906fabc795d1140cb2d0987f3dd26a7`. Release workflow [`45632007544`](https://github.com/azurekiln2333/new-api/actions/runs/45632007544) completed **all 12 jobs successfully**, including frontend/backend/database validation, both image architectures, multi-platform publication and release downloads. Release [`custom-20261125-370bd08`](https://github.com/azurekiln2333/new-api/releases/tag/custom-20261125-370bd08) was published at **2026-11-25T14:49:39Z** with **7 assets** (four platform binaries and three checksum files). This verifies publication, not production deployment or resolution of the live login incident. Earlier “no merge/release” and failed-CI snapshots below are historical, superseded for this release.
 
-**R21 — login recovery source implemented on `fix/login-session-recovery-20261125`:**
+**R21 — login recovery merged through PR #3 into `main` at `37a417457fccc74bef82f4b2afb7729dada4439c`:**
+
+**R21 publication verified:** release workflow `45658944760` completed successfully with all 12 jobs. Release `custom-20261126-37a4174` (ID `458418645`) was published at **2026-11-25T17:28:22Z / 2026-11-26 01:28:22 Asia/Shanghai**, with seven nonzero assets and all four binary checksum-text values matching GitHub asset digest metadata. The release target, lightweight tag, main and workflow head all resolve to `37a417457fccc74bef82f4b2afb7729dada4439c`. Anonymous GHCR manifest reads for `latest`, `sha-37a417457fccc74bef82f4b2afb7729dada4439c` and `custom-20261126-37a4174` verified the same index digest `sha256:dacd77d8fd80cab65fcbfacb960df5a582f29d329d8b9757e1de973cb3ce0022`, including amd64/arm64 and attestation descriptors. Manifest body hashes and checksum text metadata were verified; no binary download/rehash, image pull, execution or production interaction was performed. This supersedes earlier pending-publication snapshots below.
 
 - Concurrent-session limits are opt-in: `USER_SESSION_ACTIVE_LIMIT=0` is the default unlimited policy; a positive cap counts only active, unrevoked, unexpired sessions at the current authoritative user auth version. Admission and the session list use the same usable-session criteria, including the transactional MFA path. No existing sessions are evicted or historical rows deleted. The independent rolling issuance limit remains enforced.
 - Refresh session lookup distinguishes a missing row from operational storage errors. Missing, revoked and expired sessions remain unauthorized and clear the refresh cookie; a temporary lookup failure returns the existing generic 500 without clearing it, allowing the original cookie to refresh the same SID after recovery.
 - Browser route guards retain the requested destination and show the existing recoverable error/retry UI while restoration is unresolved. They do not render protected content or present an unresolved refresh as confirmed logout. Confirmed anonymous users still reach sign-in.
 - Authentication/MFA, signature, cookie/origin, rotation, expiry, revocation and replay checks remain authoritative. Removing a concurrency cap is not evidence that restart persistence is fixed. An unset or inconsistent `SESSION_SECRET` is a source-supported invalidation condition, but the live configuration is **unconfirmed**; no secret/configuration changes or production probes were made.
 
-**Current hosted snapshot:** push run [`45650760952`](https://github.com/azurekiln2333/new-api/actions/runs/45650760952) and PR run [`45650770535`](https://github.com/azurekiln2333/new-api/actions/runs/45650770535) both target **`4e5c18d849f4151bade40f7ee2fa8f2239d00503`**. Backend formatting, vet, root/independent-module builds and tests passed in both. Frontend typecheck, lint and production build passed, but two new session-recovery fixture assertions and two formatting hunks in the single `web/src/features/auth/__tests__/session-recovery.test.tsx` file failed; p6's correction is now READY/frozen, with hosted verification pending. Database integration, including the focused session-recovery three-database and race gates, is still pending at this snapshot. **R21 acceptance and publication remain pending the corrected exact-SHA hosted results.** No local project tests, builds, formatters or database probes were run. One read-only `git diff --check` occurred on an intermediate controller test revision and was acknowledged separately; it does not validate the final source. No production login/restart success or full ASVS compliance is claimed; the SSO/Passkey incident note remains unresolved and unchanged.
+**R21 branch validation passed:** push run `45653429981` and PR run `45653442907` both completed successfully for exact SHA `ab573348efc59467b874ff0422cd1f949dae9319`. All three jobs passed, including frontend typecheck/format/lint/build and 3547 tests in 288 files, backend formatting/vet/build/module tests, startup migration, full database contracts and all 25 focused integration gates. Recorded engines: SQLite 3.50.4, MySQL 8.4.13, PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1), Redis 7.4.12 and ClickHouse 25.8.33.6. PR #3 merged on 2026-11-25T16:54:10Z. Release run `45658944760` targets exact merge SHA `37a417457fccc74bef82f4b2afb7729dada4439c`; all frontend/backend/integration validation and publication jobs completed successfully; session matrix/race gates 30/31 passed on the merge SHA. No local project tests, builds, formatters or database probes were run. One read-only git diff --check was run on an intermediate controller-test revision and was acknowledged separately; it was not validation of the final source. No production login/restart success or full ASVS compliance is claimed; the SSO/Passkey incident remains separate and unresolved by this source work.
+
+**Five-branch inventory:** `main` contains all commits from `fix/login-session-recovery-20261125`, `fix/console-responsiveness-20261124`, `hotfix/channel-capacity-failover` and `merge/upstream`; each has zero commits ahead of main. PRs #1–#3 are merged. Remaining remote branch names are not unmerged product work.
+
+**New UI corrections in progress:** `fix/channel-card-invitation-layout-20261126` starts from the R21 merge. Current user requirements supersede the old card quota/type presentation: name replaces type, billed used quota remains visible with configured total or known zero, metric text wraps completely, invitation actions use a compact menu, and channel testing/multi-key controls follow R22 in the parent PRD. These follow-up changes require their own exact-SHA hosted checks before merge/release.
+
+**Latest hosted snapshot (2026-11-26):** root pushed `fa8d52fe2b0972f3ddaa8fc535dfe40b0beb6edb`, including accepted refund correction `e3f89b145` and plugin diagnostics `b143ace59`. Run `45724415621` actually checks out merge `9f053429d097cd17c4b0b7db236f53c2ea32dc88`; its tree `60375a32d0d69847f024a1c5b33df6a41a4a4827` matches the head. Backend `139590507054` passed formatting, root/independent-module vet/build and tests. Nonverbose package success is not a named-subtest repeatability claim. Frontend `139590506698` passed typecheck, both lints and build, but failed formatting in five test files and seven assertions (3658/3665 passed, 285/288 files passed), plus four unhandled Base UI ScrollArea `viewport.getAnimations` errors. The plugin test stops at the scoped model-chip assertion with `[]`, before later native-form/Save/callback checks; the historical `onSave=0` cause is still not established. Five Playground failures concern accessible project-name spacing, and one concerns persisted quota-failure state. Integration remains pending at this snapshot. Its successful released-migration step still uses baseline `53a71f88`, not the uncaptured latest-release R24 gate.
+
+**Later source captures:** root applied pH-accepted locale artifact `45724415656`, exactly42 additions on the verified same source/tree, in `966f46b18`. Missing/extras are zero; pre-existing untranslated ja7/ru8/zh6 remain. `732232aca` captures only three of the five exact hosted formatter path corrections. `b70f19e4e` captures the pH-accepted seven R5 error keys in all seven script dictionaries; these49 additions await hosted generation. These later commits are not covered by run `45724415621`. Unfinished feature slices and held R24 migration workflow/probe changes remain uncommitted.
+
+**Earlier PR #4 hosted evidence:** run `45714039810` targets head `b543392cfcd175fe23a05b90a46e99d0dd2d13db`; checkout and `git log` confirm actual synthetic merge `1e1e0c845eac32d386d4af2a59b96fa3c60c03e6`. Backend job `139555425422` succeeded. Frontend job `139555425821` completed failure: typecheck, lint and production build succeeded, but 12 files need the exact formatting diffs printed by the hosted protected-header formatter and one model-limit regression failed (`api-keys-mutate-drawer.test.tsx:237`, offered `alpha` absent at assertion). Tests: 3644 passed, one failed across 288 files. The next push superseded this run and cancelled integration job `139555426012` during the per-turn goal-routing/channel-waiting gate; startup migration, full database contracts and the actual linked-build-default fixture had succeeded. This is not a completed integration pass. Root assigned p6 only the 12 reported formatting hunks and p5 only the existing model-limit test for source-backed diagnosis; neither correction is covered by this run. No local executable validation was run.
+
+**Previous PR #4 run:** head `fae102150490d2bdf874c9dec4b5796cea7efefd`, pushed 2026-11-26, includes `3a895eec5` (sidebar personalization flag and Wallet check-in), `ef8d72ff4` (diagnostic test corrections), `f86cffaa6` (ranking name policy and admin chart cache isolation), and `fae102150` (mobile common-log hierarchy/stats and match-mode appearance). Hosted run `45706527989` checked out synthetic merge `c40253e7da9c257a319e55fed19cda4de244649e` and completed failure. Backend job `139529819977` succeeded; integration job `139529819772` succeeded at `2026-11-25T22:07:19Z`. Frontend job `139529819442` failed with two type errors (unused `screen` import and unsupported role-query `exact`) and one sidebar visibility regression (3632 tests passed, one failed). Root captured the independent three-test correction in `80a440fc6`: remove unused/unsupported options and await observable card removal/restoration after scheduled query notifications, retaining saved-preference and no-PUT assertions. The subsequent current run passes those suites and typechecking. Source acceptance is not a test/typecheck/database pass.
+
+**Independently source-accepted captures:** `667d2c5be` contains p5's exact 11 shared comparator/MultiSelect/Keys paths plus the model-selection spec; `0cad9022d` contains R19's six resolver/test/Docker/workflow paths plus the release contract. R19 includes the actual linker-value fixture and four-platform binary/Docker binding. These commits are included in the hosted tree above, whose overall validation is not green. The update-source UI wording is a separately frozen p6 slice under independent review; installed binaries/settings have not been changed. R28 plugin/metadata and channel caller slices were subsequently accepted and captured as recorded below; new hosted test findings require separate corrections.
+
+**Next captured tree:** pH accepted the exact six R28 plugin/metadata files, captured in `93e1e2c9e` with the model-selection contract. Commit `8f0e275a4c8263501a8a1713625480cac7fcd7fb` adds the independently reviewed temporary locale workflow/script, including `persist-credentials: false`. Locale generation run `45716933131` succeeded on merge `9e3e73405268b5a72136ba2d44f2230af79888c4`, whose tree `ef488e85de666f68a7e19f5093421206b0b6826c` exactly matches committed head `8f0e275a4`. Root applied only its generated artifact patch: six new keys in each of seven locales, no deletions. pK independently accepted all 42 values and exact interpolation tokens; root captured them in `a37689a3e`. Sync reports zero missing/extras but existing untranslated counts of seven Japanese, eight Russian and six Chinese entries; this is not a global translation-completeness claim. No local generator/sync ran.
+
+**Newer PR #4 evidence:** run `45716932767` targets head `8f0e275a4c8263501a8a1713625480cac7fcd7fb`; actual checkout and `git log` confirm merge `9e3e73405268b5a72136ba2d44f2230af79888c4`. Frontend job `139565406067` failed TS2532 at `channel-plugin-config-fields.test.tsx:202` and two tests (plugin model-scope submit callback, API-key model-limit cache refresh); 3646 tests passed, two failed in 288 files. Backend job `139565406564` passed formatting, root/independent-module vet/build but failed `TestChannelWaitRouting/quota_429_does_not_queue`: expected wallet 1000, observed 999 before asynchronous refund completion. That source diagnosis does not establish permanent loss. Integration job `139565406540` subsequently completed successfully; the overall run remains failed. No uncommitted correction is covered by this run.
+
+**Later local captures, hosted validation pending:** `4fc4bfcc6` contains independently accepted pK seven channel ordering paths plus spec; `5af999d3e` contains root-reviewed exact 12 hosted formatting corrections; `0e6a2c416` contains pH-accepted API-key model-limit `waitFor` correction plus its observable-query test contract. R19's two-file UI slice, including its final waitFor correction, was independently accepted and captured with the release spec in `5da5a50fe`. Playground P1's six files were independently accepted and captured with the chat-layout spec in `cbc316bcf`. w6E:p4 owns the two newly failing plugin test paths; production remains frozen. Root's next translation dictionary batch adds the SDK-confirmed five-language sentence and five fixed safe upstream errors, with locale generation still hosted-only.
+
+**Refund teardown finding:** persisted wallet/token balances do not fence the nested wallet cache worker: `IncreaseUserQuota` previously enqueued it even when Redis was disabled, and the worker read Redis globals only when scheduled. pK stopped without a test-only balance fix. Root then authorized exactly `model/user.go` scheduling guards in both Increase branches and Decrease, matching the existing token-side disabled-cache guard, plus `TestChannelWaitRouting` in `controller/channel_pin_retry_test.go` to await exact persisted wallet/token balances and order cleanup. Enabled-cache behavior, SQL ordering, billing arithmetic, service refunds and global pool APIs stay outside that correction. Source freeze, independent review and hosted validation are still required.
+
+Earlier PR evidence is precise to its tested tree:
+
+- `45676645347`: PR head `d1b33a4142b8d3fd37f522e5dbacf1bcb667b244`, actual synthetic merge checkout `fb783d309638d419bbca4f67e0229b23de9f657a`. Backend/integration succeeded; frontend 3576/3576 tests in 288 files, typecheck/lint/build succeeded. Overall failure was formatter-only in `multi-key-key-scope.test.tsx`; correction was committed in `ea3037cfb`.
+- `45685035807`: PR head `1c9dd209de91e8312f34ad505fbdc328c9bce200`, actual merge checkout `81b3d362f36790ca1a0017d2602741fe9a8c1738`. Backend and full DB/integration succeeded. Frontend failed TS2769 for an unsupported role-query `exact` option, one missing button type and four native-disabled assertions against a non-native Switch. Tests were 3600/3604 across 287/288 passing files; frontend build succeeded and formatter was skipped. The source corrections in `ef8d72ff4` are covered only when a subsequent run validates them.
+- Observed engine versions: SQLite 3.50.4, MySQL 8.4.13, PostgreSQL 16.16, Redis 7.4.12, ClickHouse 25.8.33.6. Released migration baseline in those runs was `53a71f88d5b568847cd7233a08f934824dcb22d3`, seeded then verified twice per relational engine. It must not be mislabeled the latest released source for new migration work. Integration included `go test -p 1 -count=1 -v ./model ./service ./controller` with real service DSNs.
+
+**Remaining work:** R28 shared/Keys, channel and plugin callers and the later plugin-test diagnostics are independently accepted and captured; execution remains pending. R25 official status is with its new sole five-file owner w6E:p4; R34 safe upstream errors remain in progress. R26's corrected eleven paths are re-frozen under independent review. Playground empty-project behavior is captured, while attachments and spool hardening remain separate. R33 log scope/channel search and R35 model-square layout have exact implementation ownership. R36's first persistence/management slice is underway but does not implement runtime/UI support; R29 monitoring, further seven-locale integration and installer work remain. R24's exact five-path primary foundation is saved with test work in progress, not frozen; source integration/readers/backfill/cleanup and production capacity proof remain separate gates. No retention or cleanup readiness is claimed.
+
+**Fingerprint follow-up:** current `fingerprint.tsx` equals the installed release `37a4174` at the compared snapshot. It still has budget controls and job-only sample cards, confirming a source gap. The user-pasted layout is transcribed in `research/fingerprint-reference-layout.md`; three initial sample cards, actual preview/dispatch prompts, no visible estimated budget, channel/Key selection and effective endpoint linkage are required. The multiple Base URL/homepage/per-Key upstream protocol requirement is R36. New requests and exact current ownership are in PRD/design/implement; partial UI changes are not full R5 completion.
+
+**Migration remains deferred:** old source `D:\My2KProjects\new-api`; target `E:\MyNewProjects\WebProjects\new-api`. Target files/Git remain untouched. Target Pi operate only on explicitly assigned old-source paths. Complete product work and hosted gates before branch/installer/artifact audit, final main synchronization, target pull/comparison and handoff.
 
 ## Historical bookkeeping and pre-release validation snapshots
 
@@ -57,7 +160,7 @@ R10 authorization review consulted the OWASP Authorization Cheat Sheet (deny by 
 
 All checks must run in GitHub Actions. The CI workflow includes root and independent-module build/vet, the existing full database integration job, focused SQLite/MySQL/PostgreSQL channel and code-operation selectors, race selectors, frontend typecheck/format/lint/tests/build, and changed-Go formatting. The management migration test uses fresh and upgrade-shaped fixtures on SQLite, MySQL, and PostgreSQL. The separate hosted gate invoked the real startup migration at released commit `53a71f88d5b568847cd7233a08f934824dcb22d3`, seeded legacy data, and invoked current startup twice against each isolated engine. This specific gate passed for `afbdc4c92`; it covers primary startup migration and its asserted preserved data/indexes/uniqueness, not separate log-database startup or all remaining database behavior.
 
-Only the exact hosted results identified above are claimed: the prior console release passed its workflow, while R21 remains unaccepted pending corrections and final hosted gates. Formatting and changed-file lint must cover the complete branch diff, so a subsequent correction commit cannot hide an earlier failed file. Diagnostic annotations retain nonzero exit status and full log artifacts; independent frontend checks continue after a formatting failure to expose all failures in one run. The audit outbox guarantees atomic mutation-plus-audit on transaction-owned paths such as code batch creation, channel create/update and ordinary-option batches; generic middleware enqueues after business commit and retains a post-commit crash window. Failed enqueue has a bounded direct sink fallback, but simultaneous failure of both paths cannot undo an already committed nontransactional mutation. Delivery is at-least-once; ClickHouse has no event-id uniqueness guarantee.
+Only the exact hosted results identified above are claimed: the prior console release and R21 branch/merge checks and publication passed; the new UI follow-up has its own pending exact-SHA hosted gates. Formatting and changed-file lint must cover the complete branch diff, so a subsequent correction commit cannot hide an earlier failed file. Diagnostic annotations retain nonzero exit status and full log artifacts; independent frontend checks continue after a formatting failure to expose all failures in one run. The audit outbox guarantees atomic mutation-plus-audit on transaction-owned paths such as code batch creation, channel create/update and ordinary-option batches; generic middleware enqueues after business commit and retains a post-commit crash window. Failed enqueue has a bounded direct sink fallback, but simultaneous failure of both paths cannot undo an already committed nontransactional mutation. Delivery is at-least-once; ClickHouse has no event-id uniqueness guarantee.
 
 After the exact branch SHA is green, merge it into `main` and allow the existing `docker-fork.yml` workflow to build and publish the release. Do not create a manual tag or bypass that workflow.
 

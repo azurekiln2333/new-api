@@ -22,6 +22,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { STORAGE_KEYS } from '../../../constants'
 import type { Message, PlaygroundConversation } from '../../../types'
+import { groupConversationsByProject } from '../../state/playground-state-utils'
 import {
   clearPlaygroundData,
   deleteConversationMessages,
@@ -204,6 +205,44 @@ describe('playground conversation storage', () => {
     ])
     expect(index.conversations[0].projectId).toBe('p1')
     expect(index.conversations[1].projectId).toBeUndefined()
+  })
+
+  test('restores visible empty projects in creation order without reassigning chats', () => {
+    const projects = [
+      {
+        id: 'newer',
+        name: 'Newer project',
+        createdAt: 1_700_000_001_000,
+        updatedAt: 1_700_000_001_000,
+      },
+      {
+        id: 'older',
+        name: 'Older project',
+        createdAt: 1_700_000_000_000,
+        updatedAt: 1_700_000_000_000,
+      },
+    ]
+    const conversations = [
+      conversation('free'),
+      conversation('orphan', { projectId: 'deleted' }),
+    ]
+    expect(
+      saveConversationIndex({ conversations, activeId: 'free', projects })
+    ).toBe('ok')
+
+    const restored = loadConversationIndex()
+    const groups = groupConversationsByProject(
+      restored.conversations,
+      restored.projects ?? []
+    )
+
+    expect(restored.conversations).toEqual(conversations)
+    expect(groups).toEqual([
+      { projectId: 'older', name: 'Older project', conversations: [] },
+      { projectId: 'newer', name: 'Newer project', conversations: [] },
+      { projectId: null, name: '', conversations },
+    ])
+    expect(restored.projects).toEqual(projects)
   })
 
   test('loads a conversation index written before projects existed', () => {

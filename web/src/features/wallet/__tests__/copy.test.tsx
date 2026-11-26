@@ -16,21 +16,146 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { BillingHistoryDialog } from '@/features/wallet/components/dialogs/billing-history-dialog'
 import en from '@/i18n/locales/en.json'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
+import { formatQuota } from '@/lib/format'
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { RechargeFormCard } from '../components/recharge-form-card'
+import { Wallet } from '../index'
 
 const i18n = createInstance()
+const clients: QueryClient[] = []
+const walletUser = {
+  id: 1,
+  username: 'alice',
+  role: 1,
+  quota: 1000000,
+  used_quota: 0,
+  request_count: 0,
+  aff_count: 0,
+  aff_quota: 0,
+  aff_history_quota: 0,
+}
+
+afterEach(() => {
+  cleanup()
+  clients.forEach((client) => client.clear())
+  clients.length = 0
+  useAuthStore.getState().auth.setUser(null)
+  vi.restoreAllMocks()
+  localStorage.clear()
+})
+
+function renderCheckinWallet(enabled: boolean, rejected = false) {
+  useAuthStore.getState().auth.setUser(walletUser)
+  const status = { checkin_enabled: enabled, turnstile_check: false }
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  client.setQueryData(STATUS_QUERY_KEY, status)
+  let checkedToday = false
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/status') {
+      return { data: { success: true, data: status } }
+    }
+    if (url === '/api/user/self') {
+      return {
+        data: {
+          success: true,
+          data: { ...walletUser, quota: checkedToday ? 1250000 : 1000000 },
+        },
+      }
+    }
+    if (url.startsWith('/api/user/checkin?month=')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            enabled: true,
+            stats: {
+              checked_in_today: checkedToday,
+              total_checkins: checkedToday ? 1 : 0,
+              total_quota: checkedToday ? 250000 : 0,
+              checkin_count: checkedToday ? 1 : 0,
+              records: [],
+            },
+          },
+        },
+      }
+    }
+    if (url === '/api/user/topup/info') {
+      return {
+        data: {
+          success: true,
+          data: {
+            enable_online_topup: false,
+            enable_stripe_topup: false,
+            pay_methods: [],
+            min_topup: 1,
+            stripe_min_topup: 1,
+            amount_options: [1],
+            discount: {},
+          },
+        },
+      }
+    }
+    if (url === '/api/user/aff') {
+      return { data: { success: true, data: 'wallet-referral' } }
+    }
+    if (url === '/api/subscription/plans') {
+      return { data: { success: true, data: [] } }
+    }
+    if (url === '/api/subscription/self') {
+      return {
+        data: {
+          success: true,
+          data: { subscriptions: [], all_subscriptions: [] },
+        },
+      }
+    }
+    if (url.startsWith('/api/user/topup/self?')) {
+      return { data: { success: true, data: { items: [], total: 0 } } }
+    }
+    throw new Error(`Unexpected Wallet GET ${url}`)
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/user/amount') {
+      return { data: { success: true, data: '1' } }
+    }
+    if (url === '/api/user/checkin') {
+      if (rejected) {
+        return { data: { success: false, message: 'Check-in failed' } }
+      }
+      checkedToday = true
+      return { data: { success: true, data: { quota_awarded: 250000 } } }
+    }
+    throw new Error(`Unexpected Wallet POST ${url}`)
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <Wallet />
+      </I18nextProvider>
+    </QueryClientProvider>
+  )
+  return { get, post }
+}
 
 beforeEach(async () => {
+  localStorage.clear()
+  useAuthStore.getState().auth.setUser(null)
   await i18n.use(initReactI18next).init({
     lng: 'zh',
     fallbackLng: false,
@@ -125,3 +250,60 @@ it.each([
     expect(screen.getByPlaceholderText('Minimum 1')).toBeVisible()
   }
 )
+
+it('shows the existing check-in card in Wallet and refreshes authoritative balance after a successful reward', async () => {
+  await i18n.changeLanguage('en')
+  const { get, post } = renderCheckinWallet(true)
+  const user = userEvent.setup()
+  expect(await screen.findByText(formatQuota(1000000))).toBeVisible()
+  expect(await screen.findByText('Daily Check-in')).toBeVisible()
+  const checkin = await screen.findByRole('button', { name: 'Check in now' })
+  await waitFor(() => expect(checkin).toBeEnabled())
+
+  await user.click(checkin)
+
+  expect(await screen.findByText(formatQuota(1250000))).toBeVisible()
+  expect(
+    await screen.findByRole('button', { name: 'Checked in' })
+  ).toBeDisabled()
+  expect(post).toHaveBeenCalledWith('/api/user/checkin')
+  expect(
+    get.mock.calls.filter(([url]) => url === '/api/user/self')
+  ).toHaveLength(2)
+  expect(
+    post.mock.calls.filter(([url]) => url === '/api/user/checkin')
+  ).toHaveLength(1)
+})
+
+it('keeps Wallet check-in hidden without requesting check-in data when the feature is disabled', async () => {
+  await i18n.changeLanguage('en')
+  const { get, post } = renderCheckinWallet(false)
+  expect(await screen.findByText(formatQuota(1000000))).toBeVisible()
+
+  expect(screen.queryByText('Daily Check-in')).not.toBeInTheDocument()
+  expect(
+    get.mock.calls.some(([url]) => url.startsWith('/api/user/checkin'))
+  ).toBe(false)
+  expect(post.mock.calls.some(([url]) => url === '/api/user/checkin')).toBe(
+    false
+  )
+})
+
+it('keeps the Wallet balance unchanged and permits retry when check-in is rejected', async () => {
+  await i18n.changeLanguage('en')
+  const { get, post } = renderCheckinWallet(true, true)
+  const user = userEvent.setup()
+  expect(await screen.findByText(formatQuota(1000000))).toBeVisible()
+  const checkin = await screen.findByRole('button', { name: 'Check in now' })
+  await waitFor(() => expect(checkin).toBeEnabled())
+
+  await user.click(checkin)
+
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/user/checkin'))
+  await waitFor(() => expect(checkin).toBeEnabled())
+  expect(screen.getByText(formatQuota(1000000))).toBeVisible()
+  expect(screen.queryByText(formatQuota(1250000))).not.toBeInTheDocument()
+  expect(
+    get.mock.calls.filter(([url]) => url === '/api/user/self')
+  ).toHaveLength(1)
+})

@@ -61,6 +61,7 @@ import {
 } from '@/components/ui/popover'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { compareModelOptions } from '@/lib/model-options'
 import { cn } from '@/lib/utils'
 
 import { formatGroupDetail } from './model-group-selector/group-detail'
@@ -74,19 +75,6 @@ interface ModelOption {
   value: string
   category?: string
   description?: string
-}
-
-const modelNameCollator = new Intl.Collator('en', {
-  numeric: true,
-  sensitivity: 'base',
-})
-
-function compareModelsByName(left: ModelOption, right: ModelOption): number {
-  const nameOrder = modelNameCollator.compare(left.label, right.label)
-  if (nameOrder !== 0) return nameOrder
-  if (left.value < right.value) return -1
-  if (left.value > right.value) return 1
-  return 0
 }
 
 interface GroupOption {
@@ -226,7 +214,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
         {} as Record<string, ModelOption[]>
       )
       for (const categoryModels of Object.values(grouped)) {
-        categoryModels.sort(compareModelsByName)
+        categoryModels.sort(compareModelOptions)
       }
       return grouped
     }, [models, t])
@@ -635,7 +623,7 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
     [groups, selectedGroup]
   )
   const sortedModels = useMemo(
-    () => [...models].sort(compareModelsByName),
+    () => [...models].sort(compareModelOptions),
     [models]
   )
   const filteredModels = useMemo(() => {

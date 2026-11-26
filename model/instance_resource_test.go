@@ -368,7 +368,7 @@ func TestBuildUserRankingViewAdminSeesEveryName(t *testing.T) {
 	}
 }
 
-func TestBuildUserRankingViewOrdinaryUserSeesOnlySelf(t *testing.T) {
+func TestBuildUserRankingViewOrdinaryUserSeesPartialOtherNames(t *testing.T) {
 	views := BuildUserRankingView(
 		RankingViewer{UserID: 22},
 		rankingRowsFixture(),
@@ -376,7 +376,7 @@ func TestBuildUserRankingViewOrdinaryUserSeesOnlySelf(t *testing.T) {
 	)
 
 	require.Len(t, views, 3)
-	assert.Equal(t, rankingMaskedDisplayName, views[0].DisplayName)
+	assert.Equal(t, "a***e", views[0].DisplayName)
 	assert.True(t, views[0].Masked)
 	assert.Zero(t, views[0].UserID)
 
@@ -386,6 +386,34 @@ func TestBuildUserRankingViewOrdinaryUserSeesOnlySelf(t *testing.T) {
 
 	assert.Equal(t, rankingMaskedDisplayName, views[2].DisplayName)
 	assert.True(t, views[2].Masked)
+}
+
+func TestBuildUserRankingViewPartiallyMasksShortAndUnicodeNames(t *testing.T) {
+	for _, scenario := range []struct {
+		name string
+		want string
+	}{
+		{name: "a", want: "*"},
+		{name: "ab", want: "a***"},
+		{name: "alice", want: "a***e"},
+		{name: "张", want: "*"},
+		{name: "张三", want: "张***"},
+		{name: "张三丰", want: "张***丰"},
+		{name: "🦊星🌙", want: "🦊***🌙"},
+		{name: "e\u0301", want: "e***"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			views := BuildUserRankingView(
+				RankingViewer{UserID: 22},
+				[]UserRankingRow{{UserID: 11}},
+				map[int]string{11: scenario.name},
+			)
+			require.Len(t, views, 1)
+			assert.Equal(t, scenario.want, views[0].DisplayName)
+			assert.True(t, views[0].Masked)
+			assert.Zero(t, views[0].UserID)
+		})
+	}
 }
 
 func TestBuildUserRankingViewAnonymousSeesNothing(t *testing.T) {
@@ -441,12 +469,12 @@ func TestUserRankingViewJSONHidesDeletedAccountID(t *testing.T) {
 	assert.NotContains(t, body, `"user_id":0`)
 }
 
-func TestVisibleUserIDsOnlyResolvesPermittedNames(t *testing.T) {
+func TestVisibleUserIDsResolvesCurrentNamesOnlyForAuthenticatedViewers(t *testing.T) {
 	anonymous := VisibleUserIDs(RankingViewer{IsAnonymous: true}, rankingRowsFixture())
 	assert.Empty(t, anonymous)
 
 	self := VisibleUserIDs(RankingViewer{UserID: 22}, rankingRowsFixture())
-	assert.Equal(t, []int{22}, self)
+	assert.Equal(t, []int{11, 22, 33}, self)
 
 	admin := VisibleUserIDs(RankingViewer{UserID: 999, IsAdmin: true}, rankingRowsFixture())
 	assert.Equal(t, []int{11, 22, 33}, admin)

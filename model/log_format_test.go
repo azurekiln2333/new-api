@@ -1,6 +1,10 @@
 package model
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net"
 	"net/http"
@@ -29,6 +33,7 @@ import (
 
 func TestLogRequestDetailStorageDatabaseMatrix(t *testing.T) {
 	runRequestLogStorageMatrix(t, func(t *testing.T, db *gorm.DB, upgrade bool) {
+		t.Setenv(requestContentCompressionEnv, "true")
 		require.NoError(t, DB.AutoMigrate(&Task{}))
 		versionQuery := "SELECT version()"
 		if common.UsingLogDatabase(common.DatabaseTypeSQLite) {
@@ -94,15 +99,66 @@ func TestLogRequestDetailStorageDatabaseMatrix(t *testing.T) {
 			}
 		}
 		require.NoError(t, WithLogRequestDetail(ctx, snapshot, writeLog(LogTypeError)))
+		var persisted struct{ Payload string }
+		require.NoError(t, db.Model(&LogRequestDetail{}).Where("ref = ?", snapshot.Ref).Take(&persisted).Error)
+		assert.True(t, strings.HasPrefix(persisted.Payload, requestContentCompressionPrefix), "enabled writes must actually persist compressed content")
+		assert.LessOrEqual(t, len(persisted.Payload), len(payload)-(len(payload)+7)/8, "include the marker and base64 overhead in the storage benefit")
+		// Disabling new encoding must not break historical compressed reads.
+		t.Setenv(requestContentCompressionEnv, "false")
 		stored, err := GetLogRequestDetail(ctx, snapshot.Ref)
 		require.NoError(t, err)
 		assert.Equal(t, string(payload), string(stored.Payload))
+		assert.Equal(t, len(payload), stored.CapturedBytes)
+		assert.Equal(t, snapshot.Truncated, stored.Truncated)
 		assert.Equal(t, "hk01", stored.SubmitNodeName)
 		encoded, err := common.Marshal(stored)
 		require.NoError(t, err)
 		var decoded map[string]any
 		require.NoError(t, common.Unmarshal(encoded, &decoded))
 		assert.IsType(t, map[string]any{}, decoded["payload"])
+
+		t.Run("plaintext_history_and_disabled_writes", func(t *testing.T) {
+			t.Setenv(requestContentCompressionEnv, "false")
+			plain := *snapshot
+			plain.Ref, plain.RequestID = common.GetUUID(), common.NewRequestId()
+			plain.CreatedAt = 3000
+			t.Cleanup(func() {
+				assert.NoError(t, deleteRequestContentDetail(db, plain.Ref))
+				assert.NoError(t, DB.Where("ref = ?", plain.Ref).Delete(&LogRequestContentProtection{}).Error)
+			})
+			require.NoError(t, WithLogRequestDetail(t.Context(), &plain, func(logDB *gorm.DB, detailErr error) error {
+				if detailErr != nil {
+					return detailErr
+				}
+				linkID, _ := logDB.Statement.Context.Value(requestContentLinkKey{}).(string)
+				other := NewLogOther()
+				other.SetAdmin("request_content", requestContentLogLink{
+					RequestContentMetadata: common.RequestContentMetadata{Ref: plain.Ref, Status: plain.Status}, LinkID: linkID,
+				})
+				return logDB.Create(&Log{UserId: plain.UserID, RequestId: plain.RequestID,
+					CreatedAt: 3001, Type: LogTypeConsume, Other: other.JSONString()}).Error
+			}))
+			var raw struct{ Payload string }
+			require.NoError(t, db.Model(&LogRequestDetail{}).Where("ref = ?", plain.Ref).Take(&raw).Error)
+			assert.Equal(t, string(payload), raw.Payload, "the false flag must persist the legacy JSON representation")
+			t.Setenv(requestContentCompressionEnv, "true")
+			// A smaller current capture budget must not invalidate historical rows.
+			t.Setenv("REQUEST_CONTENT_LOG_MAX_BYTES", "256")
+			legacy, err := GetLogRequestDetail(t.Context(), plain.Ref)
+			require.NoError(t, err)
+			assert.Equal(t, string(payload), string(legacy.Payload))
+			assert.Equal(t, len(payload), legacy.CapturedBytes)
+			encoded, err := common.Marshal(legacy)
+			require.NoError(t, err)
+			var response struct {
+				Payload map[string]any `json:"payload"`
+			}
+			require.NoError(t, common.Unmarshal(encoded, &response))
+			assert.Contains(t, response.Payload, "messages")
+			stillCompressed, err := GetLogRequestDetail(t.Context(), snapshot.Ref)
+			require.NoError(t, err, "the lower current capture limit must also preserve compressed history")
+			assert.Equal(t, string(payload), string(stillCompressed.Payload))
+		})
 
 		// Later attempts and async settlement reuse the immutable original.
 		restored := *snapshot
@@ -541,18 +597,114 @@ func TestLogRequestDetailWriterLeaseAndTaskFallback(t *testing.T) {
 	assert.Zero(t, count)
 }
 
+func TestLogRequestDetailPayloadCodec(t *testing.T) {
+	// Empty configuration uses the default-on policy, just like an absent env.
+	t.Setenv(requestContentCompressionEnv, "")
+	payload, err := common.Marshal(map[string]any{"prompt": strings.Repeat("original 你好 ", 1000)})
+	require.NoError(t, err)
+	encoded := encodeLogRequestPayload(payload)
+	require.True(t, strings.HasPrefix(string(encoded), requestContentCompressionPrefix))
+	assert.LessOrEqual(t, len(encoded), len(payload)-(len(payload)+7)/8)
+	decoded, err := decodeLogRequestPayload(encoded, len(payload))
+	require.NoError(t, err)
+	assert.Equal(t, string(payload), string(decoded))
+
+	t.Run("disabled_writes_keep_both_historical_formats_readable", func(t *testing.T) {
+		t.Setenv(requestContentCompressionEnv, "false")
+		assert.Equal(t, LogRequestPayload(payload), encodeLogRequestPayload(payload))
+		for _, stored := range []LogRequestPayload{LogRequestPayload(payload), encoded} {
+			decoded, err := decodeLogRequestPayload(stored, len(payload))
+			require.NoError(t, err)
+			assert.Equal(t, string(payload), string(decoded))
+		}
+		legacy, err := decodeLogRequestPayload(LogRequestPayload(payload), 0)
+		require.NoError(t, err, "legacy JSON does not require the envelope's length metadata")
+		assert.Equal(t, string(payload), string(legacy))
+	})
+
+	t.Run("small_or_no_benefit_stays_plaintext", func(t *testing.T) {
+		t.Setenv(requestContentCompressionEnv, "true")
+		small := []byte(`{"prompt":"small original"}`)
+		assert.Equal(t, LogRequestPayload(small), encodeLogRequestPayload(small))
+		// A fixed digest sequence supplies a reproducible high-entropy fixture,
+		// not random input. Its base64 overhead must defeat application encoding.
+		var content strings.Builder
+		for i := range 128 {
+			digest := sha256.Sum256([]byte{byte(i)})
+			content.WriteString(base64.RawStdEncoding.EncodeToString(digest[:]))
+		}
+		plain, err := common.Marshal(map[string]any{"prompt": content.String()})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(plain), requestContentCompressionMin)
+		assert.Equal(t, LogRequestPayload(plain), encodeLogRequestPayload(plain), "never persist a larger base64 envelope")
+	})
+
+	packed, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(string(encoded), requestContentCompressionPrefix))
+	require.NoError(t, err)
+	corrupt := append([]byte{}, packed...)
+	corrupt[len(corrupt)-8] ^= 1 // Damage the gzip checksum, not the captured JSON.
+	var invalidJSON bytes.Buffer
+	invalidWriter, err := gzip.NewWriterLevel(&invalidJSON, gzip.BestSpeed)
+	require.NoError(t, err)
+	malformed := []byte(`{"prompt":"` + strings.Repeat("incomplete original ", 1000) + `"`)
+	_, err = invalidWriter.Write(malformed)
+	require.NoError(t, err)
+	require.NoError(t, invalidWriter.Close())
+	nonObject := []byte(`[` + strings.Repeat(`"value",`, 1000) + `"last"]`)
+	nonObjectEncoded := encodeLogRequestPayload(nonObject)
+	require.True(t, strings.HasPrefix(string(nonObjectEncoded), requestContentCompressionPrefix))
+	for _, tc := range []struct {
+		name    string
+		payload LogRequestPayload
+		bytes   int
+	}{
+		{name: "bad base64", payload: requestContentCompressionPrefix + "%", bytes: len(payload)},
+		{name: "bad gzip header", payload: LogRequestPayload(requestContentCompressionPrefix + base64.StdEncoding.EncodeToString([]byte("not gzip"))), bytes: len(payload)},
+		{name: "checksum", payload: LogRequestPayload(requestContentCompressionPrefix + base64.StdEncoding.EncodeToString(corrupt)), bytes: len(payload)},
+		{name: "truncated stream", payload: LogRequestPayload(requestContentCompressionPrefix + base64.StdEncoding.EncodeToString(packed[:len(packed)-1])), bytes: len(payload)},
+		{name: "trailing bytes", payload: LogRequestPayload(requestContentCompressionPrefix + base64.StdEncoding.EncodeToString(append(append([]byte{}, packed...), 1))), bytes: len(payload)},
+		{name: "second gzip member", payload: LogRequestPayload(requestContentCompressionPrefix + base64.StdEncoding.EncodeToString(append(append([]byte{}, packed...), packed...))), bytes: len(payload)},
+		{name: "unknown version", payload: LogRequestPayload(strings.Replace(string(encoded), ":v1:", ":v2:", 1)), bytes: len(payload)},
+		{name: "missing original size", payload: encoded, bytes: 0},
+		{name: "original exceeds hard cap", payload: encoded, bytes: common.RequestContentMaxMaxBytes + 1},
+		{name: "encoded exceeds original size", payload: encoded, bytes: len(encoded) - 1},
+		{name: "expansion beyond recorded size", payload: encoded, bytes: len(payload) / 2},
+		{name: "shorter than recorded size", payload: encoded, bytes: len(payload) + 1},
+		{name: "compressed non-object JSON", payload: nonObjectEncoded, bytes: len(nonObject)},
+		{name: "compressed malformed JSON", payload: LogRequestPayload(requestContentCompressionPrefix + base64.StdEncoding.EncodeToString(invalidJSON.Bytes())), bytes: len(malformed)},
+		{name: "malformed legacy JSON", payload: `{"prompt":`, bytes: 10},
+		{name: "non-object legacy JSON", payload: `[]`, bytes: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decoded, err := decodeLogRequestPayload(tc.payload, tc.bytes)
+			require.ErrorIs(t, err, errRequestContentStorage)
+			assert.Empty(t, decoded, "invalid storage must not expose an envelope or partial prompt")
+			assert.Equal(t, "request content storage failed", err.Error(), "codec errors must not contain payload data")
+		})
+	}
+}
+
 func TestLogRequestPayloadIsAStringDriverValue(t *testing.T) {
 	// ClickHouse's String column converter accepts driver.Valuer, fmt.Stringer,
 	// []byte or a plain string and rejects any other named string type. Its
 	// stdDriver.CheckNamedValue returns nil without converting, so database/sql
 	// skips the default named-value conversion and the driver receives the
 	// payload type as is. The contract is asserted here without a server.
+	t.Setenv(requestContentCompressionEnv, "true")
+	original := []byte(`{"prompt":"` + strings.Repeat("driver original 你好 ", 1000) + `"}`)
+	compressed := encodeLogRequestPayload(original)
+	require.True(t, strings.HasPrefix(string(compressed), requestContentCompressionPrefix))
 	var payloadColumn column.String
 	for _, payload := range []LogRequestPayload{
 		"",
 		`{"messages":[{"role":"user","content":"hi"}]}`,
 		`{"messages":[{"role":"user","content":"你好，世界"}]}`,
+		compressed,
 	} {
+		value, err := payload.Value()
+		require.NoError(t, err)
+		assert.IsType(t, "", value)
+		assert.Equal(t, string(payload), value)
 		require.NoError(t, payloadColumn.AppendRow(payload))
 		assert.Equal(t, string(payload), payloadColumn.Row(payloadColumn.Rows()-1, false))
 	}
@@ -563,6 +715,8 @@ func TestLogRequestPayloadIsAStringDriverValue(t *testing.T) {
 		{value: "x", want: "x"},
 		{value: []byte("y"), want: "y"},
 		{value: nil, want: ""},
+		{value: string(compressed), want: compressed},
+		{value: []byte(compressed), want: compressed},
 	} {
 		var payload LogRequestPayload
 		require.NoError(t, payload.Scan(test.value))

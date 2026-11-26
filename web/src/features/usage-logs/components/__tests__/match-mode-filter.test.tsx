@@ -82,9 +82,12 @@ async function renderFilterBar(initialEntry: string) {
 it('defaults to contains matching and asks the statistics for fuzzy matching', async () => {
   const { get } = await renderFilterBar('/usage-logs/common')
 
-  expect(screen.getByRole('button', { name: 'Contains' })).toHaveAttribute(
-    'aria-pressed',
-    'true'
+  const contains = screen.getByRole('button', { name: 'Contains' })
+  expect(contains).toHaveAttribute('aria-pressed', 'true')
+  expect(contains).toHaveAttribute('data-pressed')
+  expect(contains).toHaveClass(
+    'aria-pressed:bg-primary',
+    'aria-pressed:text-primary-foreground'
   )
   expect(screen.getByRole('button', { name: 'Exact' })).toHaveAttribute(
     'aria-pressed',
@@ -103,11 +106,20 @@ it('records exact matching in the URL and asks for exact matching after search',
   const { router, get } = await renderFilterBar('/usage-logs/common')
   const user = userEvent.setup()
 
-  await user.click(screen.getByRole('button', { name: 'Exact' }))
-  expect(screen.getByRole('button', { name: 'Exact' })).toHaveAttribute(
-    'aria-pressed',
-    'true'
+  const exact = screen.getByRole('button', { name: 'Exact' })
+  await user.click(exact)
+  expect(exact).toHaveAttribute('aria-pressed', 'true')
+  expect(exact).toHaveAttribute('data-pressed')
+  expect(exact).toHaveClass(
+    'aria-pressed:bg-primary',
+    'aria-pressed:text-primary-foreground'
   )
+  expect(screen.getByRole('button', { name: 'Contains' })).toHaveAttribute(
+    'aria-pressed',
+    'false'
+  )
+  await user.click(exact)
+  expect(exact).toHaveAttribute('aria-pressed', 'true')
   await user.click(screen.getByRole('button', { name: 'Search' }))
 
   await waitFor(() =>
@@ -135,5 +147,36 @@ it('restores exact matching from the URL', async () => {
   expect(screen.getByRole('button', { name: 'Contains' })).toHaveAttribute(
     'aria-pressed',
     'false'
+  )
+})
+
+it('switches from exact to contains by keyboard without reversing the request mode', async () => {
+  const { router, get } = await renderFilterBar(
+    '/usage-logs/common?match=exact'
+  )
+  const user = userEvent.setup()
+  const exact = screen.getByRole('button', { name: 'Exact' })
+  const contains = screen.getByRole('button', { name: 'Contains' })
+
+  exact.focus()
+  await user.keyboard('{ArrowLeft} ')
+
+  expect(contains).toHaveFocus()
+  expect(contains).toHaveAttribute('aria-pressed', 'true')
+  expect(contains).toHaveAttribute('data-pressed')
+  expect(exact).toHaveAttribute('aria-pressed', 'false')
+  expect(exact).not.toHaveAttribute('data-pressed')
+  await user.click(screen.getByRole('button', { name: 'Search' }))
+
+  await waitFor(() => {
+    expect(router.state.location.search).toMatchObject({ page: 1 })
+    expect(router.state.location.search).not.toHaveProperty('match')
+  })
+  await waitFor(() =>
+    expect(
+      get.mock.calls
+        .map((call) => String(call[0]))
+        .some((url) => url.includes('match_mode=fuzzy'))
+    ).toBe(true)
   )
 })

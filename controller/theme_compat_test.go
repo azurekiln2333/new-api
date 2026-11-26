@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,4 +46,62 @@ func TestGetStatusAdvertisesDefaultDashboard(t *testing.T) {
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
 	assert.True(t, payload.Success)
 	assert.Equal(t, "default", payload.Data["theme"])
+}
+
+func TestGetStatusSidebarPersonalSettingsVisibility(t *testing.T) {
+	settings := console_setting.GetConsoleSetting()
+	previousSettings := *settings
+	previousMap := common.OptionMap
+	t.Cleanup(func() {
+		*settings = previousSettings
+		common.OptionMap = previousMap
+	})
+	common.OptionMap = map[string]string{}
+
+	tests := []struct {
+		name    string
+		options map[string]string
+		want    bool
+	}{
+		{
+			name: "missing option preserves visible default",
+			want: true,
+		},
+		{
+			name: "explicit false hides ordinary user card",
+			options: map[string]string{
+				"console_setting.sidebar_personal_settings_enabled": "false",
+			},
+			want: false,
+		},
+		{
+			name: "explicit true restores visible card",
+			options: map[string]string{
+				"console_setting.sidebar_personal_settings_enabled": "true",
+			},
+			want: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			*settings = console_setting.ConsoleSetting{
+				SidebarPersonalSettingsEnabled: true,
+			}
+			require.NoError(t, config.GlobalConfig.LoadFromDB(test.options))
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+
+			GetStatus(context)
+
+			var payload struct {
+				Success bool           `json:"success"`
+				Data    map[string]any `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+			require.True(t, payload.Success)
+			assert.Equal(t, test.want, payload.Data["sidebar_personal_settings_enabled"])
+			assert.NotContains(t, payload.Data, "sidebar_modules")
+		})
+	}
 }

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { useEffect, useState } from 'react'
@@ -25,12 +25,18 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { channelsQueryKeys } from '../../lib'
-import { channelSchema, type Channel, type KeyStatus } from '../../types'
+import {
+  channelSchema,
+  type Channel,
+  type ChannelBudgetView,
+  type KeyStatus,
+} from '../../types'
 import { ChannelsProvider, useChannels } from '../channels-provider'
 import { MultiKeyManageDialog } from '../dialogs/multi-key-manage-dialog'
 
@@ -65,6 +71,8 @@ function keyStatusResponse(keys: KeyStatus[]) {
       success: true,
       data: {
         keys,
+        revision: 10,
+        quota_supported: keys.some((key) => key.quota?.ledger_enabled === true),
         total: keys.length,
         page: 1,
         page_size: 10,
@@ -207,6 +215,299 @@ test('after a key is deleted, Escape closes Manage Keys and not the dialog that 
     ).not.toBeInTheDocument()
   )
   expect(screen.getByRole('dialog', { name: 'Edit Channel' })).toBeVisible()
+})
+
+function ManageKeysInsideSheet(props: {
+  channel: Channel
+  onSubmit: () => void
+}) {
+  const { setCurrentRow } = useChannels()
+  const [manageOpen, setManageOpen] = useState(false)
+  useEffect(() => {
+    setCurrentRow(props.channel)
+  }, [props.channel, setCurrentRow])
+  return (
+    <Sheet open>
+      <SheetContent>
+        <SheetTitle>Edit Channel</SheetTitle>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            props.onSubmit()
+          }}
+        >
+          <Button type='button' onClick={() => setManageOpen(true)}>
+            Manage Keys
+          </Button>
+          <MultiKeyManageDialog
+            open={manageOpen}
+            onOpenChange={setManageOpen}
+          />
+        </form>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+const allocationQuota: ChannelBudgetView = {
+  scope_type: 'key',
+  scope_id: '9007199254740995',
+  channel_id: 7,
+  ledger_enabled: true,
+  enabled: true,
+  limit_quota: 1000,
+  period_used_quota: 30,
+  lifetime_used_quota: 50,
+  reserved_quota: 10,
+  remaining_quota: 960,
+  config_version: 8,
+  reset_epoch: 2,
+  accounting_started_at: 1,
+}
+
+const editableAllocation: KeyStatus = {
+  id: '9007199254740995',
+  rev: 4,
+  index: 1,
+  status: 1,
+  key_preview: 'same…key',
+  quota: allocationQuota,
+}
+
+test.each([
+  {
+    action: 'Set Quota',
+    inputRole: 'textbox',
+    inputName: 'Local limit (site quota units)',
+    value: '2000',
+    payload: {
+      action: 'set_key_quota',
+      expected_config_version: 8,
+      enabled: true,
+      limit_quota: 2000,
+    },
+  },
+  {
+    action: 'Bind User',
+    inputRole: 'spinbutton',
+    inputName: 'User ID',
+    value: '12',
+    payload: { action: 'set_key_user', user_id: 12 },
+  },
+])(
+  '$action from a row inside a Sheet opens a focused scrollable editor and saves that allocation',
+  async ({ action, inputRole, inputName, value, payload }) => {
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+    const keys = [
+      { ...editableAllocation, id: '9007199254740993', index: 0, rev: 2 },
+      editableAllocation,
+    ]
+    const post = vi
+      .spyOn(api, 'post')
+      .mockImplementation(async (_url, body) => {
+        if ((body as { action: string }).action === 'get_key_status') {
+          return keyStatusResponse(keys)
+        }
+        return { data: { success: true } }
+      })
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChannelsProvider>
+          <ManageKeysInsideSheet
+            channel={channelSchema.parse(multiKeyChannel)}
+            onSubmit={onSubmit}
+          />
+        </ChannelsProvider>
+      </QueryClientProvider>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Manage Keys' }))
+    const manager = await screen.findByRole('dialog', {
+      name: /Multi-Key Management/,
+    })
+    const keyList = within(manager).getByRole('region', { name: 'API Keys' })
+    const row = await within(manager).findByRole('row', { name: /^2\./ })
+    await user.click(within(row).getByRole('button', { name: action }))
+
+    const editor = await screen.findByRole('dialog', { name: action })
+    expect(editor).toHaveClass('overflow-y-auto')
+    expect(manager).not.toContainElement(editor)
+    expect(keyList).not.toContainElement(editor)
+    await waitFor(() =>
+      expect(editor.contains(document.activeElement)).toBe(true)
+    )
+    const input = within(editor).getByRole(inputRole, { name: inputName })
+    await user.clear(input)
+    await user.type(input, value)
+    await user.click(within(editor).getByRole('button', { name: 'Save' }))
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/channel/multi_key/manage',
+        {
+          channel_id: 7,
+          key_entry_id: '9007199254740995',
+          expected_rev: 4,
+          ...payload,
+        },
+        expect.objectContaining({ singleUseAuthorization: true })
+      )
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: action })
+      ).not.toBeInTheDocument()
+    )
+    await waitFor(() =>
+      expect(manager.contains(document.activeElement)).toBe(true)
+    )
+    expect(onSubmit).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /Multi-Key Management/ })
+      ).not.toBeInTheDocument()
+    )
+    expect(screen.getByRole('dialog', { name: 'Edit Channel' })).toBeVisible()
+  }
+)
+
+test('changing channels discards an open binding draft and ignores its late save result', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  let resolveSave!: (value: {
+    data: { success: boolean; data: { channel_models: string[] } }
+  }) => void
+  const save = new Promise<{
+    data: { success: boolean; data: { channel_models: string[] } }
+  }>((resolve) => {
+    resolveSave = resolve
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    if ((body as { action: string }).action === 'get_key_status') {
+      return keyStatusResponse([editableAllocation])
+    }
+    return save
+  })
+  const client = new QueryClient()
+  const firstChannel = channelSchema.parse(multiKeyChannel)
+  const nextChannel = channelSchema.parse({
+    ...multiKeyChannel,
+    id: 8,
+    name: 'Next Channel',
+  })
+  const view = (channel: Channel) => (
+    <QueryClientProvider client={client}>
+      <ChannelsProvider>
+        <OpenDialog channel={channel} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  const { rerender } = render(view(firstChannel))
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Bind User' }))
+  const editor = await screen.findByRole('dialog', { name: 'Bind User' })
+  await user.type(
+    within(editor).getByRole('spinbutton', { name: 'User ID' }),
+    '12'
+  )
+  await user.click(within(editor).getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/channel/multi_key/manage',
+      expect.objectContaining({ action: 'set_key_user', channel_id: 7 }),
+      expect.anything()
+    )
+  )
+
+  rerender(view(nextChannel))
+  await screen.findByRole('dialog', { name: /Next Channel/ })
+  expect(
+    screen.queryByRole('dialog', { name: 'Bind User' })
+  ).not.toBeInTheDocument()
+  await act(async () => {
+    resolveSave({
+      data: { success: true, data: { channel_models: ['old-channel-model'] } },
+    })
+    await save
+  })
+  expect(screen.getByRole('dialog', { name: /Next Channel/ })).toBeVisible()
+  await user.click(await screen.findByRole('button', { name: 'Bind User' }))
+  const nextEditor = await screen.findByRole('dialog', { name: 'Bind User' })
+  expect(
+    within(nextEditor).getByRole('spinbutton', { name: 'User ID' })
+  ).toHaveValue(null)
+  expect(
+    within(nextEditor).getByRole('button', { name: 'Save' })
+  ).toBeDisabled()
+  await user.click(within(nextEditor).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Bind User' })
+    ).not.toBeInTheDocument()
+  )
+})
+
+test.each([
+  {
+    gate: 'sensitive-write permission',
+    key: editableAllocation,
+    permitted: false,
+  },
+  {
+    gate: 'inactive ledger',
+    key: {
+      ...editableAllocation,
+      quota: { ...allocationQuota, ledger_enabled: false },
+    },
+    permitted: true,
+  },
+  {
+    gate: 'missing allocation ID',
+    key: { ...editableAllocation, id: undefined },
+    permitted: true,
+  },
+  {
+    gate: 'missing allocation revision',
+    key: { ...editableAllocation, rev: undefined },
+    permitted: true,
+  },
+])('the $gate still disables the quota action', async ({ key, permitted }) => {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'operator',
+    role: ROLE.ADMIN,
+    permissions: {
+      admin_permissions: {
+        channel: { operate: true, sensitive_write: permitted },
+      },
+    },
+  })
+  const post = vi.spyOn(api, 'post').mockResolvedValue(keyStatusResponse([key]))
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channelSchema.parse(multiKeyChannel)} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+
+  const quotaAction = await screen.findByRole('button', { name: 'Set Quota' })
+  const bindAction = screen.getByRole('button', { name: 'Bind User' })
+  expect(quotaAction).toBeDisabled()
+  if (permitted) expect(bindAction).toBeEnabled()
+  else expect(bindAction).toBeDisabled()
+  const user = userEvent.setup()
+  await user.click(quotaAction)
+  expect(
+    screen.queryByRole('dialog', { name: 'Set Quota' })
+  ).not.toBeInTheDocument()
+  expect(post).toHaveBeenCalledTimes(1)
 })
 
 test('a plugin channel shows each key its own balance', async () => {

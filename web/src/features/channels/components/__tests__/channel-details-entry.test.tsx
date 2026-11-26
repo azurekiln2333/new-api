@@ -37,6 +37,7 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import {
   formatCompactNumber,
   formatTimestampToDate,
@@ -58,6 +59,7 @@ await i18n.init({
 const clients: QueryClient[] = []
 
 const CONSUMED_TOKENS = 1234567
+const BILLED_QUOTA = 1_250_000
 const TEST_TIME = 1_700_000_000
 const VIEW_MODE_STORAGE_KEY = 'channels:view-mode'
 const CARD_SELECTOR = '[data-slot=data-table-card]'
@@ -76,7 +78,7 @@ const channel: Channel = {
   balance_updated_time: 0,
   models: 'gpt-4o',
   group: 'vip',
-  used_quota: 0,
+  used_quota: BILLED_QUOTA,
   other_info: '',
   remark: '',
   max_input_tokens: 0,
@@ -239,14 +241,17 @@ async function renderChannelsPage(
       </QueryClientProvider>
     </I18nextProvider>
   )
-  expect((await screen.findAllByText('prod')).length).toBeGreaterThan(0)
+  expect((await screen.findAllByText(items[0].name)).length).toBeGreaterThan(0)
   return get
 }
 
 /** Opens the card view, leaving the table data to render afterwards. */
-async function renderCardView(usage?: { total_tokens: number } | null) {
+async function renderCardView(
+  usage?: { total_tokens: number } | null,
+  items: Channel[] = [channel]
+) {
   localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'card')
-  await renderChannelsPage(usage)
+  await renderChannelsPage(usage, items)
   const card = document.querySelector(CARD_SELECTOR)
   expect(card).not.toBeNull()
   return card as HTMLElement
@@ -315,6 +320,66 @@ it('shows a dash instead of tokens when the channel has no usage record', async 
   ).not.toBeInTheDocument()
 })
 
+it('starts the card with the long channel name and ID without a type slot', async () => {
+  const longName = 'production-primary-channel-with-a-long-descriptive-name'
+  const card = await renderCardView(undefined, [
+    {
+      ...channel,
+      name: longName,
+      channel_info: { ...channel.channel_info, is_multi_key: true },
+      other_info: JSON.stringify({
+        source: 'ionet',
+        deployment_id: 'deploy-3',
+      }),
+    },
+  ])
+  const name = within(card).getByRole('button', { name: longName })
+  const id = within(card).getByText('#3')
+  const heading = id.parentElement as HTMLElement
+
+  expect(name).toBeVisible()
+  expect(heading).toHaveClass('min-w-0', 'flex-1')
+  expect(heading.firstElementChild).toContainElement(name)
+  expect(heading.lastElementChild).toBe(id)
+  expect(heading.parentElement?.firstElementChild).toBe(heading)
+  expect(name.querySelector('.truncate')).not.toBeNull()
+  expect(card.querySelector('[data-slot="provider-badge"]')).toBeNull()
+  expect(within(card).queryByText('OpenAI')).not.toBeInTheDocument()
+  expect(within(card).queryByText('IO.NET')).not.toBeInTheDocument()
+  expect(
+    within(card).queryByText('Multi-key: Random rotation')
+  ).not.toBeInTheDocument()
+
+  await userEvent.setup().click(name)
+  expect(
+    screen.getByRole('dialog', { name: 'Channel details' })
+  ).toHaveTextContent(longName)
+})
+
+it('masks the channel name and ID when card details are hidden', async () => {
+  const card = await renderCardView()
+
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Hide' }))
+
+  expect(within(card).getByRole('button', { name: '••••' })).toBeVisible()
+  expect(within(card).getByText('#••••')).toBeVisible()
+  expect(within(card).queryByText('prod')).not.toBeInTheDocument()
+  expect(within(card).queryByText('#3')).not.toBeInTheDocument()
+  expect(card.querySelector('[data-slot="provider-badge"]')).toBeNull()
+})
+
+it('keeps the channel type and provider visible in table view', async () => {
+  localStorage.setItem(VIEW_MODE_STORAGE_KEY, 'table')
+  await renderChannelsPage()
+
+  const table = screen.getByRole('table')
+  expect(
+    within(table).getByRole('columnheader', { name: /^Type\b/ })
+  ).toBeVisible()
+  expect(within(table).getByText('OpenAI', { selector: 'span' })).toBeVisible()
+  expect(table.querySelector('[data-slot="provider-badge"]')).not.toBeNull()
+})
+
 it('opens the channel details when content inside the channel card body is clicked', async () => {
   const card = await renderCardView()
 
@@ -345,11 +410,11 @@ it('keeps a click on an inner action button from opening the channel details', a
   ).not.toBeInTheDocument()
 })
 
-it('opens the channel details when the channel name button is activated by keyboard', async () => {
-  await renderChannelsPage()
+it('opens the channel details when the card name button is activated by keyboard', async () => {
+  const card = await renderCardView()
   const user = userEvent.setup()
 
-  screen.getByRole('button', { name: 'prod' }).focus()
+  within(card).getByRole('button', { name: 'prod' }).focus()
   await user.keyboard('{Enter}')
 
   expect(
@@ -457,7 +522,7 @@ it('lays the card metrics out in two columns above a separate priority/weight ro
   // Left column: used tokens above the shared quota region.
   expect(
     [...columns[0].querySelectorAll('dt')].map((label) => label.textContent)
-  ).toEqual(['Used tokens', 'Remaining / Total'])
+  ).toEqual(['Used tokens', 'Used / Total'])
 
   // Right column: response and last tested. Concurrency stays by the name.
   expect(
@@ -494,6 +559,38 @@ it('lets the metric columns wrap instead of overflowing a narrow card', async ()
     '[data-card-metric-column]'
   ) ?? []) {
     expect(column.className).toContain('min-w-0')
+  }
+
+  // State labels can move above their values; the shared badge's truncate
+  // styles must be overridden inside both values, not only on the row.
+  for (const label of ['Response', 'Last Tested']) {
+    const term = within(card).getByText(label)
+    const value = term.nextElementSibling as HTMLElement
+    expect(term).toBeVisible()
+    expect(term.parentElement).toHaveClass('flex-wrap')
+    expect(value).toHaveClass(
+      'max-w-full',
+      'wrap-anywhere',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])]:!ml-0',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])]:whitespace-normal',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:overflow-visible',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:text-clip',
+      '[&_:is([data-slot=status-badge],[data-slot=tooltip-trigger])>span]:whitespace-normal'
+    )
+    // Both roots and their direct text spans must match the card overrides.
+    const badge = value.querySelector<HTMLElement>(
+      ':is([data-slot="status-badge"],[data-slot="tooltip-trigger"])'
+    )
+    expect(badge).toBeVisible()
+    expect(badge).toHaveAttribute(
+      'data-slot',
+      label === 'Response' ? 'status-badge' : 'tooltip-trigger'
+    )
+    const reading = within(value).getByText(
+      label === 'Response' ? 'Not tested' : /ago$/
+    )
+    expect(badge?.querySelector(':scope > span')).toBe(reading)
+    expect(reading).toBeVisible()
   }
 
   // The priority/weight row also wraps rather than pushing past the edge.
@@ -579,7 +676,7 @@ it('orders the card metrics as tokens, quota, response and last test', async () 
   // User-visible order: used Tokens first, then the quota region, then the
   // response and last-test readings. Concurrency sits in the name row instead.
   const usedTokens = await within(card).findByText('Used tokens')
-  const quota = within(card).getByText('Remaining / Total')
+  const quota = within(card).getByText('Used / Total')
   const response = within(card).getByText('Response')
   const lastTested = within(card).getByText('Last Tested')
 
@@ -617,16 +714,30 @@ it('renders the last test as relative time, not the full timestamp', async () =>
   ).toBeNull()
 })
 
-it('fills the quota region with the enabled local budget remaining and limit', async () => {
+it('shows billed used quota over the enabled local budget limit', async () => {
   const card = await renderCardViewWithEnabledBudget()
-
-  // `remaining / limit` comes from the server quota projection only, formatted
-  // with the shared quota formatter.
-  const label = await within(card).findByText('Remaining / Total')
+  const label = await within(card).findByText('Used / Total')
   const value = label.nextElementSibling as HTMLElement
-  await waitFor(() => expect(value.textContent).toContain('/'))
-  expect(value.textContent).not.toContain('Unlimited')
-  expect(value.textContent).toMatch(/\d/)
+  const format = { digitsLarge: 2, digitsSmall: 4, locale: 'en' }
+
+  await waitFor(() =>
+    expect(value).toHaveTextContent(
+      `${formatQuotaWithCurrency(BILLED_QUOTA, format)} / ${formatQuotaWithCurrency(5_000_000, format)}`
+    )
+  )
+})
+
+it('keeps billed used quota over zero when the local budget is disabled', async () => {
+  const card = await renderCardView()
+  const label = await within(card).findByText('Used / Total')
+  const value = label.nextElementSibling as HTMLElement
+  const format = { digitsLarge: 2, digitsSmall: 4, locale: 'en' }
+
+  await waitFor(() =>
+    expect(value).toHaveTextContent(
+      `${formatQuotaWithCurrency(BILLED_QUOTA, format)} / ${formatQuotaWithCurrency(0, format)}`
+    )
+  )
 })
 
 it('shows unavailable instead of the upstream balance when the local budget is unknown', async () => {
@@ -688,10 +799,15 @@ it('shows unavailable instead of the upstream balance when the local budget is u
   )
   const card = document.querySelector(CARD_SELECTOR) as HTMLElement
 
-  // The quota region must not present the upstream balance as the local budget.
-  const label = await within(card).findByText('Remaining / Total')
+  // Keep the billed numerator, but never pretend an unknown limit is zero.
+  const label = await within(card).findByText('Used / Total')
   const value = label.nextElementSibling as HTMLElement
-  await waitFor(() =>
-    expect(value.textContent).toMatch(/Unavailable|Loading\.\.\./)
+  await waitFor(() => expect(value).toHaveTextContent('Unavailable'))
+  expect(value).toHaveTextContent(
+    formatQuotaWithCurrency(BILLED_QUOTA, {
+      digitsLarge: 2,
+      digitsSmall: 4,
+      locale: 'en',
+    })
   )
 })

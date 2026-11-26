@@ -304,6 +304,110 @@ func TestSubscriptionBalanceUsedQuotaDatabaseMatrix(t *testing.T) {
 	}
 }
 
+// TestEffectiveSubscriptionListDatabaseMatrix pins the admin listing to the
+// server's status/end-time predicate, one-row-per-subscription pagination, and
+// bounded page projection on every supported relational dialect.
+func TestEffectiveSubscriptionListDatabaseMatrix(t *testing.T) {
+	for _, engine := range []struct{ kind, env string }{
+		{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"},
+	} {
+		t.Run(engine.kind, func(t *testing.T) {
+			dsn := os.Getenv(engine.env)
+			if engine.env != "" && dsn == "" {
+				t.Skip("set " + engine.env + " to run this database")
+			}
+			db := openRequestLogStore(t, engine.kind, dsn)
+			previousDB, previousType := DB, common.MainDatabaseType()
+			DB = db
+			common.SetMainDatabaseType(common.DatabaseType(engine.kind))
+			t.Cleanup(func() {
+				DB = previousDB
+				common.SetMainDatabaseType(previousType)
+			})
+			require.NoError(t, db.AutoMigrate(&User{}, &SubscriptionPlan{}, &UserSubscription{}))
+
+			const now = int64(1_800_000_000)
+			user := &User{
+				Username:    "effective-owner",
+				Password:    "fixture-password",
+				DisplayName: "Effective Owner",
+				Email:       "effective-owner@example.com",
+				Role:        common.RoleCommonUser,
+				Status:      common.UserStatusEnabled,
+				Group:       "default",
+				AffCode:     "effective-owner-aff",
+			}
+			disabledUser := &User{
+				Username:    "effective-disabled",
+				Password:    "fixture-password",
+				DisplayName: "Disabled Owner",
+				Email:       "effective-disabled@example.com",
+				Role:        common.RoleCommonUser,
+				Status:      common.UserStatusDisabled,
+				Group:       "default",
+				AffCode:     "effective-disabled-aff",
+			}
+			require.NoError(t, db.Create(user).Error)
+			require.NoError(t, db.Create(disabledUser).Error)
+			plan := &SubscriptionPlan{Title: "Effective Pro", PriceAmount: 1, DurationUnit: SubscriptionDurationMonth, DurationValue: 1, TotalAmount: 100}
+			otherPlan := &SubscriptionPlan{Title: "Effective Team", PriceAmount: 2, DurationUnit: SubscriptionDurationMonth, DurationValue: 1, TotalAmount: 200}
+			require.NoError(t, db.Create(plan).Error)
+			require.NoError(t, db.Create(otherPlan).Error)
+
+			eligible := []*UserSubscription{
+				{UserId: user.Id, PlanId: plan.Id, StartTime: now + 300, EndTime: now + 900, Status: "active"},
+				{UserId: user.Id, PlanId: otherPlan.Id, StartTime: now - 100, EndTime: now + 900, Status: "active"},
+				{UserId: disabledUser.Id, PlanId: plan.Id, StartTime: now + 200, EndTime: now + 1200, Status: "active"},
+			}
+			for _, sub := range eligible {
+				require.NoError(t, db.Create(sub).Error)
+			}
+			ineligible := []*UserSubscription{
+				{UserId: user.Id, PlanId: plan.Id, StartTime: now - 100, EndTime: now, Status: "active"},
+				{UserId: user.Id, PlanId: plan.Id, StartTime: now - 100, EndTime: now - 1, Status: "active"},
+				{UserId: user.Id, PlanId: plan.Id, StartTime: now - 100, EndTime: now + 900, Status: "expired"},
+				{UserId: user.Id, PlanId: plan.Id, StartTime: now - 100, EndTime: now + 900, Status: "cancelled"},
+				{UserId: user.Id, PlanId: plan.Id, StartTime: now - 100, EndTime: 0, Status: "active"},
+			}
+			for _, sub := range ineligible {
+				require.NoError(t, db.Create(sub).Error)
+			}
+
+			items, total, err := ListEffectiveUserSubscriptions(t.Context(), now, 0, 2)
+			require.NoError(t, err)
+			assert.EqualValues(t, 3, total, "total counts matching subscription rows, not distinct users")
+			require.Len(t, items, 2)
+			assert.Equal(t, eligible[0].Id, items[0].SubscriptionId)
+			assert.Equal(t, eligible[1].Id, items[1].SubscriptionId, "equal expiries use subscription ID as a stable tiebreaker")
+			assert.Equal(t, "effective-owner", items[0].Username)
+			assert.Equal(t, "Effective Owner", items[0].DisplayName)
+			assert.Equal(t, "Effective Pro", items[0].PlanTitle)
+			assert.Equal(t, now+300, items[0].StartTime, "the existing predicate does not filter future starts")
+			assert.Equal(t, now+900, items[0].EndTime)
+
+			lastPage, lastTotal, err := ListEffectiveUserSubscriptions(t.Context(), now, 2, 2)
+			require.NoError(t, err)
+			assert.EqualValues(t, 3, lastTotal)
+			require.Len(t, lastPage, 1)
+			assert.Equal(t, disabledUser.Id, lastPage[0].UserId, "account status is not an eligibility predicate")
+
+			empty, emptyTotal, err := ListEffectiveUserSubscriptions(t.Context(), now, 3, 2)
+			require.NoError(t, err)
+			assert.Empty(t, empty)
+			assert.EqualValues(t, 3, emptyTotal)
+			_, _, err = ListEffectiveUserSubscriptions(t.Context(), now, -1, 2)
+			assert.Error(t, err)
+			_, _, err = ListEffectiveUserSubscriptions(t.Context(), now, 0, 0)
+			assert.Error(t, err)
+
+			cancelled, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, _, err = ListEffectiveUserSubscriptions(cancelled, now, 0, 2)
+			assert.ErrorIs(t, err, context.Canceled)
+		})
+	}
+}
+
 func TestAdminResetPlanSubscriptionsNoMatchSucceeds(t *testing.T) {
 	truncateTables(t)
 

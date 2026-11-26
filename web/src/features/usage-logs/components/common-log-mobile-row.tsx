@@ -22,13 +22,14 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
+import { toIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
-import { formatLogQuota } from '@/lib/format'
+import { formatLogQuota, formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { UsageLog } from '../data/schema'
 import {
-  formatLogTokenSummary,
   formatModelName,
   logTokenName,
   parseLogOther,
@@ -40,18 +41,16 @@ import {
   isTimingLogType,
 } from '../lib/utils'
 import { CommonLogMobileCard } from './common-log-mobile-card'
+import { StreamTpsCell, TimingMetricsCell } from './timing-metrics-cell'
 import { useUsageLogsContext } from './usage-logs-provider'
 
-/**
- * Dense two-line summary of one common log. Tapping the row expands the full
- * card below it, so every field, dialog and action stays available without
- * paying the card's height for every log in a long list.
- */
+/** Model and throughput lead the summary; expanding retains the full card. */
 export function CommonLogMobileRow<TData>(props: {
   log: UsageLog
   cells: Map<string, Cell<TData, unknown>>
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { sensitiveVisible } = useUsageLogsContext()
   const [expanded, setExpanded] = useState(false)
 
@@ -65,7 +64,10 @@ export function CommonLogMobileRow<TData>(props: {
   const showTime = props.cells.has('created_at')
   const showModel = displayable && props.cells.has('model_name')
   const showCost = displayable && props.cells.has('quota')
-  const showTokens = displayable && props.cells.has('prompt_tokens')
+  const showTokens =
+    displayable &&
+    props.cells.has('prompt_tokens') &&
+    (log.prompt_tokens > 0 || log.completion_tokens > 0)
   const showUseTime = timing && props.cells.has('use_time')
   const showTokenName =
     displayable && props.cells.has('token_name') && !!log.token_name
@@ -75,93 +77,143 @@ export function CommonLogMobileRow<TData>(props: {
     : ''
   const visibleNodeName = sensitiveVisible ? nodeName : '••••'
 
-  const useTimeLabel =
-    log.use_time < 60
-      ? `${log.use_time.toFixed(1)}s`
-      : `${Math.floor(log.use_time / 60)}m${Math.round(log.use_time % 60)}s`
+  const tokensPerSecond =
+    log.use_time > 0 && log.completion_tokens > 0
+      ? log.completion_tokens / log.use_time
+      : null
 
-  // Operation-style logs (top-up, manage, system, login) carry a rendered
-  // content string instead of model/token metrics; show it as the summary.
+  // Operation-style logs carry content instead of model/token metrics.
   const contentPreview = displayable
     ? ''
     : (renderLogContent(other, t) ?? log.content ?? '')
 
-  const summaryParts: string[] = []
-  if (contentPreview) {
-    summaryParts.push(contentPreview)
-  }
-  if (showTokens && (log.prompt_tokens > 0 || log.completion_tokens > 0)) {
-    summaryParts.push(
-      `↑${formatLogTokenSummary(log.prompt_tokens)} ↓${formatLogTokenSummary(log.completion_tokens)}`
-    )
-  }
-  if (showUseTime && log.use_time > 0) {
-    summaryParts.push(useTimeLabel)
-  }
-  if (showTokenName) {
-    summaryParts.push(sensitiveVisible ? logTokenName(log, t) : '••••')
-  }
-  if (showUser) {
-    summaryParts.push(sensitiveVisible ? log.username : '••••')
-  }
   return (
     <div className='min-w-0'>
-      <button
-        type='button'
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-        className='hover:bg-muted/40 focus-visible:ring-ring/50 flex w-full min-w-0 flex-col gap-1 px-3 py-2 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none'
-      >
-        <div className='flex min-w-0 items-center gap-2'>
-          {showTime && (
-            <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>
-              {dayjs.unix(log.created_at).format('MM-DD HH:mm:ss')}
-            </span>
-          )}
-          <StatusBadge
-            label={t(config.label)}
-            variant={config.color as StatusVariant}
-            copyable={false}
-            showDot
-            className='h-4 shrink-0 px-0 text-[11px]'
-          />
-          {showModel && (
-            <span className='text-foreground min-w-0 flex-1 truncate text-[13px] font-medium'>
-              {model.name || '-'}
-            </span>
-          )}
-          {!showModel && <span className='flex-1' />}
-          {showCost && (
-            <span className='text-foreground shrink-0 text-xs font-medium tabular-nums'>
-              {formatLogQuota(log.quota)}
-            </span>
-          )}
-          <ChevronDown
-            aria-hidden='true'
-            className={cn(
-              'text-muted-foreground size-3.5 shrink-0 transition-transform',
-              expanded && 'rotate-180'
+      <div className='flex min-w-0 flex-col gap-2 px-3 py-2.5'>
+        <div
+          className='flex min-w-0 flex-col gap-1.5'
+          data-slot='mobile-log-primary'
+        >
+          <Button
+            type='button'
+            variant='ghost'
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+            className='h-auto min-h-8 w-full min-w-0 items-start justify-between gap-2 px-0 py-0 text-left font-normal whitespace-normal'
+          >
+            {showModel ? (
+              <span className='text-foreground min-w-0 flex-1 text-sm leading-5 font-semibold [overflow-wrap:anywhere]'>
+                {model.name || '-'}
+              </span>
+            ) : (
+              <StatusBadge
+                label={t(config.label)}
+                variant={config.color as StatusVariant}
+                copyable={false}
+                showDot
+              />
             )}
-          />
+            <ChevronDown
+              aria-hidden='true'
+              className={cn(
+                'text-muted-foreground mt-0.5 size-4 shrink-0 transition-transform',
+                expanded && 'rotate-180'
+              )}
+            />
+          </Button>
+          {timing && props.cells.has('is_stream') && (
+            <StreamTpsCell
+              compact={tokensPerSecond == null}
+              className='[&>span+span]:text-foreground max-w-full min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1 text-sm [&>span+span]:font-semibold'
+              isStream={log.is_stream}
+              isTask={other?.is_task === true}
+              isSyncTask={other?.task_sync === true}
+              tokensPerSecond={tokensPerSecond}
+              streamStatus={other?.stream_status}
+            />
+          )}
         </div>
-        {(summaryParts.length > 0 || nodeName) && (
-          <div className='text-muted-foreground flex w-full min-w-0 items-center gap-2 text-[11px] leading-4'>
-            {summaryParts.length > 0 && (
-              <span className='min-w-0 flex-1 truncate'>
-                {summaryParts.join(' · ')}
+        <div className='text-muted-foreground flex min-w-0 flex-col gap-2 text-xs'>
+          <div className='flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1'>
+            {showModel && (
+              <StatusBadge
+                label={t(config.label)}
+                variant={config.color as StatusVariant}
+                copyable={false}
+                showDot
+                className='h-5 px-0 text-xs'
+              />
+            )}
+            {showCost && (
+              <span className='min-w-0 [overflow-wrap:anywhere]'>
+                {t('Cost')}{' '}
+                <span className='text-foreground tabular-nums'>
+                  {formatLogQuota(log.quota)}
+                </span>
               </span>
             )}
-            {nodeName && (
-              <span
-                className='max-w-[45%] truncate font-mono'
-                title={`${t('Processing Node')}: ${visibleNodeName}`}
-              >
-                {visibleNodeName}
+            {showTime && (
+              <span className='tabular-nums'>
+                {dayjs.unix(log.created_at).format('MM-DD HH:mm:ss')}
               </span>
             )}
           </div>
-        )}
-      </button>
+          {contentPreview && (
+            <p className='text-foreground [overflow-wrap:anywhere]'>
+              {contentPreview}
+            </p>
+          )}
+          {showTokens && (
+            <dl className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-1'>
+              <div className='min-w-0'>
+                <dt>{t('Input')}</dt>
+                <dd className='text-foreground font-medium [overflow-wrap:anywhere] tabular-nums'>
+                  {formatNumber(log.prompt_tokens, locale)}
+                </dd>
+              </div>
+              <div className='min-w-0'>
+                <dt>{t('Output')}</dt>
+                <dd className='text-foreground font-medium [overflow-wrap:anywhere] tabular-nums'>
+                  {formatNumber(log.completion_tokens, locale)}
+                </dd>
+              </div>
+            </dl>
+          )}
+          {showUseTime && log.use_time > 0 && (
+            <TimingMetricsCell
+              useTimeSec={log.use_time}
+              completionTokens={log.completion_tokens}
+              frtMs={other?.frt}
+              isStream={log.is_stream}
+              indicator='dot'
+              compact
+              className='min-w-0'
+            />
+          )}
+          {(showTokenName || showUser || nodeName) && (
+            <div className='flex min-w-0 flex-wrap gap-x-3 gap-y-1 [overflow-wrap:anywhere]'>
+              {showTokenName && (
+                <span className='min-w-0'>
+                  {sensitiveVisible ? logTokenName(log, t) : '••••'}
+                </span>
+              )}
+              {showUser && (
+                <span className='min-w-0'>
+                  {sensitiveVisible ? log.username : '••••'}
+                </span>
+              )}
+              {nodeName && (
+                <span
+                  className='min-w-0 font-mono'
+                  title={`${t('Processing Node')}: ${visibleNodeName}`}
+                >
+                  {visibleNodeName}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
       {expanded && (
         <div className='border-border/40 border-t px-3 pt-2.5 pb-3'>
           <CommonLogMobileCard log={log} cells={props.cells} />

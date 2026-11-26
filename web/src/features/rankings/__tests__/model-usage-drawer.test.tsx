@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -28,6 +29,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { ModelUsageDrawer } from '../components/model-usage-drawer'
 
@@ -49,6 +52,7 @@ afterEach(() => {
   cleanup()
   client.clear()
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.setUser(null)
   if (getAnimationsDescriptor) {
     Object.defineProperty(
       HTMLElement.prototype,
@@ -82,7 +86,7 @@ const usagePayload = {
       {
         rank: 2,
         masked: true,
-        display_name: '***',
+        display_name: 's***n',
         requests: 30,
         tokens: 3000,
         quota: 300,
@@ -113,12 +117,162 @@ describe('ModelUsageDrawer', () => {
 
     expect(await screen.findByText('5.0K')).toBeVisible()
     expect(screen.getByText('alice')).toBeVisible()
-    // Masked identities stay masked exactly as the server sent them.
-    expect(screen.getByText('***')).toBeVisible()
+    // Masked identities stay partial exactly as the server sent them; the UI
+    // must not attempt to unmask or re-derive a name.
+    expect(screen.getByText('s***n')).toBeVisible()
     // The drawer is not a link to the pricing page.
     expect(
       screen.getByRole('dialog').querySelector('a[href*="/pricing"]')
     ).toBeNull()
+  })
+
+  it('partitions by viewer identity and role and renders the server mask unchanged', async () => {
+    const response = (users: typeof usagePayload.data.users) => ({
+      data: {
+        ...usagePayload,
+        data: { ...usagePayload.data, users },
+      },
+    })
+    const request = vi
+      .spyOn(api, 'get')
+      .mockResolvedValueOnce(
+        response([
+          {
+            rank: 1,
+            masked: false,
+            display_name: 'surface-admin',
+            user_id: 11,
+            requests: 50,
+            tokens: 5000,
+            quota: 500,
+          },
+          {
+            rank: 2,
+            masked: false,
+            display_name: 'surface-ordinary',
+            user_id: 22,
+            requests: 30,
+            tokens: 3000,
+            quota: 300,
+          },
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            rank: 1,
+            masked: false,
+            display_name: 'surface-admin',
+            user_id: 11,
+            requests: 50,
+            tokens: 5000,
+            quota: 500,
+          },
+          {
+            rank: 2,
+            masked: true,
+            display_name: 's***y',
+            requests: 30,
+            tokens: 3000,
+            quota: 300,
+          },
+        ])
+      )
+      .mockResolvedValueOnce(
+        response([
+          {
+            rank: 1,
+            masked: true,
+            display_name: 's***n',
+            requests: 50,
+            tokens: 5000,
+            quota: 500,
+          },
+          {
+            rank: 2,
+            masked: false,
+            display_name: 'surface-ordinary',
+            user_id: 22,
+            requests: 30,
+            tokens: 3000,
+            quota: 300,
+          },
+        ])
+      )
+
+    useAuthStore.getState().auth.setUser({
+      id: 11,
+      username: 'surface-admin',
+      role: ROLE.ADMIN,
+    })
+    renderDrawer()
+
+    expect(await screen.findByText('surface-ordinary')).toBeVisible()
+    expect(request.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
+    expect(
+      client
+        .getQueryCache()
+        .find({ queryKey: ['rankings', 'model-usage'], exact: false })
+        ?.queryKey.slice(-2)
+    ).toEqual([11, ROLE.ADMIN])
+
+    await act(async () => {
+      useAuthStore.getState().auth.setUser({
+        id: 11,
+        username: 'surface-admin',
+        role: ROLE.USER,
+      })
+    })
+
+    expect(await screen.findByText('s***y')).toBeVisible()
+    expect(screen.getByText('surface-admin')).toBeVisible()
+    expect(screen.queryByText('surface-ordinary')).not.toBeInTheDocument()
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(
+      client
+        .getQueryCache()
+        .find({
+          queryKey: [
+            'rankings',
+            'model-usage',
+            'gpt-fixture',
+            'week',
+            11,
+            ROLE.USER,
+          ],
+          exact: true,
+        })
+        ?.queryKey.slice(-2)
+    ).toEqual([11, ROLE.USER])
+
+    await act(async () => {
+      useAuthStore.getState().auth.setUser({
+        id: 22,
+        username: 'surface-ordinary',
+        role: ROLE.USER,
+      })
+    })
+
+    expect(await screen.findByText('s***n')).toBeVisible()
+    expect(screen.getByText('surface-ordinary')).toBeVisible()
+    expect(screen.queryByText('surface-admin')).not.toBeInTheDocument()
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(
+      client
+        .getQueryCache()
+        .find({
+          queryKey: [
+            'rankings',
+            'model-usage',
+            'gpt-fixture',
+            'week',
+            22,
+            ROLE.USER,
+          ],
+          exact: true,
+        })
+        ?.queryKey.slice(-2)
+    ).toEqual([22, ROLE.USER])
   })
 
   it('renders a failure as an error with a retry action rather than zero usage', async () => {
@@ -173,7 +327,7 @@ describe('ModelUsageDrawer', () => {
     expect(rowText).toContain('Quota:')
 
     // The masked row keeps its quota: masking hides identity, not usage.
-    const maskedRow = screen.getByText('***').closest('li')
+    const maskedRow = screen.getByText('s***n').closest('li')
     expect(maskedRow?.textContent ?? '').toContain('Quota:')
   })
 })

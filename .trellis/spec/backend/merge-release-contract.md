@@ -49,3 +49,71 @@ Apply when integrating upstream into a fork with custom relay, channel or releas
 Wrong: tag push succeeded, therefore deployment succeeded.
 
 Correct: record tag SHA, workflow run URL and conclusion; inspect failed steps, repair, and verify published artifacts. Live deployment is a separate observation.
+
+## Fork update-source build default
+
+### 1. Scope / trigger
+
+Fork builds must select their own release repository without rewriting the
+protected upstream identity or an administrator's explicit setting.
+
+### 2. Signatures
+
+The optional Go linker string is
+`github.com/QuantumNous/new-api/setting/system_setting.UpdateSourceBuildDefaultRepository`.
+Docker receives `UPDATE_SOURCE_REPOSITORY`; fork Docker and reusable binary
+workflows bind it to `github.repository` through `-X`.
+
+### 3. Contracts
+
+`UpdateSourceRepository()` resolves stored override, valid trimmed
+`NEW_API_UPDATE_SOURCE_REPOSITORY`, valid trimmed build default, then the unchanged
+`UpdateSourceDefaultRepository = "QuantumNous/new-api"`. Resolution never persists
+defaults or rewrites overrides. Empty build strings preserve unbound behavior.
+All Linux amd64/arm64, macOS arm64 and Windows release binaries receive the same
+binding. Additional packaging paths require their own audit.
+
+The update-source settings form keeps a blank stored override blank. Its
+placeholder may show a validated, trimmed effective repository from `/api/status`,
+otherwise a translated deployment-default hint. Placeholder refreshes must not
+replace saved values or reset unsaved edits. Blank guidance describes environment,
+build and protected upstream fallback precedence; it must not promise upstream
+selection regardless of deployment settings.
+
+### 4. Validation and error matrix
+
+| Input | Result |
+| --- | --- |
+| Explicit stored repository | Wins over environment and build values |
+| Valid environment repository | Wins over build value |
+| Empty/invalid environment, valid build repository | Uses build repository |
+| Empty/invalid build repository | Uses protected upstream fallback |
+| URL, credentials, invalid dot/path or excessive length | Existing repository validator rejects the candidate |
+
+### 5. Good / base / bad cases
+
+Good: fork workflow binds its repository while an explicit upstream override still
+wins. Base: an unbound build retains the upstream default. Bad: clearing the stored
+setting is described as always following upstream when deployment defaults exist.
+
+### 6. Tests required
+
+Existing `update_source_test.go` isolates/restores the setting and build global for
+assignment fixtures. The hosted `TestUpdateSourceRepositoryLinkedBuildDefault`
+captures the actual linked string before reset and, when
+`TEST_UPDATE_SOURCE_BUILD_REPOSITORY` is set, requires a valid nonempty exact match,
+effective resolution with blank stored/environment values and no stored mutation.
+The dedicated hosted step passes both the expected environment value and `-X`;
+ordinary runs skip only this linkage-specific case. No missing-test run proves
+the release build binding.
+The existing frontend update-checking suite covers unchanged saves, explicit and
+blank overrides, invalid effective-source hints and preserved drafts while status
+updates. Mounted query-cache updates must await the observable placeholder/render
+before checking draft preservation; synchronous `setQueryData` alone does not
+flush observer notifications.
+
+### 7. Wrong vs correct
+
+Wrong: assign the expected global inside the linked-build test, or infer an
+installed binary changed from a source commit. Correct: assert the actual linker
+value and separately verify the exact released artifact/version.

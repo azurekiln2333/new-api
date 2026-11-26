@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
+import { cn } from '@/lib/utils'
 
 import type { ChannelBudgetView } from '../types'
 import { ChannelBudgetContext } from './channel-budget-context'
@@ -47,23 +48,17 @@ export function ChannelBudgetCell(props: {
   if (!view.ledger_enabled) {
     return <span className='text-muted-foreground'>{t('Not enabled')}</span>
   }
-  return <ChannelBudgetViewDisplay view={view} variant='remaining' />
+  return <ChannelBudgetViewDisplay view={view} />
 }
 
-/**
- * The card quota region. The local budget fills it only when a local budget is
- * known and enabled. A known-but-disabled budget keeps the upstream balance,
- * which is then the authoritative figure. A loading read or a missing/failed
- * projection is *not* known to be disabled, so it renders an explicit
- * Loading/Unavailable state instead of passing the upstream balance off as the
- * local budget.
- */
+/** Billed channel usage / configured local limit, never remaining capacity. */
 export function ChannelQuotaCell(props: {
   channelId: number
+  usedQuota: number
   aggregate?: boolean
   fallback: ReactNode
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const { byChannel, loading } = useContext(ChannelBudgetContext)
   const view = byChannel[props.channelId]
@@ -71,30 +66,51 @@ export function ChannelQuotaCell(props: {
     return <span className='text-muted-foreground'>-</span>
   }
   if (!sensitiveVisible) return <span>••••</span>
+
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const formatOptions = { digitsLarge: 2, digitsSmall: 4, locale }
+  const used = formatQuotaWithCurrency(props.usedQuota, formatOptions)
+  let total = t('Unavailable')
   if (loading) {
-    return <span className='text-muted-foreground'>{t('Loading...')}</span>
+    total = t('Loading...')
+  } else if (view) {
+    total = formatQuotaWithCurrency(
+      view.ledger_enabled && view.enabled ? view.limit_quota : 0,
+      formatOptions
+    )
   }
-  if (!view) {
-    return <span className='text-muted-foreground'>{t('Unavailable')}</span>
-  }
-  if (!view.ledger_enabled) {
-    return <span className='text-muted-foreground'>{t('Not enabled')}</span>
-  }
-  // Known and enabled: the local budget is the authoritative figure.
-  if (view.enabled) {
-    return <ChannelBudgetViewDisplay view={view} variant='quota' />
-  }
-  // Known and explicitly disabled: the upstream balance is authoritative.
-  return props.fallback
+  const quota = (
+    <span
+      className={cn(
+        'tabular-nums',
+        !loading &&
+          view?.ledger_enabled &&
+          view.enabled &&
+          view.exhausted &&
+          'text-destructive'
+      )}
+    >
+      {used} / {total}
+    </span>
+  )
+  return (
+    <ChannelBudgetViewDisplay
+      view={view}
+      loading={loading}
+      balance={props.fallback}
+    >
+      {quota}
+    </ChannelBudgetViewDisplay>
+  )
 }
 
-function ChannelBudgetViewDisplay({
-  view,
-  variant,
-}: {
-  view: ChannelBudgetView
-  variant: 'remaining' | 'quota'
+function ChannelBudgetViewDisplay(props: {
+  view?: ChannelBudgetView
+  loading?: boolean
+  children?: ReactNode
+  balance?: ReactNode
 }) {
+  const view = props.view
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const format = (value: number | null | undefined) =>
@@ -105,8 +121,17 @@ function ChannelBudgetViewDisplay({
           digitsSmall: 4,
           locale,
         })
-  const remaining = view.enabled ? format(view.remaining_quota) : t('Unlimited')
-  const limit = view.enabled ? format(view.limit_quota) : t('Unlimited')
+  let unavailable: string | undefined
+  if (props.loading) {
+    unavailable = t('Loading...')
+  } else if (!view) {
+    unavailable = t('Unavailable')
+  } else if (!view.ledger_enabled) {
+    unavailable = t('Not enabled')
+  }
+  const remaining =
+    unavailable ??
+    (view?.enabled ? format(view.remaining_quota) : t('Unlimited'))
   return (
     <QuotaDetailsPopover
       title={t('Local Budget')}
@@ -114,20 +139,36 @@ function ChannelBudgetViewDisplay({
       details={[
         {
           label: t('Limit'),
-          value: view.enabled ? format(view.limit_quota) : t('Unlimited'),
+          value:
+            unavailable ??
+            (view?.enabled ? format(view.limit_quota) : t('Unlimited')),
         },
-        { label: t('Used this period'), value: format(view.period_used_quota) },
-        { label: t('Reserved'), value: format(view.reserved_quota) },
+        {
+          label: t('Used this period'),
+          value: unavailable ?? format(view?.period_used_quota),
+        },
+        {
+          label: t('Reserved'),
+          value: unavailable ?? format(view?.reserved_quota),
+        },
         { label: t('Remaining'), value: remaining },
-        { label: t('Lifetime used'), value: format(view.lifetime_used_quota) },
+        {
+          label: t('Lifetime used'),
+          value: unavailable ?? format(view?.lifetime_used_quota),
+        },
+        ...(props.balance
+          ? [{ label: t('Balance'), value: props.balance }]
+          : []),
       ]}
       description={t(
         'Wallet or subscription charges and API token quotas still apply.'
       )}
     >
-      <span className={view.exhausted ? 'text-destructive' : 'tabular-nums'}>
-        {variant === 'quota' ? `${remaining} / ${limit}` : remaining}
-      </span>
+      {props.children ?? (
+        <span className={view?.exhausted ? 'text-destructive' : 'tabular-nums'}>
+          {remaining}
+        </span>
+      )}
     </QuotaDetailsPopover>
   )
 }

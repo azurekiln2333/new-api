@@ -1,10 +1,15 @@
 package model
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql/driver"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,9 +36,14 @@ const (
 	requestContentCleanupBatch  = 100
 	requestContentWriteTimeout  = 2 * time.Second
 	requestContentReadTimeout   = 5 * time.Second
+
+	requestContentCompressionEnv    = "REQUEST_CONTENT_LOG_COMPRESSION_ENABLED"
+	requestContentCompressionPrefix = "newapi-request-content:gzip:v1:"
+	requestContentCompressionMin    = 4 << 10
 )
 
-// LogRequestPayload stores UTF-8 JSON. MySQL TEXT cannot hold 256 KiB.
+// LogRequestPayload stores JSON or a versioned compressed envelope. MySQL TEXT
+// cannot hold 256 KiB; the existing LONGTEXT mapping remains unchanged.
 type LogRequestPayload string
 
 // Value and Scan make the payload a driver value like the plain string it is.
@@ -66,6 +76,71 @@ func (LogRequestPayload) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
 		return "longtext"
 	}
 	return "text"
+}
+
+// encodeLogRequestPayload changes only new storage writes, never the captured
+// snapshot or its byte count. All readers must support the envelope before
+// writers enable it; disabling encoding does not make old binaries compatible.
+func encodeLogRequestPayload(payload []byte) LogRequestPayload {
+	if len(payload) < requestContentCompressionMin || !common.GetEnvOrDefaultBool(requestContentCompressionEnv, true) {
+		return LogRequestPayload(payload)
+	}
+	var compressed bytes.Buffer
+	writer, err := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+	if err != nil {
+		return LogRequestPayload(payload)
+	}
+	_, writeErr := writer.Write(payload)
+	closeErr := writer.Close()
+	if writeErr != nil || closeErr != nil {
+		return LogRequestPayload(payload)
+	}
+	encodedLength := len(requestContentCompressionPrefix) + base64.StdEncoding.EncodedLen(compressed.Len())
+	// Include the version marker and base64 expansion. Requiring at least 1/8
+	// savings avoids storing a larger envelope for already-compressed content.
+	if encodedLength > len(payload)-(len(payload)+7)/8 {
+		return LogRequestPayload(payload)
+	}
+	return LogRequestPayload(requestContentCompressionPrefix + base64.StdEncoding.EncodeToString(compressed.Bytes()))
+}
+
+// decodeLogRequestPayload always accepts legacy JSON, including when new
+// compression is disabled or today's capture limit is lower than historical
+// content. Only the immutable storage hard cap bounds historical reads.
+func decodeLogRequestPayload(payload LogRequestPayload, capturedBytes int) (LogRequestPayload, error) {
+	if len(payload) == 0 || len(payload) > common.RequestContentMaxMaxBytes {
+		return "", errRequestContentStorage
+	}
+	encoded, compressed := strings.CutPrefix(string(payload), requestContentCompressionPrefix)
+	var decoded []byte
+	if compressed {
+		if capturedBytes <= 0 || capturedBytes > common.RequestContentMaxMaxBytes || len(payload) > capturedBytes {
+			return "", errRequestContentStorage
+		}
+		packed, err := base64.StdEncoding.Strict().DecodeString(encoded)
+		if err != nil {
+			return "", errRequestContentStorage
+		}
+		source := bytes.NewReader(packed)
+		reader, err := gzip.NewReader(source)
+		if err != nil {
+			return "", errRequestContentStorage
+		}
+		// bytes.Reader implements io.ByteReader, so the gzip reader leaves any
+		// trailing member or bytes visible to the check below.
+		reader.Multistream(false)
+		decoded, err = io.ReadAll(io.LimitReader(reader, int64(capturedBytes)+1))
+		closeErr := reader.Close()
+		if err != nil || closeErr != nil || len(decoded) != capturedBytes || source.Len() != 0 {
+			return "", errRequestContentStorage
+		}
+	} else {
+		decoded = []byte(payload)
+	}
+	if !ojson.ValidBytes(decoded) || common.GetJsonType(decoded) != "object" {
+		return "", errRequestContentStorage
+	}
+	return LogRequestPayload(decoded), nil
 }
 
 // LogRequestDetail is one immutable, redacted original request snapshot in LOG_DB.
@@ -198,7 +273,7 @@ func ensureRequestContentDetail(db *gorm.DB, snapshot *common.RequestContentSnap
 		Ref: snapshot.Ref, RequestID: snapshot.RequestID, UserID: snapshot.UserID,
 		SubmitNodeName: snapshot.SubmitNodeName, CreatedAt: snapshot.CreatedAt,
 		Status: snapshot.Status, CapturedBytes: len(snapshot.Payload),
-		Truncated: snapshot.Truncated, Payload: LogRequestPayload(snapshot.Payload),
+		Truncated: snapshot.Truncated, Payload: encodeLogRequestPayload(snapshot.Payload),
 	}).Error
 }
 
@@ -601,6 +676,13 @@ func GetLogRequestDetail(ctx context.Context, ref string) (*LogRequestDetail, er
 	if !linked {
 		return nil, gorm.ErrRecordNotFound
 	}
+	// Decode only after the existing surviving-link and retirement checks. The
+	// storage envelope is never part of the authorized public payload shape.
+	payload, err := decodeLogRequestPayload(detail.Payload, detail.CapturedBytes)
+	if err != nil {
+		return nil, errRequestContentStorage
+	}
+	detail.Payload = payload
 	return &detail, nil
 }
 

@@ -1694,8 +1694,8 @@ func UpdateChannel(c *gin.Context) {
 }
 
 // applyChannelConfigEdit merges the requested configuration onto the freshly read
-// row. A field the request left empty keeps the stored value, matching the
-// partial-update semantics of an omitted JSON field.
+// row. Empty scalar fields and omitted/null pointers keep the stored value;
+// explicitly empty strings in pointer fields clear the stored configuration.
 func applyChannelConfigEdit(request *PatchChannel, stored *model.Channel) {
 	candidate := request.Channel
 	if candidate.Name != "" {
@@ -1712,6 +1712,9 @@ func applyChannelConfigEdit(request *PatchChannel, stored *model.Channel) {
 	}
 	if candidate.BaseURL != nil {
 		stored.BaseURL = candidate.BaseURL
+	}
+	if candidate.ModelMapping != nil {
+		stored.ModelMapping = candidate.ModelMapping
 	}
 	if candidate.Other != "" {
 		stored.Other = candidate.Other
@@ -1759,6 +1762,9 @@ func updateAuditParams(stored, baseline *model.Channel) map[string]any {
 	}
 	if !equalStringPtr(stored.BaseURL, baseline.BaseURL) {
 		changedFields = append(changedFields, "base_url")
+	}
+	if !equalStringPtr(stored.ModelMapping, baseline.ModelMapping) {
+		changedFields = append(changedFields, "model_mapping")
 	}
 	if stored.Key != baseline.Key {
 		changedFields = append(changedFields, "key")

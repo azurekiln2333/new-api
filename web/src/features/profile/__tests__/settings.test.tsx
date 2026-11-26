@@ -16,14 +16,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { SidebarModulesSection } from '@/features/system-settings/maintenance/sidebar-modules-section'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { updateUserSettings } from '../api'
 import { NotificationTab } from '../components/tabs/notification-tab'
+import { Profile } from '../index'
 import type { UserProfile } from '../types'
 
 const profile: UserProfile = {
@@ -56,12 +68,220 @@ const settings = {
   upstream_model_update_notify_enabled: true,
 }
 
-afterEach(() => vi.restoreAllMocks())
+const clients: QueryClient[] = []
+
+afterEach(() => {
+  cleanup()
+  clients.splice(0).forEach((client) => client.clear())
+  useAuthStore.getState().auth.reset()
+  vi.restoreAllMocks()
+})
 
 /** The body a PUT sends over the wire: undefined fields are left out. */
 function sentBody(put: { mock: { calls: unknown[][] } }): unknown {
   return JSON.parse(JSON.stringify(put.mock.calls[0][1]))
 }
+
+describe('sidebar personalization card visibility', () => {
+  const sidebarModules = JSON.stringify({
+    personal: { enabled: true, topup: false, personal: true },
+  })
+
+  async function renderPersonalSettings(
+    enabled: boolean | undefined,
+    role: number = ROLE.USER,
+    canConfigure = true
+  ) {
+    const user = {
+      ...profile,
+      role,
+      permissions: { sidebar_settings: canConfigure },
+      sidebar_modules: sidebarModules,
+    }
+    useAuthStore.getState().auth.setUser(user)
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: user },
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    clients.push(client)
+    client.setQueryData(['status'], {
+      sidebar_personal_settings_enabled: enabled,
+      checkin_enabled: true,
+      quota_remind_enabled: false,
+      SidebarModulesAdmin: '',
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <Profile />
+      </QueryClientProvider>
+    )
+    expect(await screen.findByText('Settings & Preferences')).toBeVisible()
+    return client
+  }
+
+  it.each([
+    { name: 'legacy default', enabled: undefined, visible: true },
+    { name: 'enabled', enabled: true, visible: true },
+    { name: 'disabled', enabled: false, visible: false },
+  ])(
+    'shows the ordinary user card according to $name',
+    async ({ enabled, visible }) => {
+      const put = vi.spyOn(api, 'put')
+      await renderPersonalSettings(enabled)
+      const card = screen.queryByText('Sidebar Personal Settings')
+      if (visible) {
+        expect(card).toBeVisible()
+      } else {
+        expect(card).not.toBeInTheDocument()
+        expect(document.querySelector('.xl\\:sticky')).toBeNull()
+      }
+      expect(screen.getByText('Language Preferences')).toBeVisible()
+      expect(useAuthStore.getState().auth.user?.sidebar_modules).toBe(
+        sidebarModules
+      )
+      expect(put).not.toHaveBeenCalled()
+      expect(screen.queryByText('Daily Check-in')).not.toBeInTheDocument()
+      expect(
+        vi
+          .mocked(api.get)
+          .mock.calls.some(([url]) => String(url).includes('/checkin'))
+      ).toBe(false)
+    }
+  )
+
+  it.each([
+    { role: ROLE.USER, canConfigure: false, visible: false },
+    { role: ROLE.ADMIN, canConfigure: true, visible: true },
+    { role: ROLE.SUPER_ADMIN, canConfigure: false, visible: false },
+  ])(
+    'keeps existing sidebar permission behavior for role $role',
+    async ({ role, canConfigure, visible }) => {
+      await renderPersonalSettings(false, role, canConfigure)
+      const card = screen.queryByText('Sidebar Personal Settings')
+      if (visible) expect(card).toBeVisible()
+      else expect(card).not.toBeInTheDocument()
+    }
+  )
+
+  it('hides and restores the whole card without clearing stored preferences', async () => {
+    const put = vi.spyOn(api, 'put')
+    const client = await renderPersonalSettings(true)
+    expect(screen.getByText('Sidebar Personal Settings')).toBeVisible()
+    act(() => {
+      client.setQueryData(['status'], {
+        sidebar_personal_settings_enabled: false,
+      })
+    })
+    await waitFor(() =>
+      expect(screen.queryByText('Sidebar Personal Settings')).toBeNull()
+    )
+    expect(useAuthStore.getState().auth.user?.sidebar_modules).toBe(
+      sidebarModules
+    )
+    act(() => {
+      client.setQueryData(['status'], {
+        sidebar_personal_settings_enabled: true,
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByText('Sidebar Personal Settings')).toBeVisible()
+    )
+    expect(useAuthStore.getState().auth.user?.sidebar_modules).toBe(
+      sidebarModules
+    )
+    expect(put).not.toHaveBeenCalled()
+  })
+
+  it('saves only the card flag without resetting an unsaved menu draft on a parent refresh', async () => {
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true },
+    })
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    })
+    clients.push(client)
+    client.setQueryData(['status'], {
+      sidebar_personal_settings_enabled: true,
+    })
+    const user = userEvent.setup()
+    const savedModules = { personal: { enabled: true, topup: true } }
+    const savedBaseline = JSON.stringify(savedModules)
+    const view = render(
+      <QueryClientProvider client={client}>
+        <SidebarModulesSection
+          config={savedModules}
+          initialSerialized={savedBaseline}
+        />
+      </QueryClientProvider>
+    )
+    const wallet = screen.getByRole('switch', { name: 'Wallet' })
+    await user.click(wallet)
+    expect(wallet).not.toBeChecked()
+    const toggle = screen.getByRole('switch', {
+      name: 'Show sidebar personalization card to ordinary users',
+    })
+    expect(toggle).toBeChecked()
+    await user.click(toggle)
+    await waitFor(() => expect(toggle).not.toBeChecked())
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(put).toHaveBeenCalledWith('/api/option/', {
+      key: 'console_setting.sidebar_personal_settings_enabled',
+      value: false,
+    })
+    expect(client.getQueryState(['status'])?.isInvalidated).toBe(true)
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <SidebarModulesSection
+          config={{ personal: { ...savedModules.personal } }}
+          initialSerialized={savedBaseline}
+          personalSettingsEnabled={false}
+        />
+      </QueryClientProvider>
+    )
+    expect(screen.getByRole('switch', { name: 'Wallet' })).not.toBeChecked()
+
+    const changedModules = {
+      personal: { enabled: true, topup: true, personal: false },
+    }
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <SidebarModulesSection
+          config={changedModules}
+          initialSerialized={JSON.stringify(changedModules)}
+          personalSettingsEnabled={false}
+        />
+      </QueryClientProvider>
+    )
+    expect(screen.getByRole('switch', { name: 'Wallet' })).toBeChecked()
+    expect(screen.getByRole('switch', { name: 'Profile' })).not.toBeChecked()
+    expect(put).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the saved visibility on a rejected flag update', async () => {
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: false, message: 'Save failed' },
+    })
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    })
+    clients.push(client)
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <SidebarModulesSection config={{}} initialSerialized='{}' />
+      </QueryClientProvider>
+    )
+    const toggle = screen.getByRole('switch', {
+      name: 'Show sidebar personalization card to ordinary users',
+    })
+    await user.click(toggle)
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toBeChecked()
+  })
+})
 
 describe('user settings saves across profile and security', () => {
   it('disabling IP recording sends the latest complete notification settings', async () => {

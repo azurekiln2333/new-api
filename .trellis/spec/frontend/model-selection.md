@@ -1,5 +1,31 @@
 # Model selector ordering
 
+## Ranking viewer labels and privileged chart cache
+
+`GET /api/rankings/model-usage` projects names on the server through
+`model.BuildUserRankingView`. ADMIN and ROOT see full current names, a signed-in
+ordinary user sees their own full name and partial names for others, and an
+anonymous viewer sees `***`. Partial masking operates on Unicode code points:
+one becomes `*`, two become first + `***`, and three or more become first +
+`***` + last. Missing non-self names stay `***`; masked rows omit `user_id`.
+Resolve names once for the bounded top-20 leaderboard, never fetch a full user
+catalog or return hidden real-name metadata. Responses remain no-store.
+
+The separate administrator dashboard user chart requires live ADMIN-or-higher
+authorization. Its query key is `['dashboard', 'user-quota', timeRange, userId,
+role]`, its API consumes AbortSignal, and it immediately hides cached chart data
+after demotion/logout. A disabled query alone is insufficient because cached
+results can remain available.
+
+Existing instance-resource/router ranking tests cover role/self/anonymous,
+Unicode masks and omitted IDs. Existing model-usage-drawer and dashboard chart
+tests cover identity/role cache isolation and cancellation. Prefix QueryCache
+lookups must explicitly pass `exact: false`; full-key lookups use `exact: true`.
+Do not remask names in the frontend or infer administrative capability from a
+chosen row filter.
+
+## Model option order
+
 `ModelGroupSelector` sorts a copy of model options by display name before
 filtering. Use `Intl.Collator('en', { numeric: true, sensitivity: 'base' })`
 and compare raw model IDs lexically when names collate equally. Fixed valid
@@ -7,12 +33,79 @@ locale makes the order deterministic across interface languages. The
 standalone `ModelSelector` preserves category order and sorts each newly
 allocated category list with the same comparator.
 
+The shared `@/lib/model-options` exports `compareModelOptions({ label, value },
+{ label, value })` and `compareModelNames(string, string)`. Model callers reuse
+these helpers; generic selectors preserve their existing ordering by default.
+`MultiSelect.compareOptions` is opt-in and sorts a fresh candidate list after
+merging offered and selected-only values. Missing labels fall back to the raw ID.
+Selected chips and emitted values keep controlled selection order; a create
+candidate remains last. API-key model limits opt in, while group and Auto options
+keep their business order. CC Switch sorts copied model lists and retains a valid
+selection when the catalog refreshes.
+
+The visible API-key row import button invokes the same explicit `resolveRealKey`
+and CC Switch dialog path as the menu action. Rendering/hover never reveals a key;
+pending reveal disables repeated activation. Credentials remain out of DOM and
+browser storage; the existing external URI is constructed only by explicit dialog
+submission. Provider identity changes must invalidate an older reveal result.
+
 Never sort caller-owned arrays in place or change the selected model as a
 side effect of display sorting. Desktop popover and mobile drawer use the
 same sorted data. `model-group-selector/__tests__/sorting.test.tsx` covers
 numeric names, equivalent names with distinct IDs, filtering, immutable
-inputs and preserved selection in both viewport modes. Future channel/group
-navigation must retain these invariants.
+inputs and preserved selection in both viewport modes. The existing MultiSelect,
+API-key limits/listing and CC Switch suites also cover selected-only values,
+unchanged chip/payload order, default generic order, explicit reveal, stale results
+and failure states. Future channel/group navigation must retain these invariants.
+
+Mounted-query regressions must await the observable option list after
+`QueryClient.setQueryData`: observer notifications are scheduled, so a synchronous
+`act` around the cache mutation does not guarantee updated props have rendered.
+Use `waitFor` with the complete expected list; retain source-array, chip and saved
+payload assertions rather than accepting the stale subset.
+
+For the API-key group picker, select options inside the popup identified by the
+live trigger's `aria-controls`. Await the user click and removal of that captured
+popup before opening another picker. A closed Base UI popover can remain mounted
+until its animation Promise completes; document-wide command-item queries can
+invoke a departing picker's handler. Preserve exact group transitions, selected
+order and submitted payload assertions rather than waiting for a wrong selection.
+For `getByRole`, a string `name` already matches the exact accessible name;
+`exact` is not a supported role-query option. Do not copy it from `getByText`.
+
+Request-plugin model scope opts into the same display comparator, including saved
+values absent from the offered catalog. Model-value autocomplete and matched
+pricing-model choices sort newly allocated suggestions only. Empty model scope
+continues to mean All models; an unfinished blank `modelValues` row is omitted by
+the existing parser and produces `{}`, not an empty named map. Sorting must not
+reorder model-value rows, emitted config, selected chips or dirty-pricing dialogs.
+
+In forms with both group and model pickers, scope chip assertions to each
+picker's own `combobox-chips` ancestor. A dialog-wide chip count cannot identify
+which selection was preserved. Before a real Save click, an unresolved submit
+regression may assert selected scope radios, exact group/model chips, displayed
+configuration, visible errors and the associated native form's validity. Keep
+the exactly-once callback and full ordered payload assertion; diagnostic
+assertions do not establish the failure's cause or prove it fixed. Compare the
+complete optional saved config object instead of dereferencing an optional map
+or adding a non-null assertion solely to satisfy TypeScript.
+
+For the installed Base UI multiple combobox, selecting a filtered option can
+close the popup automatically. Do not send an unconditional Escape afterward:
+Escape with the popup unmounted clears the selected values. Observe the live
+input's `aria-expanded` state and exact chips instead. An Escape used to dismiss
+an already-open, unfiltered list has a different path; preserve it when the test
+establishes that state. Require the current input's chip container to exist
+rather than turning a missing container into an empty list.
+
+Channel, per-group and per-Key model limits opt into `compareModelOptions` on the
+existing `MultiSelect`. Tag model choices and both mapping autocomplete fields
+sort newly mapped candidates only. Preserve channel catalogs, selected chips,
+group order, mapping row/JSON order and saved allowlists. Per-Key All models and
+explicit empty deny-all remain distinct; sorting must not change stable Key
+identity/revision or discovery preview/apply guards. Existing channel
+configuration, per-Key scope and mapping suites assert display order alongside
+unchanged payload order and frozen input arrays.
 
 ## Playground channel visibility
 
@@ -72,8 +165,31 @@ the current source before Start is enabled or a request is built.
 all valid combinations in the channel editor. Messages-only still accepts Chat and
 HTTP Responses diagnostic clients through conversion; compact requires Responses.
 Diagnostic key selection must honor `scope_mode`: an explicitly empty `allowlist`
-serves no model. If the chosen key cannot serve the model, retain the existing
-automatic-key fallback rather than sending that key's index.
+serves no model. Selecting a specific Key filters the visible/testable model list
+to that Key's scope. Reset hidden selections and pagination when switching Keys;
+never silently send an explicit-Key test through a different Key. Automatic
+selection remains available as its own explicit mode. The channel-test dialog
+defaults to streaming on open, still prohibits it on unsupported endpoints, and
+uses one model-list scroll region rather than nested dialog/body/list scrollers.
+Keep explicit selection tied to a stable allocation ID and configuration revision,
+not only its mutable array position. Send that identity to the manual test API;
+reject an unavailable or revised allocation before dispatch and after capacity
+admission. Existing index-only clients remain compatible. Clear or scope diagnostic
+results when changing Keys so overlapping model names cannot reuse another Key's
+failure or drive Delete failed models from stale results.
+
+Per-Key upstream discovery is read-only. Its editor can select newly discovered
+models outside the current channel catalog, then explicitly Save. The server
+validates Key identity/revision and additively merges the selected allowlist into
+the existing channel catalog in the same write as the Key scope. Preserve manual
+models, other Keys and existing ordering; an empty allowlist remains deny-all and
+never shrinks the catalog. Consume the successful response's authoritative
+`channel_models` so reopening the editor sees the committed options. Never replace
+this operation with an implicit all-Key fetch or a second channel update.
+Invalidate in-flight discovery generations when the editor unmounts or its channel,
+Key ID/index or revision changes. Guard success, rejection, conflict callbacks and
+loading cleanup; an obsolete conflict must never reload the previous channel into
+the current manager.
 
 ### 4. Validation & Error Matrix
 

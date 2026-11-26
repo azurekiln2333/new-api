@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2, RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { MultiSelect } from '@/components/multi-select'
@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { handleServerError } from '@/lib/handle-server-error'
+import { compareModelOptions } from '@/lib/model-options'
 
 import { fetchMultiKeyModels } from '../../api'
 import { isQuotaConflict } from '../../lib/quota-operation'
@@ -55,16 +56,19 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
   const [models, setModels] = useState<string[]>(props.initialModels)
   const [upstreamModels, setUpstreamModels] = useState<string[] | null>(null)
   const [isFetching, setIsFetching] = useState(false)
+  const discoveryRequest = useRef(0)
 
-  const channelModelSet = new Set(props.channelModels)
-  const servedByChannel = upstreamModels
-    ? upstreamModels.filter((model) => channelModelSet.has(model))
-    : []
-  const notServedByChannel = upstreamModels
-    ? upstreamModels.filter((model) => !channelModelSet.has(model))
-    : []
+  useLayoutEffect(() => {
+    setUpstreamModels(null)
+    setIsFetching(false)
+    return () => {
+      // A late conflict must not close another editor or reload an old channel.
+      discoveryRequest.current += 1
+    }
+  }, [props.channelId, props.keyEntryId, props.keyIndex, props.expectedRev])
 
   const fetchUpstreamModels = async () => {
+    const requestId = ++discoveryRequest.current
     setIsFetching(true)
     try {
       const response = await fetchMultiKeyModels(
@@ -73,21 +77,31 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
         props.keyEntryId,
         props.expectedRev
       )
+      if (requestId !== discoveryRequest.current) return
       if (!response.success) {
         if (isQuotaConflict(response)) props.onConflict()
         else handleServerError(response, t('Failed to fetch models'))
         return
       }
-      setUpstreamModels(response.data?.models ?? [])
+      setUpstreamModels([
+        ...new Set(
+          (response.data?.models ?? [])
+            .map((model) => model.trim())
+            .filter(Boolean)
+        ),
+      ])
     } catch (error: unknown) {
+      if (requestId !== discoveryRequest.current) return
       if (isQuotaConflict(error)) props.onConflict()
       else handleServerError(error, t('Failed to fetch models'))
     } finally {
-      setIsFetching(false)
+      if (requestId === discoveryRequest.current) setIsFetching(false)
     }
   }
 
-  const options = props.channelModels.map((model) => ({
+  const options = [
+    ...new Set([...props.channelModels, ...(upstreamModels ?? [])]),
+  ].map((model) => ({
     value: model,
     label: model,
   }))
@@ -152,6 +166,7 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
       </div>
       <MultiSelect
         options={options}
+        compareOptions={compareModelOptions}
         selected={models}
         onChange={(next) => {
           setAllModels(false)
@@ -164,46 +179,41 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
 
       {upstreamModels && (
         <div className='space-y-1 text-xs'>
-          {servedByChannel.length > 0 && (
+          {upstreamModels.length > 0 && (
             <div>
               <p className='text-muted-foreground'>
                 {t('Models this key serves upstream:')}
               </p>
               <div className='flex flex-wrap gap-1'>
-                {servedByChannel.map((model) => (
+                {upstreamModels.map((model) => (
                   <Button
                     key={model}
                     type='button'
-                    variant='outline'
+                    variant={
+                      !allModels && models.includes(model)
+                        ? 'secondary'
+                        : 'outline'
+                    }
                     size='sm'
                     className='h-6'
+                    aria-pressed={!allModels && models.includes(model)}
                     disabled={props.isSaving}
                     onClick={() => {
                       setAllModels(false)
-                      setModels((current) =>
-                        current.includes(model) ? current : [...current, model]
-                      )
+                      setModels((current) => {
+                        if (!allModels && current.includes(model)) {
+                          return current.filter((name) => name !== model)
+                        }
+                        return current.includes(model)
+                          ? current
+                          : [...current, model]
+                      })
                     }}
                   >
                     {model}
                   </Button>
                 ))}
               </div>
-            </div>
-          )}
-          {notServedByChannel.length > 0 && (
-            <div>
-              <p className='text-muted-foreground'>
-                {t(
-                  'Models this key serves upstream but the channel does not provide yet:'
-                )}
-              </p>
-              <p className='text-warning'>
-                {notServedByChannel.join(', ')}{' '}
-                {t(
-                  'Add them to the channel models first, or sync models from upstream.'
-                )}
-              </p>
             </div>
           )}
           {upstreamModels.length === 0 && (

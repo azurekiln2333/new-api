@@ -19,6 +19,40 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
+export interface OfficialStatusIncident {
+  id: string
+  name: string
+  status: string
+  updated_at: string
+}
+
+export const OFFICIAL_STATUS_PROVIDERS = [
+  { id: 'openai', name: 'OpenAI', source_url: 'https://status.openai.com/' },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    source_url: 'https://status.claude.com/',
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini API',
+    source_url: 'https://aistudio.google.com/status',
+  },
+  { id: 'xai', name: 'xAI', source_url: 'https://status.x.ai/' },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    source_url: 'https://status.deepseek.com/',
+  },
+  {
+    id: 'moonshot',
+    name: 'Moonshot',
+    source_url: 'https://status.moonshot.cn/',
+  },
+  { id: 'minimax', name: 'MiniMax', source_url: 'https://status.minimax.io/' },
+  { id: 'mistral', name: 'Mistral', source_url: 'https://status.mistral.ai/' },
+] as const
+
 export interface OfficialProviderStatus {
   id: string
   name: string
@@ -29,10 +63,17 @@ export interface OfficialProviderStatus {
   checked_at: number
   stale: boolean
   unavailable: boolean
+  fetch_error?: string
+  fetch_http_status?: number
   components: { id: string; name: string; status: string }[] | null
-  incidents:
-    | { id: string; name: string; status: string; updated_at: string }[]
-    | null
+  incidents: OfficialStatusIncident[] | null
+  recent_incidents?: OfficialStatusIncident[] | null
+  history_fetched_at?: number
+  history_checked_at?: number
+  history_stale?: boolean
+  history_unavailable?: boolean
+  history_error?: string
+  history_http_status?: number
 }
 
 export async function getOfficialServiceStatus(signal?: AbortSignal) {

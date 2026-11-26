@@ -24,6 +24,7 @@ import {
   RouterContextProvider,
 } from '@tanstack/react-router'
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -153,11 +154,11 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function renderDialog(keys: KeyStatus[]) {
+async function renderDialog(keys: KeyStatus[], currentChannel = channel) {
   const post = mockKeyStatus(keys)
   render(
     <I18nextProvider i18n={i18n}>
-      <DialogHarness />
+      <DialogHarness channel={currentChannel} />
     </I18nextProvider>
   )
   await screen.findByText('Allowed Models')
@@ -454,15 +455,56 @@ test('each key row shows the masked key preview next to its index', async () => 
   expect(screen.getByText('2. -')).toBeVisible()
 })
 
-test('setting models on a key posts the key index with the selected models', async () => {
-  const post = await renderDialog([keyStatus({ index: 0 })])
+test('setting models sorts dropdown choices but preserves allowlist and catalog order in the key-index save', async () => {
+  const allowedModels = ['z-model', 'model-10', 'selected-only']
+  Object.freeze(allowedModels)
+  const currentChannel = {
+    ...channel,
+    models: 'z-model,model-10,model-2,alpha-model,Alpha-model',
+  }
+  const post = await renderDialog(
+    [keyStatus({ index: 0, scope_mode: 'allowlist', models: allowedModels })],
+    currentChannel
+  )
   const user = userEvent.setup()
 
   await user.click(screen.getByRole('button', { name: 'Set Models' }))
-  await user.click(screen.getByRole('combobox', { name: 'All models' }))
-  await user.click(await screen.findByRole('option', { name: 'model-a' }))
+  const manager = screen.getByRole('dialog', {
+    name: /Multi-Key Management.*multi/,
+  })
+  expect(
+    [...manager.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['z-model', 'model-10', 'selected-only'])
+  await user.click(screen.getByRole('combobox', { name: 'Select models' }))
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual([
+    'Alpha-model',
+    'alpha-model',
+    'model-2',
+    'model-10',
+    'selected-only',
+    'z-model',
+  ])
+  expect(
+    post.mock.calls.some(
+      ([, body]) => (body as { action: string }).action === 'set_key_models'
+    )
+  ).toBe(false)
+  await user.click(screen.getByRole('option', { name: 'model-2' }))
   // The multi-select keeps its popup open; closing it restores the dialog body.
   await user.keyboard('{Escape}')
+  expect(
+    [...manager.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
+  ).toEqual(['z-model', 'model-10', 'selected-only', 'model-2'])
+  expect(allowedModels).toEqual(['z-model', 'model-10', 'selected-only'])
+  expect(currentChannel.models).toBe(
+    'z-model,model-10,model-2,alpha-model,Alpha-model'
+  )
   await user.click(screen.getByRole('button', { name: 'Save' }))
 
   await waitFor(() =>
@@ -472,10 +514,15 @@ test('setting models on a key posts the key index with the selected models', asy
         channel_id: 7,
         action: 'set_key_models',
         key_index: 0,
-        models: ['model-a'],
+        scope_mode: 'allowlist',
+        models: ['z-model', 'model-10', 'selected-only', 'model-2'],
       }),
-      expect.anything()
+      expect.objectContaining({ singleUseAuthorization: true })
     )
+  )
+  expect(allowedModels).toEqual(['z-model', 'model-10', 'selected-only'])
+  expect(currentChannel.models).toBe(
+    'z-model,model-10,model-2,alpha-model,Alpha-model'
   )
 })
 
@@ -504,7 +551,8 @@ test('binding a user posts the parsed user ID and rejects an invalid one', async
   )
 })
 
-test('fetching a key upstream shows the models that key serves and its unrouted ones', async () => {
+test('one-key discovery requires selection and Save before adding models to the committed channel catalog', async () => {
+  let applied = false
   const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
     if (url !== '/api/channel/multi_key/manage') {
       return { data: { success: true } }
@@ -512,19 +560,52 @@ test('fetching a key upstream shows the models that key serves and its unrouted 
     const params = body as { action: string }
     if (params.action === 'fetch_key_models') {
       return {
-        data: { success: true, data: { models: ['model-a', 'model-c'] } },
+        data: {
+          success: true,
+          data: {
+            models: ['model-a', ' model-c ', 'model-c', '', 'model-d'],
+          },
+        },
+      }
+    }
+    if (params.action === 'set_key_models') {
+      applied = true
+      return {
+        data: {
+          success: true,
+          data: {
+            revision: 11,
+            channel_models: ['model-a', 'model-b', 'model-c'],
+          },
+        },
       }
     }
     return {
       data: {
         success: true,
         data: {
-          keys: [keyStatus({ index: 0 })],
-          total: 1,
+          keys: [
+            keyStatus({
+              id: '1001',
+              rev: applied ? 4 : 3,
+              index: 0,
+              scope_mode: 'allowlist',
+              models: applied ? ['model-c'] : [],
+            }),
+            keyStatus({
+              id: '1002',
+              rev: 7,
+              index: 1,
+              scope_mode: 'allowlist',
+              models: ['model-b'],
+            }),
+          ],
+          revision: applied ? 11 : 10,
+          total: 2,
           page: 1,
           page_size: 10,
           total_pages: 1,
-          enabled_count: 1,
+          enabled_count: 2,
           manual_disabled_count: 0,
           auto_disabled_count: 0,
         },
@@ -536,31 +617,222 @@ test('fetching a key upstream shows the models that key serves and its unrouted 
       <DialogHarness />
     </I18nextProvider>
   )
-  await screen.findByText('Allowed Models')
+  const row = (await screen.findByText('1001')).closest('tr')
+  const siblingRow = screen.getByText('1002').closest('tr')
+  expect(row).not.toBeNull()
+  expect(siblingRow).not.toBeNull()
   const user = userEvent.setup()
 
-  await user.click(screen.getByRole('button', { name: 'Set Models' }))
+  await user.click(
+    within(row as HTMLElement).getByRole('button', { name: 'Set Models' })
+  )
   await user.click(screen.getByRole('button', { name: 'Fetch from upstream' }))
 
   expect(
     await screen.findByText('Models this key serves upstream:')
   ).toBeVisible()
-  expect(
-    screen.getByText(
-      'Models this key serves upstream but the channel does not provide yet:'
-    )
-  ).toBeVisible()
   expect(post).toHaveBeenCalledWith(
     '/api/channel/multi_key/manage',
-    expect.objectContaining({
+    {
       channel_id: 7,
       action: 'fetch_key_models',
-      key_index: 0,
-    }),
+      key_entry_id: '1001',
+      expected_rev: 3,
+      key_index: undefined,
+    },
     expect.anything()
   )
-  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  expect(
+    post.mock.calls.some(
+      ([, body]) =>
+        (body as { action: string }).action === 'set_key_models' ||
+        (body as { action: string }).action === 'sync_key_models'
+    )
+  ).toBe(false)
+  await user.click(screen.getByRole('combobox', { name: 'Select models' }))
+  expect(await screen.findByRole('option', { name: 'model-c' })).toBeVisible()
+  await user.keyboard('{Escape}')
+  const discoveredModel = screen.getByRole('button', { name: 'model-c' })
+  expect(discoveredModel).toHaveAttribute('aria-pressed', 'false')
+  await user.click(discoveredModel)
+  expect(discoveredModel).toHaveAttribute('aria-pressed', 'true')
+  await user.click(discoveredModel)
+  expect(discoveredModel).toHaveAttribute('aria-pressed', 'false')
+  await user.click(discoveredModel)
+  expect(discoveredModel).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'model-d' })).toHaveAttribute(
+    'aria-pressed',
+    'false'
+  )
+  expect(
+    post.mock.calls.some(
+      ([, body]) => (body as { action: string }).action === 'set_key_models'
+    )
+  ).toBe(false)
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/channel/multi_key/manage',
+      {
+        channel_id: 7,
+        action: 'set_key_models',
+        key_entry_id: '1001',
+        expected_rev: 3,
+        key_index: undefined,
+        scope_mode: 'allowlist',
+        models: ['model-c'],
+      },
+      expect.objectContaining({ singleUseAuthorization: true })
+    )
+  )
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: 'Save' })
+    ).not.toBeInTheDocument()
+  )
+  await waitFor(() => {
+    const savedRow = screen.getByText('1001').closest('tr')
+    expect(within(savedRow as HTMLElement).getByText('model-c')).toBeVisible()
+  })
+  const savedSiblingRow = screen.getByText('1002').closest('tr')
+  expect(savedSiblingRow).not.toBeNull()
+  expect(
+    within(savedSiblingRow as HTMLElement).getByText('model-b')
+  ).toBeVisible()
+  expect(
+    post.mock.calls.filter(
+      ([, body]) => (body as { action: string }).action === 'set_key_models'
+    )
+  ).toHaveLength(1)
+  expect(
+    post.mock.calls.some(
+      ([, body]) => (body as { action: string }).action === 'sync_key_models'
+    )
+  ).toBe(false)
+
+  await user.click(
+    within(savedSiblingRow as HTMLElement).getByRole('button', {
+      name: 'Set Models',
+    })
+  )
+  await user.click(screen.getByRole('combobox', { name: 'Select models' }))
+  expect(await screen.findByRole('option', { name: 'model-a' })).toBeVisible()
+  expect(screen.getByRole('option', { name: 'model-b' })).toBeVisible()
+  expect(screen.getByRole('option', { name: 'model-c' })).toBeVisible()
+  expect(
+    screen.queryByRole('option', { name: 'model-d' })
+  ).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
 })
+
+test.each(['response', 'rejection'])(
+  'a late %s conflict from cancelled discovery cannot replace the new channel editor',
+  async (outcome) => {
+    const conflict = {
+      success: false,
+      error_code: 'channel_key_revision_conflict',
+    }
+    let resolveOld!: (value: { data: typeof conflict }) => void
+    let rejectOld!: (reason: unknown) => void
+    const oldDiscovery = new Promise<{ data: typeof conflict }>(
+      (resolve, reject) => {
+        resolveOld = resolve
+        rejectOld = reject
+      }
+    )
+    let resolveCurrent!: (value: {
+      data: { success: boolean; data: { models: string[] } }
+    }) => void
+    const currentDiscovery = new Promise<{
+      data: { success: boolean; data: { models: string[] } }
+    }>((resolve) => {
+      resolveCurrent = resolve
+    })
+    const post = vi
+      .spyOn(api, 'post')
+      .mockImplementation(async (_url, body) => {
+        const params = body as { action: string; channel_id: number }
+        if (params.action === 'fetch_key_models') {
+          return params.channel_id === 7 ? oldDiscovery : currentDiscovery
+        }
+        return {
+          data: {
+            success: true,
+            data: {
+              keys: [
+                keyStatus({
+                  id: params.channel_id === 7 ? '1001' : '2001',
+                  rev: 3,
+                  scope_mode: 'allowlist',
+                  models: [],
+                }),
+              ],
+              revision: 10,
+              total: 1,
+              page: 1,
+              page_size: 10,
+              total_pages: 1,
+              enabled_count: 1,
+            },
+          },
+        }
+      })
+    const view = (row: Channel) => (
+      <I18nextProvider i18n={i18n}>
+        <DialogHarness channel={row} />
+      </I18nextProvider>
+    )
+    const { rerender } = render(view(channel))
+    const user = userEvent.setup()
+    await screen.findByText('1001')
+    await user.click(screen.getByRole('button', { name: 'Set Models' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Fetch from upstream' })
+    )
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(
+      screen.queryByRole('button', { name: 'Save' })
+    ).not.toBeInTheDocument()
+
+    rerender(view({ ...channel, id: 8, name: 'next channel' }))
+    await screen.findByText('2001')
+    await user.click(screen.getByRole('button', { name: 'Set Models' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Fetch from upstream' })
+    )
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+
+    await act(async () => {
+      if (outcome === 'response') resolveOld({ data: conflict })
+      else rejectOld({ response: { status: 409, data: conflict } })
+      await oldDiscovery.catch(() => {})
+    })
+    expect(screen.getByText('2001')).toBeVisible()
+    expect(screen.queryByText('1001')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(
+      post.mock.calls.filter(([, body]) => {
+        const params = body as { action: string; channel_id: number }
+        return params.action === 'get_key_status' && params.channel_id === 7
+      })
+    ).toHaveLength(1)
+
+    await act(async () => {
+      resolveCurrent({
+        data: { success: true, data: { models: ['current-key-model'] } },
+      })
+      await currentDiscovery
+    })
+    expect(
+      await screen.findByRole('button', { name: 'current-key-model' })
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  }
+)
 
 test('syncing models from upstream previews per-key counts before applying', async () => {
   const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {

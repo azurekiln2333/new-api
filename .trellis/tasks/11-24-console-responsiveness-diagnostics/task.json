@@ -12,18 +12,19 @@
   "assignee": "lcy",
   "createdAt": "2026-11-24",
   "completedAt": null,
-  "branch": "fix/login-session-recovery-20261125",
+  "branch": "fix/channel-card-invitation-layout-20261126",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
-  "pr_url": null,
+  "pr_url": "https://github.com/azurekiln2333/new-api/pull/4",
   "subtasks": [],
   "children": [
     "11-24-channel-loading-save-performance",
     "11-24-management-mutations-code-batches",
     "11-24-channel-diagnostics-log-presentation",
     "11-24-dashboard-node-ranking-details",
-    "11-25-console-forward-to-master"
+    "11-25-console-forward-to-master",
+    "11-26-durable-usage-statistics"
   ],
   "parent": null,
   "relatedFiles": [],

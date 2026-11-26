@@ -1,9 +1,8 @@
 package model
 
-// rankingMaskedDisplayName is the fixed, opaque placeholder emitted for any
-// user row a viewer is not allowed to identify. It is a constant so the masked
-// payload never carries (directly or by derivation) a real name, a user id, or
-// a stable hash of either.
+// rankingMaskedDisplayName is the opaque placeholder for anonymous viewers
+// and unresolved accounts. Authenticated viewers receive partial non-self names,
+// without account ids or hashes that could join the row to another API.
 const rankingMaskedDisplayName = "***"
 
 // rankingDeletedUserLabel is shown when a usage row references an account that
@@ -11,9 +10,9 @@ const rankingMaskedDisplayName = "***"
 // account stays unidentifiable.
 const rankingDeletedUserLabel = "Deleted user"
 
-// RankingViewer describes who is reading a user ranking. Masking is resolved
-// on the server so an ordinary viewer never receives other users' identities,
-// not even hidden metadata they could map back to an account.
+// RankingViewer describes who is reading a user ranking. The server returns full
+// names only to administrators or the account itself; other signed-in viewers
+// receive partial names without hidden account identifiers.
 type RankingViewer struct {
 	UserID      int
 	IsAdmin     bool
@@ -22,10 +21,13 @@ type RankingViewer struct {
 
 // CanSeeName reports whether the viewer may see the given user's real name.
 func (viewer RankingViewer) CanSeeName(userID int) bool {
+	if viewer.IsAnonymous {
+		return false
+	}
 	if viewer.IsAdmin {
 		return true
 	}
-	if viewer.IsAnonymous || userID == 0 {
+	if userID <= 0 {
 		return false
 	}
 	return userID == viewer.UserID
@@ -54,13 +56,16 @@ type UserRankingView struct {
 	Quota       int64  `json:"quota"`
 }
 
-// VisibleUserIDs returns the user ids whose display name the viewer may see, in
-// row order and de-duplicated. The caller batch-resolves only these ids.
+// VisibleUserIDs returns the ids needed for the viewer's full or partial labels,
+// in row order and de-duplicated. Anonymous viewers never resolve names.
 func VisibleUserIDs(viewer RankingViewer, rows []UserRankingRow) []int {
 	ids := make([]int, 0, len(rows))
+	if viewer.IsAnonymous || (viewer.UserID <= 0 && !viewer.IsAdmin) {
+		return ids
+	}
 	seen := make(map[int]struct{}, len(rows))
 	for _, row := range rows {
-		if !viewer.CanSeeName(row.UserID) {
+		if row.UserID <= 0 {
 			continue
 		}
 		if _, ok := seen[row.UserID]; ok {
@@ -72,10 +77,10 @@ func VisibleUserIDs(viewer RankingViewer, rows []UserRankingRow) []int {
 	return ids
 }
 
-// BuildUserRankingView projects rows for the viewer. names maps a user id to
-// its current display name for the ids the viewer may see; a missing entry
-// means the account no longer exists and becomes the generic deleted label.
-// Masked rows never consult names.
+// BuildUserRankingView projects current names for the viewer. Administrators and
+// self see full names; other authenticated viewers see only partial names. The
+// mask operates on Unicode code points, never byte offsets. Anonymous viewers
+// retain the opaque placeholder, and no masked row includes its account id.
 func BuildUserRankingView(viewer RankingViewer, rows []UserRankingRow, names map[int]string) []UserRankingView {
 	views := make([]UserRankingView, 0, len(rows))
 	for index, row := range rows {
@@ -99,6 +104,19 @@ func BuildUserRankingView(viewer RankingViewer, rows []UserRankingRow, names map
 		} else {
 			view.Masked = true
 			view.DisplayName = rankingMaskedDisplayName
+			if !viewer.IsAnonymous && viewer.UserID > 0 {
+				runes := []rune(names[row.UserID])
+				switch len(runes) {
+				case 0:
+					// Keep unresolved accounts opaque.
+				case 1:
+					view.DisplayName = "*"
+				case 2:
+					view.DisplayName = string(runes[0]) + "***"
+				default:
+					view.DisplayName = string(runes[0]) + "***" + string(runes[len(runes)-1])
+				}
+			}
 		}
 		views = append(views, view)
 	}

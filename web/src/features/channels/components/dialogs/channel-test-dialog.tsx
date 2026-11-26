@@ -64,6 +64,11 @@ import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -249,13 +254,15 @@ const FAILURE_SUMMARY_MAX_LENGTH = 96
 const BATCH_TEST_CONCURRENCY = 5
 const BATCH_TEST_DELAY_MS = 100
 const AUTO_TEST_KEY = 'auto'
+const KEY_CONFIGURATION_CHANGED =
+  'Channel key configuration changed, reload and retry'
 
-// A key scoped to other models cannot serve this test, so the channel picks the
-// key instead of the named one. An explicit allowlist is authoritative even when
-// empty (it denies every model); only a legacy row without a scope mode treats a
-// missing model list as unrestricted.
+// Explicit key scope controls both visible models and dispatch. An empty
+// allowlist denies every model; only an all-model or unrestricted legacy key
+// serves every configured channel model.
 function keyServesModel(key: KeyStatus, model: string) {
   const models = key.models ?? []
+  if (key.scope_mode === 'all') return true
   if (key.scope_mode === 'allowlist') return models.includes(model)
   return !models.length || models.includes(model)
 }
@@ -392,8 +399,8 @@ function ChannelTestDialogContent({
     typeof toast.loading
   > | null>(null)
   const [endpointType, setEndpointType] = useState('auto')
-  const [isStreamTest, setIsStreamTest] = useState(false)
-  const [selectedKeyIndex, setSelectedKeyIndex] = useState<number | null>(null)
+  const [isStreamTest, setIsStreamTest] = useState(true)
+  const [selectedTestKey, setSelectedTestKey] = useState<KeyStatus | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
@@ -478,20 +485,41 @@ function ChannelTestDialogContent({
     () => (isMultiKeyChannel ? (keyStatusQuery.data?.data?.keys ?? []) : []),
     [isMultiKeyChannel, keyStatusQuery.data]
   )
-  const selectedKey =
-    selectedKeyIndex === null
-      ? undefined
-      : channelKeys.find((key) => key.index === selectedKeyIndex)
+  // Keep the allocation snapshot, not its mutable position in the key list.
+  // A reordered/revised/deleted allocation requires an explicit new selection.
+  const selectedKey = selectedTestKey
+    ? channelKeys.find(
+        (key) =>
+          key.id === selectedTestKey.id &&
+          key.rev === selectedTestKey.rev &&
+          key.index === selectedTestKey.index
+      )
+    : undefined
+  const selectedKeyValue = selectedTestKey
+    ? `${selectedTestKey.id}:${selectedTestKey.rev}:${selectedTestKey.index}`
+    : AUTO_TEST_KEY
+  const selectedKeyUnavailable = selectedTestKey !== null && !selectedKey
   const listedKeyCount = keyStatusQuery.data?.data?.total ?? channelKeys.length
   const keySelectItems = useMemo(
     () => [
       { value: AUTO_TEST_KEY, label: t('Auto (by tested model)') },
+      ...(selectedKeyUnavailable
+        ? [
+            {
+              value: selectedKeyValue,
+              label: t(KEY_CONFIGURATION_CHANGED),
+              disabled: true,
+            },
+          ]
+        : []),
       ...channelKeys.map((key) => ({
-        value: String(key.index),
+        value: `${key.id}:${key.rev}:${key.index}`,
         label: keyMenuLabel(key, t),
+        disabled:
+          !key.id || !/^[1-9]\d*$/.test(key.id) || !key.rev || key.rev < 1,
       })),
     ],
-    [channelKeys, t]
+    [channelKeys, selectedKeyUnavailable, selectedKeyValue, t]
   )
 
   const dismissBatchProgressToast = useCallback(() => {
@@ -530,8 +558,8 @@ function ChannelTestDialogContent({
   const resetState = useCallback(() => {
     batchStopRequestedRef.current = true
     setEndpointType('auto')
-    setIsStreamTest(false)
-    setSelectedKeyIndex(null)
+    setIsStreamTest(true)
+    setSelectedTestKey(null)
     setSearchTerm('')
     setTestResults({})
     setRowSelection({})
@@ -560,10 +588,29 @@ function ChannelTestDialogContent({
     }
   }, [])
 
-  const handleKeyChange = useCallback((value: string | null) => {
-    if (value === null) return
-    setSelectedKeyIndex(value === AUTO_TEST_KEY ? null : Number(value))
-  }, [])
+  const handleKeyChange = useCallback(
+    (value: string | null) => {
+      if (value === null) return
+      const key = channelKeys.find(
+        (item) => `${item.id}:${item.rev}:${item.index}` === value
+      )
+      if (
+        value !== AUTO_TEST_KEY &&
+        (!key?.id || !/^[1-9]\d*$/.test(key.id) || !key.rev || key.rev < 1)
+      ) {
+        return
+      }
+      setSelectedTestKey(key ? { ...key } : null)
+      setTestResults({})
+      setFailureDetails(null)
+      setIsDeleteFailedDialogOpen(false)
+      setRowSelection({})
+      setPagination((prev) =>
+        prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }
+      )
+    },
+    [channelKeys]
+  )
 
   const handleSearchTermChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -591,21 +638,33 @@ function ChannelTestDialogContent({
     [baseModels, removedModels]
   )
 
+  const availableModels = useMemo(() => {
+    if (selectedTestKey === null) return models
+    if (!selectedKey) return []
+    return models.filter((model) => keyServesModel(selectedKey, model))
+  }, [models, selectedKey, selectedTestKey])
+
   const successModels = useMemo(
-    () => models.filter((model) => testResults[model]?.status === 'success'),
-    [models, testResults]
+    () =>
+      availableModels.filter(
+        (model) => testResults[model]?.status === 'success'
+      ),
+    [availableModels, testResults]
   )
 
   const failedModels = useMemo(
-    () => models.filter((model) => testResults[model]?.status === 'error'),
-    [models, testResults]
+    () =>
+      availableModels.filter((model) => testResults[model]?.status === 'error'),
+    [availableModels, testResults]
   )
 
   const filteredModels = useMemo(() => {
-    if (!searchTerm) return models
+    if (!searchTerm) return availableModels
     const keyword = searchTerm.toLowerCase()
-    return models.filter((model) => model.toLowerCase().includes(keyword))
-  }, [models, searchTerm])
+    return availableModels.filter((model) =>
+      model.toLowerCase().includes(keyword)
+    )
+  }, [availableModels, searchTerm])
 
   const tableData = useMemo<ModelRow[]>(
     () => filteredModels.map((model) => ({ model })),
@@ -687,16 +746,16 @@ function ChannelTestDialogContent({
       refreshList = true
     ): Promise<TestResult | undefined> => {
       if (!currentRow) return
+      if (
+        selectedTestKey !== null &&
+        (!selectedKey || !keyServesModel(selectedKey, model))
+      ) {
+        return
+      }
 
       markModelTesting(model, true)
       updateTestResult(model, { status: 'testing' })
       let finalResult: TestResult | undefined
-      // The result belongs to the selected key when that key serves this model.
-      // Otherwise the channel picks the key, as it always has.
-      const testKeyIndex =
-        selectedKey && keyServesModel(selectedKey, model)
-          ? (selectedKeyIndex ?? undefined)
-          : undefined
 
       try {
         await handleTestChannel(
@@ -709,7 +768,9 @@ function ChannelTestDialogContent({
                 ? undefined
                 : effectiveEndpointType,
             stream: effectiveStreamTest || undefined,
-            keyIndex: testKeyIndex,
+            keyIndex: selectedTestKey?.index,
+            keyEntryId: selectedTestKey?.id,
+            expectedRev: selectedTestKey?.rev,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -747,7 +808,7 @@ function ChannelTestDialogContent({
     [
       currentRow,
       selectedKey,
-      selectedKeyIndex,
+      selectedTestKey,
       effectiveEndpointType,
       effectiveStreamTest,
       markModelTesting,
@@ -767,7 +828,11 @@ function ChannelTestDialogContent({
   const handleBatchTest = useCallback(
     async (modelsToTest: string[]) => {
       const uniqueModels = [
-        ...new Set(modelsToTest.map((model) => model.trim()).filter(Boolean)),
+        ...new Set(
+          modelsToTest
+            .map((model) => model.trim())
+            .filter((model) => availableModels.includes(model))
+        ),
       ]
       if (!uniqueModels.length) return
 
@@ -896,6 +961,7 @@ function ChannelTestDialogContent({
       }
     },
     [
+      availableModels,
       dismissBatchProgressToast,
       refreshChannelLists,
       t,
@@ -915,9 +981,7 @@ function ChannelTestDialogContent({
   }, [successModels])
 
   const handleDeleteFailedModels = useCallback(async () => {
-    const failed = models.filter(
-      (model) => testResults[model]?.status === 'error'
-    )
+    const failed = failedModels
     if (!failed.length) {
       setIsDeleteFailedDialogOpen(false)
       return
@@ -960,7 +1024,7 @@ function ChannelTestDialogContent({
     } finally {
       setIsDeletingFailed(false)
     }
-  }, [currentRow.id, models, refreshChannelLists, t, testResults])
+  }, [currentRow.id, failedModels, models, refreshChannelLists, t])
 
   const handleClose = useCallback(() => {
     resetState()
@@ -1129,70 +1193,75 @@ function ChannelTestDialogContent({
             <span className='min-w-0 truncate'>{currentRow.name}</span>
           </span>
         }
-        contentClassName='max-h-[min(90dvh,var(--dialog-available-height))] overflow-y-auto sm:max-w-4xl'
-        contentHeight='auto'
-        bodyClassName='space-y-4'
+        contentClassName='h-[min(90dvh,var(--dialog-available-height))] min-h-0 gap-2 overflow-hidden sm:max-w-4xl [@media(max-height:600px)]:gap-1 [@media(max-height:600px)]:p-2 [&>div.overscroll-contain]:flex-1 [&>div.overscroll-contain]:overflow-hidden'
+        bodyClassName='flex h-full min-h-0 flex-col overflow-hidden'
+        footerClassName='py-2 sm:py-2'
         footer={
           <Button variant='outline' onClick={handleClose}>
             {t('Close')}
           </Button>
         }
       >
-        <div className='max-h-[78vh] space-y-4 overflow-y-auto py-4 pr-1'>
-          <div className='grid gap-4 md:grid-cols-2'>
-            <div className='grid gap-2'>
-              <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
-              <Combobox
-                options={endpointSelectItems}
-                value={effectiveEndpointType}
-                onValueChange={handleEndpointTypeChange}
-                id='endpoint-type'
-                className='w-full min-w-0'
-                placeholder={t('Auto detect (default)')}
-              />
-              <p className='text-muted-foreground text-xs'>
-                {t(
-                  'Override the endpoint used for testing. Leave empty to auto detect.'
-                )}
-              </p>
-            </div>
-            <div className='grid gap-2'>
-              <Label htmlFor='stream-toggle'>{t('Stream Mode')}</Label>
-              <div className='flex items-center gap-2'>
-                <Switch
-                  id='stream-toggle'
-                  checked={effectiveStreamTest}
-                  onCheckedChange={setIsStreamTest}
-                  disabled={streamDisabled}
-                />
-                <span className='text-sm'>
-                  {effectiveStreamTest ? t('Enabled') : t('Disabled')}
-                </span>
-              </div>
-              <p className='text-muted-foreground text-xs'>
-                {t('Enable streaming mode for the test request.')}
-              </p>
-            </div>
+        <div className='flex min-h-0 flex-1 flex-col gap-2'>
+          <div className='flex shrink-0 items-center gap-2'>
             {isMultiKeyChannel && (
-              <div className='grid gap-2 md:col-span-2'>
-                <Label htmlFor='test-key'>{t('Tested key')}</Label>
+              <div className='min-w-0 flex-1'>
+                <Label htmlFor='test-key' className='sr-only'>
+                  {t('Tested key')}
+                </Label>
                 <Combobox
                   options={keySelectItems}
-                  value={
-                    selectedKeyIndex === null
-                      ? AUTO_TEST_KEY
-                      : String(selectedKeyIndex)
-                  }
+                  value={selectedKeyValue}
                   onValueChange={handleKeyChange}
+                  disabled={isAnyTesting}
                   id='test-key'
                   className='w-full min-w-0'
                   placeholder={t('Auto (by tested model)')}
                 />
-                <p className='text-muted-foreground text-xs'>
-                  {t(
-                    'Choose which key this test uses. Auto tests the key that serves the tested model.'
-                  )}
-                </p>
+              </div>
+            )}
+            <Input
+              placeholder={t('Filter models...')}
+              value={searchTerm}
+              onChange={handleSearchTermChange}
+              className='min-w-0 flex-1'
+            />
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant='outline'
+                    size='icon-sm'
+                    aria-label={t('Settings')}
+                  />
+                }
+              >
+                <Settings />
+              </PopoverTrigger>
+              <PopoverContent
+                align='end'
+                className='w-80 max-w-[calc(100vw-2rem)] gap-3'
+              >
+                <div className='grid gap-2'>
+                  <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
+                  <Combobox
+                    options={endpointSelectItems}
+                    value={effectiveEndpointType}
+                    onValueChange={handleEndpointTypeChange}
+                    id='endpoint-type'
+                    className='w-full min-w-0'
+                    placeholder={t('Auto detect (default)')}
+                  />
+                </div>
+                <div className='flex items-center justify-between gap-2'>
+                  <Label htmlFor='stream-toggle'>{t('Stream Mode')}</Label>
+                  <Switch
+                    id='stream-toggle'
+                    checked={effectiveStreamTest}
+                    onCheckedChange={setIsStreamTest}
+                    disabled={streamDisabled}
+                  />
+                </div>
                 {listedKeyCount > channelKeys.length && (
                   <p className='text-muted-foreground text-xs'>
                     {t('Only the first {{count}} keys are listed.', {
@@ -1205,85 +1274,70 @@ function ChannelTestDialogContent({
                     {t('Disabled Reason')}: {getKeyDisabledReason(selectedKey)}
                   </p>
                 )}
-              </div>
-            )}
+              </PopoverContent>
+            </Popover>
           </div>
 
-          <div className='space-y-3 max-sm:has-[div[role="toolbar"]]:pb-16'>
-            <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
-              <div className='min-w-0 space-y-2'>
-                <p className='text-sm font-medium'>{t('Channel models')}</p>
-                <p className='text-muted-foreground text-xs'>
-                  {t('Select models to run batch tests.')}
-                </p>
-                <div className='flex flex-wrap items-center gap-2'>
-                  {isBatchTesting ? (
+          <div className='flex min-h-0 flex-1 flex-col gap-2'>
+            <div className='flex shrink-0 flex-wrap items-center gap-2'>
+              {isBatchTesting ? (
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={handleStopBatchTest}
+                  disabled={isBatchStopRequested}
+                >
+                  {isBatchStopRequested ? t('Stopping...') : t('Stop testing')}
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    size='sm'
+                    onClick={() => handleBatchTest(filteredModels)}
+                    disabled={isAnyTesting || filteredModels.length === 0}
+                  >
+                    {testAllButtonLabel}
+                  </Button>
+                  {successModels.length > 0 && (
                     <Button
                       variant='outline'
-                      size='sm'
-                      onClick={handleStopBatchTest}
-                      disabled={isBatchStopRequested}
+                      size='icon-sm'
+                      onClick={handleSelectSuccessfulModels}
+                      aria-label={t('Select successful models ({{count}})', {
+                        count: successModels.length,
+                      })}
                     >
-                      {isBatchStopRequested
-                        ? t('Stopping...')
-                        : t('Stop testing')}
+                      <CheckCircle2 />
                     </Button>
-                  ) : (
-                    <>
-                      <Button
-                        size='sm'
-                        onClick={() => handleBatchTest(filteredModels)}
-                        disabled={isAnyTesting || filteredModels.length === 0}
-                      >
-                        {testAllButtonLabel}
-                      </Button>
-                      {successModels.length > 0 && (
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={handleSelectSuccessfulModels}
-                        >
-                          <CheckCircle2 data-icon='inline-start' />
-                          {t('Select successful models ({{count}})', {
-                            count: successModels.length,
-                          })}
-                        </Button>
-                      )}
-                      {failedModels.length > 0 && (
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={() => setIsDeleteFailedDialogOpen(true)}
-                        >
-                          <Trash2 data-icon='inline-start' />
-                          {t('Delete failed models ({{count}})', {
-                            count: failedModels.length,
-                          })}
-                        </Button>
-                      )}
-                    </>
                   )}
-                </div>
-              </div>
-              <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
-                <Input
-                  placeholder={t('Filter models...')}
-                  value={searchTerm}
-                  onChange={handleSearchTermChange}
-                  className='sm:w-64'
-                />
-              </div>
+                  {failedModels.length > 0 && (
+                    <Button
+                      variant='outline'
+                      size='icon-sm'
+                      onClick={() => setIsDeleteFailedDialogOpen(true)}
+                      aria-label={t('Delete failed models ({{count}})', {
+                        count: failedModels.length,
+                      })}
+                    >
+                      <Trash2 />
+                    </Button>
+                  )}
+                </>
+              )}
             </div>
 
-            <div className='space-y-3'>
+            <div className='flex min-h-0 flex-1 flex-col gap-2'>
               <DataTableView
                 table={table}
-                containerClassName='rounded-md'
+                containerClassName='min-h-0 flex-1 rounded-md'
                 containerProps={{
                   role: 'region',
                   'aria-label': t('Channel models'),
                 }}
-                tableContainerClassName='max-h-90 overflow-auto **:data-[slot=table-container]:overflow-visible'
+                tableContainerClassName='h-full min-h-0'
+                splitHeader
+                splitHeaderScrollClassName='h-full'
+                bodyContainerClassName='[scrollbar-gutter:stable]'
                 tableClassName='w-max min-w-full table-auto'
                 pinnedColumns={[
                   {
@@ -1312,7 +1366,9 @@ function ChannelTestDialogContent({
                 emptyCellClassName='text-muted-foreground h-16 text-center text-sm'
               />
 
-              <DataTablePagination table={table} />
+              <div className='shrink-0'>
+                <DataTablePagination table={table} />
+              </div>
             </div>
 
             <TestModelsBulkActions table={table} />
@@ -1560,7 +1616,7 @@ function TestModelsBulkActions({ table }: { table: TanStackTable<ModelRow> }) {
   }, [copyToClipboard, selectedModels])
 
   return (
-    <BulkActionsToolbar table={table} entityName='model'>
+    <BulkActionsToolbar table={table} entityName='model' placement='inline'>
       <Tooltip>
         <TooltipTrigger
           render={

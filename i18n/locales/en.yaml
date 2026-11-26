@@ -43,6 +43,11 @@ relay.access_token_unsupported: "Access tokens are not supported here"
 relay.request_rejected: "Request rejected by policy"
 relay.request_plugin_failed: "A request plugin failed"
 relay.response_rejected: "Response stopped by policy"
+relay.upstream_rejected: "The upstream provider rejected the request."
+relay.upstream_quota_restriction: "The upstream provider reported a quota restriction."
+relay.upstream_rate_limit: "The upstream provider is rate limiting requests."
+relay.upstream_unavailable: "The upstream provider is temporarily unavailable."
+relay.upstream_error: "The upstream provider returned an error."
 
 # Emails and the name of the token created at registration
 user.default_token_name: "{{.Username}}'s initial token"

@@ -103,6 +103,14 @@ Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
   value: () => undefined,
 })
 
+// jsdom has no Web Animations API; Base UI checks for active subtree animations.
+if (typeof HTMLElement.prototype.getAnimations !== 'function') {
+  Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
+    configurable: true,
+    value: () => [],
+  })
+}
+
 // Node.js 25+ defines `localStorage`/`sessionStorage` accessors on the global
 // object that resolve to `undefined` unless `--localstorage-file` is set, and
 // vitest's jsdom environment does not replace globals that already exist.
