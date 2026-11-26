@@ -120,7 +120,9 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     if (dynamicSummary.isSpecialExpression) {
       priceSummary = (
         <div className='col-span-full min-w-0'>
-          <span className='text-warning'>{t('Special billing expression')}</span>
+          <span className='text-warning'>
+            {t('Special billing expression')}
+          </span>
           <code className='text-muted-foreground mt-1 line-clamp-2 block font-mono text-xs break-all'>
             {dynamicSummary.rawExpression}
           </code>
@@ -361,7 +363,10 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           {props.model.vendor_name && (
             <div className='flex min-w-0 flex-col gap-1'>
               <dt className='text-muted-foreground'>{t('Provider')}</dt>
-              <dd className='truncate font-medium' title={props.model.vendor_name}>
+              <dd
+                className='truncate font-medium'
+                title={props.model.vendor_name}
+              >
                 {props.model.vendor_name}
               </dd>
             </div>
@@ -403,7 +408,9 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           )}
           {endpoints.length > 0 && (
             <div className='flex min-w-0 items-baseline gap-1.5'>
-              <dt className='text-muted-foreground shrink-0'>{t('Endpoints')}</dt>
+              <dt className='text-muted-foreground shrink-0'>
+                {t('Endpoints')}
+              </dt>
               <dd className='flex min-w-0 items-baseline gap-1'>
                 <span className='truncate' title={endpoints.join(', ')}>
                   {endpoints.slice(0, 2).join(', ')}

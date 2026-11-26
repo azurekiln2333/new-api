@@ -27,7 +27,7 @@ func (transport officialStatusTransport) RoundTrip(req *http.Request) (*http.Res
 func TestOfficialStatusFeeds(t *testing.T) {
 	for _, test := range []struct {
 		name, body, want string
-		invalid         bool
+		invalid          bool
 	}{
 		{"summary", `{"page":{"id":"vendor","updated_at":"2026-11-19T10:00:00Z"},"status":{"indicator":"minor"},"components":[{"id":"api","name":"API","status":"degraded_performance"}],"incidents":[{"id":"delays","name":"API delays","status":"investigating"}]}`, "degraded_performance", false},
 		{"empty object is not healthy", `{}`, "", true},

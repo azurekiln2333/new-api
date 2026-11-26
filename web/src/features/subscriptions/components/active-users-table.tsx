@@ -129,7 +129,7 @@ export function ActiveUsersTable() {
         accessorKey: 'start_time',
         header: t('Start'),
         cell: ({ row }) => (
-          <span className='whitespace-nowrap text-sm'>
+          <span className='text-sm whitespace-nowrap'>
             {formatTimestamp(row.original.start_time)}
           </span>
         ),
@@ -139,7 +139,7 @@ export function ActiveUsersTable() {
         accessorKey: 'end_time',
         header: t('End'),
         cell: ({ row }) => (
-          <span className='whitespace-nowrap text-sm'>
+          <span className='text-sm whitespace-nowrap'>
             {formatTimestamp(row.original.end_time)}
           </span>
         ),

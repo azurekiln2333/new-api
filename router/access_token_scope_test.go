@@ -656,7 +656,7 @@ func TestActiveSubscriptionListRequiresBillingReadAndAdminRole(t *testing.T) {
 				Success bool   `json:"success"`
 				Code    string `json:"code"`
 				Data    struct {
-					Total int64                                 `json:"total"`
+					Total int64                                  `json:"total"`
 					Items []model.ActiveUserSubscriptionListItem `json:"items"`
 				} `json:"data"`
 			}

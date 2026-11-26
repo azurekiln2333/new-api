@@ -77,7 +77,8 @@ const FETCH_ERROR_LABELS: Record<string, string> = {
   timeout: 'The official feed request timed out.',
   dns_error: 'The official feed hostname could not be resolved.',
   tls_error: 'The secure connection to the official feed failed.',
-  transport_error: 'The connection to the official feed could not be completed.',
+  transport_error:
+    'The connection to the official feed could not be completed.',
   http_error: 'The official feed returned an HTTP error.',
   invalid_feed: 'The official feed response could not be validated.',
   invalid_source: 'The official feed address is invalid.',
@@ -97,7 +98,9 @@ function StatusTimestamp(props: { value: string | number | undefined }) {
   ) {
     return <span>{t('Unknown')}</span>
   }
-  return <time dateTime={date.toISOString()}>{date.toLocaleString(locale)}</time>
+  return (
+    <time dateTime={date.toISOString()}>{date.toLocaleString(locale)}</time>
+  )
 }
 
 function FeedFailure(props: { code?: string; httpStatus?: number }) {
@@ -111,9 +114,17 @@ function FeedFailure(props: { code?: string; httpStatus?: number }) {
           ? FETCH_ERROR_LABELS[props.code]
           : 'Official feed data is unavailable.'
       )}
-      {props.httpStatus !== undefined && props.httpStatus >= 100 && props.httpStatus <= 599 && (
-        <> · {t('HTTP {{status}}', { status: formatNumber(props.httpStatus, locale) })}</>
-      )}
+      {props.httpStatus !== undefined &&
+        props.httpStatus >= 100 &&
+        props.httpStatus <= 599 && (
+          <>
+            {' '}
+            ·{' '}
+            {t('HTTP {{status}}', {
+              status: formatNumber(props.httpStatus, locale),
+            })}
+          </>
+        )}
     </p>
   )
 }
@@ -133,8 +144,8 @@ function IncidentList(props: { incidents: OfficialStatusIncident[] }) {
               Object.hasOwn(STATUS_LABELS, incident.status)
                 ? STATUS_LABELS[incident.status]
                 : 'Unknown'
-            )} ·{' '}
-            <StatusTimestamp value={incident.updated_at} />
+            )}{' '}
+            · <StatusTimestamp value={incident.updated_at} />
           </p>
         </li>
       ))}
@@ -156,14 +167,20 @@ function ProviderStatusCard(props: {
     provider.fetched_at > 0 &&
     provider.fetched_at <= props.now
   const stale = hasStatus && props.now - provider.fetched_at > FRESHNESS_LIMIT
-  const lastKnown = hasStatus && (stale || provider.unavailable || props.refreshFailed)
+  const lastKnown =
+    hasStatus && (stale || provider.unavailable || props.refreshFailed)
   const historyFetchedAt = provider.history_fetched_at ?? 0
   const hasHistory =
-    Number.isFinite(historyFetchedAt) && historyFetchedAt > 0 && historyFetchedAt <= props.now
-  const historyStale = hasHistory && props.now - historyFetchedAt > FRESHNESS_LIMIT
+    Number.isFinite(historyFetchedAt) &&
+    historyFetchedAt > 0 &&
+    historyFetchedAt <= props.now
+  const historyStale =
+    hasHistory && props.now - historyFetchedAt > FRESHNESS_LIMIT
   const components = hasStatus ? (provider.components ?? []) : []
   const active = hasStatus ? (provider.incidents ?? []) : []
-  const activeIds = new Set(active.map((incident) => incident.id).filter(Boolean))
+  const activeIds = new Set(
+    active.map((incident) => incident.id).filter(Boolean)
+  )
   const recent = (hasHistory ? (provider.recent_incidents ?? []) : []).filter(
     (incident) => !incident.id || !activeIds.has(incident.id)
   )
@@ -214,42 +231,97 @@ function ProviderStatusCard(props: {
         </a>
       </CardHeader>
       <CardContent className='flex min-h-0 flex-1 flex-col gap-3 overflow-hidden'>
-        <ScrollArea role='region' aria-label={t('Status data')} className='h-44 shrink-0 sm:h-40'>
+        <ScrollArea
+          role='region'
+          aria-label={t('Status data')}
+          className='h-44 shrink-0 sm:h-40'
+        >
           <div className='flex flex-col gap-2 pr-3'>
             <div className='flex flex-wrap items-center gap-2'>
-              <StatusBadge copyable={false} variant={stale ? 'warning' : 'neutral'} label={freshnessLabel} />
-              {provider.unavailable && <StatusBadge copyable={false} variant='neutral' label={t('Unavailable')} />}
-              {lastKnown && <span className='text-muted-foreground text-xs'>{t('Last known status')}</span>}
+              <StatusBadge
+                copyable={false}
+                variant={stale ? 'warning' : 'neutral'}
+                label={freshnessLabel}
+              />
+              {provider.unavailable && (
+                <StatusBadge
+                  copyable={false}
+                  variant='neutral'
+                  label={t('Unavailable')}
+                />
+              )}
+              {lastKnown && (
+                <span className='text-muted-foreground text-xs'>
+                  {t('Last known status')}
+                </span>
+              )}
             </div>
-            {!hasStatus && <p className='text-muted-foreground text-xs'>{t('No successful fetch yet.')}</p>}
-            <FeedFailure code={provider.fetch_error} httpStatus={provider.fetch_http_status} />
+            {!hasStatus && (
+              <p className='text-muted-foreground text-xs'>
+                {t('No successful fetch yet.')}
+              </p>
+            )}
+            <FeedFailure
+              code={provider.fetch_error}
+              httpStatus={provider.fetch_http_status}
+            />
             <dl className='text-muted-foreground grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs'>
               <dt>{t('Last successful fetch')}</dt>
-              <dd className='break-words'><StatusTimestamp value={provider.fetched_at} /></dd>
+              <dd className='break-words'>
+                <StatusTimestamp value={provider.fetched_at} />
+              </dd>
               <dt>{t('Last checked')}</dt>
-              <dd className='break-words'><StatusTimestamp value={provider.checked_at} /></dd>
+              <dd className='break-words'>
+                <StatusTimestamp value={provider.checked_at} />
+              </dd>
               <dt>{t('Source updated')}</dt>
-              <dd className='break-words'><StatusTimestamp value={provider.source_updated_at} /></dd>
+              <dd className='break-words'>
+                <StatusTimestamp value={provider.source_updated_at} />
+              </dd>
             </dl>
           </div>
         </ScrollArea>
-        <Collapsible open={expanded} onOpenChange={setExpanded} className='shrink-0'>
+        <Collapsible
+          open={expanded}
+          onOpenChange={setExpanded}
+          className='shrink-0'
+        >
           <CollapsibleTrigger
             disabled={components.length === 0}
-            render={<Button variant='outline' size='sm' className='w-full justify-between' />}
+            render={
+              <Button
+                variant='outline'
+                size='sm'
+                className='w-full justify-between'
+              />
+            }
           >
             {t('Components')} ({formatNumber(components.length, locale)})
-            <ChevronDown aria-hidden='true' className={cn('size-4 transition-transform', expanded && 'rotate-180')} />
+            <ChevronDown
+              aria-hidden='true'
+              className={cn(
+                'size-4 transition-transform',
+                expanded && 'rotate-180'
+              )}
+            />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <ScrollArea role='region' aria-label={t('Components')} className='h-40'>
+            <ScrollArea
+              role='region'
+              aria-label={t('Components')}
+              className='h-40'
+            >
               <ul className='divide-border divide-y pr-3'>
                 {components.map((component, index) => (
                   <li
-                    key={component.id ? `id:${component.id}` : `component:${index}`}
+                    key={
+                      component.id ? `id:${component.id}` : `component:${index}`
+                    }
                     className='flex min-w-0 flex-wrap items-center justify-between gap-2 py-2 text-sm'
                   >
-                    <span className='min-w-0 break-words'>{component.name}</span>
+                    <span className='min-w-0 break-words'>
+                      {component.name}
+                    </span>
                     <span className='text-muted-foreground text-xs'>
                       {t(
                         Object.hasOwn(STATUS_LABELS, component.status)
@@ -263,30 +335,77 @@ function ProviderStatusCard(props: {
             </ScrollArea>
           </CollapsibleContent>
         </Collapsible>
-        <section role='region' aria-label={t('Incidents')} className='flex min-h-0 flex-1 flex-col gap-2 overflow-hidden'>
+        <section
+          role='region'
+          aria-label={t('Incidents')}
+          className='flex min-h-0 flex-1 flex-col gap-2 overflow-hidden'
+        >
           <div className='flex shrink-0 flex-wrap items-center justify-between gap-2'>
             <h3 className='text-sm font-medium'>{t('Incidents')}</h3>
             <div className='flex flex-wrap gap-2'>
-              <StatusBadge copyable={false} variant={historyStale ? 'warning' : 'neutral'} label={historyFreshnessLabel} />
-              {provider.history_unavailable && <StatusBadge copyable={false} variant='neutral' label={t('Unavailable')} />}
+              <StatusBadge
+                copyable={false}
+                variant={historyStale ? 'warning' : 'neutral'}
+                label={historyFreshnessLabel}
+              />
+              {provider.history_unavailable && (
+                <StatusBadge
+                  copyable={false}
+                  variant='neutral'
+                  label={t('Unavailable')}
+                />
+              )}
             </div>
           </div>
           <ScrollArea className='min-h-0 flex-1'>
             <div className='flex flex-col gap-2 pr-3'>
-              <h4 className='text-muted-foreground text-xs font-medium'>{t('Active incidents')}</h4>
-              {hasStatus && active.length > 0 && <IncidentList incidents={active} />}
-              {hasStatus && active.length === 0 && <p className='text-muted-foreground text-xs'>{t('No active incidents reported.')}</p>}
-              {!hasStatus && <p className='text-muted-foreground text-xs'>{t('Active incident data is unavailable.')}</p>}
-              <h4 className='text-muted-foreground text-xs font-medium'>{t('Recent incidents')}</h4>
-              {(!hasHistory || provider.history_unavailable) && <p className='text-muted-foreground text-xs'>{t('Recent incident data is unavailable.')}</p>}
-              <FeedFailure code={provider.history_error} httpStatus={provider.history_http_status} />
-              {hasHistory && recent.length > 0 && <IncidentList incidents={recent} />}
-              {hasHistory && recent.length === 0 && !provider.history_unavailable && <p className='text-muted-foreground text-xs'>{t('No additional recent incidents reported.')}</p>}
+              <h4 className='text-muted-foreground text-xs font-medium'>
+                {t('Active incidents')}
+              </h4>
+              {hasStatus && active.length > 0 && (
+                <IncidentList incidents={active} />
+              )}
+              {hasStatus && active.length === 0 && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('No active incidents reported.')}
+                </p>
+              )}
+              {!hasStatus && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('Active incident data is unavailable.')}
+                </p>
+              )}
+              <h4 className='text-muted-foreground text-xs font-medium'>
+                {t('Recent incidents')}
+              </h4>
+              {(!hasHistory || provider.history_unavailable) && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('Recent incident data is unavailable.')}
+                </p>
+              )}
+              <FeedFailure
+                code={provider.history_error}
+                httpStatus={provider.history_http_status}
+              />
+              {hasHistory && recent.length > 0 && (
+                <IncidentList incidents={recent} />
+              )}
+              {hasHistory &&
+                recent.length === 0 &&
+                !provider.history_unavailable && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t('No additional recent incidents reported.')}
+                  </p>
+                )}
               <dl className='text-muted-foreground grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs'>
                 <dt>{t('History last successful fetch')}</dt>
-                <dd className='break-words'><StatusTimestamp value={provider.history_fetched_at} /></dd>
+                <dd className='break-words'>
+                  <StatusTimestamp value={provider.history_fetched_at} />
+                </dd>
                 <dt>{t('History last checked')}</dt>
-                <dd className='break-words'><StatusTimestamp value={provider.history_checked_at} /></dd>
+                <dd className='break-words'>
+                  <StatusTimestamp value={provider.history_checked_at} />
+                </dd>
               </dl>
             </div>
           </ScrollArea>
@@ -324,7 +443,12 @@ export function OfficialServiceStatus() {
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Official status')}</SectionPageLayout.Title>
       <SectionPageLayout.Actions>
-        <Button variant='outline' size='sm' disabled={query.isFetching} onClick={() => void query.refetch()}>
+        <Button
+          variant='outline'
+          size='sm'
+          disabled={query.isFetching}
+          onClick={() => void query.refetch()}
+        >
           <RefreshCw aria-hidden='true' />
           {t('Refresh')}
         </Button>
@@ -333,14 +457,20 @@ export function OfficialServiceStatus() {
         <div className='flex flex-col gap-4'>
           <Alert>
             <AlertDescription>
-              {t('Data comes from official vendor status pages and may be delayed. This page does not indicate the availability of this site.')}
+              {t(
+                'Data comes from official vendor status pages and may be delayed. This page does not indicate the availability of this site.'
+              )}
             </AlertDescription>
           </Alert>
           <p className='text-muted-foreground text-xs'>
-            {t('Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.')}
+            {t(
+              'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.'
+            )}
           </p>
           {query.isPending && <LoadingState />}
-          {query.isError && <ErrorState description={getServerErrorMessage(query.error)} />}
+          {query.isError && (
+            <ErrorState description={getServerErrorMessage(query.error)} />
+          )}
           {query.isSuccess && query.data.length === 0 && <EmptyState />}
           <div className='grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-2'>
             {OFFICIAL_STATUS_PROVIDERS.map((source) => {

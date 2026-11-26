@@ -176,9 +176,9 @@ describe('effective subscription users table', () => {
     expect(
       screen.getAllByText(formatTimestamp(rows[0].start_time))
     ).toHaveLength(1)
-    expect(
-      screen.getAllByText(formatTimestamp(rows[0].end_time))
-    ).toHaveLength(1)
+    expect(screen.getAllByText(formatTimestamp(rows[0].end_time))).toHaveLength(
+      1
+    )
     expect(screen.getAllByText('alice')).toHaveLength(2)
   })
 

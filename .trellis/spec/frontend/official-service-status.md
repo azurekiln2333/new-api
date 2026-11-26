@@ -60,6 +60,12 @@ component, active/recent incident and both error surfaces. Hosted execution and
 locale generation are separate requirements; source acceptance is not live-feed
 reachability or translation completeness.
 
+The shared Collapsible trigger stays focusable when disabled. Assert its
+`aria-disabled` state and that click, Enter and Space keep disclosure closed;
+`toBeDisabled` alone checks native semantics and is unsuitable for this control.
+Invalid successful-fetch timestamps must still hide status/components/incidents
+and retain the neutral Unknown presentation.
+
 ## Wrong versus correct
 
 Wrong: `STATUS_LABELS[value] ?? 'Unknown'` for arbitrary upstream strings.

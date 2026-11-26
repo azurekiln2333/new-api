@@ -28,11 +28,27 @@ export interface OfficialStatusIncident {
 
 export const OFFICIAL_STATUS_PROVIDERS = [
   { id: 'openai', name: 'OpenAI', source_url: 'https://status.openai.com/' },
-  { id: 'anthropic', name: 'Anthropic', source_url: 'https://status.claude.com/' },
-  { id: 'gemini', name: 'Gemini API', source_url: 'https://aistudio.google.com/status' },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    source_url: 'https://status.claude.com/',
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini API',
+    source_url: 'https://aistudio.google.com/status',
+  },
   { id: 'xai', name: 'xAI', source_url: 'https://status.x.ai/' },
-  { id: 'deepseek', name: 'DeepSeek', source_url: 'https://status.deepseek.com/' },
-  { id: 'moonshot', name: 'Moonshot', source_url: 'https://status.moonshot.cn/' },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    source_url: 'https://status.deepseek.com/',
+  },
+  {
+    id: 'moonshot',
+    name: 'Moonshot',
+    source_url: 'https://status.moonshot.cn/',
+  },
   { id: 'minimax', name: 'MiniMax', source_url: 'https://status.minimax.io/' },
   { id: 'mistral', name: 'Mistral', source_url: 'https://status.mistral.ai/' },
 ] as const

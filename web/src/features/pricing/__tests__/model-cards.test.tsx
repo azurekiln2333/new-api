@@ -230,9 +230,9 @@ describe('model cards', () => {
       ]) {
         await act(() => i18next.changeLanguage(language))
         expect(
-          within(screen.getByRole('group', { name: 'Model metadata' })).getByText(
-            expected
-          )
+          within(
+            screen.getByRole('group', { name: 'Model metadata' })
+          ).getByText(expected)
         ).toBeVisible()
       }
     } finally {
@@ -269,7 +269,9 @@ describe('model cards', () => {
     await user.tab()
     expect(screen.getByRole('button', { name: 'Details' })).toHaveFocus()
     await user.tab()
-    expect(screen.getByRole('button', { name: 'Copy model name' })).toHaveFocus()
+    expect(
+      screen.getByRole('button', { name: 'Copy model name' })
+    ).toHaveFocus()
     await user.tab()
     expect(trigger).toHaveFocus()
     await user.keyboard('{Enter}')

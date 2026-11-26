@@ -21,12 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { ActiveUsersTable } from './components/active-users-table'
 import { SubscriptionsDialogs } from './components/subscriptions-dialogs'
@@ -73,8 +68,12 @@ function SubscriptionsContent() {
             ) : null}
             <Tabs defaultValue='plans' className='flex min-h-0 flex-1 flex-col'>
               <TabsList className='shrink-0 self-start'>
-                <TabsTrigger value='plans'>{t('Subscription Plans')}</TabsTrigger>
-                <TabsTrigger value='active-users'>{t('active users')}</TabsTrigger>
+                <TabsTrigger value='plans'>
+                  {t('Subscription Plans')}
+                </TabsTrigger>
+                <TabsTrigger value='active-users'>
+                  {t('active users')}
+                </TabsTrigger>
               </TabsList>
               <TabsContent value='plans' className='min-h-0 flex-1'>
                 <SubscriptionsTable />
