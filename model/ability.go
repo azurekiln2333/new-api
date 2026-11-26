@@ -1,7 +1,10 @@
 package model
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"github.com/samber/lo"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 )
 
 type Ability struct {
@@ -338,6 +342,74 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	}
 
 	return nil
+}
+
+// RepairChannelMappedKeyAbilities upgrades persisted routes omitted before Key
+// allowlists recognized mapped upstream names. Run after allocation migration,
+// before routing starts. Only derived abilities change; configuration, allocation
+// revisions and budget state remain untouched.
+func RepairChannelMappedKeyAbilities(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	const batchSize = 200
+	lastID := 0
+	for {
+		var ids []int
+		if err := DB.WithContext(ctx).Model(&Channel{}).
+			Where("id > ? AND model_mapping IS NOT NULL AND model_mapping <> ? AND model_mapping <> ?", lastID, "", "{}").
+			Order("id").Limit(batchSize).Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		for _, id := range ids {
+			err := ChannelBudgetTransaction(ctx, id, func(tx *gorm.DB) error {
+				var channel Channel
+				// AfterFind hydrates current authoritative allocations on this same
+				// locked transaction, never from the compatibility JSON or cache.
+				if err := tx.Session(&gorm.Session{Logger: logger.Discard}).First(&channel, id).Error; err != nil {
+					return err
+				}
+				if !channel.ChannelInfo.IsMultiKey || channel.ChannelInfo.KeyEntryRevision == 0 {
+					return nil
+				}
+				// Without mapping, the same public-scope derivation reproduces the
+				// previous request-name-only behavior. Bound-only/empty scopes and
+				// channels already served by an unrestricted Key are unaffected.
+				requestOnly := channel
+				requestOnly.ModelMapping = nil
+				if slices.Equal(requestOnly.PublicModels(), channel.PublicModels()) {
+					return nil
+				}
+				var stored []Ability
+				if err := tx.Where("channel_id = ?", id).Find(&stored).Error; err != nil {
+					return err
+				}
+				expected := channel.channelAbilities()
+				byKey := make(map[[2]string]Ability, len(stored))
+				for _, ability := range stored {
+					byKey[[2]string{ability.Group, ability.Model}] = ability
+				}
+				unchanged := len(stored) == len(expected)
+				for _, ability := range expected {
+					if !reflect.DeepEqual(byKey[[2]string{ability.Group, ability.Model}], ability) {
+						unchanged = false
+						break
+					}
+				}
+				if unchanged {
+					return nil
+				}
+				return channel.UpdateAbilities(tx)
+			})
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("repair mapped Key abilities for channel %d: %w", id, err)
+			}
+			lastID = id
+		}
+	}
 }
 
 func UpdateAbilityStatus(channelId int, status bool) error {

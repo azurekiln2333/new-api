@@ -184,3 +184,11 @@ rejection, viewer-tier projection/preferences, masked authorized channel search
 and cancellation are included. Numeric summaries remain log-backed until the
 separate R24 source/read/backfill work completes. No local validation ran; hosted
 checks on the captured commit are required before merge/release.
+
+## Key-list and mapped capability hotfix capture — 2026-11-27
+
+Independent source review accepted the frozen mapped capability predicate, existing-data ability repair and status-read changes. Root isolated the nine code/test/CI paths in `fix/channel-key-read-routing-20261127`, based on the earlier UI hotfix head `2fd6fb27a`; original and followup worktrees stay preserved. The status read retains a short owner-row transaction for a coherent authoritative snapshot, then performs page-only quota enrichment and one username batch outside that transaction. Migrated reads no longer reconcile/publish on every request. The source query bound is at most five SELECTs (four with cached activation), not a measured cross-node latency result.
+
+Public request identity, bound-user rules and empty allowlist denial remain intact while Key capability matching accepts the exact configured upstream mapping target. Startup repairs only affected derived ability rows for existing channels, including cache-disabled routing, and the new regression executes the actual migration twice. The existing three-database CI selector now includes `TestMultiKeyStatusRead*`; a dedicated SQLite/MySQL/PostgreSQL loop covers `TestRepairChannelMappedKeyAbilitiesUpgrade`. No local validation ran; database compatibility and runtime acceptance remain pending this exact captured tree's hosted checks. The reviewer noted that cancellation coverage currently targets the snapshot helper rather than the complete HTTP enrichment phase; source propagation was accepted.
+
+The separate UI hotfix PR #5 run `45873282970` has successful backend and frontend jobs at `2fd6fb27a`; integration remains running. R40 exact13 is now frozen and independently reviewing. R33 and R5 production remain with their owners until final freezes; no partial source is included in this hotfix.
