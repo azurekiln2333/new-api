@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { LearnMore } from '@/components/learn-more'
 import {
   formatLatency,
   formatThroughput,
@@ -46,11 +47,17 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
   props: ModelPerfBadgeProps
 ) {
   const { t } = useTranslation()
-  const latencyText = formatLatency(props.perf?.avg_latency_ms ?? 0)
-  const throughputText = formatThroughput(props.perf?.avg_tps ?? 0).replace(
-    ' t/s',
-    't/s'
-  )
+  const hasLatency =
+    Number.isFinite(props.perf?.avg_latency_ms) &&
+    (props.perf?.avg_latency_ms ?? 0) > 0
+  const hasThroughput =
+    Number.isFinite(props.perf?.avg_tps) && (props.perf?.avg_tps ?? 0) > 0
+  const latencyText = hasLatency
+    ? formatLatency(props.perf?.avg_latency_ms ?? 0)
+    : '—s'
+  const throughputText = hasThroughput
+    ? formatThroughput(props.perf?.avg_tps ?? 0).replace(' t/s', 't/s')
+    : '—t/s'
   const successRate = props.perf?.success_rate
   const hasSuccessRate =
     successRate != null &&
@@ -78,30 +85,46 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
 
   return (
     <div
-      aria-label={t('Performance metrics for the last 24 hours')}
-      className={cn(
-        'flex w-full min-w-0 items-center justify-between gap-3',
-        props.className
-      )}
+      role='group'
+      aria-label={t('Performance')}
+      className={cn('w-full min-w-0', props.className)}
     >
-      <dl className='flex min-w-0 items-start gap-5 text-xs tabular-nums'>
-        <div className='w-24 shrink-0'>
-          <dt
-            title={t(
-              'Success rate excludes business rejections and includes the current partial hour.'
-            )}
-            className='text-muted-foreground flex items-center justify-between gap-1 text-[11px] leading-4'
-          >
+      <dl className='grid w-full min-w-0 grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-x-3 gap-y-2 text-xs tabular-nums'>
+        <div title={t('Average latency')} className='min-w-0'>
+          <dt className='text-muted-foreground text-[11px] leading-4'>
+            {t('Average latency')}
+          </dt>
+          <dd className='mt-1 font-mono whitespace-nowrap'>{latencyText}</dd>
+        </div>
+        <div title={t('Throughput')} className='min-w-0'>
+          <dt className='text-muted-foreground text-[11px] leading-4'>
+            {t('Throughput')}
+          </dt>
+          <dd className='mt-1 font-mono whitespace-nowrap'>{throughputText}</dd>
+        </div>
+        <div className='min-w-0'>
+          <dt className='text-muted-foreground flex min-w-0 items-center gap-1 text-[11px] leading-4'>
             <span>{t('Status')}</span>
-            <span className='font-mono'>
-              {hasSuccessRate ? `${successRate.toFixed(2)}%` : '—'}
-            </span>
+            <LearnMore triggerProps={{ 'aria-label': t('Success rate') }}>
+              <p>
+                {t(
+                  'Success rate excludes business rejections and includes the current partial hour.'
+                )}
+              </p>
+            </LearnMore>
+            {hasSuccessRate ? (
+              <span className='text-foreground ml-auto shrink-0 font-mono'>
+                {successRate.toFixed(2)}%
+              </span>
+            ) : (
+              <span className='ml-auto shrink-0 font-mono'>—</span>
+            )}
           </dt>
           <dd
             role='img'
             aria-label={statusLabel}
             title={statusLabel}
-            className='mt-1 flex h-3 w-24 items-center gap-px'
+            className='mt-1 flex h-3 min-w-0 items-center gap-px'
           >
             {statusSamples.length > 0 ? (
               statusSamples.map((sample) => (
@@ -109,30 +132,14 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
                   key={sample.ts}
                   aria-hidden
                   className={cn(
-                    'h-full w-[3px] shrink-0 rounded-xs',
+                    'h-full min-w-[2px] flex-1 rounded-xs',
                     getSuccessRateDotClass(sample.success_rate)
                   )}
                 />
               ))
             ) : (
-              <span className='text-muted-foreground'>—</span>
+              <span className='text-muted-foreground font-mono'>—</span>
             )}
-          </dd>
-        </div>
-        <div title={t('Average latency')} className='shrink-0'>
-          <dt className='text-muted-foreground text-[11px] leading-4'>
-            {t('Latency short')}
-          </dt>
-          <dd className='mt-1 font-mono whitespace-nowrap'>
-            {latencyText === '—' ? '—s' : latencyText}
-          </dd>
-        </div>
-        <div title={t('Throughput')} className='shrink-0'>
-          <dt className='text-muted-foreground text-[11px] leading-4'>
-            {t('Throughput short')}
-          </dt>
-          <dd className='mt-1 font-mono whitespace-nowrap'>
-            {throughputText === '—' ? '—t/s' : throughputText}
           </dd>
         </div>
       </dl>
