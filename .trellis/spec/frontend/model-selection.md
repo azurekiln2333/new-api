@@ -81,6 +81,14 @@ assertions do not establish the failure's cause or prove it fixed. Compare the
 complete optional saved config object instead of dereferencing an optional map
 or adding a non-null assertion solely to satisfy TypeScript.
 
+For the installed Base UI multiple combobox, selecting a filtered option can
+close the popup automatically. Do not send an unconditional Escape afterward:
+Escape with the popup unmounted clears the selected values. Observe the live
+input's `aria-expanded` state and exact chips instead. An Escape used to dismiss
+an already-open, unfiltered list has a different path; preserve it when the test
+establishes that state. Require the current input's chip container to exist
+rather than turning a missing container into an empty list.
+
 Channel, per-group and per-Key model limits opt into `compareModelOptions` on the
 existing `MultiSelect`. Tag model choices and both mapping autocomplete fields
 sort newly mapped candidates only. Preserve channel catalogs, selected chips,

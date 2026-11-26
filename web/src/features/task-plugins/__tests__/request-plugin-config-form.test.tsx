@@ -25,7 +25,7 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, assert, beforeEach, expect, test, vi } from 'vitest'
 
 import type { TaskPluginOption } from '@/features/channels/api'
 
@@ -257,7 +257,11 @@ test('chosen model options sort naturally including saved custom models without 
     'aria-selected',
     'true'
   )
+  expect(groupPicker).toHaveAttribute('aria-expanded', 'true')
   await user.keyboard('{Escape}')
+  expect(
+    within(dialog).getByRole('combobox', { name: 'Select groups' })
+  ).toHaveAttribute('aria-expanded', 'false')
 
   const modelPicker = within(dialog).getByRole('combobox', {
     name: 'Select models or add custom ones',
@@ -276,24 +280,34 @@ test('chosen model options sort naturally including saved custom models without 
   )
   expect(onSave).not.toHaveBeenCalled()
   await user.type(modelPicker, 'gpt-2')
-  expect(
-    screen.getAllByRole('option').map((item) => item.textContent)
-  ).toEqual(['GPT-2', 'gpt-2'])
+  expect(screen.getAllByRole('option').map((item) => item.textContent)).toEqual(
+    ['GPT-2', 'gpt-2']
+  )
   await user.click(screen.getByRole('option', { name: 'gpt-2' }))
-  await user.keyboard('{Escape}')
+  // The filtered choice closes the popup; another Escape clears selected models.
+  const currentModelPicker = within(dialog).getByRole('combobox', {
+    name: 'Select models or add custom ones',
+  })
+  expect(currentModelPicker).toHaveAttribute('aria-expanded', 'false')
+  const modelChips = currentModelPicker.closest<HTMLElement>(
+    '[data-slot="combobox-chips"]'
+  )
+  assert.isNotNull(modelChips)
+  expect(modelChips).toBeInTheDocument()
   expect(
-    [
-      ...(modelPicker
-        .closest('[data-slot="combobox-chips"]')
-        ?.querySelectorAll('[data-slot="combobox-chip"]') ?? []),
-    ].map((chip) => chip.textContent)
+    [...modelChips.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
   ).toEqual(['gpt-10', 'custom-3', 'gpt-2'])
+  const groupChips = within(dialog)
+    .getByRole('combobox', { name: 'Select groups' })
+    .closest<HTMLElement>('[data-slot="combobox-chips"]')
+  assert.isNotNull(groupChips)
+  expect(groupChips).toBeInTheDocument()
   expect(
-    [
-      ...(groupPicker
-        .closest('[data-slot="combobox-chips"]')
-        ?.querySelectorAll('[data-slot="combobox-chip"]') ?? []),
-    ].map((chip) => chip.textContent)
+    [...groupChips.querySelectorAll('[data-slot="combobox-chip"]')].map(
+      (chip) => chip.textContent
+    )
   ).toEqual(['zeta-group', 'alpha-group'])
   expect(
     within(dialog).getByRole('radio', { name: /Chosen groups/ })
@@ -329,10 +343,10 @@ test('opening sorted choices does not pick a model or change the all-models defa
   const models = ['gpt-10', 'gpt-2']
   Object.freeze(models)
   const { user, dialog, onSave } = await openEditor('Image compress', models)
-  expect(within(dialog).getByRole('radio', { name: /All models/ })).toBeChecked()
-  await user.click(
-    within(dialog).getByRole('radio', { name: /Chosen models/ })
-  )
+  expect(
+    within(dialog).getByRole('radio', { name: /All models/ })
+  ).toBeChecked()
+  await user.click(within(dialog).getByRole('radio', { name: /Chosen models/ }))
   await user.click(
     within(dialog).getByRole('combobox', {
       name: 'Select models or add custom ones',
