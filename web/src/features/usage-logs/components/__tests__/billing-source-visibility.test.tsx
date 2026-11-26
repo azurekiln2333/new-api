@@ -75,7 +75,7 @@ async function renderLogs(props: {
       other: JSON.stringify({ billing_source: source }),
     })
   )
-  const respond: typeof api.get = vi.fn(async (url) => {
+  const respond = async (url: string) => {
     let data: unknown = { quota: 0, rpm: 0, tpm: 0 }
     if (url === '/api/subscription/admin/plans') {
       data = props.enabledPlans.map((enabled) => ({ plan: { enabled } }))
@@ -97,7 +97,7 @@ async function renderLogs(props: {
       data = {}
     }
     return { data: { success: true, data } }
-  })
+  }
   if (props.mockRequests !== false) {
     vi.spyOn(api, 'get').mockImplementation(respond)
   }

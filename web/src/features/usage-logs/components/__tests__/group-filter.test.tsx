@@ -35,6 +35,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import type { ChannelOptionsParams } from '@/features/channels/types'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -73,12 +74,7 @@ async function renderFilter(
       if (channelOptions === null) {
         return { data: { success: false, message: 'Unavailable' } }
       }
-      const params = config?.params as {
-        p?: number
-        page_size?: number
-        keyword?: string
-        ids?: string
-      }
+      const params = config?.params as ChannelOptionsParams
       const selected = channelOptions.filter(
         (channel) => String(channel.id) === params.ids
       )
@@ -364,7 +360,8 @@ it('searches bounded channel names, disambiguates duplicates by id and submits o
       vi.mocked(api.get).mock.calls.some(
         ([url, config]) =>
           url === '/api/channel/options' &&
-          config?.params?.keyword === 'Primary'
+          (config?.params as ChannelOptionsParams | undefined)?.keyword ===
+            'Primary'
       )
     ).toBe(true)
   )
@@ -388,19 +385,24 @@ it('searches bounded channel names, disambiguates duplicates by id and submits o
     .mocked(api.get)
     .mock.calls.filter(([url]) => url === '/api/channel/options')
   expect(
-    optionCalls.some(([, config]) => config?.params?.keyword === 'Primary')
+    optionCalls.some(
+      ([, config]) =>
+        (config?.params as ChannelOptionsParams | undefined)?.keyword ===
+        'Primary'
+    )
   ).toBe(true)
   for (const [, config] of optionCalls) {
-    if (config?.params?.ids) {
-      expect(config.params).toEqual({
+    const params = config?.params as ChannelOptionsParams | undefined
+    if (params?.ids) {
+      expect(params).toEqual({
         p: 1,
         page_size: 1,
         keyword: '42',
         ids: '42',
       })
     } else {
-      expect(config?.params?.page_size).toBe(30)
-      expect(config?.params).not.toHaveProperty('ids')
+      expect(params?.page_size).toBe(30)
+      expect(params).not.toHaveProperty('ids')
     }
     expect(config?.signal).toBeInstanceOf(AbortSignal)
   }
