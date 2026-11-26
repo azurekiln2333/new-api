@@ -402,6 +402,85 @@ then retain the existing validated transaction and cache publication.
 
 ---
 
+## Multi-Key status reads and mapped capabilities
+
+### 1. Scope / Trigger
+
+Key-list performance changes must preserve a coherent configuration/allocation
+snapshot. Mapping fixes must also repair persisted routing for existing channels
+when in-memory routing is disabled.
+
+### 2. Signatures
+
+- `ReadChannelKeyEntriesSnapshot(ctx, channelID)` reads authoritative allocations.
+- `ReadChannelBudgetViewsWithActivation(ctx, scope, ids)` returns views and the
+  same activation observation used to construct them.
+- `RepairChannelMappedKeyAbilities(ctx)` runs after `MigrateChannelKeyEntries`.
+- `POST /api/channel/multi_key/manage` with `action=get_key_status` caps
+  `page_size` at 100 and enriches only the selected page.
+
+### 3. Contracts
+
+Read channel and allocation rows in one short transaction, using the owning row
+lock on MySQL/PostgreSQL and a read snapshot on SQLite. Keep the transaction out
+of budget and username enrichment, and do not hold the process polling mutex
+over those reads. Only an unmigrated channel may trigger allocation migration.
+Read page budgets once and bound usernames in one batch. Activation/account
+errors remain errors; username display lookup remains best-effort. Cancellation
+must propagate through database reads and must not return a successful list.
+
+The request model remains the public authorization identity. A Key allowlist
+may match that exact identity or its final configured upstream mapping target;
+mapping does not add the upstream-only name to the public catalog or relax
+token/group rules. Empty explicit allowlists deny all. Budget admission must use
+the same capability rule. Preserve exact spelling through the mapping chain.
+
+Startup repair scans mapped channel IDs in bounded batches, locks/reloads each
+affected channel with authoritative allocations, and updates only its derived
+abilities if they differ. Retain configuration, allocation IDs/revisions,
+budgets and unrelated channels. A second startup must perform no extra ability
+rewrite. Do not use a global abilities-table wipe for this upgrade.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Migrated status read | No allocation reconciliation or publication |
+| Requested page exceeds 100 rows | Return a page of at most 100 |
+| Activation/account read fails | Error, never invented unlimited quota |
+| Username lookup fails | Keep authoritative row with empty display name |
+| Key allows `DeepSeek-R1`, channel maps `deepseek-r1` to it | Public alias is eligible |
+| Key allowlist is empty, unrelated, or bound to another user | Preserve denial |
+| Existing uncached channel lacks its mapped alias ability | Repair on startup |
+
+### 5. Good / Base / Bad Cases
+
+Good: derive the Key preview and quota for the requested page while retaining
+whole-channel status counts. Base: an unscoped Key still serves the channel's
+authorized catalog. Bad: iterate username reads per row, or repair only the
+in-memory map and leave uncached upgraded installations unable to route.
+
+### 6. Tests Required
+
+`TestMultiKeyStatusRead*` covers query amplification, page/filter bounds, stable
+identity, stale compatibility JSON, activation/account failures, legacy migration
+and cancellation. `TestChannelAllocationsMappedModelScope` covers request identity,
+exact upstream spelling, cached/uncached routing and budget admission.
+`TestRepairChannelMappedKeyAbilitiesUpgrade` seeds a missing old alias, executes
+the real migration twice and checks routing plus unchanged configuration/budgets.
+Run each affected database contract on real SQLite, MySQL and PostgreSQL in CI.
+Source query counts are not production latency measurements.
+
+### 7. Wrong vs Correct
+
+Wrong: match Key scope only against the public alias, then require the user to
+resave every old channel to restore database-backed routing.
+
+Correct: share the mapped capability predicate with budget admission and repair
+only affected derived abilities during the existing startup migration.
+
+---
+
 ## Common Mistakes
 
 <!-- Database-related mistakes your team has made -->
