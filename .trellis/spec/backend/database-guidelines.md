@@ -339,6 +339,69 @@ the generation before replacing the credential.
 
 ---
 
+## Channel configuration patch persistence
+
+### 1. Scope / Trigger
+
+Changes to the channel editor or its locked-row merge must preserve editable
+configuration through the HTTP response, database and published routing cache.
+
+### 2. Signatures
+
+- `PUT /api/channel/` decodes `PatchChannel` and validates before mutation.
+- `applyChannelConfigEdit(request *PatchChannel, stored *model.Channel)` merges
+  onto the freshly locked row inside `UpdateChannelConfigAtomic`.
+- `updateAuditParams(stored, baseline *model.Channel)` records changed names.
+
+### 3. Contracts
+
+The optional string field `model_mapping` must participate in the merge.
+Omitted or JSON-null values preserve the locked value; a provided empty string
+clears it. Preserve mapping source and target
+casing: `deepseek-r1` mapped to `DeepSeek-R1` is a valid exact-case redirect.
+Persist through the existing transaction/publication path; do not replace the
+locked row with the request or a pre-transaction snapshot. Audit only changed
+field names, never override values or credentials.
+Do not restore other missing setters without reviewing their authorization:
+sensitive changes must be authorized against the actual locked delta. A stale
+request equal to the earlier snapshot must not overwrite a concurrent sensitive
+edit after bypassing a change-based permission check.
+
+### 4. Validation & Error Matrix
+
+| Input | Required result |
+| --- | --- |
+| Mapping omitted or null | Retain its freshly locked value |
+| Mapping is an empty string or empty object string | Clear the mapping and publish the clear |
+| Valid replacement mapping | Response, database and local cache agree |
+| Existing permission, validation or revision guard rejects the edit | Preserve stored configuration |
+
+### 5. Good / Base / Bad Cases
+
+- Good: editing an existing mapping changes the actual upstream DTO model.
+- Base: renaming a channel without mapping fields retains its mapping.
+- Bad: returning success after copying only scalar fields leaves the old mapping
+  in both the database and cache.
+
+### 6. Tests Required
+
+`TestChannelUpdatePersistsModelMappingAndPublishesCache` in
+`controller/channel_create_test.go` covers real PUT add/edit/clear/omitted/null
+cases, response, database, enabled cache, audit and mapped DTO behavior with
+exact target casing. `TestChannelUpdate`-prefixed regressions run in
+the existing `TEST_CHANNEL_SQL_DSN` SQLite/MySQL/PostgreSQL CI loop. A local
+cache assertion does not prove cross-node publication or deployed behavior.
+
+### 7. Wrong vs Correct
+
+Wrong: accepting `model_mapping` into `candidate` but never assigning it to the
+locked `stored` channel before persistence.
+
+Correct: `if candidate.ModelMapping != nil { stored.ModelMapping = candidate.ModelMapping }`,
+then retain the existing validated transaction and cache publication.
+
+---
+
 ## Common Mistakes
 
 <!-- Database-related mistakes your team has made -->
