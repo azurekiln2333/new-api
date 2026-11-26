@@ -42,6 +42,49 @@ const newKeys = {
       'the selected key is unavailable for this model',
     'fingerprint endpoint type is not supported':
       'fingerprint endpoint type is not supported',
+    'Postmortem': 'Postmortem',
+    'No verified public status feed is available.':
+      'No verified public status feed is available.',
+    'The last successful fetch time is invalid.':
+      'The last successful fetch time is invalid.',
+    'The official feed request timed out.': 'The official feed request timed out.',
+    'The official feed hostname could not be resolved.':
+      'The official feed hostname could not be resolved.',
+    'The secure connection to the official feed failed.':
+      'The secure connection to the official feed failed.',
+    'The connection to the official feed could not be completed.':
+      'The connection to the official feed could not be completed.',
+    'The official feed returned an HTTP error.':
+      'The official feed returned an HTTP error.',
+    'The official feed response could not be validated.':
+      'The official feed response could not be validated.',
+    'The official feed address is invalid.': 'The official feed address is invalid.',
+    'The official feed redirect was rejected.':
+      'The official feed redirect was rejected.',
+    'The official feed response could not be read.':
+      'The official feed response could not be read.',
+    'The official feed response exceeded the size limit.':
+      'The official feed response exceeded the size limit.',
+    'Official feed data is unavailable.': 'Official feed data is unavailable.',
+    'HTTP {{status}}': 'HTTP {{status}}',
+    'Fresh': 'Fresh',
+    'Status data': 'Status data',
+    'Last known status': 'Last known status',
+    'No successful fetch yet.': 'No successful fetch yet.',
+    'Components': 'Components',
+    'Active incidents': 'Active incidents',
+    'No active incidents reported.': 'No active incidents reported.',
+    'Active incident data is unavailable.': 'Active incident data is unavailable.',
+    'Recent incidents': 'Recent incidents',
+    'Recent incident data is unavailable.': 'Recent incident data is unavailable.',
+    'No additional recent incidents reported.': 'No additional recent incidents reported.',
+    'History last successful fetch': 'History last successful fetch',
+    'History last checked': 'History last checked',
+    'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.':
+      'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.',
+    'Everyone except me': 'Everyone except me',
+    'fingerprint request no longer matches the previewed prompt':
+      'fingerprint request no longer matches the previewed prompt',
   },
   zh: {
     'Deployment default': '部署默认值',
@@ -74,6 +117,48 @@ const newKeys = {
       '所选密钥无法用于此模型。',
     'fingerprint endpoint type is not supported':
       '不支持此指纹检测端点类型。',
+    'Postmortem': '事后分析',
+    'No verified public status feed is available.':
+      '暂无经过验证的公开状态数据源。',
+    'The last successful fetch time is invalid.':
+      '上次成功获取数据的时间无效。',
+    'The official feed request timed out.': '官方数据源请求超时。',
+    'The official feed hostname could not be resolved.':
+      '无法解析官方数据源的主机名。',
+    'The secure connection to the official feed failed.':
+      '与官方数据源的安全连接失败。',
+    'The connection to the official feed could not be completed.':
+      '无法完成与官方数据源的连接。',
+    'The official feed returned an HTTP error.':
+      '官方数据源返回了 HTTP 错误。',
+    'The official feed response could not be validated.':
+      '无法验证官方数据源的响应。',
+    'The official feed address is invalid.': '官方数据源地址无效。',
+    'The official feed redirect was rejected.': '官方数据源的重定向被拒绝。',
+    'The official feed response could not be read.':
+      '无法读取官方数据源的响应。',
+    'The official feed response exceeded the size limit.':
+      '官方数据源的响应超过大小限制。',
+    'Official feed data is unavailable.': '官方数据源的数据不可用。',
+    'HTTP {{status}}': 'HTTP {{status}}',
+    'Fresh': '新近',
+    'Status data': '状态数据',
+    'Last known status': '最近已知状态',
+    'No successful fetch yet.': '尚未成功获取数据。',
+    'Components': '服务组件',
+    'Active incidents': '进行中的事件',
+    'No active incidents reported.': '未报告进行中的事件。',
+    'Active incident data is unavailable.': '进行中的事件数据不可用。',
+    'Recent incidents': '近期事件',
+    'Recent incident data is unavailable.': '近期事件数据不可用。',
+    'No additional recent incidents reported.': '未报告其他近期事件。',
+    'History last successful fetch': '历史记录上次成功获取时间',
+    'History last checked': '历史记录上次检查时间',
+    'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.':
+      '官方数据源缓存五分钟。成功获取的数据超过三十分钟后视为过时。未经验证的数据源保持不可用。',
+    'Everyone except me': '除我以外的所有人',
+    'fingerprint request no longer matches the previewed prompt':
+      '指纹检测请求与预览的提示词不再匹配。',
   },
   'zh-TW': {
     'Deployment default': '部署預設值',
@@ -106,6 +191,48 @@ const newKeys = {
       '所選金鑰無法用於此模型。',
     'fingerprint endpoint type is not supported':
       '不支援此指紋偵測端點類型。',
+    'Postmortem': '事後分析',
+    'No verified public status feed is available.':
+      '目前沒有經過驗證的公開狀態資料來源。',
+    'The last successful fetch time is invalid.':
+      '上次成功取得資料的時間無效。',
+    'The official feed request timed out.': '官方資料來源請求逾時。',
+    'The official feed hostname could not be resolved.':
+      '無法解析官方資料來源的主機名稱。',
+    'The secure connection to the official feed failed.':
+      '與官方資料來源的安全連線失敗。',
+    'The connection to the official feed could not be completed.':
+      '無法完成與官方資料來源的連線。',
+    'The official feed returned an HTTP error.':
+      '官方資料來源回傳了 HTTP 錯誤。',
+    'The official feed response could not be validated.':
+      '無法驗證官方資料來源的回應。',
+    'The official feed address is invalid.': '官方資料來源位址無效。',
+    'The official feed redirect was rejected.': '官方資料來源的重新導向遭拒。',
+    'The official feed response could not be read.':
+      '無法讀取官方資料來源的回應。',
+    'The official feed response exceeded the size limit.':
+      '官方資料來源的回應超過大小限制。',
+    'Official feed data is unavailable.': '官方資料來源的資料無法使用。',
+    'HTTP {{status}}': 'HTTP {{status}}',
+    'Fresh': '新近',
+    'Status data': '狀態資料',
+    'Last known status': '最近已知狀態',
+    'No successful fetch yet.': '尚未成功取得資料。',
+    'Components': '服務元件',
+    'Active incidents': '進行中的事件',
+    'No active incidents reported.': '未回報進行中的事件。',
+    'Active incident data is unavailable.': '進行中的事件資料無法使用。',
+    'Recent incidents': '近期事件',
+    'Recent incident data is unavailable.': '近期事件資料無法使用。',
+    'No additional recent incidents reported.': '未回報其他近期事件。',
+    'History last successful fetch': '歷史紀錄上次成功取得時間',
+    'History last checked': '歷史紀錄上次檢查時間',
+    'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.':
+      '官方資料來源快取五分鐘。成功取得的資料超過三十分鐘後視為過時。未經驗證的資料來源維持無法使用。',
+    'Everyone except me': '除我以外的所有人',
+    'fingerprint request no longer matches the previewed prompt':
+      '指紋偵測請求與預覽的提示詞不再相符。',
   },
   fr: {
     'Deployment default': 'Valeur du déploiement',
@@ -142,6 +269,52 @@ const newKeys = {
       'La clé sélectionnée n’est pas disponible pour ce modèle.',
     'fingerprint endpoint type is not supported':
       'Ce type de point de terminaison de détection d’empreinte n’est pas pris en charge.',
+    'Postmortem': 'Analyse après incident',
+    'No verified public status feed is available.':
+      'Aucun flux public d’état vérifié n’est disponible.',
+    'The last successful fetch time is invalid.':
+      'L’heure de la dernière récupération réussie est invalide.',
+    'The official feed request timed out.':
+      'Le délai de la requête au flux officiel a expiré.',
+    'The official feed hostname could not be resolved.':
+      'Le nom d’hôte du flux officiel n’a pas pu être résolu.',
+    'The secure connection to the official feed failed.':
+      'La connexion sécurisée au flux officiel a échoué.',
+    'The connection to the official feed could not be completed.':
+      'La connexion au flux officiel n’a pas pu être établie.',
+    'The official feed returned an HTTP error.':
+      'Le flux officiel a renvoyé une erreur HTTP.',
+    'The official feed response could not be validated.':
+      'La réponse du flux officiel n’a pas pu être validée.',
+    'The official feed address is invalid.': 'L’adresse du flux officiel est invalide.',
+    'The official feed redirect was rejected.':
+      'La redirection du flux officiel a été refusée.',
+    'The official feed response could not be read.':
+      'La réponse du flux officiel n’a pas pu être lue.',
+    'The official feed response exceeded the size limit.':
+      'La réponse du flux officiel dépasse la taille limite.',
+    'Official feed data is unavailable.': 'Les données du flux officiel sont indisponibles.',
+    'HTTP {{status}}': 'HTTP {{status}}',
+    'Fresh': 'Récentes',
+    'Status data': 'Données d’état',
+    'Last known status': 'Dernier état connu',
+    'No successful fetch yet.': 'Aucune récupération réussie pour le moment.',
+    'Components': 'Composants',
+    'Active incidents': 'Incidents en cours',
+    'No active incidents reported.': 'Aucun incident en cours signalé.',
+    'Active incident data is unavailable.':
+      'Les données des incidents en cours sont indisponibles.',
+    'Recent incidents': 'Incidents récents',
+    'Recent incident data is unavailable.':
+      'Les données des incidents récents sont indisponibles.',
+    'No additional recent incidents reported.': 'Aucun autre incident récent signalé.',
+    'History last successful fetch': 'Dernière récupération réussie de l’historique',
+    'History last checked': 'Dernière vérification de l’historique',
+    'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.':
+      'Les flux officiels sont mis en cache pendant cinq minutes. Les données récupérées avec succès il y a plus de trente minutes sont périmées. Les flux non vérifiés restent indisponibles.',
+    'Everyone except me': 'Tout le monde sauf moi',
+    'fingerprint request no longer matches the previewed prompt':
+      'La requête de détection d’empreinte ne correspond plus à l’instruction prévisualisée.',
   },
   ja: {
     'Deployment default': 'デプロイの既定値',
@@ -178,6 +351,53 @@ const newKeys = {
       '選択したキーはこのモデルでは利用できません。',
     'fingerprint endpoint type is not supported':
       'このフィンガープリント検出のエンドポイント種別には対応していません。',
+    'Postmortem': '事後分析',
+    'No verified public status feed is available.':
+      '確認済みの公開ステータスフィードはありません。',
+    'The last successful fetch time is invalid.':
+      '最後に取得に成功した時刻が無効です。',
+    'The official feed request timed out.':
+      '公式フィードへのリクエストがタイムアウトしました。',
+    'The official feed hostname could not be resolved.':
+      '公式フィードのホスト名を解決できませんでした。',
+    'The secure connection to the official feed failed.':
+      '公式フィードへの安全な接続に失敗しました。',
+    'The connection to the official feed could not be completed.':
+      '公式フィードへの接続を完了できませんでした。',
+    'The official feed returned an HTTP error.':
+      '公式フィードが HTTP エラーを返しました。',
+    'The official feed response could not be validated.':
+      '公式フィードの応答を検証できませんでした。',
+    'The official feed address is invalid.': '公式フィードのアドレスが無効です。',
+    'The official feed redirect was rejected.':
+      '公式フィードのリダイレクトが拒否されました。',
+    'The official feed response could not be read.':
+      '公式フィードの応答を読み取れませんでした。',
+    'The official feed response exceeded the size limit.':
+      '公式フィードの応答がサイズ制限を超えました。',
+    'Official feed data is unavailable.': '公式フィードのデータを利用できません。',
+    'HTTP {{status}}': 'HTTP {{status}}',
+    'Fresh': '新しい',
+    'Status data': 'ステータスデータ',
+    'Last known status': '最後に確認された状態',
+    'No successful fetch yet.': 'まだデータの取得に成功していません。',
+    'Components': 'コンポーネント',
+    'Active incidents': '対応中のインシデント',
+    'No active incidents reported.': '対応中のインシデントは報告されていません。',
+    'Active incident data is unavailable.':
+      '対応中のインシデントのデータを利用できません。',
+    'Recent incidents': '最近のインシデント',
+    'Recent incident data is unavailable.':
+      '最近のインシデントのデータを利用できません。',
+    'No additional recent incidents reported.':
+      'ほかに最近のインシデントは報告されていません。',
+    'History last successful fetch': '履歴の最終取得成功日時',
+    'History last checked': '履歴の最終確認日時',
+    'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.':
+      '公式フィードは5分間キャッシュされます。取得に成功してから30分を超えたデータは古いデータとして扱われます。未確認のフィードは利用できません。',
+    'Everyone except me': '自分以外の全員',
+    'fingerprint request no longer matches the previewed prompt':
+      'フィンガープリント検出のリクエストがプレビューしたプロンプトと一致しなくなりました。',
   },
   ru: {
     'Deployment default': 'По умолчанию для установки',
@@ -214,6 +434,50 @@ const newKeys = {
       'Выбранный ключ недоступен для этой модели.',
     'fingerprint endpoint type is not supported':
       'Тип конечной точки проверки отпечатка не поддерживается.',
+    'Postmortem': 'Анализ инцидента',
+    'No verified public status feed is available.':
+      'Нет доступного проверенного публичного источника данных о состоянии.',
+    'The last successful fetch time is invalid.':
+      'Некорректное время последнего успешного получения данных.',
+    'The official feed request timed out.':
+      'Истекло время ожидания ответа официального источника.',
+    'The official feed hostname could not be resolved.':
+      'Не удалось разрешить имя хоста официального источника.',
+    'The secure connection to the official feed failed.':
+      'Не удалось установить защищённое соединение с официальным источником.',
+    'The connection to the official feed could not be completed.':
+      'Не удалось установить соединение с официальным источником.',
+    'The official feed returned an HTTP error.':
+      'Официальный источник вернул ошибку HTTP.',
+    'The official feed response could not be validated.':
+      'Не удалось проверить ответ официального источника.',
+    'The official feed address is invalid.': 'Некорректный адрес официального источника.',
+    'The official feed redirect was rejected.':
+      'Перенаправление официального источника отклонено.',
+    'The official feed response could not be read.':
+      'Не удалось прочитать ответ официального источника.',
+    'The official feed response exceeded the size limit.':
+      'Ответ официального источника превысил ограничение размера.',
+    'Official feed data is unavailable.': 'Данные официального источника недоступны.',
+    'HTTP {{status}}': 'HTTP {{status}}',
+    'Fresh': 'Свежие',
+    'Status data': 'Данные о состоянии',
+    'Last known status': 'Последнее известное состояние',
+    'No successful fetch yet.': 'Данные ещё не удалось получить.',
+    'Components': 'Компоненты',
+    'Active incidents': 'Текущие инциденты',
+    'No active incidents reported.': 'О текущих инцидентах не сообщается.',
+    'Active incident data is unavailable.': 'Данные о текущих инцидентах недоступны.',
+    'Recent incidents': 'Недавние инциденты',
+    'Recent incident data is unavailable.': 'Данные о недавних инцидентах недоступны.',
+    'No additional recent incidents reported.': 'О других недавних инцидентах не сообщается.',
+    'History last successful fetch': 'Последнее успешное получение истории',
+    'History last checked': 'Последняя проверка истории',
+    'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.':
+      'Официальные источники кэшируются на пять минут. Успешно полученные данные старше тридцати минут считаются устаревшими. Непроверенные источники остаются недоступными.',
+    'Everyone except me': 'Все, кроме меня',
+    'fingerprint request no longer matches the previewed prompt':
+      'Запрос проверки отпечатка больше не соответствует промпту из предпросмотра.',
   },
   vi: {
     'Deployment default': 'Mặc định của bản triển khai',
@@ -250,6 +514,51 @@ const newKeys = {
       'Khóa đã chọn không dùng được cho mô hình này.',
     'fingerprint endpoint type is not supported':
       'Loại điểm cuối kiểm tra dấu vân tay không được hỗ trợ.',
+    'Postmortem': 'Phân tích sau sự cố',
+    'No verified public status feed is available.':
+      'Không có nguồn dữ liệu trạng thái công khai đã được xác minh.',
+    'The last successful fetch time is invalid.':
+      'Thời điểm lấy dữ liệu thành công gần nhất không hợp lệ.',
+    'The official feed request timed out.':
+      'Yêu cầu tới nguồn dữ liệu chính thức đã hết thời gian chờ.',
+    'The official feed hostname could not be resolved.':
+      'Không thể phân giải tên máy chủ của nguồn dữ liệu chính thức.',
+    'The secure connection to the official feed failed.':
+      'Kết nối bảo mật tới nguồn dữ liệu chính thức thất bại.',
+    'The connection to the official feed could not be completed.':
+      'Không thể hoàn tất kết nối tới nguồn dữ liệu chính thức.',
+    'The official feed returned an HTTP error.':
+      'Nguồn dữ liệu chính thức trả về lỗi HTTP.',
+    'The official feed response could not be validated.':
+      'Không thể xác thực phản hồi từ nguồn dữ liệu chính thức.',
+    'The official feed address is invalid.':
+      'Địa chỉ nguồn dữ liệu chính thức không hợp lệ.',
+    'The official feed redirect was rejected.':
+      'Chuyển hướng của nguồn dữ liệu chính thức đã bị từ chối.',
+    'The official feed response could not be read.':
+      'Không thể đọc phản hồi từ nguồn dữ liệu chính thức.',
+    'The official feed response exceeded the size limit.':
+      'Phản hồi từ nguồn dữ liệu chính thức vượt quá giới hạn kích thước.',
+    'Official feed data is unavailable.': 'Dữ liệu từ nguồn chính thức không khả dụng.',
+    'HTTP {{status}}': 'HTTP {{status}}',
+    'Fresh': 'Còn mới',
+    'Status data': 'Dữ liệu trạng thái',
+    'Last known status': 'Trạng thái ghi nhận gần nhất',
+    'No successful fetch yet.': 'Chưa lấy dữ liệu thành công lần nào.',
+    'Components': 'Thành phần',
+    'Active incidents': 'Sự cố đang diễn ra',
+    'No active incidents reported.': 'Không có báo cáo về sự cố đang diễn ra.',
+    'Active incident data is unavailable.': 'Dữ liệu sự cố đang diễn ra không khả dụng.',
+    'Recent incidents': 'Sự cố gần đây',
+    'Recent incident data is unavailable.': 'Dữ liệu sự cố gần đây không khả dụng.',
+    'No additional recent incidents reported.': 'Không có báo cáo về sự cố gần đây nào khác.',
+    'History last successful fetch': 'Lần lấy lịch sử thành công gần nhất',
+    'History last checked': 'Lần kiểm tra lịch sử gần nhất',
+    'Official feeds are cached for five minutes. Successful data older than thirty minutes is stale. Unverified feeds remain unavailable.':
+      'Nguồn dữ liệu chính thức được lưu đệm trong năm phút. Dữ liệu được lấy thành công cách đây hơn ba mươi phút được coi là cũ. Các nguồn chưa được xác minh vẫn không khả dụng.',
+    'Everyone except me': 'Mọi người trừ tôi',
+    'fingerprint request no longer matches the previewed prompt':
+      'Yêu cầu kiểm tra dấu vân tay không còn khớp với câu lệnh đã xem trước.',
   },
 }
 
