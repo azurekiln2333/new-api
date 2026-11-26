@@ -424,7 +424,14 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSearch|TestGetChannelOptions|TestChannelCreate|TestChannelUpdate|TestChannelCacheReload|TestChannelBoundIndex'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSearch|TestGetChannelOptions|TestChannelCreate|TestChannelUpdate|TestChannelCacheReload|TestChannelBoundIndex|TestMultiKeyStatusRead'
+          done
+
+      - name: Verify mapped Key ability upgrades on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for DIALECT in sqlite mysql postgres; do
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestRepairChannelMappedKeyAbilitiesUpgrade$'
           done
 
       - name: Verify management operation migrations and durable audit delivery
