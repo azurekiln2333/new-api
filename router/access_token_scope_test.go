@@ -612,6 +612,72 @@ func TestAdminChannelSurfaceAdmitsOnlyAuthorizedAdmins(t *testing.T) {
 	}
 }
 
+// TestActiveSubscriptionListRequiresBillingReadAndAdminRole exercises the real
+// route guards: a PAT's billing:read grant never replaces the account role.
+// ASVS 5.0.0 V8.2.1 / V8.3.1: enforce function access in trusted middleware.
+func TestActiveSubscriptionListRequiresBillingReadAndAdminRole(t *testing.T) {
+	fixture := setupAdminChannelSurfaceFixture(t)
+	const path = "/api/subscription/admin/active-users"
+	rule, declared := middleware.AccessTokenRouteRule(http.MethodGet + " " + path)
+	require.True(t, declared, "the admin read must declare its PAT scope")
+	assert.Equal(t, "scope", rule.Kind())
+	assert.Equal(t, "billing:read", rule.Scope())
+
+	require.NoError(t, fixture.database.AutoMigrate(&model.SubscriptionPlan{}, &model.UserSubscription{}))
+	plan := &model.SubscriptionPlan{Title: "surface-active-plan", PriceAmount: 1,
+		DurationUnit: model.SubscriptionDurationMonth, DurationValue: 1}
+	require.NoError(t, fixture.database.Create(plan).Error)
+	now := common.GetTimestamp()
+	subscription := &model.UserSubscription{UserId: fixture.ordinaryId, PlanId: plan.Id,
+		StartTime: now - 60, EndTime: now + 3600, Status: "active"}
+	require.NoError(t, fixture.database.Create(subscription).Error)
+
+	billingRead := authz.Permission{Resource: "billing", Action: authz.ActionRead}
+	readPAT := createAdminSurfacePAT(t, fixture.adminId, billingRead)
+	writePAT := createAdminSurfacePAT(t, fixture.adminId, authz.Permission{Resource: "billing", Action: authz.ActionWrite})
+	ordinaryReadPAT := createAdminSurfacePAT(t, fixture.ordinaryId, billingRead)
+	for _, test := range []struct {
+		name, credential string
+		status           int
+		code             string
+	}{
+		{name: "anonymous", status: http.StatusUnauthorized, code: "AUTH_UNAUTHORIZED"},
+		{name: "admin session", credential: fixture.adminSession, status: http.StatusOK},
+		{name: "admin billing read PAT", credential: readPAT, status: http.StatusOK},
+		{name: "admin unrelated PAT", credential: fixture.adminPAT, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED"},
+		{name: "admin write-only PAT", credential: writePAT, status: http.StatusForbidden, code: "ACCESS_TOKEN_SCOPE_DENIED"},
+		{name: "ordinary session", credential: fixture.ordinarySession, status: http.StatusForbidden, code: "AUTH_INSUFFICIENT_PRIVILEGE"},
+		{name: "ordinary billing read PAT", credential: ordinaryReadPAT, status: http.StatusForbidden, code: "AUTH_INSUFFICIENT_PRIVILEGE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := fixture.request(http.MethodGet, path+"?p=1&page_size=20", test.credential, "")
+			require.Equal(t, test.status, response.Code, response.Body.String())
+			var body struct {
+				Success bool   `json:"success"`
+				Code    string `json:"code"`
+				Data    struct {
+					Total int64                                 `json:"total"`
+					Items []model.ActiveUserSubscriptionListItem `json:"items"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(response.Body.String(), &body))
+			if test.status != http.StatusOK {
+				assert.False(t, body.Success)
+				assert.Equal(t, test.code, body.Code)
+				assert.Empty(t, body.Data.Items)
+				assert.NotContains(t, response.Body.String(), plan.Title)
+				return
+			}
+			assert.True(t, body.Success)
+			assert.EqualValues(t, 1, body.Data.Total)
+			require.Len(t, body.Data.Items, 1)
+			assert.Equal(t, subscription.Id, body.Data.Items[0].SubscriptionId)
+			assert.Equal(t, fixture.ordinaryId, body.Data.Items[0].UserId)
+			assert.Equal(t, plan.Title, body.Data.Items[0].PlanTitle)
+		})
+	}
+}
+
 func TestPersonalAccessTokenLogStorageScope(t *testing.T) {
 	fixture := setupAdminChannelSurfaceFixture(t)
 	require.NoError(t, fixture.database.Model(&model.User{}).Where("id = ?", fixture.adminId).Update("role", common.RoleRootUser).Error)

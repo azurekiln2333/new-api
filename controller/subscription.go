@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -383,6 +384,49 @@ func subscriptionChangeSuccess(c *gin.Context, notice *common.Message) {
 }
 
 // ---- Admin: user subscription management ----
+
+func AdminListEffectiveUserSubscriptions(c *gin.Context) {
+	const (
+		defaultPageSize = 20
+		maxPageSize     = 100
+	)
+	page, err := parseSubscriptionPageValue(c.Query("p"), 1)
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	pageSize, err := parseSubscriptionPageValue(c.Query("page_size"), defaultPageSize)
+	if err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	pageSize = min(pageSize, maxPageSize)
+	if page-1 > math.MaxInt32/pageSize {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	offset := (page - 1) * pageSize
+	items, total, err := model.ListEffectiveUserSubscriptions(c.Request.Context(), common.GetTimestamp(), offset, pageSize)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo := &common.PageInfo{Page: page, PageSize: pageSize}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(items)
+	common.ApiSuccess(c, pageInfo)
+}
+
+func parseSubscriptionPageValue(value string, fallback int) (int, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		return 0, strconv.ErrSyntax
+	}
+	return parsed, nil
+}
 
 func AdminListUserSubscriptions(c *gin.Context) {
 	userId, _ := strconv.Atoi(c.Param("id"))

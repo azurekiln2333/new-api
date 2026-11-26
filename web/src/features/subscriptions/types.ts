@@ -75,9 +75,23 @@ export interface UserSubscriptionRecord {
   subscription: UserSubscription
 }
 
-// ============================================================================
-// API Request/Response Types
-// ============================================================================
+export interface EffectiveSubscriptionUser {
+  subscription_id: number
+  user_id: number
+  username: string
+  display_name: string
+  plan_id: number
+  plan_title: string
+  start_time: number
+  end_time: number
+}
+
+export interface EffectiveSubscriptionPage {
+  items: EffectiveSubscriptionUser[]
+  total: number
+  page: number
+  page_size: number
+}
 
 export interface ApiResponse<T = unknown> {
   success: boolean
