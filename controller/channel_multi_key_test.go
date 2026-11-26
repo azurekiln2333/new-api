@@ -848,7 +848,7 @@ func TestChannelAllocationsMappedModelScope(t *testing.T) {
 			settings, err := common.Marshal(&dto.ChannelOtherSettings{GroupModels: map[string][]string{group: {alias, unrelated}, upstreamGroup: {target}}})
 			require.NoError(t, err)
 			channel := &model.Channel{Name: t.Name(), Type: constant.ChannelTypeOpenAI, Key: "denied-key\nmapped-key", Models: alias + "," + unrelated, Group: group + "," + upstreamGroup,
-				Status:      common.ChannelStatusEnabled, ModelMapping: common.GetPointer(`{"deepseek-r1":"DeepSeek-R1"}`), OtherSettings: string(settings),
+				Status: common.ChannelStatusEnabled, ModelMapping: common.GetPointer(`{"deepseek-r1":"DeepSeek-R1"}`), OtherSettings: string(settings),
 				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
 					MultiKeyScopeModes: map[int]string{0: "allowlist", 1: "allowlist"}, MultiKeyModels: map[int][]string{1: {target}}}}
 			require.NoError(t, channel.Insert())
@@ -1895,7 +1895,7 @@ func TestMultiKeyStatusReadIsPageBounded(t *testing.T) {
 				t.Cleanup(func() { common.BatchUpdateEnabled = previousBatch })
 				require.NoError(t, model.InitializeChannelBudgets())
 			}
-			owner := &model.User{Username: "status-page-owner", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+			owner := &model.User{Username: "status-page-owner", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: "statuspage"}
 			require.NoError(t, model.DB.Create(owner).Error)
 			selected := &model.Channel{Name: t.Name(), Type: 1, Key: "sk-first\nsk-second\nsk-third\nsk-fourth\nsk-fifth\nsk-sixth", Models: "model-a,model-b", Group: "default", Status: common.ChannelStatusEnabled,
 				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 6}}

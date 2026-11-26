@@ -179,7 +179,7 @@ func TestRepairChannelMappedKeyAbilitiesUpgrade(t *testing.T) {
 		{name: "no-mapping", status: common.ChannelStatusEnabled, mode: "allowlist", models: []string{upstream}},
 	} {
 		channel := Channel{Name: tc.name, Type: constant.ChannelTypeOpenAI, Key: "fixture-key", Models: alias, Group: tc.name, Status: tc.status,
-			Priority:    common.GetPointer(int64(5)), Weight: common.GetPointer(uint(3)), Tag: common.GetPointer("retained-tag"),
+			Priority: common.GetPointer(int64(5)), Weight: common.GetPointer(uint(3)), Tag: common.GetPointer("retained-tag"),
 			ChannelInfo: ChannelInfo{IsMultiKey: true, MultiKeySize: 1, MultiKeyScopeModes: map[int]string{0: tc.mode},
 				MultiKeyModels: map[int][]string{0: tc.models}, MultiKeyUsers: map[int]int{0: tc.owner}}}
 		if tc.mapped {
@@ -212,7 +212,7 @@ func TestRepairChannelMappedKeyAbilitiesUpgrade(t *testing.T) {
 	require.NoError(t, DB.Session(&gorm.Session{SkipHooks: true}).Order("id").Find(&beforeChannels).Error)
 	require.NoError(t, DB.Order("id").Find(&beforeEntries).Error)
 	require.NoError(t, DB.Order("id").Find(&beforeBudgets).Error)
-	require.NoError(t, DB.Where("channel_id = ?", unchanged.Id).Order(commonGroupCol + ", model").Find(&unrelatedAbilities).Error)
+	require.NoError(t, DB.Where("channel_id = ?", unchanged.Id).Order(commonGroupCol+", model").Find(&unrelatedAbilities).Error)
 	missing, err := GetRandomSatisfiedChannel("public", alias, 0, nil)
 	require.NoError(t, err)
 	require.Nil(t, missing)
@@ -260,7 +260,7 @@ func TestRepairChannelMappedKeyAbilitiesUpgrade(t *testing.T) {
 		require.NoError(t, DB.Session(&gorm.Session{SkipHooks: true}).Order("id").Find(&channels).Error)
 		require.NoError(t, DB.Order("id").Find(&entries).Error)
 		require.NoError(t, DB.Order("id").Find(&budgets).Error)
-		require.NoError(t, DB.Where("channel_id = ?", unchanged.Id).Order(commonGroupCol + ", model").Find(&abilities).Error)
+		require.NoError(t, DB.Where("channel_id = ?", unchanged.Id).Order(commonGroupCol+", model").Find(&abilities).Error)
 		assert.Equal(t, beforeChannels, channels, "configuration and channel revisions remain unchanged")
 		assert.Equal(t, beforeEntries, entries, "allocation identity, scope and revisions remain unchanged")
 		assert.Equal(t, beforeBudgets, budgets, "limits, usage and live holds remain unchanged")
