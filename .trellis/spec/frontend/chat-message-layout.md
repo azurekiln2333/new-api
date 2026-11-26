@@ -31,3 +31,16 @@ Rename/delete/move/archive behavior and existing message history stay attached t
 their original identities. The existing conversation-list, playground-state and
 conversation-storage suites cover keyboard/create/cancel, empty-project reload,
 moving chats, preserved history and absence of dummy chats.
+
+`switchConversation(activeConversationId)` is a no-op and does not retry failed
+storage writes. A storage-recovery regression must retain the quota warning and
+unchanged durable index for that no-op, then switch to a distinct saved/in-memory
+conversation to trigger a real flush. Switching back and remounting must preserve
+the original messages, project and active conversation ID.
+
+Accessible-name assertions must match the actual composition: adjacent project
+name/count spans currently yield `Research0`, not `Research 0`. Keep exact names
+and counts rather than broad regexes. In jsdom, the shared test setup supplies
+`HTMLElement.prototype.getAnimations = () => []` only if absent, so Base UI can
+inspect active animations without unhandled timer errors. Do not add another
+suite-local shim for the same missing API or replace a real implementation.

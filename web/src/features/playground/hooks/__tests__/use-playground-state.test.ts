@@ -138,26 +138,42 @@ describe('usePlaygroundState conversations', () => {
     act(() => {
       view.result.current.updateMessages(messages)
     })
+    let pendingConversationId = ''
     act(() => {
       view.result.current.createProject('Pending project')
-      view.result.current.createConversation()
+      pendingConversationId = view.result.current.createConversation()
     })
 
     expect(view.result.current.storageFailure).toBe('quota')
+    expect(pendingConversationId).not.toBe(conversationId)
+    expect(view.result.current.activeConversationId).toBe(pendingConversationId)
     expect(view.result.current.projects[0].name).toBe('Pending project')
     expect(loadConversationIndex()).toEqual(durableIndex)
     act(() => {
       view.result.current.switchConversation(conversationId)
     })
+    expect(view.result.current.activeConversationId).toBe(conversationId)
     expect(view.result.current.messages).toEqual(messages)
 
     setItem.mockRestore()
+    // Selecting the active chat is a no-op, not a retry of pending writes.
     act(() => {
       view.result.current.switchConversation(conversationId)
     })
+    expect(view.result.current.storageFailure).toBe('quota')
+    expect(loadConversationIndex()).toEqual(durableIndex)
+    act(() => {
+      view.result.current.switchConversation(pendingConversationId)
+    })
     expect(view.result.current.storageFailure).toBeNull()
+    expect(view.result.current.activeConversationId).toBe(pendingConversationId)
+    act(() => {
+      view.result.current.switchConversation(conversationId)
+    })
+    expect(view.result.current.messages).toEqual(messages)
     view.unmount()
     const reloaded = await renderPlaygroundState()
+    expect(reloaded.result.current.activeConversationId).toBe(conversationId)
     expect(reloaded.result.current.messages).toEqual(messages)
     expect(reloaded.result.current.projects).toEqual([
       expect.objectContaining({ name: 'Pending project' }),

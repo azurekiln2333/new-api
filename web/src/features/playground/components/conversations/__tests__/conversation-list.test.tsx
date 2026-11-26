@@ -209,7 +209,7 @@ describe('ConversationPanel', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
       expect(
-        await screen.findByRole('button', { name: /^Research\s+0$/ })
+        await screen.findByRole('button', { name: 'Research0' })
       ).toBeInTheDocument()
       await user.click(
         screen
@@ -221,13 +221,13 @@ describe('ConversationPanel', () => {
       )
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Research' }))
       expect(
-        await screen.findByRole('button', { name: /^Research\s+1$/ })
+        await screen.findByRole('button', { name: 'Research1' })
       ).toBeInTheDocument()
       view.unmount()
 
       renderPanel(host)
       expect(
-        await screen.findByRole('button', { name: /^Research\s+1$/ })
+        await screen.findByRole('button', { name: 'Research1' })
       ).toBeInTheDocument()
     }
   )
@@ -252,26 +252,22 @@ describe('ConversationPanel', () => {
     await user.type(name, 'Keyboard project{Enter}')
 
     expect(
-      await screen.findByRole('button', { name: /^Keyboard project\s+0$/ })
+      await screen.findByRole('button', { name: 'Keyboard project0' })
     ).toBeInTheDocument()
   })
 
   test('cancelling project creation leaves no project and reopens a blank name', async () => {
     const user = userEvent.setup()
     renderPanel()
-    await user.click(
-      await screen.findByRole('button', { name: 'New project' })
-    )
+    await user.click(await screen.findByRole('button', { name: 'New project' }))
     const dialog = await screen.findByRole('dialog', { name: 'New project' })
     await user.type(within(dialog).getByLabelText('Project name'), 'Cancelled')
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
 
     expect(
-      screen.queryByRole('button', { name: /^Cancelled\s+0$/ })
+      screen.queryByRole('button', { name: 'Cancelled0' })
     ).not.toBeInTheDocument()
-    await user.click(
-      await screen.findByRole('button', { name: 'New project' })
-    )
+    await user.click(await screen.findByRole('button', { name: 'New project' }))
     expect(await screen.findByLabelText('Project name')).toHaveValue('')
   })
 })
@@ -437,7 +433,7 @@ describe('ConversationList', () => {
 
     expect(screen.getByText('No chats yet')).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: /^Project p1\s+0$/ })
+      screen.getByRole('button', { name: 'Project p10' })
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'New project' })
@@ -459,7 +455,7 @@ describe('ConversationList', () => {
       [project('p1')]
     )
     const projectHeader = screen.getByRole('button', {
-      name: /^Project p1\s+0$/,
+      name: 'Project p10',
     })
     expect(projectHeader).toHaveAttribute('aria-expanded', 'true')
     expect(
@@ -492,9 +488,7 @@ describe('ConversationList', () => {
       await user.click(
         screen.getAllByRole('button', { name: 'More options' })[0]
       )
-      await user.click(
-        await screen.findByRole('menuitem', { name: 'Delete' })
-      )
+      await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
 
       expect(handlers.onDeleteProject).not.toHaveBeenCalled()
       expect(await screen.findByText('Delete project?')).toBeInTheDocument()
