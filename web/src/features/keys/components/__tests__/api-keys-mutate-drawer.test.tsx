@@ -306,7 +306,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     if (!addGroupTrigger) {
       throw new Error('Expected Auto group order combobox')
     }
-    await selectComboboxOption(user, addGroupTrigger, 'vip Priority access 2x')
+    await selectComboboxOption(user, addGroupTrigger, 'vipPriority access2x')
 
     expect(
       document.querySelector('button[aria-label="Remove vip"]')
@@ -317,16 +317,12 @@ describe('API keys mutate drawer Auto group integration', () => {
     expect(findButton('Restore global Auto', true).disabled).toBe(false)
 
     const groupTrigger = getControlByLabel('Group')
-    await selectComboboxOption(user, groupTrigger, 'default Standard access 1x')
+    await selectComboboxOption(user, groupTrigger, 'defaultStandard access1x')
     expect(
       within(groupTrigger).getByText('default', { exact: true })
     ).toBeVisible()
     expect(document.querySelector('button[aria-label="Remove vip"]')).toBe(null)
-    await selectComboboxOption(
-      user,
-      groupTrigger,
-      'auto Automatic routing Auto'
-    )
+    await selectComboboxOption(user, groupTrigger, 'autoAutomatic routingAuto')
 
     expect(
       document.querySelector('button[aria-label="Remove vip"]')
