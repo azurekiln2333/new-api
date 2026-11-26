@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -185,18 +192,22 @@ function changeInput(input: HTMLInputElement, value: string): void {
   fireEvent.input(input, { target: { value } })
 }
 
-function selectComboboxOption(
+async function selectComboboxOption(
+  user: ReturnType<typeof userEvent.setup>,
   trigger: HTMLButtonElement,
-  optionDescription: string
-): void {
-  fireEvent.click(trigger)
-  const option = [
-    ...document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
-  ].find((candidate) => candidate.textContent?.includes(optionDescription))
-  if (!option) {
-    throw new Error(`Expected option containing "${optionDescription}"`)
+  optionName: string
+): Promise<void> {
+  await user.click(trigger)
+  expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  const popupId = trigger.getAttribute('aria-controls')
+  const popup = popupId ? document.getElementById(popupId) : null
+  if (!popup) {
+    throw new Error('Expected popup controlled by combobox')
   }
-  fireEvent.click(option)
+  await user.click(
+    within(popup).getByRole('option', { name: optionName, exact: true })
+  )
+  await waitFor(() => expect(popup).not.toBeInTheDocument())
 }
 
 afterEach(() => {
@@ -289,6 +300,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     installApiFixtures(createdPayloads)
     await renderCreateDrawer()
 
+    const user = userEvent.setup()
     const autoOrderControl = getControlByLabel('Auto group order')
     const addGroupTrigger = autoOrderControl.querySelector<HTMLButtonElement>(
       'button[role="combobox"]'
@@ -296,7 +308,7 @@ describe('API keys mutate drawer Auto group integration', () => {
     if (!addGroupTrigger) {
       throw new Error('Expected Auto group order combobox')
     }
-    selectComboboxOption(addGroupTrigger, 'Priority access')
+    await selectComboboxOption(user, addGroupTrigger, 'vip Priority access 2x')
 
     expect(
       document.querySelector('button[aria-label="Remove vip"]')
@@ -307,9 +319,16 @@ describe('API keys mutate drawer Auto group integration', () => {
     expect(findButton('Restore global Auto', true).disabled).toBe(false)
 
     const groupTrigger = getControlByLabel('Group')
-    selectComboboxOption(groupTrigger, 'Standard access')
+    await selectComboboxOption(user, groupTrigger, 'default Standard access 1x')
+    expect(
+      within(groupTrigger).getByText('default', { exact: true })
+    ).toBeVisible()
     expect(document.querySelector('button[aria-label="Remove vip"]')).toBe(null)
-    selectComboboxOption(groupTrigger, 'Automatic routing')
+    await selectComboboxOption(
+      user,
+      groupTrigger,
+      'auto Automatic routing Auto'
+    )
 
     expect(
       document.querySelector('button[aria-label="Remove vip"]')

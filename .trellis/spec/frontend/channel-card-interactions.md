@@ -78,3 +78,10 @@ in titles. User balances and the separately sortable Total Used column reuse
 uses plain `formatNumber` counts for usage, budgets and output limits. Keep
 normalized Intl locales at these call sites. Outside its own tests, shared
 `formatTokens` is used only by channel metrics.
+
+The priority-guide demo regression retains exact playback boundaries and full
+dialog removal after dismissal. Under fake timers, await asynchronous advancement
+inside `act` for the existing closed interval: Base UI completes close after an
+animation frame and a Promise continuation, even when `getAnimations` returns an
+empty array. Do not increase the interval, disable animations or replace DOM
+absence with a weaker closed-state assertion. Reopening must reset the demo.

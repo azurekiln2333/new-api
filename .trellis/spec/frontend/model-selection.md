@@ -64,6 +64,13 @@ Mounted-query regressions must await the observable option list after
 Use `waitFor` with the complete expected list; retain source-array, chip and saved
 payload assertions rather than accepting the stale subset.
 
+For the API-key group picker, select options inside the popup identified by the
+live trigger's `aria-controls`. Await the user click and removal of that captured
+popup before opening another picker. A closed Base UI popover can remain mounted
+until its animation Promise completes; document-wide command-item queries can
+invoke a departing picker's handler. Preserve exact group transitions, selected
+order and submitted payload assertions rather than waiting for a wrong selection.
+
 Request-plugin model scope opts into the same display comparator, including saved
 values absent from the offered catalog. Model-value autocomplete and matched
 pricing-model choices sort newly allocated suggestions only. Empty model scope
