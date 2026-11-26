@@ -391,9 +391,8 @@ it('cancels one pre-submit refresh waiter without cancelling another or sending 
   const send = vi
     .spyOn(XMLHttpRequest.prototype, 'send')
     .mockImplementation(function (this: XMLHttpRequest) {
-      const request = this
       finishRefresh = () => {
-        Object.defineProperties(request, {
+        Object.defineProperties(this, {
           status: { value: 200, configurable: true },
           statusText: { value: 'OK', configurable: true },
           responseText: {
@@ -405,7 +404,7 @@ it('cancels one pre-submit refresh waiter without cancelling another or sending 
           },
           readyState: { value: 4, configurable: true },
         })
-        request.onloadend?.(new ProgressEvent('loadend'))
+        this.onloadend?.(new ProgressEvent('loadend'))
       }
     })
   const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => ({

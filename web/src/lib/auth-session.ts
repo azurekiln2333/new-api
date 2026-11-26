@@ -109,7 +109,8 @@ export async function withAuthRequestDeadline<T>(
           controller.signal.throwIfAborted()
           return operation(controller.signal)
         })
-        .then(resolve, reject)
+        .then(resolve)
+        .catch(reject)
     })
   } finally {
     globalThis.clearTimeout(timer)

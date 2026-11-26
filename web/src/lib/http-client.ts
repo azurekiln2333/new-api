@@ -93,10 +93,11 @@ api.interceptors.response.use(
 
     return response
   },
-  async (error) => {
-    const config = error?.config as ApiRequestConfig | undefined
+  async (error: unknown) => {
+    const axiosError = axios.isAxiosError(error) ? error : undefined
+    const config = axiosError?.config
     const skipErrorHandler = config?.skipErrorHandler
-    const status = error?.response?.status
+    const status = axiosError?.response?.status
 
     if (status === 401) {
       if (config && !config.skipAuthRefresh && !config.authRetry) {
@@ -111,10 +112,7 @@ api.interceptors.response.use(
         if (outcome.kind === 'authenticated') {
           const token = useAuthStore.getState().auth.accessToken
           if (token) {
-            config.headers = {
-              ...config.headers,
-              Authorization: `Bearer ${token}`,
-            }
+            config.headers.set('Authorization', `Bearer ${token}`)
           }
           return api.request(config)
         }
@@ -147,7 +145,7 @@ api.interceptors.response.use(
         })
       }
     }
-    if (axios.isAxiosError(error)) error.message = getServerErrorMessage(error)
+    if (axiosError) axiosError.message = getServerErrorMessage(axiosError)
     throw error
   }
 )
