@@ -36,11 +36,15 @@ const logTypeSearchSchema = z
 const usageLogsSearchSchema = z.object({
   page: z.number().optional().catch(1),
   pageSize: z.number().optional().catch(undefined),
+  user_scope: z.enum(['all', 'self', 'others']).optional(),
   type: logTypeSearchSchema.optional(),
   filter: z.string().optional().catch(''),
   model: z.string().optional().catch(''),
   token: z.string().optional().catch(''),
-  channel: z.string().optional().catch(''),
+  channel: z.preprocess(
+    (value) => (typeof value === 'number' ? String(value) : value),
+    z.string().optional().catch('')
+  ),
   group: z.string().optional().catch(''),
   username: z.string().optional().catch(''),
   requestId: z.string().optional().catch(''),

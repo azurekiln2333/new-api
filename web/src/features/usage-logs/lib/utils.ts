@@ -33,6 +33,8 @@ import {
   TIMING_LOG_TYPES,
 } from '../constants'
 import type {
+  AdminLogUserScope,
+  GetLogStatsParams,
   GetLogsParams,
   GetLogsResponse,
   FetchLogsConfig,
@@ -159,9 +161,17 @@ export function buildApiParams(config: {
   pageSize: number
   searchParams: Record<string, unknown>
   columnFilters?: Array<{ id: string; value: unknown }>
+  userScope?: AdminLogUserScope
   isAdmin: boolean
 }): GetLogsParams {
-  const { page, pageSize, searchParams, columnFilters = [], isAdmin } = config
+  const {
+    page,
+    pageSize,
+    searchParams,
+    columnFilters = [],
+    isAdmin,
+    userScope = 'all',
+  } = config
 
   // Helper to process type parameter (single value from array)
   const processType = (value: unknown): number | undefined => {
@@ -183,6 +193,7 @@ export function buildApiParams(config: {
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
+    ...(isAdmin ? { user_scope: userScope } : {}),
     ...(searchParams.type ? { type: processType(searchParams.type) } : {}),
     // The list, the statistics and the export share one text-match mode.
     match_mode: searchParams.match === 'exact' ? 'exact' : 'fuzzy',
@@ -235,6 +246,18 @@ export function buildApiParams(config: {
   return params
 }
 
+/** Statistics reuse the page predicate, excluding only pagination. */
+export function buildLogStatsParams(
+  config: Omit<Parameters<typeof buildApiParams>[0], 'page' | 'pageSize'>
+): GetLogStatsParams {
+  const { p: _page, page_size: _pageSize, ...params } = buildApiParams({
+    ...config,
+    page: 1,
+    pageSize: 1,
+  })
+  return params
+}
+
 // ============================================================================
 // Data Fetching
 // ============================================================================
@@ -245,8 +268,16 @@ export function buildApiParams(config: {
 export async function fetchLogsByCategory(
   config: FetchLogsConfig
 ): Promise<GetLogsResponse> {
-  const { logCategory, isAdmin, page, pageSize, searchParams, columnFilters } =
-    config
+  const {
+    logCategory,
+    isAdmin,
+    userScope,
+    signal,
+    page,
+    pageSize,
+    searchParams,
+    columnFilters,
+  } = config
 
   if (logCategory === 'common') {
     const params = buildApiParams({
@@ -255,8 +286,11 @@ export async function fetchLogsByCategory(
       searchParams,
       columnFilters,
       isAdmin,
+      userScope,
     })
-    return isAdmin ? await getAllLogs(params) : await getUserLogs(params)
+    return isAdmin
+      ? await getAllLogs(params, signal)
+      : await getUserLogs(params, signal)
   }
 
   // For drawing and task logs
@@ -279,12 +313,18 @@ export async function fetchLogsByCategory(
 
   if (logCategory === 'drawing') {
     return isAdmin
-      ? await getAllMidjourneyLogs(paramsWithFilter as GetMidjourneyLogsParams)
-      : await getUserMidjourneyLogs(paramsWithFilter as GetMidjourneyLogsParams)
+      ? await getAllMidjourneyLogs(
+          paramsWithFilter as GetMidjourneyLogsParams,
+          signal
+        )
+      : await getUserMidjourneyLogs(
+          paramsWithFilter as GetMidjourneyLogsParams,
+          signal
+        )
   }
 
   // task logs
   return isAdmin
-    ? await getAllTaskLogs(paramsWithFilter as GetTaskLogsParams)
-    : await getUserTaskLogs(paramsWithFilter as GetTaskLogsParams)
+    ? await getAllTaskLogs(paramsWithFilter as GetTaskLogsParams, signal)
+    : await getUserTaskLogs(paramsWithFilter as GetTaskLogsParams, signal)
 }

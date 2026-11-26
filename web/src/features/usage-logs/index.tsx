@@ -110,11 +110,15 @@ function UsageLogsContent() {
 
   const handleViewScopeChange = useCallback(
     (scope: string) => {
-      if (scope === 'all' || scope === 'self') {
+      if (
+        scope === 'all' ||
+        scope === 'self' ||
+        (activeCategory === 'common' && scope === 'others')
+      ) {
         setViewScope(scope as LogsViewScope)
       }
     },
-    [setViewScope]
+    [activeCategory, setViewScope]
   )
 
   const pageMeta =
@@ -134,6 +138,11 @@ function UsageLogsContent() {
               <TabsList>
                 <TabsTrigger value='all'>{t('All')}</TabsTrigger>
                 <TabsTrigger value='self'>{t('Only Mine')}</TabsTrigger>
+                {activeCategory === 'common' && (
+                  <TabsTrigger value='others'>
+                    {t('Everyone except me')}
+                  </TabsTrigger>
+                )}
               </TabsList>
             </Tabs>
           )}

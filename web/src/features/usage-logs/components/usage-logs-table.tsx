@@ -94,6 +94,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     isAdminView: isAdmin,
     isRootView: isRoot,
     viewAccess,
+    userScope,
   } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
@@ -160,25 +161,34 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
+  // The URL is the applied common-log predicate used by statistics and export.
+  // Table filter state follows navigation in an effect and can still describe
+  // the previous search during the first render of a new URL.
+  const requestColumnFilters = logCategory === 'common' ? [] : columnFilters
+
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'logs',
       logCategory,
       viewAccess,
+      userScope,
+      userId,
       pagination.pageIndex + 1,
       pagination.pageSize,
-      columnFilters,
+      requestColumnFilters,
       searchParams,
       t,
     ],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const result = await fetchLogsByCategory({
         logCategory,
         isAdmin,
+        userScope,
+        signal,
         page: pagination.pageIndex + 1,
         pageSize: pagination.pageSize,
         searchParams,
-        columnFilters,
+        columnFilters: requestColumnFilters,
       })
 
       if (!result?.success) {
@@ -190,7 +200,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     placeholderData: (previousData, previousQuery) => {
       if (
         previousQuery?.queryKey[1] === logCategory &&
-        previousQuery.queryKey[2] === viewAccess
+        previousQuery.queryKey[2] === viewAccess &&
+        previousQuery.queryKey[3] === userScope &&
+        previousQuery.queryKey[4] === userId
       ) {
         return previousData
       }

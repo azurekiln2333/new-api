@@ -19,6 +19,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Async quota fixture boundaries; other conventions pending | Partially defined |
 | [Logging Guidelines](./logging-guidelines.md) | Original relay request capture, protected stores, privileged reads and retention | Defined |
+| [Log user scopes](./log-user-scopes.md) | Shared administrator row predicates, immutable self access and viewer projections | Defined |
 | [CORS Origins](./cors-origins.md) | Exact credentialed browser origins and preflight behavior | Defined |
 | [Merge and Release Contract](./merge-release-contract.md) | Preserve both merge parents and verify actual release artifacts | Defined |
 

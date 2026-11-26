@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -45,9 +46,10 @@ func logMatchMode(c *gin.Context) model.LogMatchMode {
 	return model.LogMatchFuzzy
 }
 
-// logFilterFromQuery reads the log search shared by the log list and the log
-// export. Username and channel are read only for administrators.
-func logFilterFromQuery(c *gin.Context, admin bool) model.LogFilter {
+// logFilterFromQuery reads common-log filters for lists, statistics and export.
+// For administrator endpoints it also validates the row scope and binds its
+// user identity exclusively from the authenticated context.
+func logFilterFromQuery(c *gin.Context, admin bool) (model.LogFilter, error) {
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
@@ -65,8 +67,26 @@ func logFilterFromQuery(c *gin.Context, admin bool) model.LogFilter {
 	if admin {
 		filter.Username = c.Query("username")
 		filter.Channel, _ = strconv.Atoi(c.Query("channel"))
+		filter.UserScope = model.LogUserScopeAll
+		query, err := url.ParseQuery(c.Request.URL.RawQuery)
+		if err != nil {
+			return model.LogFilter{}, common.NewMessage("Invalid parameters")
+		}
+		if scopes, provided := query["user_scope"]; provided {
+			if len(scopes) != 1 {
+				return model.LogFilter{}, common.NewMessage("Invalid parameters")
+			}
+			rawScope := scopes[0]
+			switch model.LogUserScope(rawScope) {
+			case model.LogUserScopeAll, model.LogUserScopeSelf, model.LogUserScopeOthers:
+				filter.UserScope = model.LogUserScope(rawScope)
+			default:
+				return model.LogFilter{}, common.NewMessage("Invalid parameters")
+			}
+		}
+		filter.ScopeUserId = c.GetInt("id")
 	}
-	return filter
+	return filter, nil
 }
 
 // limitLogTimeRange returns the start of a log or dashboard search kept within
@@ -89,7 +109,12 @@ func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) 
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	logs, total, err := model.GetAllLogs(logFilterFromQuery(c, true), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	filter, err := logFilterFromQuery(c, true)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	logs, total, err := model.GetAllLogs(filter, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -107,7 +132,11 @@ func GetAllLogs(c *gin.Context) {
 
 func GetUserLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	filter := logFilterFromQuery(c, false)
+	filter, err := logFilterFromQuery(c, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if c.GetInt("role") < common.RoleAdminUser {
 		startTimestamp, err := limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp)
 		if err != nil {
@@ -146,7 +175,15 @@ func ExportUserLogs(c *gin.Context) {
 // one export at a time, and every export stays within the longest log time
 // range.
 func exportLogs(c *gin.Context, all bool) {
-	filter := logFilterFromQuery(c, all)
+	filter, err := logFilterFromQuery(c, all)
+	if err != nil {
+		if all {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		} else {
+			common.ApiError(c, err)
+		}
+		return
+	}
 	startTimestamp, err := limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp)
 	if err != nil {
 		common.ApiError(c, err)
@@ -234,7 +271,12 @@ func GetLogByKey(c *gin.Context) {
 }
 
 func GetLogsStat(c *gin.Context) {
-	stat, err := model.SumUsedQuota(logFilterFromQuery(c, true))
+	filter, err := logFilterFromQuery(c, true)
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	stat, err := model.SumUsedQuota(filter)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -248,7 +290,11 @@ func GetLogsStat(c *gin.Context) {
 }
 
 func GetLogsSelfStat(c *gin.Context) {
-	filter := logFilterFromQuery(c, false)
+	filter, err := logFilterFromQuery(c, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	filter.UserId = c.GetInt("id")
 	if c.GetInt("role") < common.RoleAdminUser {
 		var err error

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /* eslint-disable react-refresh/only-export-components */
+import { getRouteApi } from '@tanstack/react-router'
 import { createContext, useContext, useState, type ReactNode } from 'react'
 
 import { ROLE } from '@/lib/roles'
@@ -27,16 +28,15 @@ import {
   writeMobileLogViewMode,
   type MobileLogViewMode,
 } from '../lib/mobile-log-view'
-import type { ChannelAffinityInfo } from '../types'
+import type { AdminLogUserScope, ChannelAffinityInfo } from '../types'
 
-export type LogsViewScope = 'all' | 'self'
+const route = getRouteApi('/_authenticated/usage-logs/$section')
+
+export type LogsViewScope = AdminLogUserScope
 export type LogsViewAccess = 'self' | 'admin' | 'root'
 
-export function resolveLogsViewAccess(
-  role: number,
-  viewScope: LogsViewScope
-): LogsViewAccess {
-  if (viewScope !== 'all' || role < ROLE.ADMIN) return 'self'
+export function resolveLogsViewAccess(role: number): LogsViewAccess {
+  if (role < ROLE.ADMIN) return 'self'
   return role === ROLE.SUPER_ADMIN ? 'root' : 'admin'
 }
 
@@ -109,25 +109,41 @@ export function useUsageLogsContext() {
   return context
 }
 
-/**
- * Resolves the effective admin scope for usage logs: whether the current
- * user is allowed to view all users' logs (`canManageScope`), and whether
- * their current view preference (`viewScope`) has that scope active
- * (`isAdminView`). Data fetching and admin-only UI should key off
- * `isAdminView` rather than raw role, so an admin who switches to "only
- * mine" is treated exactly like a regular user for that view.
+/** Common-log row scope never changes the authenticated viewer's capabilities.
+ * Drawing/task logs retain their existing all/self endpoint behavior.
  */
 export function useLogsViewScope() {
   const role = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
-  const { viewScope, setViewScope } = useUsageLogsContext()
+  const context = useUsageLogsContext()
+  const search = route.useSearch()
+  const { section } = route.useParams()
+  const navigate = route.useNavigate()
+  const isCommon = section === 'common'
   const canManageScope = role >= ROLE.ADMIN
-  const viewAccess = resolveLogsViewAccess(role, viewScope)
+  let requestedScope: LogsViewScope = context.viewScope === 'self' ? 'self' : 'all'
+  if (isCommon) requestedScope = search.user_scope ?? 'all'
+  const viewScope = canManageScope ? requestedScope : 'self'
+  const viewAccess =
+    !isCommon && viewScope === 'self' ? 'self' : resolveLogsViewAccess(role)
   const isAdminView = viewAccess !== 'self'
   const isRootView = viewAccess === 'root'
+  const userScope = viewScope
+  const setViewScope = (scope: LogsViewScope) => {
+    if (!canManageScope || (!isCommon && scope === 'others')) return
+    context.setViewScope(scope)
+    void navigate({
+      search: (previous) => ({
+        ...previous,
+        user_scope: isCommon ? scope : undefined,
+        page: 1,
+      }),
+    })
+  }
 
   return {
     canManageScope,
     viewScope,
+    userScope,
     setViewScope,
     isAdminView,
     isRootView,

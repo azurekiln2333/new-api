@@ -16,16 +16,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient, useIsFetching, useQuery } from '@tanstack/react-query'
+import {
+  useQueryClient,
+  useIsFetching,
+  useQuery,
+  useInfiniteQuery,
+} from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import type { Table } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
 import { useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Combobox } from '@/components/ui/combobox'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  useComboboxAnchor,
+} from '@/components/ui/combobox'
 import {
   Select,
   SelectContent,
@@ -39,10 +53,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { getChannelOptions } from '@/features/channels/api'
 import { getGroups } from '@/features/users/api'
 import { useMediaQuery } from '@/hooks'
+import { useDebounce } from '@/hooks/use-debounce'
+import { hasPermission } from '@/lib/admin-permissions'
 import { getUserGroups } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
@@ -115,6 +134,178 @@ function buildSearchSourceKey(values: {
     .join('\u001f')
 }
 
+function ChannelNameFilter({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (value: string) => void
+}) {
+  const { t } = useTranslation()
+  const anchor = useComboboxAnchor()
+  const user = useAuthStore((state) => state.auth.user)
+  const { sensitiveVisible } = useUsageLogsContext()
+  const [open, setOpen] = useState(false)
+  const [keyword, setKeyword] = useState('')
+  const debouncedKeyword = useDebounce(keyword, 300)
+  const searchPending = keyword !== debouncedKeyword
+  const canReadChannels =
+    !!user &&
+    user.role >= ROLE.ADMIN &&
+    hasPermission(user, 'channel', 'read')
+  const channelsQuery = useInfiniteQuery({
+    queryKey: [
+      'usage-log-channel-options',
+      user?.id,
+      user?.role,
+      canReadChannels,
+      debouncedKeyword,
+    ],
+    initialPageParam: 1,
+    enabled: canReadChannels && open && !searchPending,
+    queryFn: async ({ signal, pageParam }) =>
+      requireServerSuccess(
+        await getChannelOptions(
+          {
+            p: pageParam,
+            page_size: 30,
+            ...(debouncedKeyword.trim()
+              ? { keyword: debouncedKeyword.trim() }
+              : {}),
+          },
+          signal
+        )
+      ),
+    getNextPageParam: (page) =>
+      page.data?.has_more ? page.data.page + 1 : undefined,
+    staleTime: 60_000,
+    meta: { errorToast: false },
+  })
+  // Hydration resolves only the selected label. It must not add an unrelated
+  // selected channel to the server's keyword-matched options.
+  const selectedChannelQuery = useQuery({
+    queryKey: [
+      'usage-log-channel-label',
+      user?.id,
+      user?.role,
+      canReadChannels,
+      value,
+    ],
+    enabled: canReadChannels && !!value,
+    queryFn: async ({ signal }) =>
+      requireServerSuccess(
+        await getChannelOptions(
+          { p: 1, page_size: 1, keyword: value, ids: value },
+          signal
+        )
+      ),
+    staleTime: 60_000,
+    meta: { errorToast: false },
+  })
+  const options = useMemo(() => {
+    const byId = new Map<string, { value: string; label: string }>()
+    if (!canReadChannels) return []
+    for (const page of channelsQuery.data?.pages ?? []) {
+      for (const channel of page.data?.items ?? []) {
+        byId.set(String(channel.id), {
+          value: String(channel.id),
+          label: `${sensitiveVisible ? channel.name : '••••'} (#${channel.id})`,
+        })
+      }
+    }
+    return [...byId.values()]
+  }, [canReadChannels, channelsQuery.data, sensitiveVisible])
+  let selected = options.find((option) => option.value === value) ?? null
+  if (!selected && value) {
+    selected = { value, label: `#${value}` }
+    const channel = canReadChannels
+      ? selectedChannelQuery.data?.data?.items.find(
+          (item) => String(item.id) === value
+        )
+      : undefined
+    if (channel) {
+      selected.label = `${sensitiveVisible ? channel.name : '••••'} (#${value})`
+    }
+  }
+
+  return (
+    <Combobox
+      items={searchPending ? [] : options}
+      value={selected}
+      inputValue={open ? keyword : selected?.label ?? ''}
+      open={open}
+      filter={null}
+      isItemEqualToValue={(item, selectedValue) =>
+        item.value === selectedValue.value
+      }
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) setKeyword('')
+      }}
+      onInputValueChange={(nextKeyword, details) => {
+        if (details.reason === 'input-change') setKeyword(nextKeyword)
+      }}
+      onValueChange={(option) => {
+        if (!canReadChannels) return
+        onChange(option?.value ?? '')
+        setKeyword('')
+      }}
+    >
+      <div
+        ref={anchor}
+        className={
+          sensitiveVisible ? 'min-w-0' : 'min-w-0 [-webkit-text-security:disc]'
+        }
+      >
+        <ComboboxInput
+          aria-label={t('Search channels')}
+          triggerAriaLabel={t('Search channels')}
+          placeholder={t('Search channels')}
+          title={sensitiveVisible ? selected?.label : undefined}
+          showClear
+          className='h-8 w-full text-sm'
+        />
+      </div>
+      <ComboboxContent anchor={anchor}>
+        {channelsQuery.isError ? (
+          <ErrorState
+            className='min-h-0 p-3'
+            onRetry={() => void channelsQuery.refetch()}
+          />
+        ) : (
+          <>
+            <ComboboxEmpty>
+              {t(
+                searchPending || channelsQuery.isFetching
+                  ? 'Loading'
+                  : 'No matching channels'
+              )}
+            </ComboboxEmpty>
+            <ComboboxList>
+              {(option: { value: string; label: string }) => (
+                <ComboboxItem key={option.value} value={option}>
+                  <span className='min-w-0 break-words'>{option.label}</span>
+                </ComboboxItem>
+              )}
+            </ComboboxList>
+          </>
+        )}
+        {channelsQuery.hasNextPage && !channelsQuery.isError && (
+          <Button
+            type='button'
+            variant='ghost'
+            className='w-full'
+            disabled={searchPending || channelsQuery.isFetching}
+            onClick={() => void channelsQuery.fetchNextPage()}
+          >
+            {t('Load more')}
+          </Button>
+        )}
+      </ComboboxContent>
+    </Combobox>
+  )
+}
+
 interface CommonLogsFilterBarProps<TData> {
   table: Table<TData>
 }
@@ -127,7 +318,9 @@ export function CommonLogsFilterBar<TData>(
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const { isAdminView: isAdmin } = useLogsViewScope()
+  const { isAdminView: isAdmin, userScope } = useLogsViewScope()
+  const user = useAuthStore((state) => state.auth.user)
+  const canSearchChannels = isAdmin && hasPermission(user, 'channel', 'read')
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
   const { data: adminGroups } = useQuery({
@@ -225,6 +418,7 @@ export function CommonLogsFilterBar<TData>(
         params: { section: 'common' },
         search: {
           ...filterParams,
+          user_scope: isAdmin ? userScope : undefined,
           type: [logType],
           page: 1,
         },
@@ -232,7 +426,7 @@ export function CommonLogsFilterBar<TData>(
       queryClient.invalidateQueries({ queryKey: ['logs'] })
       queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
     },
-    [filters, logType, navigate, queryClient]
+    [filters, logType, navigate, queryClient, isAdmin, userScope]
   )
 
   const handleReset = useCallback(() => {
@@ -254,12 +448,13 @@ export function CommonLogsFilterBar<TData>(
       params: { section: 'common' },
       search: {
         page: 1,
+        user_scope: isAdmin ? userScope : undefined,
         ...resetSearch,
       },
     })
     queryClient.invalidateQueries({ queryKey: ['logs'] })
     queryClient.invalidateQueries({ queryKey: ['usage-logs-stats'] })
-  }, [navigate, queryClient])
+  }, [navigate, queryClient, isAdmin, userScope])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -468,12 +663,20 @@ export function CommonLogsFilterBar<TData>(
       )}
       {isAdmin && (
         <LogsFilterField>
-          <LogsFilterInput
-            placeholder={t('Channel ID')}
-            value={filters.channel || ''}
-            onChange={(e) => handleChange('channel', e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
+          {canSearchChannels ? (
+            <ChannelNameFilter
+              key={`${user?.id}:${user?.role}:${canSearchChannels}`}
+              value={filters.channel || ''}
+              onChange={(value) => handleChange('channel', value)}
+            />
+          ) : (
+            <LogsFilterInput
+              placeholder={t('Channel ID')}
+              value={filters.channel || ''}
+              onChange={(e) => handleChange('channel', e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+          )}
         </LogsFilterField>
       )}
       <LogsFilterField>
