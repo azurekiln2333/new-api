@@ -391,6 +391,10 @@ func readFetchModelsResponse(response *http.Response) ([]byte, error) {
 // fixed-channel lease until the response body is closed.
 func sendFetchModelsRequest(request *http.Request, channel *model.Channel, key string, admission *service.ChannelDiagnosticAdmission) (*http.Response, error) {
 	settings := channel.GetSetting()
+	normalizedSettings := settings
+	if err := normalizedSettings.NormalizeUpstreamURLs(); err != nil {
+		return nil, err
+	}
 	call := service.ChannelManagementCall{
 		Request:   request,
 		Settings:  settings,
@@ -404,7 +408,11 @@ func sendFetchModelsRequest(request *http.Request, channel *model.Channel, key s
 			if err != nil || fresh == nil {
 				return nil, dto.ChannelSettings{}, fmt.Errorf("channel configuration changed during model discovery")
 			}
-			if fresh.Type != channel.Type || channelBaseURL(fresh) != channelBaseURL(channel) || !channelManagementKeyEnabled(fresh, key) {
+			freshSettings := fresh.GetSetting()
+			if err := freshSettings.NormalizeUpstreamURLs(); err != nil {
+				return nil, dto.ChannelSettings{}, fmt.Errorf("channel configuration changed during model discovery")
+			}
+			if fresh.Type != channel.Type || channelBaseURL(fresh) != channelBaseURL(channel) || !slices.Equal(normalizedSettings.BaseURLs, freshSettings.BaseURLs) || !channelManagementKeyEnabled(fresh, key) {
 				return nil, dto.ChannelSettings{}, fmt.Errorf("channel configuration changed during model discovery")
 			}
 			headers, err := buildFetchModelsHeaders(fresh, key)
@@ -704,7 +712,14 @@ func fetchChannelUpstreamModelIDsSnapshot(ctx context.Context, channel *model.Ch
 		}
 		return normalizeModelNames(plugin.Meta.Models), nil
 	}
-	baseURL := channelBaseURL(channel)
+	baseURL, err := channel.SelectUpstreamBaseURL()
+	if err != nil {
+		return nil, err
+	}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = channelBaseURL(channel)
+	}
 
 	if channel.Type == constant.ChannelTypeOllama {
 		key, _, apiErr := channel.GetNextEnabledKey()

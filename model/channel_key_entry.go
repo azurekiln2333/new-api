@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -86,6 +88,7 @@ type ChannelKeyEntry struct {
 	CredentialRef  string `json:"-" gorm:"type:varchar(255);not null;default:''"`
 	BoundUserId    int    `json:"bound_user_id" gorm:"not null;default:0"`
 	ScopeMode      string `json:"scope_mode" gorm:"type:varchar(16);not null;default:'all'"`
+	UpstreamProtocol string `json:"upstream_protocol" gorm:"type:varchar(16);not null;default:'inherit'"`
 	Models         string `json:"-" gorm:"type:text;not null"`
 	ModelMapping   string `json:"-" gorm:"type:text"`
 	Status         int    `json:"status" gorm:"not null;default:1"`
@@ -277,12 +280,23 @@ func (channel *Channel) applyKeyEntryProjection(entries []ChannelKeyEntry) error
 	info.MultiKeyModels = nil
 	info.MultiKeyModelMappings = nil
 	info.MultiKeyScopeModes = nil
+	info.MultiKeyUpstreamProtocols = nil
 	info.MultiKeyUsers = nil
 	info.MultiKeyStatusList = nil
 	info.MultiKeyDisabledReason = nil
 	info.MultiKeyDisabledTime = nil
 	for i := range entries {
 		entry := &entries[i]
+		protocol, err := dto.NormalizeChannelUpstreamProtocol(entry.UpstreamProtocol)
+		if err != nil {
+			return err
+		}
+		if protocol != dto.ChannelUpstreamProtocolInherit {
+			if info.MultiKeyUpstreamProtocols == nil {
+				info.MultiKeyUpstreamProtocols = make(map[int]string)
+			}
+			info.MultiKeyUpstreamProtocols[i] = protocol
+		}
 		keys = append(keys, entry.Key)
 		if entry.ModelMapping != "" {
 			if info.MultiKeyModelMappings == nil {
@@ -410,6 +424,14 @@ func persistKeyEntries(tx *gorm.DB, channel *Channel, entries, retired []Channel
 	managed := map[string]bool{}
 	for i := range entries {
 		entry := &entries[i]
+		protocol, err := dto.NormalizeChannelUpstreamProtocol(entry.UpstreamProtocol)
+		if err != nil {
+			return err
+		}
+		if protocol != dto.ChannelUpstreamProtocolInherit && channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeAnthropic {
+			return errors.New("upstream_protocol is only supported for OpenAI and Anthropic channels")
+		}
+		entry.UpstreamProtocol = protocol
 		entry.ChannelId = channel.Id
 		entry.Position = i
 		entry.UpdatedTime = now
@@ -449,7 +471,7 @@ func persistKeyEntries(tx *gorm.DB, channel *Channel, entries, retired []Channel
 				return err
 			}
 		} else {
-			if err := tx.Model(&ChannelKeyEntry{}).Where("id = ? AND channel_id = ? AND retired_at = 0", entry.Id, channel.Id).Select("position", "key", "credential_ref", "bound_user_id", "scope_mode", "models", "model_mapping", "status", "disabled_reason", "disabled_time", "config_revision", "updated_time").Updates(entry).Error; err != nil {
+			if err := tx.Model(&ChannelKeyEntry{}).Where("id = ? AND channel_id = ? AND retired_at = 0", entry.Id, channel.Id).Select("position", "key", "credential_ref", "bound_user_id", "scope_mode", "upstream_protocol", "models", "model_mapping", "status", "disabled_reason", "disabled_time", "config_revision", "updated_time").Updates(entry).Error; err != nil {
 				return err
 			}
 		}
@@ -573,7 +595,7 @@ func CreateChannelKeyEntries(tx *gorm.DB, channel *Channel) error {
 		if value, ok := channel.ChannelInfo.MultiKeyStatusList[i]; ok {
 			status = value
 		}
-		entry := ChannelKeyEntry{Key: key, BoundUserId: channel.ChannelInfo.MultiKeyUsers[i], ModelMapping: channel.ChannelInfo.MultiKeyModelMappings[i], Status: status, DisabledReason: channel.ChannelInfo.MultiKeyDisabledReason[i], DisabledTime: channel.ChannelInfo.MultiKeyDisabledTime[i]}
+		entry := ChannelKeyEntry{Key: key, BoundUserId: channel.ChannelInfo.MultiKeyUsers[i], ModelMapping: channel.ChannelInfo.MultiKeyModelMappings[i], Status: status, DisabledReason: channel.ChannelInfo.MultiKeyDisabledReason[i], DisabledTime: channel.ChannelInfo.MultiKeyDisabledTime[i], UpstreamProtocol: channel.KeyUpstreamProtocol(i)}
 		if err := entry.SetKeyModels(channel.ChannelInfo.MultiKeyModels[i]); err != nil {
 			return err
 		}
@@ -683,6 +705,16 @@ type ChannelAllocation struct {
 	CredentialRef string
 	UserID        int
 	Revision      int64
+	UpstreamProtocol string
+}
+
+// KeyUpstreamProtocol reads the authoritative allocation projection. It is a
+// dispatch policy, never a restriction on the client's incoming wire format.
+func (channel *Channel) KeyUpstreamProtocol(position int) string {
+	if protocol := channel.ChannelInfo.MultiKeyUpstreamProtocols[position]; protocol != "" {
+		return protocol
+	}
+	return dto.ChannelUpstreamProtocolInherit
 }
 
 func (channel *Channel) ChannelAllocationByPosition(position int) (ChannelAllocation, bool) {
@@ -690,7 +722,7 @@ func (channel *Channel) ChannelAllocationByPosition(position int) (ChannelAlloca
 	if position < 0 || position >= len(keys) || position >= len(channel.KeyEntryRevisions) {
 		return ChannelAllocation{}, false
 	}
-	return ChannelAllocation{ChannelID: channel.Id, EntryID: channel.KeyEntryIDs[position], Position: position, Key: keys[position], CredentialRef: credentialRefFor(keys[position]), UserID: channel.ChannelInfo.MultiKeyUsers[position], Revision: channel.KeyEntryRevisions[position]}, true
+	return ChannelAllocation{ChannelID: channel.Id, EntryID: channel.KeyEntryIDs[position], Position: position, Key: keys[position], CredentialRef: credentialRefFor(keys[position]), UserID: channel.ChannelInfo.MultiKeyUsers[position], Revision: channel.KeyEntryRevisions[position], UpstreamProtocol: channel.KeyUpstreamProtocol(position)}, true
 }
 
 // UpdateChannelAllocationStatus attributes delayed health evidence only to the
@@ -832,9 +864,15 @@ func ModelsAvailableToUserGroups(ctx context.Context, groups []string, userID in
 	return available, nil
 }
 
-// MutateChannelKeyEntries serializes entry and budget mutations in one channel
-// transaction. Account Tx calls may follow the sorted entry locks, never before.
+// MutateChannelKeyEntries serializes administrative commits and publications in
+// the same order as configuration edits. Callers must not hold the polling lock.
+// Account Tx calls may follow the sorted entry locks, never before.
 func MutateChannelKeyEntries(ctx context.Context, channelID int, revision int64, mutate func(*gorm.DB, *Channel, []ChannelKeyEntry) ([]ChannelKeyEntry, []ChannelKeyEntry, error)) (*Channel, error) {
+	channelPublicationLock.Lock()
+	defer channelPublicationLock.Unlock()
+	pollingLock := GetChannelPollingLock(channelID)
+	pollingLock.Lock()
+	defer pollingLock.Unlock()
 	updated, written, err := mutateChannelKeyEntries(ctx, channelID, revision, mutate)
 	if err != nil {
 		return nil, err

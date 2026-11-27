@@ -328,6 +328,15 @@ func TestMultiKeyAllocationPublishesOnlyChangedChannel(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "allowlist", published.ChannelInfo.MultiKeyScopeModes[0])
 			assert.False(t, model.IsChannelEnabledForGroupModel("default", "allocation-model", channel.Id), "the newly empty allowlist must remove the local public route")
+			revision = published.KeyEntryRevisions[0]
+			recorder = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_protocol", KeyEntryID: entryID, ExpectedRev: &revision, UpstreamProtocol: common.GetPointer("responses")})
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+			require.True(t, result.Success, recorder.Body.String())
+			assert.Zero(t, fullReads, "protocol mutation must use the same targeted publisher")
+			published, err = model.CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			assert.Equal(t, "responses", published.KeyUpstreamProtocol(0))
+			assert.Equal(t, "allowlist", published.ChannelInfo.MultiKeyScopeModes[0])
 		})
 	}
 }
@@ -1041,6 +1050,21 @@ func TestChannelAllocationsDedupConservesUsageAndConflicts(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, model.SettleChannelBudgets(t.Context(), model.BudgetSettleRequest{ReservationID: r.Id, Revision: 1, TotalActualQuota: int64(10 + i), Final: true}))
 	}
+	// Equal credentials with different upstream policies are not duplicates.
+	protocolRev := selected.KeyEntryRevisions[1]
+	protocolResponse := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_protocol", KeyEntryID: strconv.FormatInt(selected.KeyEntryIDs[1], 10), ExpectedRev: &protocolRev, UpstreamProtocol: common.GetPointer("chat")})
+	var protocolResult struct { Success bool `json:"success"`; Data struct { Rev int64 `json:"rev"` } `json:"data"` }
+	require.NoError(t, common.Unmarshal(protocolResponse.Body.Bytes(), &protocolResult))
+	require.True(t, protocolResult.Success, protocolResponse.Body.String())
+	differentPolicies := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys"})
+	var distinct struct { Success bool `json:"success"`; Data channelKeyDedupPlan `json:"data"` }
+	require.NoError(t, common.Unmarshal(differentPolicies.Body.Bytes(), &distinct))
+	require.True(t, distinct.Success, differentPolicies.Body.String())
+	assert.Empty(t, distinct.Data.Groups)
+	protocolRev = protocolResult.Data.Rev
+	protocolResponse = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "set_key_protocol", KeyEntryID: strconv.FormatInt(selected.KeyEntryIDs[1], 10), ExpectedRev: &protocolRev, UpstreamProtocol: common.GetPointer("inherit")})
+	require.NoError(t, common.Unmarshal(protocolResponse.Body.Bytes(), &protocolResult))
+	require.True(t, protocolResult.Success, protocolResponse.Body.String())
 	previewResponse := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "deduplicate_keys"})
 	var decoded struct {
 		Success bool                `json:"success"`
@@ -1364,6 +1388,238 @@ func TestChannelAllocationsMappedModelScope(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestChannelKeyProtocolMutationPreservesAllocationIdentity(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	require.NoError(t, model.InitializeChannelBudgets())
+	for _, channelType := range []int{constant.ChannelTypeOpenAI, constant.ChannelTypeAnthropic} {
+		for _, cacheEnabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("type=%d/cache=%t", channelType, cacheEnabled), func(t *testing.T) {
+				previousCache := common.MemoryCacheEnabled
+				common.MemoryCacheEnabled = cacheEnabled
+				t.Cleanup(func() { common.MemoryCacheEnabled = previousCache })
+				const credential = "protocol-allocation-secret"
+				channel := &model.Channel{Name: t.Name(), Type: channelType, Key: credential + "\n" + credential + "\nthird-protocol-secret", Models: "model-a,model-b", Group: "default", Status: common.ChannelStatusEnabled,
+					ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyModels: map[int][]string{1: {"model-b"}}, MultiKeyUsers: map[int]int{1: rootID}, MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled}}}
+				require.NoError(t, channel.Insert())
+				t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+				require.Len(t, channel.KeyEntryIDs, 3)
+				accounts := []model.ChannelBudgetAccount{{ScopeType: model.BudgetScopeKey, ScopeId: channel.KeyEntryIDs[1], ChannelId: channel.Id, Enabled: true, LimitQuota: 100, PeriodUsedQuota: 25, ReservedQuota: 5, ConfigVersion: 2}}
+				require.NoError(t, model.DB.Create(&accounts).Error)
+				model.InitChannelCache()
+				targetID := strconv.FormatInt(channel.KeyEntryIDs[1], 10)
+				revision := channel.KeyEntryRevisions[1]
+				listRevision := channel.ChannelInfo.KeyEntryRevision
+				response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_protocol", KeyEntryID: targetID, ExpectedRev: &revision, UpstreamProtocol: common.GetPointer("messages")})
+				var result struct {
+					Success bool `json:"success"`
+					Data struct {
+						Revision int64 `json:"revision"`
+						ID string `json:"key_entry_id"`
+						Rev int64 `json:"rev"`
+						Protocol string `json:"upstream_protocol"`
+					} `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				require.True(t, result.Success, response.Body.String())
+				assert.Equal(t, targetID, result.Data.ID)
+				assert.Equal(t, revision+1, result.Data.Rev)
+				assert.Equal(t, listRevision+1, result.Data.Revision)
+				assert.Equal(t, "messages", result.Data.Protocol)
+				assert.NotContains(t, response.Body.String(), credential)
+				loaded, err := model.GetChannelById(channel.Id, true)
+				require.NoError(t, err)
+				assert.Equal(t, map[int]string{1: "messages"}, loaded.ChannelInfo.MultiKeyUpstreamProtocols)
+				assert.Equal(t, channel.KeyEntryIDs, loaded.KeyEntryIDs)
+				assert.Equal(t, []int64{1, 2, 1}, loaded.KeyEntryRevisions)
+				assert.Equal(t, channel.Key, loaded.Key)
+				assert.Equal(t, channel.ChannelInfo.MultiKeyModels, loaded.ChannelInfo.MultiKeyModels)
+				assert.Equal(t, channel.ChannelInfo.MultiKeyUsers, loaded.ChannelInfo.MultiKeyUsers)
+				assert.Equal(t, channel.ChannelInfo.MultiKeyStatusList, loaded.ChannelInfo.MultiKeyStatusList)
+				var storedAccounts []model.ChannelBudgetAccount
+				require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&storedAccounts).Error)
+				assert.Equal(t, accounts, storedAccounts)
+				cached, err := model.CacheGetChannel(channel.Id)
+				require.NoError(t, err)
+				assert.Equal(t, loaded.ChannelInfo, cached.ChannelInfo)
+				allocation, ok := cached.ChannelAllocationByPosition(1)
+				require.True(t, ok)
+				assert.Equal(t, "messages", allocation.UpstreamProtocol)
+				assert.Equal(t, loaded.KeyEntryIDs[1], allocation.EntryID)
+
+				stale := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_protocol", KeyEntryID: targetID, ExpectedRev: &revision, UpstreamProtocol: common.GetPointer("chat")})
+				assert.Equal(t, http.StatusConflict, stale.Code)
+				assert.Contains(t, stale.Body.String(), "channel_key_revision_conflict")
+				order := []string{strconv.FormatInt(loaded.KeyEntryIDs[2], 10), targetID, strconv.FormatInt(loaded.KeyEntryIDs[0], 10)}
+				// Move the selected allocation from index 1 to 0, despite equal credentials.
+				order[0], order[1] = order[1], order[0]
+				response = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "reorder_keys", KeyEntryIDs: order, ExpectedRevision: &loaded.ChannelInfo.KeyEntryRevision})
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				loaded, err = model.GetChannelById(channel.Id, true)
+				require.NoError(t, err)
+				assert.Equal(t, channel.KeyEntryIDs[1], loaded.KeyEntryIDs[0])
+				assert.Equal(t, "messages", loaded.KeyUpstreamProtocol(0))
+				assert.Equal(t, "inherit", loaded.KeyUpstreamProtocol(2))
+				list := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "get_key_status"})
+				var status struct { Success bool `json:"success"`; Data MultiKeyStatusResponse `json:"data"` }
+				require.NoError(t, common.Unmarshal(list.Body.Bytes(), &status))
+				require.True(t, status.Success, list.Body.String())
+				require.Len(t, status.Data.Keys, 3)
+				assert.Equal(t, targetID, status.Data.Keys[0].Id)
+				assert.Equal(t, "messages", status.Data.Keys[0].UpstreamProtocol)
+				assert.Equal(t, "inherit", status.Data.Keys[2].UpstreamProtocol)
+				assert.NotContains(t, list.Body.String(), credential)
+				// A stale general editor cannot write the derived projection.
+				patch, err := common.Marshal(map[string]any{"id": channel.Id, "name": "protocol-renamed", "channel_info": map[string]any{"multi_key_upstream_protocols": map[int]string{0: "chat", 2: "responses"}}})
+				require.NoError(t, err)
+				response = putUpdateChannel(t, rootID, common.RoleRootUser, string(patch))
+				var saved struct { Success bool `json:"success"` }
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &saved))
+				require.True(t, saved.Success, response.Body.String())
+				loaded, err = model.GetChannelById(channel.Id, true)
+				require.NoError(t, err)
+				assert.Equal(t, map[int]string{0: "messages"}, loaded.ChannelInfo.MultiKeyUpstreamProtocols)
+				rowRevision := loaded.KeyEntryRevisions[0]
+				response = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_protocol", KeyEntryID: targetID, ExpectedRev: &rowRevision, UpstreamProtocol: common.GetPointer("")})
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				require.True(t, result.Success, response.Body.String())
+				assert.Equal(t, "inherit", result.Data.Protocol)
+				entry, err := model.ChannelKeyEntryByID(channel.Id, channel.KeyEntryIDs[1])
+				require.NoError(t, err)
+				assert.Equal(t, "inherit", entry.UpstreamProtocol)
+				assert.Equal(t, rowRevision+1, entry.ConfigRevision)
+				var audits []model.AuditEventOutbox
+				require.NoError(t, model.DB.Where("action = ?", "channel.multi_key_manage").Find(&audits).Error)
+				protocolAudits := 0
+				for _, audit := range audits {
+					var params map[string]any
+					require.NoError(t, common.UnmarshalJsonStr(audit.ParamsJson, &params))
+					if params["action"] != "set_key_protocol" || params["entry_id"] != targetID { continue }
+					protocolAudits++
+					assert.True(t, audit.Success)
+					assert.Equal(t, rootID, audit.ActorUserId)
+					assert.Contains(t, params, "rev")
+					assert.Contains(t, params, "revision")
+					assert.Contains(t, params, "upstream_protocol")
+					encoded, err := common.Marshal(audit)
+					require.NoError(t, err)
+					assert.NotContains(t, string(encoded), credential)
+				}
+				assert.Equal(t, 2, protocolAudits, "only committed protocol saves enqueue success audits")
+			})
+		}
+	}
+}
+
+func TestChannelKeyProtocolRejectsInvalidAndRollsBack(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	previousCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousCache })
+	channel := &model.Channel{Name: t.Name(), Type: constant.ChannelTypeOpenAI, Key: "protocol-rollback-secret", Models: "m", Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	model.InitChannelCache()
+	entryID := strconv.FormatInt(channel.KeyEntryIDs[0], 10)
+	rev := channel.KeyEntryRevisions[0]
+	for _, tc := range []struct {
+		name string
+		id string
+		rev *int64
+		protocol *string
+		index *int
+		listRevision *int64
+		table string
+	}{
+		{name: "index only", rev: &rev, index: common.GetPointer(0), protocol: common.GetPointer("chat")},
+		{name: "missing revision", id: entryID, protocol: common.GetPointer("chat")},
+		{name: "zero revision", id: entryID, rev: common.GetPointer(int64(0)), protocol: common.GetPointer("chat")},
+		{name: "negative revision", id: entryID, rev: common.GetPointer(int64(-1)), protocol: common.GetPointer("chat")},
+		{name: "stale row revision", id: entryID, rev: common.GetPointer(int64(99)), protocol: common.GetPointer("chat")},
+		{name: "stale list revision", id: entryID, rev: &rev, listRevision: common.GetPointer(int64(99)), protocol: common.GetPointer("chat")},
+		{name: "invalid list revision", id: entryID, rev: &rev, listRevision: common.GetPointer(int64(0)), protocol: common.GetPointer("chat")},
+		{name: "missing protocol", id: entryID, rev: &rev},
+		{name: "noncanonical id", id: "0" + entryID, rev: &rev, protocol: common.GetPointer("chat")},
+		{name: "unknown id", id: "9223372036854775807", rev: &rev, protocol: common.GetPointer("chat")},
+		{name: "invalid enum", id: entryID, rev: &rev, protocol: common.GetPointer("realtime")},
+		{name: "mismatched index", id: entryID, rev: &rev, index: common.GetPointer(1), protocol: common.GetPointer("chat")},
+		{name: "audit failure", id: entryID, rev: &rev, protocol: common.GetPointer("chat"), table: "audit_event_outbox"},
+		{name: "ability failure", id: entryID, rev: &rev, protocol: common.GetPointer("responses"), table: "abilities"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			injected := false
+			if tc.table != "" {
+				const callback = "test:key-protocol-save-failure"
+				database := model.DB
+				require.NoError(t, database.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+					if tx.Statement.Table == tc.table { injected = true; _ = tx.AddError(gorm.ErrInvalidDB) }
+				}))
+				t.Cleanup(func() { require.NoError(t, database.Callback().Create().Remove(callback)) })
+			}
+			response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_protocol", KeyEntryID: tc.id, ExpectedRev: tc.rev, ExpectedRevision: tc.listRevision, KeyIndex: tc.index, UpstreamProtocol: tc.protocol})
+			var result struct { Success bool `json:"success"` }
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			assert.False(t, result.Success, response.Body.String())
+			assert.Equal(t, tc.table != "", injected)
+			loaded, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, channel.ChannelInfo, loaded.ChannelInfo)
+			assert.Equal(t, channel.KeyEntryRevisions, loaded.KeyEntryRevisions)
+			assert.Equal(t, "inherit", loaded.KeyUpstreamProtocol(0))
+			var count int64
+			require.NoError(t, model.DB.Model(&model.AuditEventOutbox{}).Count(&count).Error)
+			assert.Zero(t, count)
+			cached, err := model.CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			assert.Equal(t, channel.ChannelInfo, cached.ChannelInfo)
+		})
+	}
+	// Legacy empty column values normalize on read, and single-key metadata
+	// exposes the stable ID/revision needed for the same management action.
+	require.NoError(t, model.DB.Model(&model.ChannelKeyEntry{}).Where("id = ?", channel.KeyEntryIDs[0]).Update("upstream_protocol", "").Error)
+	list := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "get_key_status"})
+	var status struct { Success bool `json:"success"`; Data MultiKeyStatusResponse `json:"data"` }
+	require.NoError(t, common.Unmarshal(list.Body.Bytes(), &status))
+	require.True(t, status.Success, list.Body.String())
+	require.Len(t, status.Data.Keys, 1)
+	assert.Equal(t, entryID, status.Data.Keys[0].Id)
+	assert.Equal(t, "inherit", status.Data.Keys[0].UpstreamProtocol)
+	for _, protocol := range []string{"chat", "responses", "messages", "inherit"} {
+		response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_protocol", KeyEntryID: entryID, ExpectedRev: &rev, UpstreamProtocol: &protocol})
+		var result struct { Success bool `json:"success"`; Data struct { Rev int64 `json:"rev"` } `json:"data"` }
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success, response.Body.String())
+		rev = result.Data.Rev
+		loaded, err := model.GetChannelById(channel.Id, true)
+		require.NoError(t, err)
+		assert.Equal(t, protocol, loaded.KeyUpstreamProtocol(0))
+	}
+	// Ordinary credential rotation keeps the one provable allocation and policy.
+	response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_protocol", KeyEntryID: entryID, ExpectedRev: &rev, UpstreamProtocol: common.GetPointer("responses")})
+	var saved struct { Success bool `json:"success"` }
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &saved))
+	require.True(t, saved.Success, response.Body.String())
+	patch := fmt.Sprintf(`{"id":%d,"key":"rotated-protocol-secret","key_mode":"replace"}`, channel.Id)
+	response = putUpdateChannel(t, rootID, common.RoleRootUser, patch)
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &saved))
+	require.True(t, saved.Success, response.Body.String())
+	loaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, channel.KeyEntryIDs, loaded.KeyEntryIDs)
+	assert.Equal(t, "responses", loaded.KeyUpstreamProtocol(0))
+	assert.Greater(t, loaded.KeyEntryRevisions[0], rev)
+	// Unsupported provider changes cannot retain an explicit dispatch policy.
+	response = putUpdateChannel(t, rootID, common.RoleRootUser, fmt.Sprintf(`{"id":%d,"type":%d}`, channel.Id, constant.ChannelTypeAzure))
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &saved))
+	assert.False(t, saved.Success, response.Body.String())
+	unsupported := &model.Channel{Name: "protocol-unsupported", Type: constant.ChannelTypeAzure, Key: "azure-secret", Models: "m", Group: "default"}
+	require.NoError(t, unsupported.Insert())
+	t.Cleanup(func() { require.NoError(t, unsupported.Delete()) })
+	response = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: unsupported.Id, Action: "set_key_protocol", KeyEntryID: strconv.FormatInt(unsupported.KeyEntryIDs[0], 10), ExpectedRev: &unsupported.KeyEntryRevisions[0], UpstreamProtocol: common.GetPointer("chat")})
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &saved))
+	assert.False(t, saved.Success, response.Body.String())
 }
 
 func TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions(t *testing.T) {
@@ -2216,6 +2472,7 @@ func TestMultiKeyModelDiscoveryUsesOneKey(t *testing.T) {
 	var modelListCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		modelListCalls.Add(1)
+		assert.Equal(t, "/discovery/v1/models", r.URL.Path)
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		modelsByKey := map[string][]string{
 			"sk-alpha": {"model-a", "model-shared"},
@@ -2235,11 +2492,18 @@ func TestMultiKeyModelDiscoveryUsesOneKey(t *testing.T) {
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
-	baseURL := server.URL
+	var legacyCalls atomic.Int32
+	legacyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		legacyCalls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(legacyServer.Close)
+	baseURL := legacyServer.URL
 	channel := &model.Channel{Name: "multi-key-fetch", Type: constant.ChannelTypeOpenAI, Key: "sk-alpha\nsk-beta", Models: "model-a", Group: "default", BaseURL: &baseURL,
 		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
 			MultiKeyModels: map[int][]string{1: {"model-a"}}},
 	}
+	channel.SetSetting(dto.ChannelSettings{BaseURLs: []string{server.URL + "/discovery/"}})
 	require.NoError(t, channel.Insert())
 	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
 
@@ -2295,6 +2559,7 @@ func TestMultiKeyModelDiscoveryUsesOneKey(t *testing.T) {
 	assert.True(t, legacyResponse.Success, legacy.Body.String())
 	assert.Equal(t, response.Data.Models, legacyResponse.Data.Models)
 	assert.EqualValues(t, 2, modelListCalls.Load(), "unambiguous legacy index-only discovery remains compatible")
+	assert.Zero(t, legacyCalls.Load(), "discovery uses the admitted channel pool instead of its legacy scalar")
 
 	loaded, err := model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)

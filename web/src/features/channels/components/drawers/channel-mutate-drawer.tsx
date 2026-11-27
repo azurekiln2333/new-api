@@ -178,6 +178,7 @@ import {
   getAdvancedCustomStats,
   transformChannelToFormDefaults,
   supportsChannelEndpointSelection,
+  supportsChannelUpstreamPool,
   supportsMultipleChannelKeys,
   type ChannelFormValues,
   deduplicateKeys,
@@ -376,6 +377,8 @@ const CAPABILITY_OPTIONS: Array<{
 const SENSITIVE_FORM_FIELDS = [
   'type',
   'base_url',
+  'base_urls',
+  'homepage_url',
   'key',
   'openai_organization',
   'other',
@@ -1042,6 +1045,10 @@ export function ChannelMutateDrawer({
           shouldDirty: true,
           shouldValidate: true,
         })
+      }
+      if (target.kind === 'plugin' || !supportsChannelUpstreamPool(target.type)) {
+        form.setValue('base_urls', '', { shouldDirty: true, shouldValidate: true })
+        form.setValue('homepage_url', '', { shouldDirty: true, shouldValidate: true })
       }
       setProviderTarget(target)
       setChoosingProvider(false)
@@ -4844,6 +4851,43 @@ export function ChannelMutateDrawer({
                   </FormItem>
                 )}
               />
+            )}
+
+            {supportsChannelUpstreamPool(currentType) && (
+              <>
+                <FormField
+                  control={form.control}
+                  name='base_urls'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Base URL pool')}</FormLabel>
+                      <FormControl>
+                        <Textarea {...field} value={field.value ?? ''} rows={3} />
+                      </FormControl>
+                      <FormDescription>
+                        {t('One HTTP(S) URL per line, up to 16 unique addresses. Paths are preserved; credentials, query and fragment are not allowed. Empty uses Base URL or the provider default.')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='homepage_url'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Homepage URL')}</FormLabel>
+                      <FormControl>
+                        <Input {...field} value={field.value ?? ''} />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Optional HTTP(S) navigation address. Query and fragment are allowed. Empty opens the first effective Base URL.')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
             )}
 
             {currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && (

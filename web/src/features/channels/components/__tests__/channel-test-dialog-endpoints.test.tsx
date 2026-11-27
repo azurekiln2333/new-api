@@ -79,6 +79,15 @@ beforeEach(() => {
       user: { id: 1, username: 'root', role: ROLE.SUPER_ADMIN },
     },
   })
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        keys: [{ id: '101', rev: 1, index: 0, status: 1, upstream_protocol: 'inherit' }],
+        total: 1,
+      },
+    },
+  })
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/task_plugin_options') {
       return { data: { success: true, data: pluginOptions } }

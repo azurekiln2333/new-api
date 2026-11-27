@@ -43,6 +43,10 @@ import {
 } from './advanced-custom'
 import { parseGroupModels, pruneGroupModels } from './channel-group-models'
 import { readTaskExtendPluginKeys } from './channel-plugin-extensions'
+import {
+  isValidChannelHttpUrl,
+  supportsChannelUpstreamPool,
+} from './channel-utils'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
 // ============================================================================
@@ -219,6 +223,8 @@ export const channelFormSchema = z
     name: z.string().min(1, ERROR_MESSAGES.REQUIRED_NAME),
     type: z.number().min(0, ERROR_MESSAGES.REQUIRED_TYPE),
     base_url: z.string().optional(),
+    base_urls: z.string().optional(),
+    homepage_url: z.string().optional(),
     task_plugin_key: z.string().optional(),
     task_extend_plugin_keys: z.array(z.string()).optional(),
     request_plugins: z.array(z.string()).optional(),
@@ -349,6 +355,51 @@ export const channelFormSchema = z
       .optional(),
   })
   .superRefine((data, ctx) => {
+    const poolLines = (data.base_urls ?? '')
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+    const pool = poolLines.map((line) => line.trim())
+    if (pool.length > 16) {
+      addRequiredIssue(
+        ctx,
+        'base_urls',
+        'Base URL pool must contain at most 16 URLs'
+      )
+    }
+    if (new Set(pool).size !== pool.length) {
+      addRequiredIssue(
+        ctx,
+        'base_urls',
+        'Base URL pool must not contain duplicate URLs'
+      )
+    }
+    if (poolLines.some((url) => !isValidChannelHttpUrl(url))) {
+      addRequiredIssue(
+        ctx,
+        'base_urls',
+        'Base URLs must be HTTP(S), at most 2048 bytes, without credentials, query, fragment, control characters or backslashes'
+      )
+    }
+    if (
+      data.homepage_url?.trim() &&
+      !isValidChannelHttpUrl(data.homepage_url, true)
+    ) {
+      addRequiredIssue(
+        ctx,
+        'homepage_url',
+        'Homepage URL must be HTTP(S), at most 2048 bytes, without credentials, control characters or backslashes'
+      )
+    }
+    if (
+      !supportsChannelUpstreamPool(data.type) &&
+      (pool.length || data.homepage_url?.trim())
+    ) {
+      addRequiredIssue(
+        ctx,
+        'base_urls',
+        'Upstream address settings are only supported for OpenAI and Anthropic channels'
+      )
+    }
     if (data.supported_endpoints?.length) {
       if (!supportsChannelEndpointSelection(data.type)) {
         addRequiredIssue(
@@ -534,6 +585,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   name: '',
   type: 1,
   base_url: '',
+  base_urls: '',
+  homepage_url: '',
   task_plugin_key: '',
   task_extend_plugin_keys: [],
   request_plugins: [],
@@ -615,6 +668,8 @@ export function transformChannelToFormDefaults(
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
+    base_urls: '',
+    homepage_url: '',
     max_concurrent_requests: 0,
     upstream_first_byte_timeout_mode: 'inherit' as 'inherit' | 'custom',
     upstream_first_byte_timeout_seconds: 0,
@@ -645,6 +700,11 @@ export function transformChannelToFormDefaults(
         parsed.http2_connection_shards
       )
       extraSettings = {
+        base_urls: Array.isArray(parsed.base_urls)
+          ? parsed.base_urls.join('\n')
+          : '',
+        homepage_url:
+          typeof parsed.homepage_url === 'string' ? parsed.homepage_url : '',
         max_concurrent_requests: parsed.max_concurrent_requests ?? 0,
         upstream_first_byte_timeout_mode:
           parsed.upstream_first_byte_timeout_seconds == null
@@ -803,7 +863,9 @@ export function transformChannelToFormDefaults(
  * Build the setting JSON string from form extra settings
  */
 export function buildSettingJSON(formData: ChannelFormValues): string {
+  const existing: unknown = parseOptionalJson(formData.setting)
   const settingObj: Record<string, unknown> = {
+    ...(isJsonObjectValue(existing) ? existing : {}),
     max_concurrent_requests: formData.max_concurrent_requests || undefined,
     upstream_first_byte_timeout_seconds:
       formData.upstream_first_byte_timeout_mode === 'custom'
@@ -837,6 +899,21 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
   }
+
+  if (supportsChannelUpstreamPool(formData.type)) {
+    settingObj.base_urls = (formData.base_urls ?? '')
+      .split(/\r?\n/)
+      .map((url) => url.trim())
+      .filter(Boolean)
+    settingObj.homepage_url = formData.homepage_url?.trim() || ''
+  } else if ('base_urls' in settingObj || 'homepage_url' in settingObj) {
+    // Explicit clears are required by the server's patch-preservation contract.
+    settingObj.base_urls = []
+    settingObj.homepage_url = ''
+  }
+  delete settingObj.http_protocol
+  delete settingObj.http2_connection_shards
+  delete settingObj.tls_insecure_skip_verify
 
   const protocol = normalizeHttpProtocol(formData.http_protocol)
   const shards =

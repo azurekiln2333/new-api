@@ -14,10 +14,12 @@ import (
 	"github.com/MoeForge/moego/regexp"
 	common2 "github.com/QuantumNous/new-api/common"
 	appconstant "github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -438,6 +440,68 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	return resp, nil
 }
 
+// validateAttemptUpstreamProtocol is the final fail-closed boundary for all
+// transports, including non-text handlers that never run endpoint resolution.
+// It reads only the frozen attempt; budget/identity admission remains unchanged.
+func validateAttemptUpstreamProtocol(c *gin.Context, info *common.RelayInfo, websocket bool) error {
+	if info == nil || info.ChannelMeta == nil {
+		return nil
+	}
+	protocol, err := dto.NormalizeChannelUpstreamProtocol(info.ChannelKeyProtocol)
+	if err != nil {
+		return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if len(info.ChannelSetting.BaseURLs) > 0 {
+		settings := info.ChannelSetting
+		if (info.ChannelType != appconstant.ChannelTypeOpenAI && info.ChannelType != appconstant.ChannelTypeAnthropic) || settings.NormalizeUpstreamURLs() != nil {
+			return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		selectedURL := strings.TrimRight(info.ChannelBaseUrl, "/")
+		if selectedURL == "" || !slices.ContainsFunc(settings.BaseURLs, func(configured string) bool {
+			return strings.TrimRight(configured, "/") == selectedURL
+		}) {
+			return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+	}
+	if protocol == dto.ChannelUpstreamProtocolInherit {
+		return nil
+	}
+	target := types.RelayFormatOpenAI
+	switch protocol {
+	case dto.ChannelEndpointMessages:
+		target = types.RelayFormatClaude
+	case dto.ChannelEndpointResponses:
+		target = types.RelayFormatOpenAIResponses
+	}
+	actual := info.GetFinalRequestRelayFormat()
+	allowed := actual == target || protocol == dto.ChannelEndpointResponses && actual == types.RelayFormatOpenAIResponsesCompaction
+	allowed = allowed && (info.ChannelType == appconstant.ChannelTypeOpenAI || info.ChannelType == appconstant.ChannelTypeAnthropic)
+	allowed = allowed && (len(info.ChannelSetting.SupportedEndpoints) == 0 || slices.Contains(info.ChannelSetting.SupportedEndpoints, protocol))
+	if err := common2.ValidateChannelSupportedEndpoints(info.ChannelType, &info.ChannelSetting); err != nil {
+		return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	// Non-text requests can share OpenAI's relay format. Matching that format
+	// alone must not authorize embeddings, images, audio or legacy completions.
+	switch info.RelayFormat {
+	case types.RelayFormatOpenAI:
+		allowed = allowed && (info.RelayMode == constant.RelayModeChatCompletions || info.RelayMode == constant.RelayModeResponses)
+	case types.RelayFormatClaude:
+	case types.RelayFormatOpenAIResponses:
+		allowed = allowed && info.RelayMode == constant.RelayModeResponses
+	case types.RelayFormatOpenAIResponsesCompaction:
+		allowed = allowed && info.RelayMode == constant.RelayModeResponsesCompact
+	default:
+		allowed = false
+	}
+	if websocket {
+		allowed = allowed && protocol == dto.ChannelEndpointResponses && info.RelayMode == constant.RelayModeResponses
+	}
+	if !allowed {
+		return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointUnsupported)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	return nil
+}
+
 // WebSocketPreparer is an adaptor that prepares the request before its
 // WebSocket handshake is built, such as binding the key it sends.
 type WebSocketPreparer interface {
@@ -449,6 +513,9 @@ type WebSocketPreparer interface {
 // request context, and reports a rejected handshake as a *types.NewAPIError
 // carrying the upstream status code (types.NewError preserves it).
 func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*websocket.Conn, error) {
+	if err := validateAttemptUpstreamProtocol(c, info, true); err != nil {
+		return nil, err
+	}
 	if preparer, ok := a.(WebSocketPreparer); ok {
 		if err := preparer.PrepareWebSocket(c, info); err != nil {
 			return nil, err
@@ -539,6 +606,9 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 }
 
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	if err := validateAttemptUpstreamProtocol(c, info, false); err != nil {
+		return nil, err
+	}
 	settings := info.ChannelSetting
 	firstByteTimeout := service.EffectiveUpstreamFirstByteTimeoutSeconds(settings)
 	settings.UpstreamFirstByteTimeoutSeconds = &firstByteTimeout

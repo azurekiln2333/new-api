@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -26,6 +27,47 @@ func resolveTextUpstreamEndpoint(c *gin.Context, info *relaycommon.RelayInfo) (t
 	canUpgrade := info.RelayFormat == types.RelayFormatClaude ||
 		(info.RelayFormat == types.RelayFormatOpenAI && info.RelayMode == relayconstant.RelayModeChatCompletions)
 	preferResponses := canUpgrade && service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName)
+	protocol, protocolErr := dto.NormalizeChannelUpstreamProtocol(info.ChannelKeyProtocol)
+	if protocolErr != nil {
+		return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if protocol != dto.ChannelUpstreamProtocolInherit {
+		info.UpstreamTextEndpoint = ""
+		if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAnthropic {
+			return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointUnsupported)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if err := common.ValidateChannelSupportedEndpoints(info.ChannelType, settings); err != nil {
+			return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		// A Key narrows a channel declaration; it cannot add a capability the
+		// channel explicitly excludes. An undeclared legacy channel is unrestricted.
+		allowed := len(settings.SupportedEndpoints) == 0 || slices.Contains(settings.SupportedEndpoints, protocol)
+		target := types.RelayFormatOpenAI
+		switch protocol {
+		case dto.ChannelEndpointMessages:
+			target = types.RelayFormatClaude
+		case dto.ChannelEndpointResponses:
+			target = types.RelayFormatOpenAIResponses
+		}
+		switch info.RelayFormat {
+		case types.RelayFormatOpenAI:
+			allowed = allowed && info.RelayMode == relayconstant.RelayModeChatCompletions
+		case types.RelayFormatClaude, types.RelayFormatOpenAIResponses:
+		case types.RelayFormatOpenAIResponsesCompaction:
+			allowed = allowed && protocol == dto.ChannelEndpointResponses
+			target = types.RelayFormatOpenAIResponsesCompaction
+		default:
+			allowed = false
+		}
+		if !allowed {
+			return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointUnsupported)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if passthrough && target != info.RelayFormat {
+			return "", types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointPassthroughConflict)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		info.UpstreamTextEndpoint = target
+		return target, nil
+	}
 	if len(settings.SupportedEndpoints) == 0 {
 		info.UpstreamTextEndpoint = ""
 		if preferResponses && !passthrough {

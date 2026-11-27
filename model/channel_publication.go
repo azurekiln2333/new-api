@@ -523,7 +523,25 @@ func UpdateChannelConfigAtomic(channelID int, edit ChannelConfigEdit) (*Channel,
 			if edit.Apply == nil {
 				return nil
 			}
-			return edit.Apply(&baseline, channel)
+			if err := edit.Apply(&baseline, channel); err != nil {
+				return err
+			}
+			// Older editors omit additive settings. Merge only after locking so
+			// they cannot restore the pre-transaction URL pool over a newer save.
+			if err := channel.PreserveUpstreamSettings(&baseline); err != nil {
+				return err
+			}
+			if err := channel.NormalizeUpstreamSettings(); err != nil {
+				return err
+			}
+			if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeAnthropic {
+				for _, protocol := range baseline.ChannelInfo.MultiKeyUpstreamProtocols {
+					if protocol != "" && protocol != kitdto.ChannelUpstreamProtocolInherit {
+						return errors.New("upstream_protocol is only supported for OpenAI and Anthropic channels")
+					}
+				}
+			}
+			return nil
 		})
 		if err != nil {
 			return err

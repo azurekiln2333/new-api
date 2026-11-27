@@ -32,6 +32,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import { resolveChannelAddressUrl } from '../../lib/channel-utils'
 import type { Channel } from '../../types'
 import { ChannelsProvider, useChannels } from '../channels-provider'
 import { ChannelsTable } from '../channels-table'
@@ -100,6 +101,8 @@ async function renderChannelsPage(params: {
   baseUrl: string | null
   viewMode: 'table' | 'card'
   tagMode?: boolean
+  setting?: string
+  providerDefault?: string
 }) {
   localStorage.setItem('channels:view-mode', params.viewMode)
   localStorage.setItem('enable-tag-mode', String(params.tagMode ?? false))
@@ -108,9 +111,12 @@ async function renderChannelsPage(params: {
       return {
         data: {
           success: true,
-          data: { items: [channel(params.baseUrl)], total: 1, type_counts: {} },
+          data: { items: [{ ...channel(params.baseUrl), setting: params.setting }], total: 1, type_counts: {} },
         },
       }
+    }
+    if (url === '/api/channel/default_base_urls') {
+      return { data: { success: true, data: { 1: params.providerDefault } } }
     }
     return { data: { success: true, data: ['vip'] } }
   })
@@ -207,3 +213,66 @@ test.each(VIEW_MODES)(
     ).toBeNull()
   }
 )
+
+test.each([
+  {
+    setting: { homepage_url: 'https://portal.example/account?tab=usage#today', base_urls: ['https://pool.example/prefix/'] },
+    expected: 'https://portal.example/account?tab=usage#today',
+  },
+  {
+    setting: { homepage_url: '', base_urls: ['https://pool.example/prefix/', 'https://other.example'] },
+    expected: 'https://pool.example/prefix/',
+  },
+  {
+    setting: { homepage_url: 'javascript:alert(1)', base_urls: ['https://pool.example/prefix/'] },
+    expected: 'https://pool.example/prefix/',
+  },
+  { setting: { base_urls: [] }, expected: 'https://legacy.example' },
+])(
+  'card navigation uses the safe configured destination $expected',
+  async ({ setting, expected }) => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    await renderChannelsPage({
+      baseUrl: 'https://legacy.example',
+      viewMode: 'card',
+      setting: JSON.stringify(setting),
+    })
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Open Channel Address' }))
+    expect(open).toHaveBeenCalledWith(expected, '_blank', 'noopener,noreferrer')
+  }
+)
+
+test('a legacy official channel opens the shared server-provided default', async () => {
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  await renderChannelsPage({
+    baseUrl: null,
+    viewMode: 'card',
+    providerDefault: 'https://api.openai.com',
+  })
+  await userEvent
+    .setup()
+    .click(await screen.findByRole('button', { name: 'Open Channel Address' }))
+  expect(open).toHaveBeenCalledWith(
+    'https://api.openai.com',
+    '_blank',
+    'noopener,noreferrer'
+  )
+})
+
+test.each([
+  'javascript:alert(1)',
+  'https://user:secret@unsafe.example',
+  'https://@unsafe.example',
+  'https://unsafe.example/%0a',
+  'https://unsafe.example/%5c',
+  'https:///unsafe.example',
+])('unsafe configured navigation %s cannot be opened', (url) => {
+  expect(
+    resolveChannelAddressUrl({
+      ...channel(url),
+      setting: JSON.stringify({ homepage_url: url, base_urls: [url] }),
+    })
+  ).toBeNull()
+})

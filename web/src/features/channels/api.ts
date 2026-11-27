@@ -57,7 +57,9 @@ import type {
   MultiKeyManageParams,
   MultiKeyModelSelection,
   MultiKeyModelSyncResult,
+  MultiKeyProtocolResponse,
   MultiKeyStatusResponse,
+  ChannelUpstreamProtocol,
   ResetChannelBudgetParams,
   SearchChannelsParams,
   SearchChannelsResponse,
@@ -651,6 +653,29 @@ export async function manageMultiKeys(
     channelActionConfig({ singleUseAuthorization: write })
   )
   return res.data
+}
+
+/** Pin one stable allocation's upstream protocol; never mutate by index. */
+export async function setMultiKeyProtocol(params: {
+  channelId: number
+  keyEntryId: string
+  expectedRev: number
+  upstreamProtocol: ChannelUpstreamProtocol
+}): Promise<MultiKeyProtocolResponse> {
+  if (
+    !/^[1-9]\d*$/.test(params.keyEntryId) ||
+    !Number.isSafeInteger(params.expectedRev) ||
+    params.expectedRev < 1
+  ) {
+    throw new Error('Channel key configuration changed, reload and retry')
+  }
+  return manageMultiKeys({
+    channel_id: params.channelId,
+    action: 'set_key_protocol',
+    key_entry_id: params.keyEntryId,
+    expected_rev: params.expectedRev,
+    upstream_protocol: params.upstreamProtocol,
+  }) as Promise<MultiKeyProtocolResponse>
 }
 
 /**

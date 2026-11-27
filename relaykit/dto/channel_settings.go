@@ -7,12 +7,18 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/MoeForge/moego/regexp"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 type ChannelSettings struct {
+	// BaseURLs is an ordered upstream pool, independent of the channel's keys.
+	// Empty preserves the legacy scalar base_url and provider default.
+	BaseURLs []string `json:"base_urls,omitempty"`
+	// HomepageURL is navigation metadata only; empty uses the first effective URL.
+	HomepageURL string `json:"homepage_url,omitempty"`
 	// SupportedEndpoints declares upstream text API capabilities. Empty preserves
 	// legacy routing; it does not restrict the protocols accepted from clients.
 	SupportedEndpoints []string `json:"supported_endpoints,omitempty"`
@@ -92,7 +98,80 @@ const (
 	MaxHTTP2ConnectionShards           = 8
 	MaxChannelConcurrentRequests       = 1_000_000
 	MaxUpstreamFirstByteTimeoutSeconds = 86_400
+	MaxChannelBaseURLs                 = 16
+	MaxChannelURLBytes                 = 2048
+	ChannelUpstreamProtocolInherit     = "inherit"
 )
+
+// NormalizeUpstreamURLs validates configuration syntax without making requests.
+// It retains pool order and paths and never changes a caller-owned slice.
+func (s *ChannelSettings) NormalizeUpstreamURLs() error {
+	if s == nil {
+		return nil
+	}
+	if len(s.BaseURLs) > MaxChannelBaseURLs {
+		return fmt.Errorf("base_urls must contain at most 16 URLs")
+	}
+	var normalized []string
+	if s.BaseURLs != nil {
+		normalized = make([]string, 0, len(s.BaseURLs))
+	}
+	for _, raw := range s.BaseURLs {
+		value, err := normalizeChannelHTTPURL(raw, false)
+		if err != nil || value == "" {
+			return fmt.Errorf("base_urls must contain valid HTTP(S) URLs without credentials, query, fragment, control characters or backslashes")
+		}
+		if slices.Contains(normalized, value) {
+			return fmt.Errorf("base_urls must not contain duplicate URLs")
+		}
+		normalized = append(normalized, value)
+	}
+	homepage, err := normalizeChannelHTTPURL(s.HomepageURL, true)
+	if err != nil {
+		return fmt.Errorf("homepage_url must be a valid HTTP(S) URL without credentials, control characters or backslashes")
+	}
+	s.BaseURLs = normalized
+	s.HomepageURL = homepage
+	return nil
+}
+
+func normalizeChannelHTTPURL(raw string, navigation bool) (string, error) {
+	if strings.ContainsRune(raw, '\\') || strings.ContainsFunc(raw, unicode.IsControl) {
+		return "", fmt.Errorf("invalid channel URL")
+	}
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) > MaxChannelURLBytes {
+		return "", fmt.Errorf("channel URL exceeds 2048 bytes")
+	}
+	decoded, err := url.PathUnescape(value)
+	if err != nil || strings.ContainsRune(decoded, '\\') || strings.ContainsFunc(decoded, unicode.IsControl) {
+		return "", fmt.Errorf("invalid channel URL")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.Opaque != "" || parsed.Hostname() == "" ||
+		(!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
+		return "", fmt.Errorf("invalid channel URL")
+	}
+	if !navigation && strings.ContainsAny(value, "?#") {
+		return "", fmt.Errorf("invalid channel base URL")
+	}
+	return value, nil
+}
+
+// NormalizeChannelUpstreamProtocol keeps legacy empty allocation rows inherited.
+func NormalizeChannelUpstreamProtocol(value string) (string, error) {
+	switch value {
+	case "", ChannelUpstreamProtocolInherit:
+		return ChannelUpstreamProtocolInherit, nil
+	case ChannelEndpointMessages, ChannelEndpointChat, ChannelEndpointResponses:
+		return value, nil
+	default:
+		return "", fmt.Errorf("invalid channel key upstream protocol")
+	}
+}
 
 func (s *ChannelSettings) ValidateSupportedEndpoints() error {
 	if s == nil || len(s.SupportedEndpoints) == 0 {

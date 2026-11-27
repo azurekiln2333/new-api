@@ -57,6 +57,8 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -97,7 +99,8 @@ import {
   formatResponseTime,
   handleTestChannel,
   parseChannelSettings,
-  supportsChannelEndpointSelection,
+  supportsChannelDiagnosticEndpoint,
+  supportsChannelUpstreamPool,
 } from '../../lib'
 import type {
   Channel,
@@ -188,14 +191,12 @@ function getLatestChannelTestCachePatch(
   return latest?.patch
 }
 
-// A required upstream lists the declarations that can serve the request shape.
-// Streaming is not a separate requirement: an HTTP SSE Responses request is
-// converted for a Messages-only channel exactly like the non-streaming one.
+// Capabilities come from the shared channel/Key intersection helper.
+// Streaming is not a separate endpoint: supported HTTP conversions also use SSE.
 const endpointTypeOptions: Array<{
   value: string
   label: string
   path?: string
-  requiresAnyUpstream?: readonly ('chat' | 'responses' | 'messages')[]
 }> = [
   { value: 'auto', label: 'Auto detect (default)' },
   {
@@ -210,7 +211,6 @@ const endpointTypeOptions: Array<{
     value: 'openai-response',
     label: 'OpenAI Responses (/v1/responses)',
     path: '/v1/responses',
-    requiresAnyUpstream: ['responses', 'messages'],
   },
   {
     // Compaction has no Anthropic Messages equivalent and is refused before
@@ -218,7 +218,6 @@ const endpointTypeOptions: Array<{
     value: 'openai-response-compact',
     label: 'OpenAI Response Compaction (/v1/responses/compact)',
     path: '/v1/responses/compact',
-    requiresAnyUpstream: ['responses'],
   },
   {
     value: 'anthropic',
@@ -229,7 +228,6 @@ const endpointTypeOptions: Array<{
     value: 'gemini',
     label: 'Gemini (/v1beta/models/{model}:generateContent)',
     path: '/v1beta/models/{model}:generateContent',
-    requiresAnyUpstream: ['chat'],
   },
   {
     value: 'jina-rerank',
@@ -442,58 +440,31 @@ function ChannelTestDialogContent({
       : undefined
   )
   const relayPaths = plugin?.relayPaths
-  const supportedEndpoints = supportsChannelEndpointSelection(currentRow.type)
-    ? settings?.supported_endpoints
-    : undefined
-  const declaredUpstreams = supportedEndpoints?.length
-    ? supportedEndpoints
-    : undefined
-  const endpointSelectItems = useMemo(
-    () =>
-      endpointTypeOptions
-        .filter((option) => {
-          if (relayPaths && option.path && !relayPaths.includes(option.path)) {
-            return false
-          }
-          // No declaration keeps the historical behavior: every request shape is
-          // offered and the channel decides.
-          if (!declaredUpstreams) return true
-          if (!option.requiresAnyUpstream) return true
-          return option.requiresAnyUpstream.some((upstream) =>
-            declaredUpstreams.includes(upstream)
-          )
-        })
-        .map((option) => ({
-          value: option.value,
-          label: t(option.label),
-        })),
-    [declaredUpstreams, relayPaths, t]
-  )
-  const effectiveEndpointType = endpointSelectItems.some(
-    (option) => option.value === endpointType
-  )
-    ? endpointType
-    : 'auto'
-
-  // Only a multi-key channel has keys to choose from; the key list is already
-  // served by the existing multi-key management endpoint.
+  // The existing management endpoint also exposes the stable single-Key
+  // allocation so diagnostics can honor its upstream restriction.
   const isMultiKeyChannel =
     currentRow.channel_info.is_multi_key &&
     currentRow.channel_info.multi_key_size > 0
+  const requiresSingleKeyStatus =
+    !isMultiKeyChannel && supportsChannelUpstreamPool(currentRow.type)
   const keyStatusQuery = useQuery({
     queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId),
-    queryFn: () =>
-      getMultiKeyStatus(
-        currentChannelId,
-        1,
-        currentRow.channel_info.multi_key_size
+    queryFn: async () =>
+      requireServerSuccess(
+        await getMultiKeyStatus(
+          currentChannelId,
+          1,
+          Math.max(1, currentRow.channel_info.multi_key_size)
+        )
       ),
-    enabled: open && isMultiKeyChannel,
+    enabled:
+      open &&
+      (isMultiKeyChannel || supportsChannelUpstreamPool(currentRow.type)),
     staleTime: 30_000,
   })
   const channelKeys = useMemo(
-    () => (isMultiKeyChannel ? (keyStatusQuery.data?.data?.keys ?? []) : []),
-    [isMultiKeyChannel, keyStatusQuery.data]
+    () => keyStatusQuery.data?.data?.keys ?? [],
+    [keyStatusQuery.data]
   )
   // Keep the allocation snapshot, not its mutable position in the key list.
   // A reordered/revised/deleted allocation requires an explicit new selection.
@@ -509,6 +480,9 @@ function ChannelTestDialogContent({
     ? `${selectedTestKey.id}:${selectedTestKey.rev}:${selectedTestKey.index}`
     : AUTO_TEST_KEY
   const selectedKeyUnavailable = selectedTestKey !== null && !selectedKey
+  const singleKeyUnavailable =
+    requiresSingleKeyStatus &&
+    (!keyStatusQuery.isSuccess || channelKeys.length !== 1)
   const listedKeyCount = keyStatusQuery.data?.data?.total ?? channelKeys.length
   const keySelectItems = useMemo(
     () => [
@@ -550,6 +524,30 @@ function ChannelTestDialogContent({
       void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId) })
     },
   })
+  const diagnosticKey = isMultiKeyChannel ? selectedKey : channelKeys[0]
+  const selectedProtocol = diagnosticKey?.upstream_protocol || 'inherit'
+  const endpointSelectItems = useMemo(
+    () =>
+      endpointTypeOptions
+        .filter((option) => {
+          if (relayPaths && option.path && !relayPaths.includes(option.path)) {
+            return false
+          }
+          return supportsChannelDiagnosticEndpoint(
+            currentRow.type,
+            settings,
+            selectedProtocol,
+            option.value
+          )
+        })
+        .map((option) => ({ value: option.value, label: t(option.label) })),
+    [currentRow.type, settings, selectedProtocol, relayPaths, t]
+  )
+  const effectiveEndpointType = endpointSelectItems.some(
+    (option) => option.value === endpointType
+  )
+    ? endpointType
+    : endpointSelectItems[0]?.value ?? 'auto'
 
   const dismissBatchProgressToast = useCallback(() => {
     if (batchProgressToastIdRef.current === null) return
@@ -669,11 +667,19 @@ function ChannelTestDialogContent({
   )
 
   const availableModels = useMemo(() => {
+    if (singleKeyUnavailable || endpointSelectItems.length === 0) return []
     if (selectedTestKey === null) return models
     if (!selectedKey) return []
     if (testAllChannelModels) return models
     return models.filter((model) => keyServesModel(selectedKey, model))
-  }, [models, selectedKey, selectedTestKey, testAllChannelModels])
+  }, [
+    models,
+    selectedKey,
+    selectedTestKey,
+    testAllChannelModels,
+    singleKeyUnavailable,
+    endpointSelectItems.length,
+  ])
 
   const successModels = useMemo(
     () =>
@@ -776,7 +782,11 @@ function ChannelTestDialogContent({
       silent = false,
       refreshList = true
     ): Promise<TestResult | undefined> => {
-      if (!currentRow) return
+      if (
+        !currentRow ||
+        singleKeyUnavailable ||
+        endpointSelectItems.length === 0
+      ) return
       if (
         selectedTestKey !== null &&
         (!selectedKey || (!testAllChannelModels && !keyServesModel(selectedKey, model)))
@@ -845,6 +855,8 @@ function ChannelTestDialogContent({
       selectedKey,
       selectedTestKey,
       testAllChannelModels,
+      singleKeyUnavailable,
+      endpointSelectItems.length,
       effectiveEndpointType,
       effectiveStreamTest,
       markModelTesting,
@@ -1272,6 +1284,25 @@ function ChannelTestDialogContent({
               />
               <Label htmlFor='test-all-channel-models'>{t('All channel models')}</Label>
             </div>
+          )}
+          {requiresSingleKeyStatus && keyStatusQuery.isPending && (
+            <LoadingState inline size='sm' message={t('Loading...')} />
+          )}
+          {requiresSingleKeyStatus &&
+            !keyStatusQuery.isPending &&
+            singleKeyUnavailable && (
+              <ErrorState
+                className='min-h-0 py-3'
+                title={t('Failed to load key status')}
+                onRetry={() => void keyStatusQuery.refetch()}
+              />
+            )}
+          {!singleKeyUnavailable && endpointSelectItems.length === 0 && (
+            <p role='status'>
+              {t(
+                'This channel does not support a compatible upstream endpoint for this request'
+              )}
+            </p>
           )}
           <div className='flex shrink-0 items-center gap-2'>
             {isMultiKeyChannel && (

@@ -187,6 +187,82 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+test.each([
+  { type: 1, protocol: 'messages' as const, setting: '{"supported_endpoints":["messages"]}', compact: false },
+  { type: 14, protocol: 'chat' as const, setting: '', compact: false },
+  { type: 1, protocol: 'responses' as const, setting: '{"supported_endpoints":["responses"]}', compact: true },
+])('a type $type Key pinned to $protocol offers converted text clients without extra probes', async ({ type, protocol, setting, compact }) => {
+  const { get } = renderDialog(makeChannel({ type, setting }), [
+    { id: '9007199254740995', rev: 4, index: 0, status: 1, key_preview: 'same…key', upstream_protocol: protocol },
+    { id: '9007199254740997', rev: 7, index: 1, status: 1, key_preview: 'same…key' },
+  ])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('combobox', { name: 'Tested key' }))
+  await user.click(await screen.findByRole('option', { name: '1 · same…key · Enabled' }))
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  await user.click(await screen.findByRole('combobox', { name: 'Endpoint Type' }))
+  const list = within(await screen.findByRole('listbox'))
+  expect(list.getByRole('option', { name: 'OpenAI (/v1/chat/completions)' })).toBeVisible()
+  expect(list.getByRole('option', { name: 'Anthropic (/v1/messages)' })).toBeVisible()
+  const responses = list.getByRole('option', { name: 'OpenAI Responses (/v1/responses)' })
+  expect(responses).toBeVisible()
+  expect(Boolean(list.queryByRole('option', { name: 'OpenAI Response Compaction (/v1/responses/compact)' }))).toBe(compact)
+  expect(list.queryByRole('option', { name: 'Embeddings (/v1/embeddings)' })).not.toBeInTheDocument()
+  expect(get.mock.calls.filter(([url]) => url === '/api/channel/test/7')).toHaveLength(0)
+  await user.click(responses)
+  await user.keyboard('{Escape}')
+  await user.click((await testModelRow('model-a')).getByRole('button', { name: 'Test Connection' }))
+  await waitFor(() => expect(get).toHaveBeenCalledWith('/api/channel/test/7', expect.objectContaining({ params: {
+    model: 'model-a', stream: true, endpoint_type: 'openai-response',
+    key_index: 0, key_entry_id: '9007199254740995', expected_rev: 4,
+  } })))
+  expect(get.mock.calls.filter(([url]) => url === '/api/channel/test/7')).toHaveLength(1)
+})
+
+test.each([
+  { protocol: 'messages' as const, label: 'Anthropic (/v1/messages)' },
+  { protocol: 'chat' as const, label: 'OpenAI (/v1/chat/completions)' },
+  { protocol: 'responses' as const, label: 'OpenAI Responses (/v1/responses)' },
+])('passthrough with a $protocol Key offers no converted client entrypoint', async ({ protocol, label }) => {
+  const { get } = renderDialog(makeChannel({ setting: '{"pass_through_body_enabled":true}' }), [
+    { index: 0, status: 1, key_preview: 'key…one', upstream_protocol: protocol },
+    { index: 1, status: 1, key_preview: 'key…two' },
+  ])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('combobox', { name: 'Tested key' }))
+  await user.click(await screen.findByRole('option', { name: '1 · key…one · Enabled' }))
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  await user.click(await screen.findByRole('combobox', { name: 'Endpoint Type' }))
+  const labels = within(await screen.findByRole('listbox')).getAllByRole('option').map((option) => option.textContent)
+  const expected = [label]
+  if (protocol === 'responses') expected.splice(1, 0, 'OpenAI Response Compaction (/v1/responses/compact)')
+  expect(labels).toEqual(expected)
+  expect(get.mock.calls.filter(([url]) => url === '/api/channel/test/7')).toHaveLength(0)
+})
+
+test('an inherited Key retains channel capabilities after switching from a pinned Chat Key', async () => {
+  renderDialog(makeChannel({ setting: '{"supported_endpoints":["chat"]}' }), [
+    { index: 0, status: 1, key_preview: 'key…one', upstream_protocol: 'chat' },
+    { index: 1, status: 1, key_preview: 'key…two', upstream_protocol: 'inherit' },
+  ])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('combobox', { name: 'Tested key' }))
+  await user.click(await screen.findByRole('option', { name: '1 · key…one · Enabled' }))
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  await user.click(await screen.findByRole('combobox', { name: 'Endpoint Type' }))
+  await user.click(await screen.findByRole('option', { name: 'OpenAI Responses (/v1/responses)' }))
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('combobox', { name: 'Tested key' }))
+  await user.click(await screen.findByRole('option', { name: '2 · key…two · Enabled' }))
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  expect(await screen.findByRole('combobox', { name: 'Endpoint Type' })).toHaveValue('Auto detect (default)')
+  await user.click(screen.getByRole('combobox', { name: 'Endpoint Type' }))
+  const list = within(await screen.findByRole('listbox'))
+  expect(list.queryByRole('option', { name: 'OpenAI Responses (/v1/responses)' })).not.toBeInTheDocument()
+  expect(list.queryByRole('option', { name: 'OpenAI Response Compaction (/v1/responses/compact)' })).not.toBeInTheDocument()
+  expect(list.getByRole('option', { name: 'Embeddings (/v1/embeddings)' })).toBeVisible()
+})
+
 test('a multi-key channel offers an automatic and a per-key choice', async () => {
   renderDialog(makeChannel(), [
     { index: 0, status: 1, key_preview: 'sk-…mnop' },
@@ -212,8 +288,8 @@ test('a multi-key channel offers an automatic and a per-key choice', async () =>
   ).toBeVisible()
 })
 
-test('a single-key channel shows no key choice', async () => {
-  const { post } = renderDialog(
+test('a single-key channel loads its protocol without showing a key choice or starting a probe', async () => {
+  const { post, get } = renderDialog(
     makeChannel({
       channel_info: {
         is_multi_key: false,
@@ -222,14 +298,73 @@ test('a single-key channel shows no key choice', async () => {
         multi_key_mode: 'random',
       },
     }),
-    []
+    [{ index: 0, status: 1, upstream_protocol: 'messages' }]
   )
 
   await screen.findByText('model-a')
   expect(
     screen.queryByRole('combobox', { name: 'Tested key' })
   ).not.toBeInTheDocument()
-  expect(post).not.toHaveBeenCalled()
+  expect(post).toHaveBeenCalledWith(
+    '/api/channel/multi_key/manage',
+    expect.objectContaining({ channel_id: 7, action: 'get_key_status', page_size: 1 }),
+    expect.anything()
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  await user.click(await screen.findByRole('combobox', { name: 'Endpoint Type' }))
+  const list = within(await screen.findByRole('listbox'))
+  expect(list.getByRole('option', { name: 'OpenAI Responses (/v1/responses)' })).toBeVisible()
+  expect(list.queryByRole('option', { name: 'Embeddings (/v1/embeddings)' })).not.toBeInTheDocument()
+  expect(get).not.toHaveBeenCalled()
+})
+
+test.each([
+  { protocol: 'messages' as const, endpoints: ['responses'] },
+  { protocol: 'chat' as const, endpoints: ['messages'] },
+  { protocol: 'responses' as const, endpoints: ['chat'] },
+])('a $protocol Key excluded by the channel cannot start any diagnostic', async ({ protocol, endpoints }) => {
+  const { get } = renderDialog(
+    makeChannel({ setting: JSON.stringify({ supported_endpoints: endpoints }) }),
+    [{ index: 0, status: 1, upstream_protocol: protocol }]
+  )
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('combobox', { name: 'Tested key' }))
+  await user.click(await screen.findByRole('option', { name: '1 · - · Enabled' }))
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'This channel does not support a compatible upstream endpoint for this request'
+  )
+  expect(screen.getByRole('button', { name: 'Test all 0 models' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Test Connection' })).not.toBeInTheDocument()
+  expect(get).not.toHaveBeenCalled()
+})
+
+test.each(['business', 'network', 'missing'])('a single-Key %s metadata failure blocks probes and supports retry', async (failure) => {
+  const { post, get } = mockChannelTest([{ index: 0, status: 1, upstream_protocol: 'chat' }])
+  if (failure === 'network') {
+    post.mockRejectedValueOnce(new Error('unavailable'))
+  } else {
+    post.mockResolvedValueOnce({
+      data: { success: failure === 'missing', message: 'Failed to load key status' },
+    })
+  }
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DialogHarness channel={makeChannel({ channel_info: {
+        is_multi_key: false, multi_key_size: 1, multi_key_polling_index: 0, multi_key_mode: 'random',
+      } })} />
+    </I18nextProvider>
+  )
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Retry' }))
+  expect(get).not.toHaveBeenCalled()
+  await screen.findByText('model-a')
+  expect(screen.queryByRole('combobox', { name: 'Tested key' })).not.toBeInTheDocument()
+  await user.click((await testModelRow('model-a')).getByRole('button', { name: 'Test Connection' }))
+  await waitFor(() => expect(get).toHaveBeenCalledWith(
+    '/api/channel/test/7',
+    expect.objectContaining({ params: { model: 'model-a', stream: true } })
+  ))
 })
 
 test('an automatic test defaults to streaming without pinning a key', async () => {

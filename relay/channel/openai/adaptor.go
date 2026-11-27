@@ -131,6 +131,9 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if info.UpstreamTextEndpoint == types.RelayFormatOpenAI {
+		return relaycommon.GetFullRequestURL(info.ChannelBaseUrl, "/v1/chat/completions", info.ChannelType), nil
+	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		if after, ok := strings.CutPrefix(info.ChannelBaseUrl, "https://"); ok {
 			baseUrl := after
@@ -287,7 +290,8 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		// OpenAI chat request into an Anthropic Messages request.
 		return (&claude.Adaptor{}).ConvertOpenAIRequest(c, info, request)
 	}
-	if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAzure {
+	if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAzure &&
+		info.ChannelKeyProtocol != dto.ChannelEndpointChat && info.ChannelKeyProtocol != dto.ChannelEndpointResponses {
 		request.StreamOptions = nil
 	}
 	// Nested reasoning is an OpenRouter-compatible input dialect and needs
@@ -710,6 +714,17 @@ func detectImageMimeType(filename string) string {
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
+	if info.UpstreamTextEndpoint == types.RelayFormatOpenAI {
+		result, err := service.ConvertRequest(c, info, types.RelayFormatOpenAI, &request)
+		if err != nil {
+			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeConvertRequestFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		chatRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
+		if !ok {
+			return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value)
+		}
+		return a.ConvertOpenAIRequest(c, info, chatRequest)
+	}
 	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
 		// Responses HTTP with no declared Responses endpoint falls back to the
 		// existing Claude conversion; compaction is refused before this point.
@@ -798,6 +813,13 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.UpstreamTextEndpoint == types.RelayFormatOpenAI && info.RelayFormat == types.RelayFormatOpenAIResponses {
+		info.FinalRequestRelayFormat = types.RelayFormatOpenAI
+		if info.IsStream {
+			return OaiChatToResponsesStreamHandler(c, info, resp)
+		}
+		return OaiChatToResponsesHandler(c, info, resp)
+	}
 	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
 		// The Messages upstream answers in Anthropic format; the Claude adaptor
 		// converts it back to the client's protocol (chat JSON, chat SSE, or

@@ -986,6 +986,10 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 
+	// Only stable-allocation management assigns a protocol to an existing Key.
+	if addChannelRequest.Channel != nil {
+		addChannelRequest.Channel.ChannelInfo.MultiKeyUpstreamProtocols = nil
+	}
 	baseURLFromPluginDefault := addChannelRequest.Channel != nil &&
 		addChannelRequest.Channel.Type == constant.ChannelTypeTaskPlugin &&
 		(addChannelRequest.Channel.BaseURL == nil || strings.TrimSpace(*addChannelRequest.Channel.BaseURL) == "")
@@ -1411,9 +1415,8 @@ func UpdateChannel(c *gin.Context) {
 	channelToValidate := &channel.Channel
 	if channel.Type == 0 && channel.Setting != nil {
 		var setting dto.ChannelSettings
-		if common.UnmarshalJsonStr(*channel.Setting, &setting) == nil && len(setting.SupportedEndpoints) > 0 {
-			// Partial updates retain the stored provider. Resolve its endpoint
-			// capabilities without turning the omitted type into a type update.
+		if common.UnmarshalJsonStr(*channel.Setting, &setting) == nil &&
+			(len(setting.SupportedEndpoints) > 0 || len(setting.BaseURLs) > 0 || setting.HomepageURL != "") {
 			checked := channel.Channel
 			checked.Type = originChannel.Type
 			channelToValidate = &checked
@@ -1423,6 +1426,8 @@ func UpdateChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// Do not merge inherited additive fields until the freshly locked edit.
+	channel.Setting = channelToValidate.Setting
 	originProxy := originChannel.GetSetting().Proxy
 	proxyChanged := false
 	_, settingProvided := requestData["setting"]
@@ -1764,6 +1769,9 @@ func updateAuditParams(stored, baseline *model.Channel) map[string]any {
 	}
 	if stored.Key != baseline.Key {
 		changedFields = append(changedFields, "key")
+	}
+	if !equalStringPtr(stored.Setting, baseline.Setting) {
+		changedFields = append(changedFields, "setting")
 	}
 	return map[string]any{
 		"id":             stored.Id,
@@ -2228,6 +2236,7 @@ func CopyChannel(c *gin.Context) {
 	clone.ChannelInfo.MultiKeyModelMappings = maps.Clone(origin.ChannelInfo.MultiKeyModelMappings)
 	clone.ChannelInfo.MultiKeyUsers = maps.Clone(origin.ChannelInfo.MultiKeyUsers)
 	clone.ChannelInfo.MultiKeyScopeModes = maps.Clone(origin.ChannelInfo.MultiKeyScopeModes)
+	clone.ChannelInfo.MultiKeyUpstreamProtocols = maps.Clone(origin.ChannelInfo.MultiKeyUpstreamProtocols)
 	service.DropPluginCredentials(&clone)
 
 	if err := clone.ValidateSettings(); err != nil {
@@ -2269,6 +2278,7 @@ type MultiKeyManageRequest struct {
 	ExpectedRevision      *int64   `json:"expected_revision,omitempty"`
 	KeyEntryIDs           []string `json:"key_entry_ids,omitempty"`
 	ScopeMode             *string  `json:"scope_mode,omitempty"`
+	UpstreamProtocol      *string  `json:"upstream_protocol,omitempty"`
 	ExpectedConfigVersion *int64   `json:"expected_config_version,omitempty"`
 	Enabled               *bool    `json:"enabled,omitempty"`
 	LimitQuota            *int64   `json:"limit_quota,omitempty"`
@@ -2311,13 +2321,35 @@ func newSingleKeyChannel(channel *model.Channel, key string, sourceIndex ...int)
 	singleKeyChannel.ChannelInfo.MultiKeyUsers = nil
 	singleKeyChannel.ChannelInfo.MultiKeyScopeModes = nil
 	if len(sourceIndex) > 0 {
-		if mapping, ok := channel.ChannelInfo.MultiKeyModelMappings[sourceIndex[0]]; ok && mapping != "" {
-			singleKeyChannel.ChannelInfo.MultiKeyModelMappings = map[int]string{0: mapping}
+		index := sourceIndex[0]
+		keys := channel.GetKeys()
+		if index >= 0 && index < len(keys) && index < len(channel.KeyEntryIDs) && index < len(channel.KeyEntryRevisions) && strings.TrimSpace(keys[index]) == strings.TrimSpace(key) {
+			singleKeyChannel.KeyEntryIDs = []int64{channel.KeyEntryIDs[index]}
+			singleKeyChannel.KeyEntryRevisions = []int64{channel.KeyEntryRevisions[index]}
+			singleKeyChannel.KeyEntryIDStrings = singleKeyChannel.ChannelKeyEntryIDsAsStrings()
+			if mapping := channel.ChannelInfo.MultiKeyModelMappings[index]; mapping != "" {
+				singleKeyChannel.ChannelInfo.MultiKeyModelMappings = map[int]string{0: mapping}
+			} else {
+				singleKeyChannel.ChannelInfo.MultiKeyModelMappings = nil
+			}
+			if protocol := channel.KeyUpstreamProtocol(index); protocol != dto.ChannelUpstreamProtocolInherit {
+				singleKeyChannel.ChannelInfo.MultiKeyUpstreamProtocols = map[int]string{0: protocol}
+			} else {
+				singleKeyChannel.ChannelInfo.MultiKeyUpstreamProtocols = nil
+			}
 		} else {
+			singleKeyChannel.KeyEntryIDs = nil
+			singleKeyChannel.KeyEntryRevisions = nil
+			singleKeyChannel.KeyEntryIDStrings = nil
 			singleKeyChannel.ChannelInfo.MultiKeyModelMappings = nil
+			singleKeyChannel.ChannelInfo.MultiKeyUpstreamProtocols = nil
 		}
 	} else {
+		singleKeyChannel.KeyEntryIDs = nil
+		singleKeyChannel.KeyEntryRevisions = nil
+		singleKeyChannel.KeyEntryIDStrings = nil
 		singleKeyChannel.ChannelInfo.MultiKeyModelMappings = nil
+		singleKeyChannel.ChannelInfo.MultiKeyUpstreamProtocols = nil
 	}
 	return &singleKeyChannel
 }
@@ -2341,7 +2373,8 @@ type KeyStatus struct {
 	Id           string                   `json:"id"`
 	Rev          int64                    `json:"rev"`
 	ScopeMode    string                   `json:"scope_mode"`
-	ModelMapping string                   `json:"model_mapping"`
+	UpstreamProtocol string                   `json:"upstream_protocol"`
+	ModelMapping     string                   `json:"model_mapping"`
 	Quota        *model.ChannelBudgetView `json:"quota,omitempty"`
 	Index        int                      `json:"index"`
 	Status       int                      `json:"status"` // 1: enabled, 2: disabled
@@ -2448,7 +2481,8 @@ func ManageMultiKeys(c *gin.Context) {
 		return
 	}
 
-	if !channel.ChannelInfo.IsMultiKey {
+	if !channel.ChannelInfo.IsMultiKey && request.Action != "set_key_protocol" &&
+		!(request.Action == "get_key_status" && (channel.Type == constant.ChannelTypeOpenAI || channel.Type == constant.ChannelTypeAnthropic)) {
 		common.ApiErrorT(c, "This channel is not in multi-key mode")
 		return
 	}
@@ -2458,8 +2492,14 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 	}
-	if handleChannelKeyAllocationAction(c, channel, request) {
-		return
+	if isChannelKeyAllocationAction(request.Action) {
+		// Authoritative admin mutations take publication before polling locks,
+		// matching configuration edits and covering commit through publication.
+		lock.Unlock()
+		locked = false
+		if handleChannelKeyAllocationAction(c, channel, request) {
+			return
+		}
 	}
 	// Discovery is read-only. Sync confirmation owns its audit in the same
 	// transaction as scopes/catalog/abilities, never before a successful write.
@@ -2475,6 +2515,12 @@ func ManageMultiKeys(c *gin.Context) {
 	switch request.Action {
 	case "get_key_status":
 		keys := channel.GetKeys()
+		if !channel.ChannelInfo.IsMultiKey {
+			keys = nil
+			if channel.Key != "" {
+				keys = []string{channel.Key}
+			}
+		}
 
 		// Default pagination parameters
 		page := request.Page
@@ -2530,7 +2576,8 @@ func ManageMultiKeys(c *gin.Context) {
 				Id:           strconv.FormatInt(channel.ChannelKeyEntryID(i), 10),
 				Rev:          channel.KeyEntryRevisions[i],
 				ScopeMode:    scopeMode,
-				ModelMapping: channel.ChannelInfo.MultiKeyModelMappings[i],
+				UpstreamProtocol: channel.KeyUpstreamProtocol(i),
+				ModelMapping:     channel.ChannelInfo.MultiKeyModelMappings[i],
 				Index:        i,
 				Status:       status,
 				DisabledTime: disabledTime,
@@ -3052,7 +3099,7 @@ func multiKeyActionRequiresSensitiveWrite(action string) bool {
 	// the channel, so they need the same permission as deleting a key. Applying
 	// an upstream model sync changes the channel model list the same way.
 	switch action {
-	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_model_mapping", "set_key_user", "sync_key_models", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
+	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_model_mapping", "set_key_protocol", "set_key_user", "sync_key_models", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
 		return true
 	default:
 		return false

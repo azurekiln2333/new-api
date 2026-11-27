@@ -18,6 +18,76 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestSelectUpstreamBaseURLUsesConfiguredPoolIndependentlyOfLegacyURL(t *testing.T) {
+	channel := &Channel{
+		Type:    constant.ChannelTypeOpenAI,
+		BaseURL: common.GetPointer("https://legacy.example.test/api/v1"),
+	}
+	channel.SetSetting(dto.ChannelSettings{BaseURLs: []string{
+		"https://first.example.test/prefix/",
+		"https://second.example.test/tenant/v1",
+	}})
+
+	selected, err := channel.SelectUpstreamBaseURL()
+	require.NoError(t, err)
+	assert.Contains(t, []string{
+		"https://first.example.test/prefix",
+		"https://second.example.test/tenant/v1",
+	}, selected)
+	assert.Equal(t, "https://legacy.example.test/api/v1", channel.GetBaseURL())
+	assert.Equal(t, "https://first.example.test/prefix/", channel.GetHomepageURL())
+}
+
+func TestSelectUpstreamBaseURLUsesLegacyFallbackAndRejectsInvalidPool(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		channel  Channel
+		wantURL  string
+		wantFail bool
+	}{
+		{
+			name:    "legacy scalar",
+			channel: Channel{Type: constant.ChannelTypeOpenAI, BaseURL: common.GetPointer("https://legacy.example.test/prefix")},
+			wantURL: "https://legacy.example.test/prefix",
+		},
+		{
+			name:    "provider default",
+			channel: Channel{Type: constant.ChannelTypeOpenAI},
+			wantURL: constant.GetChannelBaseURL(constant.ChannelTypeOpenAI),
+		},
+		{
+			name: "empty pool keeps scalar fallback",
+			channel: Channel{
+				Type:    constant.ChannelTypeAnthropic,
+				BaseURL: common.GetPointer("https://legacy.example.test/v1"),
+				Setting: common.GetPointer(`{"base_urls":[]}`),
+			},
+			wantURL: "https://legacy.example.test/v1",
+		},
+		{
+			name:     "invalid pool fails closed",
+			channel:  Channel{Type: constant.ChannelTypeOpenAI, Setting: common.GetPointer(`{"base_urls":["https://user:secret@example.test"]}`)},
+			wantFail: true,
+		},
+		{
+			name:     "pool on unsupported channel fails closed",
+			channel:  Channel{Type: constant.ChannelTypeAzure, Setting: common.GetPointer(`{"base_urls":["https://example.test"]}`)},
+			wantFail: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			selected, err := tc.channel.SelectUpstreamBaseURL()
+			if tc.wantFail {
+				require.Error(t, err)
+				assert.Empty(t, selected)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantURL, selected)
+		})
+	}
+}
+
 func TestChannelValidateSettingsRejectsInvalidHTTPTransport(t *testing.T) {
 	tests := []struct {
 		name    string

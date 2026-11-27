@@ -66,6 +66,106 @@ import { ChannelMutateDrawer } from '../drawers/channel-mutate-drawer'
 
 const originalAuth = useAuthStore.getState().auth
 
+test.each([1, 14])(
+  'type %s round-trips the address pool and homepage without dropping unrelated settings',
+  (type) => {
+    const channel = {
+      ...editingChannel,
+      type,
+      setting: JSON.stringify({
+        base_urls: ['https://one.example/prefix/', 'https://two.example/api'],
+        homepage_url: 'https://portal.example/account?tab=usage#today',
+        custom_transport: { keep: true },
+        http_protocol: 'http1',
+      }),
+    }
+    const values = transformChannelToFormDefaults(channel)
+    expect(values.base_urls).toBe('https://one.example/prefix/\nhttps://two.example/api')
+    expect(values.homepage_url).toBe('https://portal.example/account?tab=usage#today')
+    const parsed = channelFormSchema.parse({ ...values, http_protocol: 'auto' })
+    for (const payload of [
+      transformFormDataToCreatePayload(parsed).channel,
+      transformFormDataToUpdatePayload(parsed, channel.id),
+    ]) {
+      const saved = JSON.parse(payload.setting ?? '{}')
+      expect(saved).toMatchObject({
+        base_urls: ['https://one.example/prefix/', 'https://two.example/api'],
+        homepage_url: 'https://portal.example/account?tab=usage#today',
+        custom_transport: { keep: true },
+      })
+      expect(saved).not.toHaveProperty('http_protocol')
+      const reloaded = transformChannelToFormDefaults({ ...channel, setting: payload.setting })
+      expect(reloaded.base_urls).toBe(values.base_urls)
+      expect(reloaded.homepage_url).toBe(values.homepage_url)
+    }
+    expect(JSON.parse(buildSettingJSON({ ...values, base_urls: '', homepage_url: '' }))).toMatchObject({
+      base_urls: [], homepage_url: '', custom_transport: { keep: true },
+    })
+  }
+)
+
+test.each([
+  { base_urls: 'https://one.example/api\n https://one.example/api ', field: 'base_urls' },
+  { base_urls: Array.from({ length: 17 }, (_, i) => `https://node${i}.example`).join('\n'), field: 'base_urls' },
+  { base_urls: 'https://user:secret@one.example', field: 'base_urls' },
+  { base_urls: 'https://@one.example', field: 'base_urls' },
+  { base_urls: 'https://one.example?key=value', field: 'base_urls' },
+  { base_urls: 'https://one.example/#fragment', field: 'base_urls' },
+  { base_urls: 'https://one.example/path%0a', field: 'base_urls' },
+  { base_urls: 'https://one.example/path%5c', field: 'base_urls' },
+  { base_urls: 'ftp://one.example', field: 'base_urls' },
+  { base_urls: `https://one.example/${'界'.repeat(700)}`, field: 'base_urls' },
+  { homepage_url: 'javascript:alert(1)', field: 'homepage_url' },
+  { homepage_url: 'https://user:secret@portal.example', field: 'homepage_url' },
+  { homepage_url: 'https://portal.example/%0d', field: 'homepage_url' },
+])('rejects unsafe or duplicate address configuration $field: $base_urls $homepage_url', (input) => {
+  const result = channelFormSchema.safeParse({
+    ...transformChannelToFormDefaults(editingChannel),
+    ...input,
+  })
+  expect(result.success).toBe(false)
+  if (!result.success) {
+    expect(result.error.issues).toContainEqual(expect.objectContaining({ path: [input.field] }))
+  }
+})
+
+test('pool normalization trims addresses but preserves path prefixes and legacy fallback', () => {
+  const values = channelFormSchema.parse({
+    ...transformChannelToFormDefaults(editingChannel),
+    base_urls: ' https://one.example/path/ \n\n https://two.example/path ',
+    homepage_url: ' https://portal.example/?tab=billing#today ',
+  })
+  expect(JSON.parse(buildSettingJSON(values))).toMatchObject({
+    base_urls: ['https://one.example/path/', 'https://two.example/path'],
+    homepage_url: 'https://portal.example/?tab=billing#today',
+  })
+  expect(channelFormSchema.safeParse({ ...values, type: 43 }).success).toBe(false)
+  const legacy = transformChannelToFormDefaults({ ...editingChannel, setting: '{}' })
+  expect(legacy.base_urls).toBe('')
+  expect(legacy.homepage_url).toBe('')
+  expect(transformFormDataToUpdatePayload(legacy, editingChannel.id).base_url).toBe(editingChannel.base_url)
+})
+
+test.each([1, 14])('the type %s editor saves and clears the pool and homepage using existing fields', async (type) => {
+  editingChannel.type = type
+  editingChannel.setting = '{"custom_transport":{"keep":true}}'
+  const put = vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness currentRow={editingChannel} />)
+  await screen.findByDisplayValue('Existing channel')
+  const pool = screen.getByRole('textbox', { name: 'Base URL pool' })
+  const homepage = screen.getByRole('textbox', { name: 'Homepage URL' })
+  await user.type(pool, 'https://one.example/path/\nhttps://two.example')
+  await user.type(homepage, 'https://portal.example/?tab=usage#today')
+  await user.click(screen.getByRole('button', { name: 'Update Channel' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(JSON.parse((put.mock.calls[0][1] as { setting: string }).setting)).toMatchObject({
+    base_urls: ['https://one.example/path/', 'https://two.example'],
+    homepage_url: 'https://portal.example/?tab=usage#today',
+    custom_transport: { keep: true },
+  })
+})
+
 test.each([undefined, false, true])(
   'goal restriction %s survives channel create, update, reload and toggle',
   (denyGoal) => {
