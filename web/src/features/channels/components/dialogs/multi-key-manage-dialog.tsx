@@ -101,6 +101,7 @@ import type {
   KeyStatus,
   MultiKeyConfirmAction,
   MultiKeyDedupResult,
+  MultiKeyModelSelection,
   MultiKeyModelSyncResult,
 } from '../../types'
 import { ChannelBalanceDetails } from '../channel-balance-details'
@@ -281,6 +282,10 @@ export function MultiKeyManageDialog({
     setQuotaEditor(null)
     setIsSavingAssignment(false)
     setIsSavingQuota(false)
+    setIsSyncing(false)
+    setIsApplyingSync(false)
+    setSyncPreview(null)
+    setSyncError(null)
     if (open && currentRow && !singleKey) {
       setKeys([])
       setTotal(0)
@@ -606,12 +611,14 @@ export function MultiKeyManageDialog({
   // Preview which models every enabled key serves before writing anything.
   const openSync = async () => {
     if (!currentRow || !canEditSensitive || isSyncing) return
+    const session = editorSession.current
     setSyncOpen(true)
     setSyncPreview(null)
     setSyncError(null)
     setIsSyncing(true)
     try {
       const response = await syncMultiKeyModels(currentRow.id, false, revision)
+      if (session !== editorSession.current) return
       if (!response.success || !response.data) {
         setSyncError(
           getServerErrorMessage(response, t('Failed to fetch models'))
@@ -620,27 +627,31 @@ export function MultiKeyManageDialog({
       }
       setSyncPreview(response.data)
     } catch (error: unknown) {
-      setSyncError(getServerErrorMessage(error, t('Failed to fetch models')))
+      if (session === editorSession.current) setSyncError(getServerErrorMessage(error, t('Failed to fetch models')))
     } finally {
-      setIsSyncing(false)
+      if (session === editorSession.current) setIsSyncing(false)
     }
   }
 
-  const applySync = async () => {
+  const applySync = async (selections: MultiKeyModelSelection[]) => {
     if (
       !currentRow ||
       !canEditSensitive ||
       !syncPreview ||
       syncPreview.applied ||
+      !syncPreview.preview_token ||
+      selections.length === 0 ||
       isApplyingSync
     ) {
       return
     }
+    const session = editorSession.current
     setIsApplyingSync(true)
     try {
       const response = requireServerSuccess(
-        await syncMultiKeyModels(currentRow.id, true, syncPreview.revision)
+        await syncMultiKeyModels(currentRow.id, true, syncPreview.revision, syncPreview.preview_token, selections)
       )
+      if (session !== editorSession.current) return
       if (!response.data?.applied) {
         setSyncError(t('Operation failed'))
         return
@@ -663,6 +674,7 @@ export function MultiKeyManageDialog({
       queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all })
       await loadKeyStatus()
     } catch (error: unknown) {
+      if (session !== editorSession.current) return
       if (isQuotaConflict(error)) {
         setSyncOpen(false)
         setSyncPreview(null)
@@ -671,7 +683,7 @@ export function MultiKeyManageDialog({
         setSyncError(getServerErrorMessage(error, t('Operation failed')))
       }
     } finally {
-      setIsApplyingSync(false)
+      if (session === editorSession.current) setIsApplyingSync(false)
     }
   }
 
@@ -1623,13 +1635,17 @@ export function MultiKeyManageDialog({
         onOpenChange={(next) => {
           if (isApplyingSync) return
           setSyncOpen(next)
-          if (!next) setSyncPreview(null)
+          if (!next) {
+            editorSession.current += 1
+            setSyncPreview(null)
+            setIsSyncing(false)
+          }
         }}
         isFetching={isSyncing}
         isApplying={isApplyingSync}
         preview={syncPreview}
         error={syncError}
-        onApply={() => void applySync()}
+        onApply={(selections) => void applySync(selections)}
       />
 
       {/* Unbind confirmation */}

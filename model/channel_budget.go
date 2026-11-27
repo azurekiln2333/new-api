@@ -383,7 +383,7 @@ func MigrateChannelBudgets(db *gorm.DB) error {
 
 // budgetLookupAllocation reads the allocation identity from the shared table
 // and validates that the attempt may use it.
-func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyAllocation, error) {
+func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection, diagnosticScope bool) (*budgetKeyAllocation, error) {
 	if selection.ChannelID <= 0 || selection.AllocationID <= 0 || selection.AllocationRevision <= 0 || selection.UserID <= 0 {
 		return nil, fmt.Errorf("%w: channel and allocation are required", ErrBudgetAllocationInvalid)
 	}
@@ -431,9 +431,10 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 		if common.UnmarshalJsonStr(allocation.Models, &models) != nil {
 			return nil, ErrBudgetAllocationInvalid
 		}
-		// Only allocation capability accepts the mapped upstream name. Channel
-		// and group authorization above/below stay in the request namespace.
-		if !budgetScopeServesModel(models, selection.ModelName) && !channel.keyScopeServesModel(allocation.Position, models, selection.ModelName) {
+		// The ordinary relay path must retain the selected Key's mapped
+		// capability. Only an explicit stable-Key diagnostic may test outside
+		// its configured allowlist.
+		if !diagnosticScope && !budgetScopeServesModel(models, selection.ModelName) && !channel.keyScopeServesModel(allocation.Position, models, selection.ModelName) {
 			return nil, ErrBudgetAllocationInvalid
 		}
 	default:

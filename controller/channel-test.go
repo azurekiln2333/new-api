@@ -130,7 +130,7 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 // request is built: a named key must exist and be allowed to serve the tested
 // model. A key disabled by automatic health checks stays eligible, so an
 // operator can confirm whether it works again.
-func checkChannelTestKey(channel *model.Channel, keyIndex int, testModel string) error {
+func checkChannelTestKey(channel *model.Channel, keyIndex int, testModel string, allowOutOfScope ...bool) error {
 	if keyIndex < 0 {
 		return nil
 	}
@@ -146,7 +146,7 @@ func checkChannelTestKey(channel *model.Channel, keyIndex int, testModel string)
 			code:    types.ErrorCodeInvalidRequest,
 		}
 	}
-	if !channel.KeyServesModel(keyIndex, testModel) {
+	if !channel.KeyServesModel(keyIndex, testModel) && (len(allowOutOfScope) == 0 || !allowOutOfScope[0]) {
 		return &channelTestKeyError{
 			message: fmt.Sprintf("key #%d is not allowed to serve model %q", keyIndex+1, testModel),
 			code:    types.ErrorCodeChannelKeyScopeUnsatisfied,
@@ -158,7 +158,11 @@ func checkChannelTestKey(channel *model.Channel, keyIndex int, testModel string)
 // pinChannelTestKey resolves an explicit selection from the current channel snapshot.
 // When the caller supplies an allocation identity, the optional index is an
 // additional snapshot fence: it must still point at that allocation.
-func pinChannelTestKey(channel *model.Channel, keyIndex int, entryID, expectedRevision int64, testModel string) (*pinnedChannelTestKey, error) {
+func pinChannelTestKey(channel *model.Channel, keyIndex int, entryID, expectedRevision int64, testModel string, allowOutOfScope ...bool) (*pinnedChannelTestKey, error) {
+	outsideScope := len(allowOutOfScope) > 0 && allowOutOfScope[0]
+	if outsideScope && (entryID <= 0 || expectedRevision <= 0) {
+		return nil, &channelTestKeyError{message: "Channel key configuration changed, reload and retry", code: types.ErrorCodeInvalidRequest}
+	}
 	if entryID == 0 && expectedRevision == 0 {
 		if keyIndex < 0 {
 			return nil, nil
@@ -196,7 +200,7 @@ func pinChannelTestKey(channel *model.Channel, keyIndex int, entryID, expectedRe
 			code:    types.ErrorCodeInvalidRequest,
 		}
 	}
-	if err := checkChannelTestKey(channel, position, testModel); err != nil {
+	if err := checkChannelTestKey(channel, position, testModel, outsideScope); err != nil {
 		return nil, err
 	}
 	return &pinnedChannelTestKey{
@@ -204,6 +208,7 @@ func pinChannelTestKey(channel *model.Channel, keyIndex int, entryID, expectedRe
 		value:    channel.GetKeys()[position],
 		entryID:  entryID,
 		revision: expectedRevision,
+		allowOutOfScope: outsideScope,
 	}, nil
 }
 
@@ -231,6 +236,7 @@ type channelTestSpec struct {
 	keyIndex         int
 	keyEntryID       int64
 	keyEntryRevision int64
+	allowOutOfScope  bool // manual all-model mode only; never fingerprint or health checks
 	healthCheck      bool
 }
 
@@ -239,6 +245,7 @@ type pinnedChannelTestKey struct {
 	value    string
 	entryID  int64
 	revision int64
+	allowOutOfScope bool
 }
 
 // testChannel runs one manual test or fingerprint sample. A non-negative
@@ -255,7 +262,10 @@ func runChannelTest(ctx context.Context, channel *model.Channel, spec channelTes
 	}
 	spec.model = strings.TrimSpace(spec.model)
 	spec.endpoint = strings.TrimSpace(spec.endpoint)
-	pinned, err := pinChannelTestKey(channel, spec.keyIndex, spec.keyEntryID, spec.keyEntryRevision, channelTestModel(channel, spec.model))
+	if spec.allowOutOfScope && (spec.healthCheck || channelTestPromptFromContext(ctx) != nil || spec.userID <= 0 || spec.model == "" || !channelTestModelConfigured(channel, spec.model)) {
+		return testResult{localErr: &channelTestKeyError{message: "Invalid parameters", code: types.ErrorCodeInvalidRequest}}
+	}
+	pinned, err := pinChannelTestKey(channel, spec.keyIndex, spec.keyEntryID, spec.keyEntryRevision, channelTestModel(channel, spec.model), spec.allowOutOfScope)
 	if err != nil {
 		return testResult{localErr: err, keyIndex: spec.keyIndex}
 	}
@@ -371,7 +381,18 @@ func runAdmittedChannelTest(ctx context.Context, lease *service.ChannelCapacityL
 			return testResult{localErr: err}
 		}
 	}
-	if err := checkChannelTestKey(channel, spec.keyIndex, testModel); err != nil {
+	if spec.allowOutOfScope {
+		if channelTestPromptFromContext(ctx) != nil || spec.healthCheck || pinned == nil || !pinned.allowOutOfScope || !pinned.matchesAllocation(channel) {
+			return testResult{localErr: &channelTestKeyError{message: "Channel key configuration changed, reload and retry", code: types.ErrorCodeInvalidRequest}}
+		}
+		if channel.Status != common.ChannelStatusEnabled || !channelTestModelConfigured(channel, testModel) {
+			return testResult{localErr: &channelTestKeyError{message: "the selected model is not available on this channel", code: types.ErrorCodeChannelKeyScopeUnsatisfied}}
+		}
+		if status, recorded := channel.ChannelInfo.MultiKeyStatusList[pinned.index]; recorded && status != common.ChannelStatusEnabled {
+			return testResult{localErr: &channelTestKeyError{message: "no enabled key serves this request", code: types.ErrorCodeChannelKeyScopeUnsatisfied}}
+		}
+	}
+	if err := checkChannelTestKey(channel, spec.keyIndex, testModel, spec.allowOutOfScope); err != nil {
 		return testResult{localErr: err, keyIndex: spec.keyIndex}
 	}
 	if pinned != nil && pinned.entryID > 0 && !pinned.matchesAllocation(channel) {
@@ -441,7 +462,7 @@ func (key *pinnedChannelTestKey) stillServes(channel *model.Channel, testModel s
 			return false
 		}
 	} else {
-		if checkChannelTestKey(channel, key.index, testModel) != nil || key.value != channel.GetKeys()[key.index] {
+		if checkChannelTestKey(channel, key.index, testModel, key.allowOutOfScope) != nil || key.value != channel.GetKeys()[key.index] {
 			return false
 		}
 		status, recorded := channel.ChannelInfo.MultiKeyStatusList[key.index]
@@ -449,7 +470,7 @@ func (key *pinnedChannelTestKey) stillServes(channel *model.Channel, testModel s
 			return false
 		}
 	}
-	if explicit {
+	if explicit && !key.allowOutOfScope {
 		return true // named recovery tests deliberately bypass key health observations
 	}
 	upstreamModel, _ := channel.RoutingUpstreamModelNameForKey(max(key.index, 0), testModel)
@@ -555,6 +576,11 @@ func testChannelAttempt(ctx context.Context, channel *model.Channel, spec channe
 		keyIndex = servedTestKeyIndex(c, channel)
 	}
 
+	if spec.allowOutOfScope {
+		// This synthetic context is constructed only after the HTTP admin and
+		// stable-allocation checks. No client header enables this exception.
+		c.Set("channel_test_all_models", true)
+	}
 	request := buildTestRequest(testModel, constant.EndpointType(endpointType), spec.endpoint == "", isStream, prompt)
 	if request == nil {
 		return testResult{localErr: errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointUnsupported))}
@@ -630,7 +656,15 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 		return testResult{context: c, localErr: err, newAPIError: types.NewError(err, types.ErrorCodeInvalidApiType)}
 	}
 
-	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
+	promptTokens := 0
+	if c.GetBool("channel_test_all_models") {
+		promptTokens, err = service.EstimateRequestToken(c, request.GetTokenCountMeta(), info)
+		if err != nil {
+			return testResult{context: c, localErr: err, newAPIError: types.NewError(err, types.ErrorCodeCountTokenFailed)}
+		}
+		info.SetEstimatePromptTokens(promptTokens)
+	}
+	priceData, err := helper.ModelPriceHelper(c, info, promptTokens, request.GetTokenCountMeta())
 	if err != nil {
 		return testResult{
 			context:     c,
@@ -648,15 +682,61 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 			adaptor = bounded
 		}
 	}
+	var reservation *model.ChannelBudgetReservation
+	if c.GetBool("channel_test_all_models") && model.ChannelBudgetsEnabled() {
+		if err := model.EnsureChannelBudgetRuntimePrerequisite(); err != nil {
+			return testResult{context: c, localErr: err}
+		}
+		allocation, ok := common.GetContextKeyType[model.ChannelAllocation](c, constant.ContextKeyChannelAllocation)
+		if !ok || allocation.EntryID <= 0 || allocation.Revision <= 0 {
+			return testResult{context: c, localErr: model.ErrBudgetAllocationInvalid}
+		}
+		reservation, err = model.ReserveChannelDiagnosticBudgets(c.Request.Context(), model.BudgetReserveRequest{
+			AttemptKey: "manual-test:" + common.GetUUID(),
+			Selection: model.BudgetSelection{
+				ChannelID: channel.Id, AllocationID: allocation.EntryID, AllocationRevision: allocation.Revision,
+				UserID: testUserID, Group: info.UsingGroup, ModelName: info.OriginModelName,
+			},
+			ReserveQuota: int64(priceData.QuotaToPreConsume), OwnerNode: common.NodeName,
+		})
+		if err != nil {
+			return testResult{context: c, localErr: err}
+		}
+		info.ChannelBudget = relaycommon.BudgetAttempt{
+			ReservationID: reservation.Id, AttemptKey: reservation.AttemptKey,
+			AllocationID: reservation.AllocationId, AllocationRevision: reservation.AllocationRevision,
+			EstimatedQuota: reservation.ReservedQuota,
+		}
+	}
 	var knownUsage *dto.Usage
 	defer func() {
+		hasUsage := knownUsage != nil && (knownUsage.PromptTokens > 0 || knownUsage.CompletionTokens > 0 || knownUsage.TotalTokens > 0 || knownUsage.InputTokens > 0 || knownUsage.OutputTokens > 0)
+		if reservation != nil {
+			work, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if knownUsage == nil || !hasUsage && (outcome.localErr != nil || outcome.newAPIError != nil) {
+				err = model.RefundChannelBudgets(work, model.BudgetRefundRequest{ReservationID: reservation.Id, Revision: 1, Reason: "diagnostic_released"})
+			} else {
+				quota, _ := settleTestQuota(info, priceData, knownUsage)
+				settlement := model.BudgetSettleRequest{ReservationID: reservation.Id, Revision: 1, TotalActualQuota: int64(quota), Final: true}
+				err = model.QueueChannelBudgetSettlement(work, settlement, false)
+				if err == nil {
+					err = model.SettleChannelBudgets(work, settlement)
+				}
+			}
+			if err != nil {
+				common.SysError("failed to finalize channel diagnostic budget reservation")
+				if outcome.localErr == nil && outcome.newAPIError == nil {
+					outcome.localErr = errors.New("channel budget is unavailable, retry the request")
+				}
+			}
+		}
 		if knownUsage == nil {
 			return
 		}
 		outcome.promptTokens = knownUsage.PromptTokens
 		outcome.completionTokens = knownUsage.CompletionTokens
-		outcome.consumedUsage = knownUsage.PromptTokens > 0 || knownUsage.CompletionTokens > 0 || knownUsage.TotalTokens > 0 ||
-			knownUsage.InputTokens > 0 || knownUsage.OutputTokens > 0
+		outcome.consumedUsage = hasUsage
 		// A failed stream can carry real usage even if the adaptor correctly
 		// returns no separate API error after writing output. Record it once;
 		// failed attempts without usage, including admission refusals, stay free.
@@ -1041,6 +1121,22 @@ func TestChannel(c *gin.Context) {
 			return
 		}
 	}
+	allowOutOfScope := false
+	if values, present := query["model_scope"]; present {
+		if len(values) != 1 || values[0] != "all" && values[0] != "key" {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		allowOutOfScope = values[0] == "all"
+		if allowOutOfScope && (keyEntryID <= 0 || expectedKeyRevision <= 0 || strings.TrimSpace(query.Get("model")) == "") {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+		if allowOutOfScope && (c.GetInt("id") <= 0 || c.GetInt("role") < common.RoleAdminUser) {
+			common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("You don't have necessary permission"), nil)
+			return
+		}
+	}
 	channel, err := model.GetChannelById(channelId, true)
 	if err != nil {
 		common.ApiError(c, err)
@@ -1066,6 +1162,7 @@ func TestChannel(c *gin.Context) {
 		keyIndex:         keyIndex,
 		keyEntryID:       keyEntryID,
 		keyEntryRevision: expectedKeyRevision,
+		allowOutOfScope:  allowOutOfScope,
 	})
 	if result.localErr != nil {
 		resp := gin.H{

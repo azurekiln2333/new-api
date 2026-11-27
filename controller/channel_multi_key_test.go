@@ -852,6 +852,65 @@ func TestMultiKeyModelMappingFollowsStableKeyAndInheritsChannelRules(t *testing.
 	}
 }
 
+func TestAppendDuplicateStaticCredentialWithoutLedgerKeepsAllocationIdentity(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	const credential = "sk-static-duplicate-append"
+	channel := &model.Channel{
+		Name: "duplicate-static-append", Type: constant.ChannelTypeOpenAI,
+		Key: credential + "\n" + credential, Models: "model-a,model-b", Group: "default",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2,
+			MultiKeyModels: map[int][]string{0: {"model-a"}, 1: {"model-b"}},
+			MultiKeyUsers: map[int]int{1: rootID}},
+	}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	require.Len(t, channel.KeyEntryIDs, 2)
+	accounts := []model.ChannelBudgetAccount{
+		{ScopeType: model.BudgetScopeKey, ScopeId: channel.KeyEntryIDs[0], ChannelId: channel.Id, Enabled: true, LimitQuota: 100, PeriodUsedQuota: 25, LifetimeUsedQuota: 40, ReservedQuota: 5, ConfigVersion: 2},
+		{ScopeType: model.BudgetScopeKey, ScopeId: channel.KeyEntryIDs[1], ChannelId: channel.Id, Enabled: true, LimitQuota: 250, PeriodUsedQuota: 40, LifetimeUsedQuota: 70, ReservedQuota: 10, ConfigVersion: 3},
+	}
+	require.NoError(t, model.DB.Create(&accounts).Error)
+	payload, err := common.Marshal(map[string]any{
+		"id": channel.Id, "key": credential, "key_mode": "append",
+		"expected_revision": channel.ChannelInfo.KeyEntryRevision,
+	})
+	require.NoError(t, err)
+	response := putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
+	require.Equal(t, http.StatusOK, response.Code)
+	var result struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success, response.Body.String())
+	assert.NotContains(t, response.Body.String(), credential)
+
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.Len(t, updated.KeyEntryIDs, 3)
+	assert.Equal(t, channel.KeyEntryIDs, updated.KeyEntryIDs[:2], "append retains both existing allocation identities")
+	assert.NotContains(t, channel.KeyEntryIDs, updated.KeyEntryIDs[2], "the new duplicate receives a separate allocation")
+	assert.Equal(t, channel.KeyEntryRevisions, updated.KeyEntryRevisions[:2])
+	assert.EqualValues(t, 1, updated.KeyEntryRevisions[2])
+	assert.Equal(t, channel.ChannelInfo.MultiKeyModels, updated.ChannelInfo.MultiKeyModels)
+	assert.Equal(t, channel.ChannelInfo.MultiKeyUsers, updated.ChannelInfo.MultiKeyUsers)
+	assert.Equal(t, credential+"\n"+credential+"\n"+credential, updated.Key)
+	assert.False(t, model.ChannelBudgetsEnabled(), "static allocation identity is independent of local budgeting")
+	var storedAccounts []model.ChannelBudgetAccount
+	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Order("scope_id").Find(&storedAccounts).Error)
+	assert.Equal(t, accounts, storedAccounts, "append must neither transfer nor reset existing budgets, usage or holds")
+
+	stale := putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
+	assert.Equal(t, http.StatusConflict, stale.Code, "a stale append must not create another allocation")
+	after, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, updated.KeyEntryIDs, after.KeyEntryIDs)
+	assert.Equal(t, updated.KeyEntryRevisions, after.KeyEntryRevisions)
+	assert.Equal(t, updated.ChannelInfo, after.ChannelInfo)
+	ambiguous := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_models", KeyIndex: common.GetPointer(0), Models: []string{"model-b"}})
+	assert.Equal(t, http.StatusConflict, ambiguous.Code, "duplicate allocations still require stable identity for scope mutations")
+}
+
 // TestChannelAllocationsIdentityAndBudgetRouting exercises the authoritative
 // allocation API with three equal credentials and distinct permissions.
 func TestChannelAllocationsIdentityAndBudgetRouting(t *testing.T) {
@@ -1975,15 +2034,207 @@ func newMultiKeyModelServer(t *testing.T, modelsByKey map[string][]string, faili
 	return server
 }
 
+func TestChannelEditDiscoveryKeepsAllKeyResultsAndExistingModels(t *testing.T) {
+	setupChannelCreateTest(t)
+	server := newMultiKeyModelServer(t, map[string][]string{
+		"first-key": {"shared", "first"},
+		"disabled-key": {"second", "shared"},
+	}, "failed-key")
+	channel := &model.Channel{Name: "all-key-discovery", Type: constant.ChannelTypeOpenAI, Key: "first-key\nfailed-key\ndisabled-key", BaseURL: &server.URL,
+		Models: "manual,previous", Group: "default", Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3, MultiKeyModels: map[int][]string{1: {"previous"}}, MultiKeyStatusList: map[int]int{2: common.ChannelStatusManuallyDisabled}}}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	for _, preview := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preview=%t", preview), func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			if preview {
+				body, err := common.Marshal(fetchModelsRequest{ChannelID: channel.Id})
+				require.NoError(t, err)
+				c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/channel/fetch_models", bytes.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				FetchModels(c)
+			} else {
+				c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/channel/fetch_models/"+strconv.Itoa(channel.Id), nil)
+				c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+				FetchUpstreamModels(c)
+			}
+			var result struct {
+				Success bool `json:"success"`
+				Partial bool `json:"partial"`
+				Data []string `json:"data"`
+				Results []MultiKeyModelsResult `json:"results"`
+			}
+			require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
+			require.True(t, result.Success, w.Body.String())
+			assert.True(t, result.Partial)
+			assert.Equal(t, []string{"shared", "first", "second"}, result.Data)
+			require.Len(t, result.Results, 3)
+			assert.NotEmpty(t, result.Results[1].Error)
+			assert.Equal(t, []string{"second", "shared"}, result.Results[2].Models)
+			assert.False(t, result.Results[2].Skipped)
+			stored, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, "manual,previous", stored.Models)
+			assert.Equal(t, []string{"previous"}, stored.ChannelInfo.MultiKeyModels[1])
+		})
+	}
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	_, _, err = collectPendingUpstreamModelChanges(t.Context(), stored, stored.GetOtherSettings())
+	require.Error(t, err, "an incomplete union must not become automatic removal evidence")
+}
+
+func TestKeyDiscoveryAdditionsPreserveMappingAndSiblingScope(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	originalMapping := `{"public":"upstream-original"}`
+	channel := &model.Channel{Name: "key-mapping-save", Type: constant.ChannelTypeOpenAI, Key: "selected-key\nsibling-key", Models: "manual,public,sibling-model", ModelMapping: &originalMapping, Group: "default", Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyModels: map[int][]string{0: {"public"}, 1: {"sibling-model"}}, MultiKeyUsers: map[int]int{1: rootID}}}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	entryID, rev := strconv.FormatInt(stored.KeyEntryIDs[0], 10), stored.KeyEntryRevisions[0]
+	request := MultiKeyManageRequest{ChannelId: channel.Id, Action: "set_key_models", KeyEntryID: entryID, ExpectedRev: &rev,
+		Models: []string{"new-model"}, AddModels: true}
+	response := postMultiKeyManage(t, rootID, request)
+	var result struct { Success bool `json:"success"` }
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success, response.Body.String())
+	updated, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "manual,public,sibling-model,new-model", updated.Models)
+	assert.ElementsMatch(t, []string{"public", "new-model"}, updated.ChannelInfo.MultiKeyModels[0])
+	assert.Equal(t, []string{"sibling-model"}, updated.ChannelInfo.MultiKeyModels[1])
+	assert.Equal(t, rootID, updated.ChannelInfo.MultiKeyUsers[1])
+	require.NotNil(t, updated.ModelMapping)
+	assert.JSONEq(t, originalMapping, *updated.ModelMapping)
+	assert.Equal(t, stored.KeyEntryRevisions[1], updated.KeyEntryRevisions[1])
+	request.Models = []string{"must-not-be-added"}
+	conflict := postMultiKeyManage(t, rootID, request)
+	assert.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
+	after, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, updated.Models, after.Models)
+	assert.Equal(t, updated.ChannelInfo, after.ChannelInfo)
+	assert.Equal(t, *updated.ModelMapping, *after.ModelMapping)
+}
+
+func TestManualAllModelModePinsKeyAndPreservesRoutingScope(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	t.Setenv("BATCH_UPDATE_ENABLED", "false")
+	previousBatch := common.BatchUpdateEnabled
+	common.BatchUpdateEnabled = false
+	t.Cleanup(func() { common.BatchUpdateEnabled = previousBatch })
+	require.NoError(t, model.InitializeChannelBudgets())
+	oldPrices := ratio_setting.ModelPrice2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-4.1":0.001}`))
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldPrices)) })
+	requests := make(chan channelDiagnosticWire, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var hold model.ChannelBudgetReservation
+		err := model.DB.Where("model_name = ? AND phase = ?", "gpt-4.1", model.BudgetReservationPhasePending).Order("id desc").First(&hold).Error
+		assert.NoError(t, err)
+		assert.Positive(t, hold.ReservedQuota, "upstream dispatch requires a real priced hold")
+		assert.Positive(t, hold.ForwardedAt, "the transport marks the held attempt forwarded")
+		requests <- captureChannelDiagnostic(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(channelDiagnosticChatReply))
+	}))
+	t.Cleanup(upstream.Close)
+	for _, tc := range []struct { name, scope, endpoint string; role int; stable, disabled, exhausted, stale, success bool }{
+		{name: "explicit stable all-mode", scope: "all", stable: true, role: common.RoleRootUser, success: true},
+		{name: "ordinary manual scope fence", stable: true, role: common.RoleRootUser},
+		{name: "index-only cannot opt out", scope: "all", role: common.RoleRootUser},
+		{name: "non-admin cannot opt out", scope: "all", stable: true, role: common.RoleCommonUser},
+		{name: "disabled key cannot opt out", scope: "all", stable: true, disabled: true, role: common.RoleRootUser},
+		{name: "exhausted budget cannot opt out", scope: "all", stable: true, exhausted: true, role: common.RoleRootUser},
+		{name: "stale revision cannot opt out", scope: "all", stable: true, stale: true, role: common.RoleRootUser},
+		{name: "unsupported endpoint cannot opt out", scope: "all", endpoint: "openai-response-compact", stable: true, role: common.RoleRootUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channel := &model.Channel{Name: tc.name, Type: constant.ChannelTypeOpenAI, Key: "selected-key\nsibling-key", Models: "gpt-4.1,gpt-5.1", BaseURL: &upstream.URL, Group: "default", Status: common.ChannelStatusEnabled,
+				Setting: common.GetPointer(`{"supported_endpoints":["chat"],"max_concurrent_requests":1}`),
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyModels: map[int][]string{0: {"gpt-5.1"}, 1: {"gpt-4.1"}}}}
+			if tc.disabled { channel.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled} }
+			require.NoError(t, channel.Insert())
+			t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+			stored, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			if tc.exhausted {
+				_, err := model.SetChannelBudgetLimit(t.Context(), model.BudgetScopeKey, stored.KeyEntryIDs[0], 0, true, 1)
+				require.NoError(t, err)
+			}
+			query := "model=gpt-4.1&key_index=0&endpoint_type=openai"
+			if tc.endpoint != "" { query = "model=gpt-4.1&key_index=0&endpoint_type=" + tc.endpoint }
+			if tc.scope != "" { query += "&model_scope=" + tc.scope }
+			if tc.stable {
+				rev := stored.KeyEntryRevisions[0]
+				if tc.stale { rev++ }
+				query += "&key_entry_id=" + strconv.FormatInt(stored.KeyEntryIDs[0], 10) + "&expected_rev=" + strconv.FormatInt(rev, 10)
+			}
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/channel/test/"+strconv.Itoa(channel.Id)+"?"+query, nil)
+			c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+			c.Set("id", userID)
+			c.Set("role", tc.role)
+			TestChannel(c)
+			var response struct { Success bool `json:"success"` }
+			require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+			require.Equal(t, tc.success, response.Success, w.Body.String())
+			if tc.success {
+				wire := takeChannelDiagnostic(t, requests)
+				assert.Equal(t, "Bearer selected-key", wire.headers.Get("Authorization"))
+				assert.Equal(t, "/v1/chat/completions", wire.path)
+				var hold model.ChannelBudgetReservation
+				require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).First(&hold).Error)
+				assert.Equal(t, model.BudgetReservationPhaseSettled, hold.Phase)
+				assert.Positive(t, hold.SettledQuota)
+				budget, err := model.ReadChannelBudget(t.Context(), model.BudgetScopeKey, stored.KeyEntryIDs[0])
+				require.NoError(t, err)
+				assert.Zero(t, budget.ReservedQuota)
+			}
+			assert.Empty(t, requests, "a refusal must not fall back to another Key")
+			after, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, stored.ChannelInfo, after.ChannelInfo, "test success alone never saves scope")
+			_, index, apiErr := after.GetNextEnabledKeyFor("gpt-4.1", 0)
+			require.Nil(t, apiErr)
+			assert.Equal(t, 1, index, "ordinary routing still obeys the allowlist")
+		})
+	}
+}
+
 // TestMultiKeyModelDiscoveryUsesOneKey pins the per-key discovery actions: the
 // models of one key are read with that key only, and the channel keeps its own
 // model scope / status out of the upstream request.
 func TestMultiKeyModelDiscoveryUsesOneKey(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
-	server := newMultiKeyModelServer(t, map[string][]string{
-		"sk-alpha": {"model-a", "model-shared"},
-		"sk-beta":  {"model-b", "model-shared"},
-	})
+	var modelListCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		modelListCalls.Add(1)
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		modelsByKey := map[string][]string{
+			"sk-alpha": {"model-a", "model-shared"},
+			"sk-beta":  {"model-b", "model-shared"},
+		}
+		models, ok := modelsByKey[key]
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		data := make([]map[string]string, 0, len(models))
+		for _, modelName := range models {
+			data = append(data, map[string]string{"id": modelName})
+		}
+		body, err := common.Marshal(map[string]any{"object": "list", "data": data})
+		require.NoError(t, err)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
 	baseURL := server.URL
 	channel := &model.Channel{Name: "multi-key-fetch", Type: constant.ChannelTypeOpenAI, Key: "sk-alpha\nsk-beta", Models: "model-a", Group: "default", BaseURL: &baseURL,
 		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
@@ -1992,19 +2243,58 @@ func TestMultiKeyModelDiscoveryUsesOneKey(t *testing.T) {
 	require.NoError(t, channel.Insert())
 	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
 
+	selectedID := strconv.FormatInt(channel.KeyEntryIDs[1], 10)
+	selectedRevision := channel.KeyEntryRevisions[1]
 	// The second key is scoped to model-a, which must not narrow what its
-	// upstream account reports.
-	recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "fetch_key_models", KeyIndex: common.GetPointer(1)})
+	// upstream account reports. Discovery still reports the exact allocation
+	// identity that was checked before upstream dispatch.
+	recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{
+		ChannelId: channel.Id, Action: "fetch_key_models", KeyEntryID: selectedID,
+		ExpectedRev: &selectedRevision,
+	})
 	var response struct {
 		Success bool   `json:"success"`
 		Message string `json:"message"`
 		Data    struct {
-			Models []string `json:"models"`
+			Models     []string `json:"models"`
+			KeyEntryID string   `json:"key_entry_id"`
+			Rev        int64    `json:"rev"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success, response.Message)
 	assert.Equal(t, []string{"model-b", "model-shared"}, response.Data.Models)
+	assert.Equal(t, selectedID, response.Data.KeyEntryID)
+	assert.Equal(t, selectedRevision, response.Data.Rev)
+	assert.EqualValues(t, 1, modelListCalls.Load())
+
+	staleRevision := selectedRevision + 1
+	stale := postMultiKeyManage(t, rootID, MultiKeyManageRequest{
+		ChannelId: channel.Id, Action: "fetch_key_models", KeyEntryID: selectedID,
+		ExpectedRev: &staleRevision,
+	})
+	var staleResponse struct {
+		Success   bool   `json:"success"`
+		ErrorCode string `json:"error_code"`
+	}
+	require.NoError(t, common.Unmarshal(stale.Body.Bytes(), &staleResponse))
+	assert.False(t, staleResponse.Success)
+	assert.Equal(t, "channel_key_revision_conflict", staleResponse.ErrorCode)
+	assert.EqualValues(t, 1, modelListCalls.Load(), "a stale stable identity must be rejected before an upstream fetch")
+
+	legacy := postMultiKeyManage(t, rootID, MultiKeyManageRequest{
+		ChannelId: channel.Id, Action: "fetch_key_models", KeyIndex: common.GetPointer(1),
+	})
+	var legacyResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Models []string `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(legacy.Body.Bytes(), &legacyResponse))
+	assert.True(t, legacyResponse.Success, legacy.Body.String())
+	assert.Equal(t, response.Data.Models, legacyResponse.Data.Models)
+	assert.EqualValues(t, 2, modelListCalls.Load(), "unambiguous legacy index-only discovery remains compatible")
 
 	loaded, err := model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
@@ -2107,14 +2397,11 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 		Success bool   `json:"success"`
 		Message string `json:"message"`
 		Data    struct {
-			Results []struct {
-				KeyIndex int      `json:"key_index"`
-				Models   []string `json:"models"`
-				Error    string   `json:"error"`
-				Skipped  bool     `json:"skipped"`
-			} `json:"results"`
-			AddedModels []string `json:"added_models"`
-			Applied     bool     `json:"applied"`
+			Results     []MultiKeyModelsResult `json:"results"`
+			AddedModels []string               `json:"added_models"`
+			Applied     bool                   `json:"applied"`
+			Revision    int64                  `json:"revision"`
+			PreviewToken string               `json:"preview_token"`
 		} `json:"data"`
 	}
 
@@ -2131,7 +2418,9 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 	assert.Equal(t, []string{"model-b", "model-shared"}, preview.Data.Results[2].Models)
 	assert.NotEmpty(t, preview.Data.Results[3].Error, "a failing key is reported with its reason")
 	assert.False(t, preview.Data.Applied)
-	assert.Equal(t, []string{"model-b"}, preview.Data.AddedModels)
+	assert.Empty(t, preview.Data.AddedModels, "nothing is selected by fetching")
+	require.NotEmpty(t, preview.Data.PreviewToken)
+	require.Positive(t, preview.Data.Revision)
 
 	loaded, err := model.GetChannelById(channel.Id, true)
 	require.NoError(t, err)
@@ -2139,6 +2428,58 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 	assert.Equal(t, map[int][]string{1: {"model-a"}, 3: {"model-shared"}}, loaded.ChannelInfo.MultiKeyModels)
 
 	recorder = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "sync_key_models", Apply: true})
+	var missingSelection syncResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &missingSelection))
+	require.False(t, missingSelection.Success, "a legacy apply cannot implicitly select all discoveries")
+	selected := preview.Data.Results[2]
+	selection := MultiKeyModelSelection{KeyEntryID: selected.KeyEntryID, Rev: selected.Rev, Models: []string{"model-b"}}
+	for _, tc := range []struct {
+		name string
+		selection MultiKeyModelSelection
+	}{
+		{name: "unknown allocation", selection: MultiKeyModelSelection{KeyEntryID: "99999999", Rev: selected.Rev, Models: []string{"model-b"}}},
+		{name: "stale allocation", selection: MultiKeyModelSelection{KeyEntryID: selected.KeyEntryID, Rev: selected.Rev + 1, Models: []string{"model-b"}}},
+		{name: "unfetched model", selection: MultiKeyModelSelection{KeyEntryID: selected.KeyEntryID, Rev: selected.Rev, Models: []string{"not-discovered"}}},
+		{name: "failed allocation", selection: MultiKeyModelSelection{KeyEntryID: preview.Data.Results[3].KeyEntryID, Rev: preview.Data.Results[3].Rev, Models: []string{"model-b"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rejected := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "sync_key_models", Apply: true,
+				ExpectedRevision: &preview.Data.Revision, PreviewToken: preview.Data.PreviewToken, ModelSelections: []MultiKeyModelSelection{tc.selection}})
+			var result syncResponse
+			require.NoError(t, common.Unmarshal(rejected.Body.Bytes(), &result))
+			assert.False(t, result.Success, rejected.Body.String())
+			after, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, loaded.Models, after.Models)
+			assert.Equal(t, loaded.ChannelInfo, after.ChannelInfo)
+		})
+	}
+	for _, table := range []string{"audit_event_outbox", "abilities"} {
+		t.Run("rollback at "+table, func(t *testing.T) {
+			const callback = "test:model-sync-rollback"
+			database := model.DB
+			injected := false
+			require.NoError(t, database.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table == table {
+					injected = true
+					_ = tx.AddError(gorm.ErrInvalidDB)
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, database.Callback().Create().Remove(callback)) })
+			rejected := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "sync_key_models", Apply: true,
+				ExpectedRevision: &preview.Data.Revision, PreviewToken: preview.Data.PreviewToken, ModelSelections: []MultiKeyModelSelection{selection}})
+			var result syncResponse
+			require.NoError(t, common.Unmarshal(rejected.Body.Bytes(), &result))
+			assert.False(t, result.Success, rejected.Body.String())
+			assert.True(t, injected)
+			after, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, loaded.Models, after.Models)
+			assert.Equal(t, loaded.ChannelInfo, after.ChannelInfo)
+		})
+	}
+	recorder = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: channel.Id, Action: "sync_key_models", Apply: true,
+		ExpectedRevision: &preview.Data.Revision, PreviewToken: preview.Data.PreviewToken, ModelSelections: []MultiKeyModelSelection{selection}})
 	var applied syncResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &applied))
 	require.True(t, applied.Success, applied.Message)
@@ -2149,11 +2490,11 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "model-a,model-shared,model-b", loaded.Models, "existing models keep their order and new ones are appended once")
 	assert.Equal(t, map[int][]string{
-		0: {"model-a", "model-shared"},
 		1: {"model-a"},
-		2: {"model-b", "model-shared"},
+		2: {"model-b"},
 		3: {"model-shared"},
-	}, loaded.ChannelInfo.MultiKeyModels, "only the keys that answered take a new scope, and the skipped key keeps its own")
+	}, loaded.ChannelInfo.MultiKeyModels, "only the selected Key receives additions; unselected, failed and skipped Keys retain scope")
+	assert.Empty(t, loaded.ChannelInfo.MultiKeyScopeModes[2], "adding candidates preserves an existing all scope")
 
 	// The extended model list really reaches the routing table, and the skipped
 	// key keeps its own scope.
@@ -2212,31 +2553,6 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 			replacement := `{"X-Configuration":"replacement"}`
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "Bearer sk-source", r.Header.Get("Authorization"))
-				column, value := "header_override", any(replacement)
-				if schedulingEdit {
-					info := source.ChannelInfo
-					info.MultiKeyMode = constant.MultiKeyModePolling
-					info.MultiKeyPollingIndex = 1
-					info.MultiKeyDisabledReason = map[int]string{1: "current reason"}
-					info.MultiKeyDisabledTime = map[int]int64{1: 123456}
-					column, value = "channel_info", info
-				}
-				var updateErr error
-				if schedulingEdit {
-					_, updateErr = model.UpdateScheduledChannelLocked(r.Context(), source.Id, func(current *model.Channel) error {
-						current.ChannelInfo.MultiKeyMode = constant.MultiKeyModePolling
-						current.ChannelInfo.MultiKeyPollingIndex = 1
-						current.ChannelInfo.MultiKeyDisabledReason = map[int]string{1: "current reason"}
-						current.ChannelInfo.MultiKeyDisabledTime = map[int]int64{1: 123456}
-						return nil
-					})
-				} else {
-					updateErr = model.DB.Model(&model.Channel{}).Where("id = ?", source.Id).Update(column, value).Error
-				}
-				if !assert.NoError(t, updateErr) {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
 				_, _ = w.Write([]byte(`{"data":[{"id":"model-new"}]}`))
 			}))
 			t.Cleanup(upstream.Close)
@@ -2246,7 +2562,27 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 					MultiKeyStatusList: map[int]int{1: common.ChannelStatusManuallyDisabled}}}
 			require.NoError(t, source.Insert())
 			t.Cleanup(func() { require.NoError(t, source.Delete()) })
-			recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: source.Id, Action: "sync_key_models", Apply: true})
+			recorder := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: source.Id, Action: "sync_key_models"})
+			var sampled syncResponse
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &sampled))
+			require.True(t, sampled.Success, recorder.Body.String())
+			require.Len(t, sampled.Data.Results, 2)
+			var updateErr error
+			if schedulingEdit {
+				_, updateErr = model.UpdateScheduledChannelLocked(t.Context(), source.Id, func(current *model.Channel) error {
+					current.ChannelInfo.MultiKeyMode = constant.MultiKeyModePolling
+					current.ChannelInfo.MultiKeyPollingIndex = 1
+					current.ChannelInfo.MultiKeyDisabledReason = map[int]string{1: "current reason"}
+					current.ChannelInfo.MultiKeyDisabledTime = map[int]int64{1: 123456}
+					return nil
+				})
+			} else {
+				updateErr = model.DB.Model(&model.Channel{}).Where("id = ?", source.Id).Update("header_override", replacement).Error
+			}
+			require.NoError(t, updateErr)
+			recorder = postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: source.Id, Action: "sync_key_models", Apply: true,
+				ExpectedRevision: &sampled.Data.Revision, PreviewToken: sampled.Data.PreviewToken,
+				ModelSelections: []MultiKeyModelSelection{{KeyEntryID: sampled.Data.Results[0].KeyEntryID, Rev: sampled.Data.Results[0].Rev, Models: []string{"model-new"}}}})
 			var response struct {
 				Success bool `json:"success"`
 			}

@@ -283,6 +283,8 @@ export interface FetchModelsResponse {
   success: boolean
   message?: string
   data?: string[]
+  partial?: boolean
+  results?: MultiKeyModelFetchResult[]
 }
 
 export interface CopyChannelResponse {
@@ -530,6 +532,8 @@ export interface MultiKeyManageParams {
   status?: number // 1=enabled, 2=manual_disabled, 3=auto_disabled
   models?: string[] // set_key_models: empty array clears the restriction
   model_mapping?: string // set_key_model_mapping: empty restores inheritance
+  add_models?: boolean // merge additions without replacing the current scope
+  model_selections?: MultiKeyModelSelection[] // explicit per-Key discovery additions
   user_id?: number // set_key_user: 0 unbinds
   apply?: boolean // sync_key_models / deduplicate_keys: write the previewed result
   // set_key_quota / reset_key_quota
@@ -545,14 +549,22 @@ export interface MultiKeyModelFetchResult {
   key_index: number
   key_entry_id?: string
   rev?: number
+  key_preview?: string
   models?: string[]
   error?: string
   skipped?: boolean
 }
 
-/** `sync_key_models` preview: per-key results plus the models it would add. */
+export interface MultiKeyModelSelection {
+  key_entry_id: string
+  rev: number
+  models: string[]
+}
+
+/** `sync_key_models` preview: per-key candidates, never automatic additions. */
 export interface MultiKeyModelSyncResult {
   revision?: number
+  preview_token?: string
   results: MultiKeyModelFetchResult[]
   added_models: string[]
   channel_models?: string[]

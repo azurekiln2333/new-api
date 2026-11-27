@@ -1037,6 +1037,81 @@ test('one-key discovery requires selection and Save before adding models to the 
   await user.click(screen.getByRole('button', { name: 'Cancel' }))
 })
 
+test('saving a Key scope does not substitute the channel-wide mapping for independent Key mapping', async () => {
+  const post = await renderDialog([
+    keyStatus({ id: '1001', rev: 3, index: 0, scope_mode: 'allowlist', models: ['model-a'] }),
+  ], { ...channel, model_mapping: '{"model-a":"upstream-old"}' }, 10)
+  const user = userEvent.setup()
+  const row = screen.getByText('1001').closest('tr')
+  expect(row).not.toBeNull()
+  await user.click(within(row as HTMLElement).getByRole('button', { name: 'Set Models' }))
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/channel/multi_key/manage', {
+    channel_id: 7, action: 'set_key_models', key_index: undefined, key_entry_id: '1001', expected_rev: 3,
+    scope_mode: 'allowlist', models: ['model-a'],
+  }, expect.objectContaining({ singleUseAuthorization: true })))
+})
+
+test.each([
+  { name: 'legacy response without identity', identity: {}, accepted: true },
+  {
+    name: 'matching stable identity',
+    identity: { key_entry_id: '1001', rev: 3 },
+    accepted: true,
+  },
+  {
+    name: 'another allocation identity',
+    identity: { key_entry_id: '1002', rev: 3 },
+    accepted: false,
+  },
+  {
+    name: 'another allocation revision',
+    identity: { key_entry_id: '1001', rev: 4 },
+    accepted: false,
+  },
+])('discovery accepts only the active Key or a $name', async ({ identity, accepted }) => {
+  const post = await renderDialog(
+    [keyStatus({ id: '1001', rev: 3, scope_mode: 'allowlist', models: [] })],
+    channel,
+    10
+  )
+  post.mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: { models: ['discovered-only'], ...identity },
+    },
+  })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Set Models' }))
+  await user.click(screen.getByRole('button', { name: 'Fetch from upstream' }))
+
+  if (accepted) {
+    expect(
+      await screen.findByRole('button', { name: 'discovered-only' })
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  } else {
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Save' })
+      ).not.toBeInTheDocument()
+    )
+    expect(
+      screen.queryByRole('button', { name: 'discovered-only' })
+    ).not.toBeInTheDocument()
+    expect(
+      post.mock.calls.filter(
+        ([, body]) => (body as { action: string }).action === 'get_key_status'
+      )
+    ).toHaveLength(2)
+  }
+  expect(
+    post.mock.calls.some(
+      ([, body]) => (body as { action: string }).action === 'set_key_models'
+    )
+  ).toBe(false)
+})
+
 test.each(['response', 'rejection'])(
   'a late %s conflict from cancelled discovery cannot replace the new channel editor',
   async (outcome) => {
@@ -1144,7 +1219,7 @@ test.each(['response', 'rejection'])(
   }
 )
 
-test('syncing models from upstream previews per-key counts before applying', async () => {
+test('upstream preview offers separate empty Key selectors and confirms only chosen models with stable identities', async () => {
   const post = vi.spyOn(api, 'post').mockImplementation(async (url, body) => {
     if (url !== '/api/channel/multi_key/manage') {
       return { data: { success: true } }
@@ -1156,10 +1231,11 @@ test('syncing models from upstream previews per-key counts before applying', asy
           success: true,
           data: {
             results: [
-              { key_index: 0, models: ['model-a'] },
-              { key_index: 1, skipped: true },
+              { key_index: 0, key_entry_id: '101', rev: 4, models: ['model-a', 'model-b'] },
+              { key_index: 1, key_entry_id: '102', rev: 7, models: ['model-b', 'model-c'] },
             ],
-            added_models: ['model-b'],
+            channel_models: ['model-a', 'model-b', 'model-c'],
+            added_models: ['model-c'],
             applied: true,
           },
         },
@@ -1171,11 +1247,15 @@ test('syncing models from upstream previews per-key counts before applying', asy
           success: true,
           data: {
             results: [
-              { key_index: 0, models: ['model-a'] },
-              { key_index: 1, skipped: true },
-              { key_index: 2, models: [], error: 'Bad key' },
+              { key_index: 0, key_entry_id: '101', rev: 3, key_preview: 'sk-abcd…wxyz', models: ['model-a', 'model-b'] },
+              { key_index: 1, key_entry_id: '102', rev: 7, key_preview: 'sk-efgh…abcd', models: ['model-b', 'model-c'] },
+              { key_index: 2, key_entry_id: '103', rev: 1, models: [], error: 'Bad key' },
+              { key_index: 3, key_entry_id: '104', rev: 2, skipped: true },
             ],
-            added_models: ['model-b'],
+            revision: 10,
+            preview_token: 'preview-7',
+            channel_models: ['model-a', 'model-b'],
+            added_models: [],
             applied: false,
           },
         },
@@ -1210,7 +1290,11 @@ test('syncing models from upstream previews per-key counts before applying', asy
   )
 
   expect(await screen.findByText('Models added to the channel')).toBeVisible()
-  expect(screen.getByText('model-b')).toBeVisible()
+  const first = screen.getByRole('group', { name: 'Models for Key 101' })
+  const second = screen.getByRole('group', { name: 'Models for Key 102' })
+  expect(within(first).getByRole('checkbox', { name: 'model-b' })).not.toBeChecked()
+  expect(within(second).getByRole('checkbox', { name: 'model-b' })).not.toBeChecked()
+  expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
   expect(screen.getByText('#3: Bad key')).toBeVisible()
   expect(screen.getByText(/Disabled keys are skipped/)).toBeVisible()
   expect(post).toHaveBeenCalledWith(
@@ -1219,6 +1303,10 @@ test('syncing models from upstream previews per-key counts before applying', asy
     expect.anything()
   )
 
+  expect(post.mock.calls.filter(([, body]) => (body as { apply?: boolean }).apply)).toHaveLength(0)
+  await user.click(within(first).getByRole('checkbox', { name: 'model-b' }))
+  expect(within(second).getByRole('checkbox', { name: 'model-b' })).not.toBeChecked()
+  await user.click(within(second).getByRole('checkbox', { name: 'model-c' }))
   await user.click(screen.getByRole('button', { name: 'Apply' }))
 
   expect(await screen.findByText('Models synced')).toBeVisible()
@@ -1228,6 +1316,12 @@ test('syncing models from upstream previews per-key counts before applying', asy
       channel_id: 7,
       action: 'sync_key_models',
       apply: true,
+      expected_revision: 10,
+      preview_token: 'preview-7',
+      model_selections: [
+        { key_entry_id: '101', rev: 3, models: ['model-b'] },
+        { key_entry_id: '102', rev: 7, models: ['model-c'] },
+      ],
     }),
     expect.anything()
   )

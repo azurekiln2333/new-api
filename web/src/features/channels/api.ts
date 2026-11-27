@@ -55,6 +55,7 @@ import type {
   GetChannelsResponse,
   MultiKeyDedupResult,
   MultiKeyManageParams,
+  MultiKeyModelSelection,
   MultiKeyModelSyncResult,
   MultiKeyStatusResponse,
   ResetChannelBudgetParams,
@@ -416,6 +417,7 @@ export async function testChannel(
     key_index?: number
     key_entry_id?: string
     expected_rev?: number
+    model_scope?: 'all'
   }
 ): Promise<ChannelTestResponse> {
   const res = await api.get(
@@ -861,7 +863,11 @@ export async function setMultiKeyModels(
   models: string[],
   keyEntryId?: string,
   expectedRev?: number,
-  scopeMode?: 'all' | 'allowlist'
+  scopeMode?: 'all' | 'allowlist',
+  options?: {
+    addModels?: boolean
+    expectedRevision?: number
+  }
 ): Promise<{
   success: boolean
   message?: string
@@ -875,6 +881,10 @@ export async function setMultiKeyModels(
     expected_rev: expectedRev,
     scope_mode: scopeMode,
     models,
+    ...(options?.addModels ? { add_models: true } : {}),
+    ...(options?.expectedRevision !== undefined
+      ? { expected_revision: options.expectedRevision }
+      : {}),
   }) as Promise<{
     success: boolean
     message?: string
@@ -927,7 +937,7 @@ export async function fetchMultiKeyModels(
 ): Promise<{
   success: boolean
   message?: string
-  data?: { models: string[] }
+  data?: { models: string[]; key_entry_id?: string; rev?: number }
 }> {
   return manageMultiKeys({
     channel_id: channelId,
@@ -938,18 +948,20 @@ export async function fetchMultiKeyModels(
   }) as Promise<{
     success: boolean
     message?: string
-    data?: { models: string[] }
+    data?: { models: string[]; key_entry_id?: string; rev?: number }
   }>
 }
 
 /**
- * Fetch the upstream models of every enabled key. Preview by default; `apply`
- * writes the channel models and each successful key's model scope.
+ * Preview every enabled Key. Confirm only the explicitly selected additions
+ * from that owner-bound preview; never refetch or replace existing scopes.
  */
 export async function syncMultiKeyModels(
   channelId: number,
   apply: boolean,
-  expectedRevision?: number
+  expectedRevision?: number,
+  previewToken?: string,
+  modelSelections?: MultiKeyModelSelection[]
 ): Promise<{
   success: boolean
   message?: string
@@ -960,6 +972,7 @@ export async function syncMultiKeyModels(
     action: 'sync_key_models',
     apply,
     expected_revision: expectedRevision,
+    ...(apply ? { preview_token: previewToken, model_selections: modelSelections } : {}),
   }) as Promise<{
     success: boolean
     message?: string

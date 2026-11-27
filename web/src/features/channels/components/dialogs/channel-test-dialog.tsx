@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   ColumnDef,
   RowSelectionState,
@@ -85,8 +85,11 @@ import {
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { handleServerError } from '@/lib/handle-server-error'
+import { ADMIN_PERMISSION_ACTIONS, ADMIN_PERMISSION_RESOURCES, hasPermission } from '@/lib/admin-permissions'
+import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { updateChannel, getMultiKeyStatus } from '../../api'
+import { updateChannel, getMultiKeyStatus, setMultiKeyModels } from '../../api'
 import { CHANNEL_TYPE_TASK_PLUGIN } from '../../constants'
 import { useTaskPluginOption } from '../../hooks/use-task-plugin-option'
 import {
@@ -125,6 +128,9 @@ type TestResult = {
   completedAt?: number
   error?: string
   errorCode?: string
+  keyEntryId?: string
+  keyRevision?: number
+  outOfScope?: boolean
 }
 
 type BatchProgress = {
@@ -401,6 +407,10 @@ function ChannelTestDialogContent({
   const [endpointType, setEndpointType] = useState('auto')
   const [isStreamTest, setIsStreamTest] = useState(true)
   const [selectedTestKey, setSelectedTestKey] = useState<KeyStatus | null>(null)
+  const [testAllChannelModels, setTestAllChannelModels] = useState(false)
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const canAddKeyModels = hasPermission(currentUser, ADMIN_PERMISSION_RESOURCES.CHANNEL, ADMIN_PERMISSION_ACTIONS.OPERATE) &&
+    hasPermission(currentUser, ADMIN_PERMISSION_RESOURCES.CHANNEL, ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE)
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
@@ -469,7 +479,7 @@ function ChannelTestDialogContent({
   // served by the existing multi-key management endpoint.
   const isMultiKeyChannel =
     currentRow.channel_info.is_multi_key &&
-    currentRow.channel_info.multi_key_size > 1
+    currentRow.channel_info.multi_key_size > 0
   const keyStatusQuery = useQuery({
     queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId),
     queryFn: () =>
@@ -522,6 +532,25 @@ function ChannelTestDialogContent({
     [channelKeys, selectedKeyUnavailable, selectedKeyValue, t]
   )
 
+  const addKeyModel = useMutation({
+    mutationFn: async (selection: { key: KeyStatus; model: string }) => {
+      if (!canAddKeyModels || !selection.key.id || !selection.key.rev) throw new Error(KEY_CONFIGURATION_CHANGED)
+      return requireServerSuccess(await setMultiKeyModels(
+        currentChannelId, selection.key.index, [selection.model], selection.key.id, selection.key.rev,
+        undefined, { addModels: true }
+      ))
+    },
+    onSuccess: () => {
+      toast.success(t('Key models saved'))
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId) })
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+    },
+    onError: (error) => {
+      handleServerError(error, t('Operation failed'))
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId) })
+    },
+  })
+
   const dismissBatchProgressToast = useCallback(() => {
     if (batchProgressToastIdRef.current === null) return
 
@@ -560,6 +589,7 @@ function ChannelTestDialogContent({
     setEndpointType('auto')
     setIsStreamTest(true)
     setSelectedTestKey(null)
+    setTestAllChannelModels(false)
     setSearchTerm('')
     setTestResults({})
     setRowSelection({})
@@ -641,8 +671,9 @@ function ChannelTestDialogContent({
   const availableModels = useMemo(() => {
     if (selectedTestKey === null) return models
     if (!selectedKey) return []
+    if (testAllChannelModels) return models
     return models.filter((model) => keyServesModel(selectedKey, model))
-  }, [models, selectedKey, selectedTestKey])
+  }, [models, selectedKey, selectedTestKey, testAllChannelModels])
 
   const successModels = useMemo(
     () =>
@@ -748,7 +779,7 @@ function ChannelTestDialogContent({
       if (!currentRow) return
       if (
         selectedTestKey !== null &&
-        (!selectedKey || !keyServesModel(selectedKey, model))
+        (!selectedKey || (!testAllChannelModels && !keyServesModel(selectedKey, model)))
       ) {
         return
       }
@@ -771,6 +802,7 @@ function ChannelTestDialogContent({
             keyIndex: selectedTestKey?.index,
             keyEntryId: selectedTestKey?.id,
             expectedRev: selectedTestKey?.rev,
+            modelScope: selectedTestKey && testAllChannelModels ? 'all' : undefined,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -781,6 +813,9 @@ function ChannelTestDialogContent({
               completedAt,
               error,
               errorCode,
+              keyEntryId: selectedTestKey?.id,
+              keyRevision: selectedTestKey?.rev,
+              outOfScope: !!selectedKey && testAllChannelModels && !keyServesModel(selectedKey, model),
             }
             updateTestResult(model, finalResult)
           }
@@ -809,6 +844,7 @@ function ChannelTestDialogContent({
       currentRow,
       selectedKey,
       selectedTestKey,
+      testAllChannelModels,
       effectiveEndpointType,
       effectiveStreamTest,
       markModelTesting,
@@ -1040,7 +1076,7 @@ function ChannelTestDialogContent({
     [handleClose]
   )
 
-  const isAnyTesting = testingModels.size > 0 || isBatchTesting
+  const isAnyTesting = testingModels.size > 0 || isBatchTesting || addKeyModel.isPending
   const isFilteringModels = searchTerm.trim().length > 0
   const testAllButtonLabel = isFilteringModels
     ? t('Test {{count}} matching models', { count: filteredModels.length })
@@ -1133,6 +1169,17 @@ function ChannelTestDialogContent({
           const isTestingModel = testingModels.has(model)
 
           return (
+            <div className='flex items-center gap-1'>
+            {canAddKeyModels && selectedKey && testResults[model]?.status === 'success' && testResults[model]?.outOfScope && testResults[model]?.keyEntryId === selectedKey.id && testResults[model]?.keyRevision === selectedKey.rev && !keyServesModel(selectedKey, model) && (
+              <Button
+                variant='outline'
+                size='sm'
+                disabled={isAnyTesting}
+                onClick={() => addKeyModel.mutate({ key: { ...selectedKey }, model })}
+              >
+                {t('Add to key')}
+              </Button>
+            )}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1140,7 +1187,7 @@ function ChannelTestDialogContent({
                     variant='ghost'
                     size='icon-sm'
                     onClick={() => testSingleModel(model)}
-                    disabled={isTestingModel || isBatchTesting}
+                    disabled={isTestingModel || isBatchTesting || addKeyModel.isPending}
                     aria-label={t('Test Connection')}
                   />
                 }
@@ -1153,6 +1200,7 @@ function ChannelTestDialogContent({
               </TooltipTrigger>
               <TooltipContent>{t('Test Connection')}</TooltipContent>
             </Tooltip>
+            </div>
           )
         },
         enableSorting: false,
@@ -1161,6 +1209,10 @@ function ChannelTestDialogContent({
     [
       defaultTestModel,
       isBatchTesting,
+      isAnyTesting,
+      addKeyModel,
+      canAddKeyModels,
+      selectedKey,
       t,
       testResults,
       testingModels,
@@ -1203,6 +1255,24 @@ function ChannelTestDialogContent({
         }
       >
         <div className='flex min-h-0 flex-1 flex-col gap-2'>
+          {selectedTestKey && (
+            <div className='flex shrink-0 items-center gap-2'>
+              <Switch
+                id='test-all-channel-models'
+                checked={testAllChannelModels}
+                disabled={isAnyTesting || selectedKeyUnavailable}
+                onCheckedChange={(checked) => {
+                  setTestAllChannelModels(checked)
+                  setTestResults({})
+                  setRowSelection({})
+                  setFailureDetails(null)
+                  setIsDeleteFailedDialogOpen(false)
+                  setPagination((previous) => ({ ...previous, pageIndex: 0 }))
+                }}
+              />
+              <Label htmlFor='test-all-channel-models'>{t('All channel models')}</Label>
+            </div>
+          )}
           <div className='flex shrink-0 items-center gap-2'>
             {isMultiKeyChannel && (
               <div className='min-w-0 flex-1'>

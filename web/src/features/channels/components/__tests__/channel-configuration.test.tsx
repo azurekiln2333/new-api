@@ -1527,6 +1527,28 @@ test('model discovery discards a response for old credentials and retains manual
   expect(screen.getByText('custom-model')).toBeVisible()
 })
 
+test('partial all-Key discovery shows failed Keys and preserves selected models when accepting additions', async () => {
+  vi.spyOn(api, 'post').mockResolvedValue({ data: {
+    success: true, data: ['new-upstream-model'], partial: true,
+    results: [
+      { key_index: 0, key_entry_id: '101', models: ['new-upstream-model'] },
+      { key_index: 1, key_entry_id: '102', error: 'Upstream rejected the key' },
+    ],
+  } })
+  const user = userEvent.setup()
+  render(<ConfigurationHarness />)
+  await user.click(screen.getByRole('option', { name: /^OpenAI / }))
+  fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'test-key' } })
+  await user.type(screen.getByRole('combobox', { name: 'Select models or add custom ones' }), 'manual-model,')
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Fetch from Upstream' }))
+  expect(await screen.findByText('Some keys could not fetch models')).toBeVisible()
+  expect(screen.getByText('#2: Upstream rejected the key')).toBeVisible()
+  await user.click(await screen.findByRole('checkbox', { name: 'new-upstream-model' }))
+  expect(screen.getByRole('button', { name: 'manual-model' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'new-upstream-model' })).toBeVisible()
+})
+
 test('model discovery reports failures inline and allows an empty result to fall back to manual models', async () => {
   vi.spyOn(api, 'post')
     .mockResolvedValueOnce({

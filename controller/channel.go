@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -522,7 +521,12 @@ func FetchUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	ids, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel)
+	ids, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel, channelModelDiscoveryOptions{IncludeDisabled: true})
+	var partial *channelModelDiscoveryPartialError
+	if errors.As(err, &partial) {
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": ids, "partial": true, "results": partial.Results})
+		return
+	}
 	if err != nil {
 		common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
 		return
@@ -1535,16 +1539,8 @@ func UpdateChannel(c *gin.Context) {
 				}
 			}
 
-			seen := make(map[string]bool, len(existingKeys)+len(newKeys))
-			for _, key := range existingKeys {
-				seen[key] = true
-			}
-			for _, key := range newKeys {
-				if seen[key] && !model.ChannelBudgetsEnabled() {
-					return "", model.ErrChannelAllocationsInactive
-				}
-				seen[key] = true
-			}
+			// Static duplicates are separate allocations, not a budget feature.
+			// The locked allocation reconciliation preserves every existing ID.
 			allKeys := append(existingKeys, newKeys...)
 			return strings.Join(allKeys, "\n"), nil
 		}
@@ -2001,7 +1997,7 @@ func FetchModels(c *gin.Context) {
 	}
 
 	var channel *model.Channel
-	discoveryOptions := channelModelDiscoveryOptions{Preview: &req}
+	discoveryOptions := channelModelDiscoveryOptions{Preview: &req, IncludeDisabled: true}
 	if req.ChannelID > 0 {
 		savedChannel, err := model.GetChannelById(req.ChannelID, true)
 		if err != nil {
@@ -2009,6 +2005,12 @@ func FetchModels(c *gin.Context) {
 			return
 		}
 		discoveryOptions.SourceType = savedChannel.Type
+		if savedChannel.ChannelInfo.IsMultiKey {
+			// An edited pool is not a positional replacement credential. Discover
+			// every saved allocation with stable identity; typed single-key
+			// previews remain supported for ordinary single-key channels.
+			req.Key = ""
+		}
 		if savedChannel.Type == constant.ChannelTypeAdvancedCustom {
 			channel, err = buildAdvancedCustomModelPreviewChannel(req)
 			if err != nil {
@@ -2092,6 +2094,11 @@ func FetchModels(c *gin.Context) {
 		}
 	}
 	models, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel, discoveryOptions)
+	var partial *channelModelDiscoveryPartialError
+	if errors.As(err, &partial) {
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": models, "partial": true, "results": partial.Results})
+		return
+	}
 	if err != nil {
 		common.ApiErrorT(c, "Failed to fetch models: {{error}}", map[string]any{"error": err.Error()})
 		return
@@ -2267,6 +2274,8 @@ type MultiKeyManageRequest struct {
 	LimitQuota            *int64   `json:"limit_quota,omitempty"`
 	OperationID           string   `json:"operation_id,omitempty"`
 	PreviewToken          string   `json:"preview_token,omitempty"`
+	AddModels             bool     `json:"add_models,omitempty"`
+	ModelSelections       []MultiKeyModelSelection `json:"model_selections,omitempty"`
 }
 
 // MultiKeyModelsResult reports the upstream models discovered with one key of a
@@ -2278,6 +2287,7 @@ type MultiKeyModelsResult struct {
 	Skipped    bool     `json:"skipped,omitempty"`
 	KeyEntryID string   `json:"key_entry_id,omitempty"`
 	Rev        int64    `json:"rev,omitempty"`
+	KeyPreview string   `json:"key_preview,omitempty"`
 }
 
 // multiKeyModelSyncConcurrency bounds how many keys of one channel are queried
@@ -2451,10 +2461,11 @@ func ManageMultiKeys(c *gin.Context) {
 	if handleChannelKeyAllocationAction(c, channel, request) {
 		return
 	}
-	// get_key_status 为只读查询，不记录审计；其余为修改操作，记录审计并跳过中间件兜底。
-	if request.Action == "get_key_status" {
+	// Discovery is read-only. Sync confirmation owns its audit in the same
+	// transaction as scopes/catalog/abilities, never before a successful write.
+	if request.Action == "get_key_status" || request.Action == "fetch_key_models" {
 		markAuditLogged(c)
-	} else {
+	} else if request.Action != "sync_key_models" {
 		recordManageAudit(c, "channel.multi_key_manage", map[string]any{
 			"action": request.Action,
 			"id":     channel.Id,
@@ -3016,137 +3027,18 @@ func ManageMultiKeys(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
-			"data":    gin.H{"models": models},
+			"data": gin.H{
+				"models":       models,
+				"key_entry_id": strconv.FormatInt(channel.ChannelKeyEntryID(keyIndex), 10),
+				"rev":          channel.KeyEntryRevisions[keyIndex],
+			},
 		})
 		return
 
 	case "sync_key_models":
 		lock.Unlock()
 		locked = false
-		if request.Apply && model.ChannelHasDuplicateCredentials(channel) && (request.ExpectedRevision == nil || *request.ExpectedRevision != channel.ChannelInfo.KeyEntryRevision) {
-			channelKeyManageError(c, model.ErrChannelKeyEntryRevisionStale)
-			return
-		}
-		keys := channel.GetKeys()
-		results := make([]MultiKeyModelsResult, len(keys))
-		var wg sync.WaitGroup
-		capacity := make(chan struct{}, multiKeyModelSyncConcurrency)
-		for keyIndex := range keys {
-			results[keyIndex] = MultiKeyModelsResult{KeyIndex: keyIndex, KeyEntryID: strconv.FormatInt(channel.ChannelKeyEntryID(keyIndex), 10), Rev: channel.KeyEntryRevisions[keyIndex]}
-			// A disabled key is reported without contacting the upstream: the
-			// operator sees it was left alone, and a failing credential is not
-			// exercised again.
-			if status, ok := channel.ChannelInfo.MultiKeyStatusList[keyIndex]; ok && status != common.ChannelStatusEnabled {
-				results[keyIndex].Skipped = true
-				continue
-			}
-			wg.Go(func() {
-				select {
-				case capacity <- struct{}{}:
-					defer func() { <-capacity }()
-				case <-c.Request.Context().Done():
-					results[keyIndex].Error = c.Request.Context().Err().Error()
-					return
-				}
-				models, err := fetchChannelUpstreamModelIDsForRequest(c.Request.Context(), channel, channelModelDiscoveryOptions{KeyIndex: &keyIndex})
-				if err != nil {
-					results[keyIndex].Error = err.Error()
-					return
-				}
-				results[keyIndex].Models = models
-			})
-		}
-		wg.Wait()
-		if err := c.Request.Context().Err(); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-
-		channelModels := normalizeModelNames(channel.GetModels())
-		discovered := make([]string, 0, len(results))
-		for _, result := range results {
-			if result.Error != "" || len(result.Models) == 0 {
-				continue
-			}
-			discovered = append(discovered, result.Models...)
-		}
-		addedModels := subtractModelNames(normalizeModelNames(discovered), channelModels)
-
-		response := gin.H{
-			"results":        results,
-			"added_models":   addedModels,
-			"applied":        false,
-			"channel_models": channelModels,
-			"revision":       channel.ChannelInfo.KeyEntryRevision,
-		}
-		if !request.Apply {
-			c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
-			return
-		}
-
-		source := *channel
-		channel.ChannelInfo.MultiKeyModels = maps.Clone(channel.ChannelInfo.MultiKeyModels)
-		channel.Models = strings.Join(mergeModelNames(channelModels, addedModels), ",")
-		for _, result := range results {
-			if result.Error != "" || len(result.Models) == 0 {
-				continue
-			}
-			if channel.ChannelInfo.MultiKeyModels == nil {
-				channel.ChannelInfo.MultiKeyModels = make(map[int][]string)
-			}
-			channel.ChannelInfo.MultiKeyModels[result.KeyIndex] = result.Models
-		}
-		// Prune before persisting: a scope may name models that the channel list
-		// lost while this key's upstream no longer serves them.
-		nextModels := normalizeModelNames(channel.GetModels())
-		for keyIndex, scope := range channel.ChannelInfo.MultiKeyModels {
-			scope = intersectModelNames(scope, nextModels)
-			if len(scope) == 0 {
-				delete(channel.ChannelInfo.MultiKeyModels, keyIndex)
-				continue
-			}
-			channel.ChannelInfo.MultiKeyModels[keyIndex] = scope
-		}
-		persistCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
-		expected := int64(0) // unique legacy requests still validate each sampled entry
-		if request.ExpectedRevision != nil {
-			expected = *request.ExpectedRevision
-		}
-		_, err = model.MutateChannelKeyEntries(persistCtx, channel.Id, expected, func(_ *gorm.DB, current *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
-			if !sameChannelModelUpdateSource(&source, current) {
-				return nil, nil, model.ErrChannelKeyEntryRevisionStale
-			}
-			current.Models = channel.Models
-			for _, result := range results {
-				if result.Error != "" || result.Skipped || len(result.Models) == 0 {
-					continue
-				}
-				for i := range entries {
-					if strconv.FormatInt(entries[i].Id, 10) == result.KeyEntryID {
-						if entries[i].ConfigRevision != result.Rev {
-							return nil, nil, model.ErrChannelKeyEntryRevisionStale
-						}
-						if err := entries[i].SetKeyModels(intersectModelNames(result.Models, normalizeModelNames(current.GetModels()))); err != nil {
-							return nil, nil, err
-						}
-						entries[i].ScopeMode = "allowlist"
-						entries[i].ConfigRevision++
-					}
-				}
-			}
-			return entries, nil, nil
-		})
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		// MutateChannelKeyEntries commits abilities and the sync obligation, then
-		// publishes the authoritative channel snapshot locally before returning.
-		// Re-reading the row and rebuilding its abilities here duplicated work and
-		// used to trigger a full channel-cache reload.
-		response["applied"] = true
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
+		handleChannelModelSync(c, channel, request)
 		return
 
 	default:

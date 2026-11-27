@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -455,9 +456,21 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 }
 
 type channelModelDiscoveryOptions struct {
-	Preview    *fetchModelsRequest
-	SourceType int
-	KeyIndex   *int
+	Preview        *fetchModelsRequest
+	SourceType     int
+	KeyIndex       *int
+	RequireEnabled bool
+	IncludeDisabled bool // explicit channel-edit discovery visits every allocation
+}
+
+// Partial discovery is useful to a human choosing additions, but is still an
+// error for automatic synchronization: missing keys are not removal evidence.
+type channelModelDiscoveryPartialError struct {
+	Results []MultiKeyModelsResult
+}
+
+func (err *channelModelDiscoveryPartialError) Error() string {
+	return "Some keys could not fetch models"
 }
 
 func fetchChannelUpstreamModelIDsForRequest(parent context.Context, channel *model.Channel, options ...channelModelDiscoveryOptions) ([]string, error) {
@@ -790,51 +803,65 @@ func channelModelListURL(channel *model.Channel, baseURL string) string {
 
 func fetchEnabledMultiKeyModelUnion(ctx context.Context, channel *model.Channel, admission *service.ChannelDiagnosticAdmission, options channelModelDiscoveryOptions) ([]string, error) {
 	keys := channel.GetKeys()
-	union := make([]string, 0)
-	enabledCount := 0
-	for keyIndex := range keys {
-		if status, ok := channel.ChannelInfo.MultiKeyStatusList[keyIndex]; ok && status != common.ChannelStatusEnabled {
+	results := make([]MultiKeyModelsResult, len(keys))
+	jobs := make(chan int, len(keys))
+	for index := range keys {
+		results[index] = MultiKeyModelsResult{KeyIndex: index, KeyEntryID: strconv.FormatInt(channel.ChannelKeyEntryID(index), 10)}
+		if index < len(channel.KeyEntryRevisions) {
+			results[index].Rev = channel.KeyEntryRevisions[index]
+		}
+		if status, ok := channel.ChannelInfo.MultiKeyStatusList[index]; !options.IncludeDisabled && ok && status != common.ChannelStatusEnabled {
+			results[index].Skipped = true
 			continue
 		}
-		enabledCount++
-		current, lease, err := acquireMultiKeyDiscoverySnapshot(ctx, channel, keyIndex, admission, options)
-		if err != nil {
-			return nil, fmt.Errorf("enabled key %d model discovery failed: %w", keyIndex, err)
-		}
-		requestCtx := ctx
-		if lease != nil {
-			requestCtx = lease.Context()
-		}
-		var models []string
-		if current.Type == constant.ChannelTypeTaskPlugin {
-			plugin, ok := jsplugin.DefaultRegistry.Get(current.GetSetting().TaskPluginKey)
-			if !ok {
-				if lease != nil {
-					lease.Release()
-				}
-				return nil, fmt.Errorf("task plugin is not registered")
-			}
-			if _, ok := plugin.Meta.ModelListRoute(); ok {
-				models, err = fetchProviderPluginUpstreamModelIDs(requestCtx, current, plugin, nil, keyIndex)
-			} else {
-				models = normalizeModelNames(plugin.Meta.Models)
-			}
-		} else {
-			key := current.GetKeys()[keyIndex]
-			models, err = fetchChannelUpstreamModelIDsSnapshot(requestCtx, newSingleKeyChannel(current, key, keyIndex), nil)
-		}
-		if lease != nil {
-			lease.Release()
-		}
-		if err != nil {
-			return nil, fmt.Errorf("enabled key %d model discovery failed: %w", keyIndex, err)
-		}
-		union = append(union, models...)
+		jobs <- index
 	}
-	if enabledCount == 0 {
+	close(jobs)
+	var workers sync.WaitGroup
+	for range min(multiKeyModelSyncConcurrency, len(keys)) {
+		workers.Go(func() {
+			for index := range jobs {
+				if channel.Id > 0 && (channel.ChannelKeyEntryID(index) <= 0 || results[index].Rev <= 0) {
+					results[index].Error = "Channel key configuration changed, reload and retry"
+					continue
+				}
+				// A waiter owns mutable queue state, so parallel keys must not share it.
+				keyAdmission := service.NewChannelDiagnosticAdmission(ctx, 0)
+				choice := options
+				choice.KeyIndex = &index
+				choice.RequireEnabled = !options.IncludeDisabled
+				models, err := fetchChannelUpstreamModelIDsWithAdmission(ctx, channel, keyAdmission, choice)
+				keyAdmission.Close()
+				if err != nil {
+					results[index].Error = err.Error()
+					continue
+				}
+				results[index].Models = models
+			}
+		})
+	}
+	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	union := make([]string, 0)
+	failed, enabled := false, 0
+	for _, result := range results {
+		if result.Skipped {
+			continue
+		}
+		enabled++
+		failed = failed || result.Error != ""
+		union = append(union, result.Models...)
+	}
+	if enabled == 0 {
 		return nil, fmt.Errorf("channel has no enabled keys")
 	}
-	return normalizeModelNames(union), nil
+	union = normalizeModelNames(union)
+	if failed {
+		return union, &channelModelDiscoveryPartialError{Results: results}
+	}
+	return union, nil
 }
 
 func acquireMultiKeyDiscoverySnapshot(ctx context.Context, channel *model.Channel, keyIndex int, admission *service.ChannelDiagnosticAdmission, options channelModelDiscoveryOptions) (*model.Channel, *service.ChannelCapacityLease, error) {
@@ -871,7 +898,7 @@ func acquireMultiKeyDiscoverySnapshot(ctx context.Context, channel *model.Channe
 			lease.Release()
 			return nil, nil, fmt.Errorf("channel configuration changed during model discovery")
 		}
-		if status, ok := fresh.ChannelInfo.MultiKeyStatusList[keyIndex]; options.KeyIndex == nil && ok && status != common.ChannelStatusEnabled {
+		if status, ok := fresh.ChannelInfo.MultiKeyStatusList[keyIndex]; (options.KeyIndex == nil || options.RequireEnabled) && ok && status != common.ChannelStatusEnabled {
 			lease.Release()
 			return nil, nil, fmt.Errorf("channel key is no longer enabled")
 		}

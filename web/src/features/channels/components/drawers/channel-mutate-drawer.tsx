@@ -1398,7 +1398,7 @@ export function ChannelMutateDrawer({
   // key: the preview request carries the saved channel id and the draft key.
   // Advanced Custom keeps reusing the saved credential on the server.
   const editedKey =
-    isEditing && !isAdvancedCustom && currentKey?.trim()
+    isEditing && !isMultiKeyChannel && !isAdvancedCustom && currentKey?.trim()
       ? currentKey
       : undefined
   const editPreviewsDraftKey = Boolean(editedKey)
@@ -3805,6 +3805,18 @@ export function ChannelMutateDrawer({
                     </AlertDescription>
                   </Alert>
                 )}
+                {discovery.status === 'success' && discovery.partial && (
+                  <Alert>
+                    <AlertDescription>
+                      <p>{t('Some keys could not fetch models')}</p>
+                      {discovery.results?.filter((result) => result.error).map((result) => (
+                        <p key={result.key_entry_id ?? result.key_index}>
+                          #{result.key_index + 1}: {result.error}
+                        </p>
+                      ))}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {discovery.status === 'success' &&
                   discovery.models.length === 0 && (
                     <EmptyState
@@ -3836,8 +3848,14 @@ export function ChannelMutateDrawer({
                             ? initialModelsRef.current
                             : currentModelsArray
                         }
-                        onChange={handleModelsChange}
-                        showChanges={isEditing}
+                        onChange={(selected) =>
+                          handleModelsChange(
+                            discovery.partial
+                              ? [...new Set([...currentModelsArray, ...selected])]
+                              : selected
+                          )
+                        }
+                        showChanges={isEditing && !discovery.partial}
                         redirectModels={redirectModelList}
                         redirectSourceModels={redirectModelKeyList}
                         onRedirectModel={handleFetchedRedirect}

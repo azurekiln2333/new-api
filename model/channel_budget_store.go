@@ -245,11 +245,32 @@ func ResetChannelBudgetUsageTx(tx *gorm.DB, in BudgetResetRequest) (*ChannelBudg
 }
 
 func ReserveChannelBudgets(ctx context.Context, in BudgetReserveRequest) (*ChannelBudgetReservation, error) {
+	return reserveChannelBudgets(ctx, in, false)
+}
+
+// ReserveChannelDiagnosticBudgets permits only the allocation's model-scope
+// exception. The persisted actor must still be an enabled administrator; channel,
+// allocation identity/status, binding/group policy and both accounts stay fenced.
+// Ordinary relay never calls this entry point.
+func ReserveChannelDiagnosticBudgets(ctx context.Context, in BudgetReserveRequest) (*ChannelBudgetReservation, error) {
+	return reserveChannelBudgets(ctx, in, true)
+}
+
+func reserveChannelBudgets(ctx context.Context, in BudgetReserveRequest, diagnosticScope bool) (*ChannelBudgetReservation, error) {
 	if len(in.AttemptKey) == 0 || len(in.AttemptKey) > 160 || in.ReserveQuota < 0 || in.ReserveQuota > budgetLimitUpperBound || in.Selection.ChannelID <= 0 {
 		return nil, ErrBudgetConfigInvalid
 	}
 	var reservation *ChannelBudgetReservation
 	err := ChannelBudgetTransaction(ctx, in.Selection.ChannelID, func(tx *gorm.DB) error {
+		if diagnosticScope {
+			var actor User
+			if err := tx.Select("id", "role", "status").First(&actor, in.Selection.UserID).Error; err != nil {
+				return err
+			}
+			if actor.Id <= 0 || actor.Role < common.RoleAdminUser || actor.Status != common.UserStatusEnabled {
+				return ErrBudgetAllocationInvalid
+			}
+		}
 		var existing ChannelBudgetReservation
 		err := tx.Where("attempt_key = ?", in.AttemptKey).First(&existing).Error
 		if err == nil {
@@ -270,7 +291,7 @@ func ReserveChannelBudgets(ctx context.Context, in BudgetReserveRequest) (*Chann
 			return ErrBudgetAllocationInvalid
 		}
 		if in.Selection.UsesKeyScope() {
-			if _, err := budgetLookupAllocation(tx, in.Selection); err != nil {
+			if _, err := budgetLookupAllocation(tx, in.Selection, diagnosticScope); err != nil {
 				return err
 			}
 		} else {

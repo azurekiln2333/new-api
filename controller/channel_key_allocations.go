@@ -370,16 +370,27 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			if request.ScopeMode != nil && *request.ScopeMode != "all" && *request.ScopeMode != "allowlist" {
 				return nil, nil, common.NewMessage("invalid channel key model scope")
 			}
+			if request.AddModels && (request.KeyEntryID == "" || request.ExpectedRev == nil) {
+				return nil, nil, model.ErrChannelKeyEntryRevisionStale
+			}
+			previousScopeMode := entry.ScopeMode
 			models := normalizeModelNames(request.Models)
+			if request.AddModels {
+				models = mergeModelNames(entry.KeyModels(), models)
+			}
 			if err := entry.SetKeyModels(models); err != nil {
 				return nil, nil, err
 			}
-			if request.ScopeMode != nil {
+			if request.AddModels {
+				// Additions never replace an existing allowlist or narrow an all scope.
+				entry.ScopeMode = previousScopeMode
+			}
+			if request.ScopeMode != nil && !request.AddModels {
 				// SetKeyModels infers legacy empty selections as all. An explicit
 				// empty allowlist instead stays deny-all.
 				entry.ScopeMode = *request.ScopeMode
 			}
-			if entry.ScopeMode == "allowlist" && len(models) > 0 {
+			if (entry.ScopeMode == "allowlist" || request.AddModels) && len(models) > 0 {
 				// Preserve manual models and their order; only the selected Key's
 				// explicit allowlist adds names to the shared catalog.
 				current.Models = strings.Join(mergeModelNames(current.GetModels(), models), ",")

@@ -38,6 +38,8 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { channelsQueryKeys } from '../../lib'
 import type { Channel, KeyStatus, MultiKeyStatusResponse } from '../../types'
@@ -52,6 +54,7 @@ await i18n.init({
 })
 
 let client: QueryClient
+const originalAuth = useAuthStore.getState().auth
 
 function makeChannel(overrides: Partial<Channel> = {}): Channel {
   return {
@@ -171,6 +174,7 @@ async function testModelRow(model: string) {
 }
 
 beforeEach(() => {
+  useAuthStore.setState({ auth: { ...originalAuth, user: { id: 1, username: 'root', role: ROLE.SUPER_ADMIN } } })
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -179,6 +183,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   client.clear()
+  useAuthStore.setState({ auth: originalAuth })
   vi.restoreAllMocks()
 })
 
@@ -379,6 +384,53 @@ test.each<{
     )
   }
 )
+
+test('all-channel mode tests an out-of-scope model with its selected identity and saves only on explicit add', async () => {
+  const { get, post } = renderDialog(makeChannel(), [
+    { index: 0, id: '101', rev: 3, status: 1, key_preview: 'sk-…mnop', models: ['model-b'], scope_mode: 'allowlist' },
+    { index: 1, id: '102', rev: 7, status: 1, key_preview: '…67', scope_mode: 'all' },
+  ])
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('combobox', { name: 'Tested key' }))
+  await user.click(await screen.findByRole('option', { name: '1 · sk-…mnop · Enabled' }))
+  expect(screen.queryByText('model-a')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('switch', { name: 'All channel models' }))
+  const row = await testModelRow('model-a')
+  await user.click(row.getByRole('button', { name: 'Test Connection' }))
+  expect(await row.findByRole('button', { name: 'Add to key' })).toBeVisible()
+  expect(get).toHaveBeenCalledWith('/api/channel/test/7', expect.objectContaining({ params: {
+    model: 'model-a', stream: true, key_index: 0, key_entry_id: '101', expected_rev: 3, model_scope: 'all',
+  } }))
+  expect(post.mock.calls.filter(([, body]) => (body as { action: string }).action === 'set_key_models')).toHaveLength(0)
+  post.mockResolvedValueOnce({ data: { success: true, data: { revision: 8, channel_models: ['model-a', 'model-b'] } } })
+  await user.click(row.getByRole('button', { name: 'Add to key' }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/channel/multi_key/manage', {
+    channel_id: 7, action: 'set_key_models', key_index: undefined, key_entry_id: '101', expected_rev: 3,
+    scope_mode: undefined, models: ['model-a'], add_models: true,
+  }, expect.objectContaining({ singleUseAuthorization: true })))
+})
+
+test('turning all-channel mode off resets results and automatic tests never carry its scope override', async () => {
+  const { get } = renderDialog(makeChannel(), [
+    { index: 0, status: 1, key_preview: 'sk-…mnop', models: ['model-b'], scope_mode: 'allowlist' },
+  ])
+  const user = userEvent.setup()
+  const key = await screen.findByRole('combobox', { name: 'Tested key' })
+  await user.click(key)
+  await user.click(await screen.findByRole('option', { name: '1 · sk-…mnop · Enabled' }))
+  const scope = screen.getByRole('switch', { name: 'All channel models' })
+  await user.click(scope)
+  expect((await testModelRow('model-a')).getByText('Not tested')).toBeVisible()
+  await user.click(scope)
+  expect(screen.queryByText('model-a')).not.toBeInTheDocument()
+  await user.click(scope)
+  await user.click(key)
+  await user.click(await screen.findByRole('option', { name: 'Auto (by tested model)' }))
+  const row = await testModelRow('model-a')
+  await user.click(row.getByRole('button', { name: 'Test Connection' }))
+  await waitFor(() => expect(get).toHaveBeenCalledWith('/api/channel/test/7', expect.objectContaining({ params: { model: 'model-a', stream: true } })))
+  expect(row.queryByRole('button', { name: 'Add to key' })).not.toBeInTheDocument()
+})
 
 test('switching keys resets pagination and hidden model selection', async () => {
   const models = Array.from(

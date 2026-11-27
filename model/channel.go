@@ -1372,9 +1372,6 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	if ChannelHasDuplicateCredentials(channel) && !ChannelBudgetsEnabled() {
-		return ErrChannelAllocationsInactive
-	}
 	err := DB.Session(&gorm.Session{Logger: gormlogger.Discard}).Transaction(func(tx *gorm.DB) error {
 		channel.ChannelInfo.KeyEntryRevision = 0
 		if err := tx.Create(channel).Error; err != nil {
