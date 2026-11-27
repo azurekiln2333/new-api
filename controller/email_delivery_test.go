@@ -194,7 +194,7 @@ func TestEmailProviderCannotActivateIncompleteResend(t *testing.T) {
 func TestResendSettingsChangesKeepActiveDeliveryWorking(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.SystemTask{}, &model.SystemTaskLock{}, &model.AuditEventOutbox{}))
 	previousDB, previousRedis := model.DB, common.RedisEnabled
 	model.DB, common.RedisEnabled = db, false
 	t.Cleanup(func() { model.DB, common.RedisEnabled = previousDB, previousRedis })

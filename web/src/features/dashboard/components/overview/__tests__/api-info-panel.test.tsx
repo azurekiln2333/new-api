@@ -83,7 +83,11 @@ const apiInfoEntries = [
   },
 ]
 
-function mockStatusAndInstances(instances: unknown, pending = false) {
+function mockStatusAndInstances(
+  instances: unknown,
+  pending = false,
+  entries = apiInfoEntries
+) {
   vi.spyOn(api, 'get').mockImplementation((url: string) => {
     if (url.includes('/api/status/instances')) {
       if (pending) return new Promise(() => {})
@@ -92,7 +96,7 @@ function mockStatusAndInstances(instances: unknown, pending = false) {
     return Promise.resolve({
       data: {
         success: true,
-        data: { api_info_enabled: true, api_info: apiInfoEntries },
+        data: { api_info_enabled: true, api_info: entries },
       },
     })
   })
@@ -125,10 +129,260 @@ describe('ApiInfoPanel', () => {
     ])
     expect(within(cards[0]).queryByText('Backup')).not.toBeInTheDocument()
     expect(within(cards[0]).queryByRole('link')).not.toBeInTheDocument()
-    // No resource sample yet, so the explicit unknown state is shown instead
-    // of a fabricated 0%.
-    expect(within(cards[0]).getAllByText('Unknown')).toHaveLength(4)
+    // No instance summary yet: keep the status without inventing metric rows.
+    expect(within(cards[0]).getAllByText('Unknown')).toHaveLength(1)
+    for (const label of ['CPU', 'Memory', 'Storage']) {
+      expect(
+        within(cards[0]).queryByRole('group', { name: label })
+      ).not.toBeInTheDocument()
+    }
     expect(within(cards[0]).queryByText('0%')).not.toBeInTheDocument()
+  })
+
+  it('hides resource rows on unbound API cards and their details', async () => {
+    const user = userEvent.setup()
+    mockStatusAndInstances({
+      instances: [],
+      generated_at: 1010,
+      monitoring: 'unknown',
+    })
+
+    renderPanel()
+
+    const card = await screen.findByRole('article', { name: 'CN2 GIA' })
+    expect(within(card).getByText('https://api.example.com')).toBeVisible()
+    expect(
+      within(card).getByRole('button', { name: 'Copy URL' })
+    ).toBeEnabled()
+    for (const label of ['CPU', 'Memory', 'Storage']) {
+      expect(within(card).queryByText(label)).not.toBeInTheDocument()
+    }
+
+    await user.click(within(card).getByRole('button', { name: 'CN2 GIA' }))
+    const detail = within(
+      await screen.findByRole('dialog', { name: 'CN2 GIA' })
+    )
+    expect(detail.getByText('https://api.example.com')).toBeVisible()
+    expect(detail.getByText('Status')).toBeVisible()
+    for (const label of ['CPU', 'Memory', 'Storage']) {
+      expect(detail.queryByText(label)).not.toBeInTheDocument()
+    }
+  })
+
+  it.each([
+    { kind: 'unbound', id: 2 },
+    { kind: 'legacy', id: 0 },
+  ])(
+    'hides resources on a $kind entry sharing a bound entry URL',
+    async ({ id }) => {
+      const user = userEvent.setup()
+      mockStatusAndInstances(
+        {
+          instances: [
+            {
+              key: 'api-1',
+              name: 'CN2 GIA',
+              status: 'healthy',
+              domains: ['https://api.example.com'],
+              entry_ids: [1],
+              resources: {
+                cpu_percent: 12,
+                memory_percent: 34,
+                storage_percent: 56,
+              },
+              observed_at: 1000,
+              stale: false,
+              disabled: false,
+            },
+          ],
+          generated_at: 1010,
+          monitoring: 'enabled',
+        },
+        false,
+        [
+          apiInfoEntries[0],
+          { ...apiInfoEntries[1], id, url: apiInfoEntries[0].url },
+        ]
+      )
+
+      renderPanel()
+
+      expect(await screen.findByText('12%')).toBeVisible()
+      const card = within(screen.getByRole('article', { name: 'Backup' }))
+      for (const label of ['CPU', 'Memory', 'Storage']) {
+        expect(
+          card.queryByRole('group', { name: label })
+        ).not.toBeInTheDocument()
+      }
+      expect(card.queryByText('12%')).not.toBeInTheDocument()
+      expect(card.getByRole('button', { name: 'Copy URL' })).toBeEnabled()
+      expect(card.getByRole('button', { name: 'Test Latency' })).toBeEnabled()
+
+      await user.click(card.getByRole('button', { name: 'Backup' }))
+      const detail = within(
+        await screen.findByRole('dialog', { name: 'Backup' })
+      )
+      expect(detail.getByText('https://api.example.com')).toBeVisible()
+      for (const label of ['CPU', 'Memory', 'Storage']) {
+        expect(detail.queryByText(label)).not.toBeInTheDocument()
+      }
+      expect(detail.queryByText('12%')).not.toBeInTheDocument()
+    }
+  )
+
+  it('keeps different bound instances separate when their API entries share a URL', async () => {
+    const user = userEvent.setup()
+    mockStatusAndInstances(
+      {
+        instances: [
+          {
+            key: 'api-1',
+            name: 'CN2 GIA',
+            status: 'healthy',
+            domains: ['https://api.example.com'],
+            entry_ids: [1],
+            resources: {
+              cpu_percent: 12,
+              memory_percent: 34,
+              storage_percent: 56,
+            },
+            observed_at: 1000,
+            stale: false,
+            disabled: false,
+          },
+          {
+            key: 'api-2',
+            name: 'Backup',
+            status: 'healthy',
+            domains: ['https://api.example.com'],
+            entry_ids: [2],
+            resources: {
+              cpu_percent: 78,
+              memory_percent: 89,
+              storage_percent: 90,
+            },
+            observed_at: 1000,
+            stale: false,
+            disabled: false,
+          },
+        ],
+        generated_at: 1010,
+        monitoring: 'enabled',
+      },
+      false,
+      [apiInfoEntries[0], { ...apiInfoEntries[1], url: apiInfoEntries[0].url }]
+    )
+
+    renderPanel()
+
+    expect(await screen.findByText('12%')).toBeVisible()
+    const first = within(screen.getByRole('article', { name: 'CN2 GIA' }))
+    const second = within(screen.getByRole('article', { name: 'Backup' }))
+    expect(first.getByRole('group', { name: 'CPU' })).toHaveTextContent('12%')
+    expect(second.getByRole('group', { name: 'CPU' })).toHaveTextContent('78%')
+    expect(first.queryByText('78%')).not.toBeInTheDocument()
+    expect(second.queryByText('12%')).not.toBeInTheDocument()
+
+    await user.click(first.getByRole('button', { name: 'CN2 GIA' }))
+    const firstDetail = within(
+      await screen.findByRole('dialog', { name: 'CN2 GIA' })
+    )
+    expect(firstDetail.getByText('12%')).toBeVisible()
+    expect(firstDetail.queryByText('78%')).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+
+    await user.click(second.getByRole('button', { name: 'Backup' }))
+    const secondDetail = within(
+      await screen.findByRole('dialog', { name: 'Backup' })
+    )
+    expect(secondDetail.getByText('78%')).toBeVisible()
+    expect(secondDetail.queryByText('12%')).not.toBeInTheDocument()
+  })
+
+  it('does not infer a resource binding from a legacy summary URL', async () => {
+    const user = userEvent.setup()
+    mockStatusAndInstances({
+      instances: [
+        {
+          key: 'api-1',
+          name: 'CN2 GIA',
+          status: 'healthy',
+          domains: ['https://api.example.com'],
+          resources: {
+            cpu_percent: 12,
+            memory_percent: 34,
+            storage_percent: 56,
+          },
+          observed_at: 1000,
+          stale: false,
+          disabled: false,
+        },
+      ],
+      generated_at: 1010,
+      monitoring: 'enabled',
+    })
+
+    renderPanel()
+
+    const card = within(
+      await screen.findByRole('article', { name: 'CN2 GIA' })
+    )
+    await user.click(card.getByRole('button', { name: 'CN2 GIA' }))
+    const detail = within(
+      await screen.findByRole('dialog', { name: 'CN2 GIA' })
+    )
+    for (const label of ['CPU', 'Memory', 'Storage']) {
+      expect(card.queryByRole('group', { name: label })).not.toBeInTheDocument()
+      expect(detail.queryByText(label)).not.toBeInTheDocument()
+    }
+    expect(detail.queryByText('12%')).not.toBeInTheDocument()
+  })
+
+  it('keeps unknown resource readings for a bound instance without a sample', async () => {
+    const user = userEvent.setup()
+    mockStatusAndInstances({
+      instances: [
+        {
+          key: 'api-1',
+          name: 'CN2 GIA',
+          status: 'unknown',
+          domains: ['https://api.example.com'],
+          entry_ids: [1],
+          resources: {
+            cpu_percent: null,
+            memory_percent: null,
+            storage_percent: null,
+          },
+          observed_at: null,
+          stale: false,
+          disabled: false,
+        },
+      ],
+      generated_at: 1010,
+      monitoring: 'unknown',
+    })
+
+    renderPanel()
+
+    const card = await screen.findByRole('article', { name: 'CN2 GIA' })
+    for (const label of ['CPU', 'Memory', 'Storage']) {
+      const metric = await within(card).findByRole('group', { name: label })
+      expect(within(metric).getByText('Unknown')).toHaveClass('text-[11px]')
+    }
+    expect(within(card).queryByText('0%')).not.toBeInTheDocument()
+
+    await user.click(within(card).getByRole('button', { name: 'CN2 GIA' }))
+    const detail = within(
+      await screen.findByRole('dialog', { name: 'CN2 GIA' })
+    )
+    for (const label of ['CPU', 'Memory', 'Storage']) {
+      const metric = detail.getByText(label).closest('div')
+      expect(metric).toHaveTextContent('Unknown')
+    }
+    expect(detail.queryByText('0%')).not.toBeInTheDocument()
   })
 
   it('keeps fractional resources readable under the transparent card hover and in its dialog', async () => {
@@ -140,6 +394,7 @@ describe('ApiInfoPanel', () => {
           name: 'CN2 GIA',
           status: 'healthy',
           domains: ['https://api.example.com'],
+          entry_ids: [1],
           resources: {
             cpu_percent: 12.34,
             memory_percent: 34,
@@ -182,13 +437,10 @@ describe('ApiInfoPanel', () => {
       expect(metric.querySelector('svg circle')).not.toBeNull()
     }
     const knownValue = within(card).getByText('12.3%')
-    const unknownValue = within(screen.getByRole('article', { name: 'Backup' }))
-      .getAllByText('Unknown')
-      .at(-1)
     expect(knownValue).toHaveClass('text-[11px]')
-    expect(unknownValue).toHaveClass('text-[11px]')
-    // The second, unbound card knows nothing and says so.
-    expect(screen.getAllByText('Unknown').length).toBeGreaterThan(0)
+    const backup = within(screen.getByRole('article', { name: 'Backup' }))
+    expect(backup.getByText('Unknown')).toBeVisible()
+    expect(backup.queryByRole('group', { name: 'CPU' })).not.toBeInTheDocument()
 
     await user.click(trigger)
     const detail = within(
@@ -205,6 +457,7 @@ describe('ApiInfoPanel', () => {
   })
 
   it('renders a legitimate zero percent reading as 0% rather than unknown', async () => {
+    const user = userEvent.setup()
     mockStatusAndInstances({
       instances: [
         {
@@ -212,6 +465,7 @@ describe('ApiInfoPanel', () => {
           name: 'CN2 GIA',
           status: 'healthy',
           domains: ['https://api.example.com'],
+          entry_ids: [1],
           resources: {
             cpu_percent: 0,
             memory_percent: 34,
@@ -229,6 +483,11 @@ describe('ApiInfoPanel', () => {
     renderPanel()
 
     expect(await screen.findByText('0%')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'CN2 GIA' }))
+    const detail = within(
+      await screen.findByRole('dialog', { name: 'CN2 GIA' })
+    )
+    expect(detail.getByText('0%')).toBeVisible()
   })
 
   it('opens a centered dialog from the whole API card and returns keyboard focus on close', async () => {
@@ -240,6 +499,7 @@ describe('ApiInfoPanel', () => {
           name: 'CN2 GIA',
           status: 'healthy',
           domains: ['https://api.example.com'],
+          entry_ids: [1],
           resources: {
             cpu_percent: 12,
             memory_percent: 34,
@@ -360,6 +620,7 @@ describe('ApiInfoPanel', () => {
           name: 'CN2 GIA',
           status: 'disabled',
           domains: ['https://api.example.com'],
+          entry_ids: [1],
           resources: {
             cpu_percent: null,
             memory_percent: null,
@@ -393,6 +654,7 @@ describe('ApiInfoPanel', () => {
           name: 'CN2 GIA',
           status: 'stale',
           domains: ['https://api.example.com', 'https://api2.example.com'],
+          entry_ids: [1, 2],
           resources: {
             cpu_percent: 12,
             memory_percent: null,
@@ -432,6 +694,7 @@ describe('ApiInfoPanel', () => {
           name: 'CN2 GIA',
           status: 'healthy',
           domains: ['https://api.example.com'],
+          entry_ids: [1],
           resources: {
             cpu_percent: cpu,
             memory_percent: 34,

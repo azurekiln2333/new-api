@@ -125,8 +125,10 @@ export function ApiInfoItemComponent(props: ApiInfoItemProps) {
         </p>
       </CardContent>
       <CardFooter className='pointer-events-none flex-wrap justify-between gap-3'>
-        <ResourceMeters resources={props.resources ?? null} />
-        <div className='relative flex flex-wrap items-center gap-1'>
+        {props.instanceStatus != null && (
+          <ResourceMeters resources={props.resources ?? null} />
+        )}
+        <div className='relative ml-auto flex flex-wrap items-center gap-1'>
           {status.testing && (
             <StatusBadge
               label={t('Testing...')}

@@ -418,13 +418,17 @@ func UpdateOption(key string, value string) error {
 	// and the console showed a value the database never stored. One portable
 	// upsert statement keeps this to a single round trip: insert the row, and on
 	// a primary-key conflict update only the value column.
-	if err := DB.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "key"}},
-		DoUpdates: clause.AssignmentColumns([]string{"value"}),
-	}).Create(&Option{Key: key, Value: value}).Error; err != nil {
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"value"}),
+		}).Create(&Option{Key: key, Value: value}).Error; err != nil {
+			return err
+		}
+		return bumpSyncTopic(tx, SyncTopicOptions)
+	}); err != nil {
 		return err
 	}
-	BumpSyncTopic(SyncTopicOptions)
 	// Update OptionMap only after the write succeeded.
 	return updateOptionMap(key, value)
 }
@@ -480,12 +484,11 @@ func UpdateOptionsBulk(values map[string]string) error {
 				return err
 			}
 		}
-		return nil
+		return bumpSyncTopic(tx, SyncTopicOptions)
 	})
 	if err != nil {
 		return err
 	}
-	BumpSyncTopic(SyncTopicOptions)
 	for k, v := range values {
 		if err := updateOptionMap(k, v); err != nil {
 			return err
@@ -543,7 +546,7 @@ func UpdateOrdinaryOptionsBatch(ctx context.Context, options []Option, audit Aud
 				return &OptionUpdateError{Key: option.Key, Err: common.NewMessage("Failed to update setting")}
 			}
 		}
-		if err := addSyncTask(tx, SyncTopicOptions); err != nil {
+		if err := bumpSyncTopic(tx, SyncTopicOptions); err != nil {
 			return common.NewMessage("Failed to update settings")
 		}
 		if _, err := EnqueueAuditEventTx(tx, audit); err != nil {

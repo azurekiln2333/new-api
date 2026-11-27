@@ -438,7 +438,6 @@ func UpdateOption(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusOK, err, fields)
 		return
 	}
-	var err error
 	if model.IsPasskeyDomainOption(option.Key) {
 		change, updateErr := model.UpdatePasskeyDomainOptions(map[string]string{option.Key: option.Value.(string)}, false, "")
 		if updateErr != nil {
@@ -450,7 +449,21 @@ func UpdateOption(c *gin.Context) {
 		common.ApiSuccess(c, change)
 		return
 	}
-	err = model.UpdateOption(option.Key, option.Value.(string))
+	ordinary := !model.IsModelPricingOption(option.Key) && !model.IsRequestPolicyOption(option.Key)
+	var err error
+	if ordinary {
+		// Single-field saves need the same atomic audit and sync obligations as
+		// section saves. Otherwise the response waits for two more independent
+		// commits after the setting is already stored, even after cancellation.
+		draft := buildAuditDraft(snapshotAuditActor(c), "option.update", map[string]any{"key": option.Key})
+		err = model.UpdateOrdinaryOptionsBatch(c.Request.Context(), []model.Option{{Key: option.Key, Value: option.Value.(string)}}, draft)
+		var message *common.Message
+		if err != nil && !errors.As(err, &message) {
+			err = common.NewMessage("Failed to update settings")
+		}
+	} else {
+		err = model.UpdateOption(option.Key, option.Value.(string))
+	}
 	if err != nil {
 		if errors.Is(err, system_setting.ErrPasskeyRPIDInvalid) {
 			writeSecurityOperationError(c, err)
@@ -459,10 +472,14 @@ func UpdateOption(c *gin.Context) {
 		}
 		return
 	}
-	// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
-	recordManageAudit(c, "option.update", map[string]any{
-		"key": option.Key,
-	})
+	if ordinary {
+		markAuditLogged(c)
+	} else {
+		// 出于安全考虑只记录被修改的配置项名称，不记录配置值（可能含密钥等敏感信息）。
+		recordManageAudit(c, "option.update", map[string]any{
+			"key": option.Key,
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

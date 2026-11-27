@@ -64,6 +64,7 @@ func TestInstanceResourceSummaryNeverLeaksNodeIdentity(t *testing.T) {
 	assert.Equal(t, "api-7", instance.Key, "key must come from the persistent entry id")
 	assert.Equal(t, "CN2 GIA", instance.Name)
 	assert.Equal(t, []string{"https://api.example.com", "https://api2.example.com"}, instance.Domains)
+	assert.Equal(t, []int{7, 9}, instance.EntryIDs)
 	assert.Equal(t, InstanceStatusHealthy, instance.Status)
 
 	// Node name and hostname must never appear in the projection.
@@ -96,6 +97,8 @@ func TestInstanceResourceSummaryKeyIsStableAcrossReordering(t *testing.T) {
 	// change which instance an API card is attached to.
 	assert.Equal(t, first.Instances[0].Key, second.Instances[0].Key)
 	assert.Equal(t, "api-3", first.Instances[0].Key)
+	assert.Equal(t, []int{3, 8}, first.Instances[0].EntryIDs)
+	assert.Equal(t, []int{8, 3}, second.Instances[0].EntryIDs)
 }
 
 func TestInstanceResourceSummaryUnavailableSampleIsNotZero(t *testing.T) {
@@ -184,6 +187,7 @@ func TestInstanceResourceSummaryMissingInstanceIsUnknown(t *testing.T) {
 	summary := BuildInstanceResourceSummary(nil, bindings, 1010)
 	require.Len(t, summary.Instances, 1)
 	assert.Equal(t, InstanceStatusUnknown, summary.Instances[0].Status)
+	assert.Equal(t, []int{4}, summary.Instances[0].EntryIDs)
 	assert.Nil(t, summary.Instances[0].ObservedAt)
 }
 
@@ -268,7 +272,49 @@ func TestInstanceResourceSummaryMultipleDomainsToOneInstance(t *testing.T) {
 		"https://b.example.com",
 		"https://c.example.com",
 	}, summary.Instances[0].Domains)
+	assert.Equal(t, []int{5, 6, 7}, summary.Instances[0].EntryIDs)
 	assert.Equal(t, "api-5", summary.Instances[0].Key)
+}
+
+func TestInstanceResourceSummarySeparatesEntriesSharingURL(t *testing.T) {
+	instances := []*SystemInstance{
+		{NodeName: "host-a", Info: instanceInfoFixture(12, 34, 56), LastSeenAt: 1000},
+		{NodeName: "host-b", Info: instanceInfoFixture(78, 89, 90), LastSeenAt: 1000},
+	}
+	bindings := []ApiInfoBinding{
+		{ID: 1, NodeName: "host-a", Route: "First", Name: "https://api.example.com"},
+		{ID: 2, NodeName: "", Route: "Unbound", Name: "https://api.example.com"},
+		{ID: 3, NodeName: "host-b", Route: "Second", Name: "https://api.example.com"},
+		{ID: 4, NodeName: "host-a", Route: "Alias", Name: "https://api.example.com"},
+	}
+
+	summary := BuildInstanceResourceSummary(instances, bindings, 1010)
+
+	require.Len(t, summary.Instances, 2)
+	first := summary.Instances[0]
+	second := summary.Instances[1]
+	assert.Equal(t, []int{1, 4}, first.EntryIDs)
+	assert.Equal(t, []int{3}, second.EntryIDs)
+	require.NotNil(t, first.Resources.CPUPercent)
+	require.NotNil(t, second.Resources.CPUPercent)
+	assert.Equal(t, 12.0, *first.Resources.CPUPercent)
+	assert.Equal(t, 78.0, *second.Resources.CPUPercent)
+}
+
+func TestInstanceResourceSummaryOmitsLegacyEntryMembership(t *testing.T) {
+	bindings := []ApiInfoBinding{
+		{ID: 0, NodeName: "host-a", Route: "Legacy", Name: "https://api.example.com"},
+		{ID: -1, NodeName: "host-a", Route: "Invalid", Name: "https://api.example.com"},
+		{ID: 7, NodeName: "host-a", Route: "Saved", Name: "https://api.example.com"},
+		{ID: 7, NodeName: "host-a", Route: "Duplicate", Name: "https://api.example.com"},
+	}
+
+	summary := BuildInstanceResourceSummary(nil, bindings, 1010)
+
+	require.Len(t, summary.Instances, 1)
+	assert.Equal(t, []int{7}, summary.Instances[0].EntryIDs)
+	assert.Equal(t, "api-7", summary.Instances[0].Key)
+	assert.Empty(t, BuildInstanceResourceSummary(nil, bindings[:2], 1010).Instances)
 }
 
 func TestInstanceResourceSummaryPublicJSONIsAllowlisted(t *testing.T) {
@@ -309,9 +355,10 @@ func TestInstanceResourceSummaryPublicJSONIsAllowlisted(t *testing.T) {
 	require.NoError(t, common.UnmarshalJsonStr(body, &decoded))
 	require.Len(t, decoded.Instances, 1)
 	assert.Equal(t, map[string]struct{}{
-		"key": {}, "name": {}, "status": {}, "domains": {},
+		"key": {}, "name": {}, "status": {}, "domains": {}, "entry_ids": {},
 		"resources": {}, "observed_at": {}, "stale": {}, "disabled": {},
 	}, keySet(decoded.Instances[0]))
+	assert.Equal(t, []any{float64(3)}, decoded.Instances[0]["entry_ids"])
 
 	resources, ok := decoded.Instances[0]["resources"].(map[string]any)
 	require.True(t, ok)
