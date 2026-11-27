@@ -175,6 +175,15 @@ Root captured and pushed hotfix `94862b39f` in the isolated multikey-hotfix work
 Separate console-followups ownership: p6 fixes repeated allocation reconciliation/transaction, whole-channel budget reads and per-row username lookups in get_key_status; native mapping author fixes missing legacy alias abilities and p6 wires its one startup call. pH fixes the bounded secure-verification spinner; p3 finishes fingerprint progress/single-probe retry; p5 finishes R33 privacy/abort/search corrections. Native mapping exact3 is not accepted until existing-data repair and real-dialect checks pass. R5 is partial until its new tests and independent freeze review complete.
 
 Other isolated worktrees: p2 finishes R34 safe upstream sinks, p5 finishes R36 runtime/UI, p4 integrates durable statistics, w6E:p2 owns R37/R38 discovery/manual diagnostics. Root exclusively owns Git, hosted CI, merge and release. Original dirty source stays preserved. Confirmed tool-loss/interrupted sessions were restarted with /new and gpt-6.1-sol restored; terminal working status alone is never completion evidence. Watchtower deployment authorization remains in effect; publish the reviewed image after required hosted checks, without SSH or production configuration changes.
+## R33 isolated capture — 2026-11-27
+
+The exact 19 production/existing-test files were independently source accepted,
+then applied cleanly to `feat/admin-log-user-scopes-20261127` based on main
+9f918c414. The shared administrator scope predicate, explicit invalid-query
+rejection, viewer-tier projection/preferences, masked authorized channel search
+and cancellation are included. Numeric summaries remain log-backed until the
+separate R24 source/read/backfill work completes. No local validation ran; hosted
+checks on the captured commit are required before merge/release.
 
 ## Sensitive-action verification capture — 2026-11-27
 

@@ -48,7 +48,8 @@ function buildApiPath(endpoint: string, isAdmin: boolean): string {
 async function fetchLogs<T>(
   endpoint: string,
   params: T,
-  isAdmin: boolean
+  isAdmin: boolean,
+  signal?: AbortSignal
 ): Promise<GetLogsResponse> {
   const paramRecord = params as unknown as Record<string, unknown>
   const queryParams = buildQueryParams({
@@ -57,7 +58,7 @@ async function fetchLogs<T>(
     ...params,
   })
   const path = buildApiPath(endpoint, isAdmin)
-  const res = await api.get(`${path}?${queryParams}`)
+  const res = await api.get(`${path}?${queryParams}`, { signal })
   return res.data
 }
 
@@ -78,19 +79,30 @@ async function fetchLogStats<T>(
 // Common Log APIs
 // ============================================================================
 
-export const getAllLogs = (params: GetLogsParams = {}) =>
-  fetchLogs('/api/log', params, true)
+export const getAllLogs = (params: GetLogsParams = {}, signal?: AbortSignal) =>
+  fetchLogs('/api/log', params, true, signal)
+
+function selfLogParams<T extends GetLogStatsParams>(params: T) {
+  const {
+    user_scope: _scope,
+    username: _username,
+    channel: _channel,
+    ...self
+  } = params
+  return self
+}
 
 export const getUserLogs = (
-  params: Omit<GetLogsParams, 'username' | 'channel'> = {}
-) => fetchLogs('/api/log', params, false)
+  params: Omit<GetLogsParams, 'username' | 'channel' | 'user_scope'> = {},
+  signal?: AbortSignal
+) => fetchLogs('/api/log', selfLogParams(params), false, signal)
 
 export const getLogStats = (params: GetLogStatsParams = {}) =>
   fetchLogStats('/api/log', params, true)
 
 export const getUserLogStats = (
-  params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
-) => fetchLogStats('/api/log', params, false)
+  params: Omit<GetLogStatsParams, 'username' | 'channel' | 'user_scope'> = {}
+) => fetchLogStats('/api/log', selfLogParams(params), false)
 
 /**
  * Stream the logs matching params, newest first. The server sends one JSON
@@ -103,7 +115,10 @@ export async function exportLogs(
   options: { signal: AbortSignal; onLog: (log: UsageLog) => void }
 ): Promise<number> {
   const queryParams = buildQueryParams(
-    params as unknown as Record<string, unknown>
+    (isAdmin ? params : selfLogParams(params)) as unknown as Record<
+      string,
+      unknown
+    >
   )
   const response = await fetch(
     `${buildApiPath('/api/log', isAdmin)}/export?${queryParams}`,
@@ -192,21 +207,29 @@ export async function getLogRequestContent(
 // MjProxy (Drawing) Logs API
 // ============================================================================
 
-export const getAllMidjourneyLogs = (params: GetMidjourneyLogsParams) =>
-  fetchLogs('/api/mj', params, true)
+export const getAllMidjourneyLogs = (
+  params: GetMidjourneyLogsParams,
+  signal?: AbortSignal
+) => fetchLogs('/api/mj', params, true, signal)
 
-export const getUserMidjourneyLogs = (params: GetMidjourneyLogsParams) =>
-  fetchLogs('/api/mj', params, false)
+export const getUserMidjourneyLogs = (
+  params: GetMidjourneyLogsParams,
+  signal?: AbortSignal
+) => fetchLogs('/api/mj', params, false, signal)
 
 // ============================================================================
 // Task Logs API
 // ============================================================================
 
-export const getAllTaskLogs = (params: GetTaskLogsParams) =>
-  fetchLogs('/api/task', params, true)
+export const getAllTaskLogs = (
+  params: GetTaskLogsParams,
+  signal?: AbortSignal
+) => fetchLogs('/api/task', params, true, signal)
 
-export const getUserTaskLogs = (params: GetTaskLogsParams) =>
-  fetchLogs('/api/task', params, false)
+export const getUserTaskLogs = (
+  params: GetTaskLogsParams,
+  signal?: AbortSignal
+) => fetchLogs('/api/task', params, false, signal)
 
 const taskArtifactRequestConfig = {
   skipBusinessError: true,

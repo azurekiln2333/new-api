@@ -26,17 +26,29 @@ import {
 } from '@tanstack/react-router'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { CommonLogsStats } from '../common-logs-stats'
 import { UsageLogsProvider } from '../usage-logs-provider'
 
 async function renderStats(
   stat: Record<string, number>,
-  options: { mobile?: boolean; pending?: boolean } = {}
+  options: {
+    mobile?: boolean
+    pending?: boolean
+    role?: number
+    scope?: string
+  } = {}
 ) {
+  useAuthStore.getState().auth.setUser({
+    id: 7,
+    username: 'viewer',
+    role: options.role ?? ROLE.USER,
+  })
   if (options.mobile) {
     const matchMedia = window.matchMedia
     vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
@@ -62,7 +74,11 @@ async function renderStats(
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
-    history: createMemoryHistory({ initialEntries: ['/usage-logs/common'] }),
+    history: createMemoryHistory({
+      initialEntries: [
+        `/usage-logs/common?user_scope=${options.scope ?? 'all'}&channel=42&username=alice&group=premium&model=gpt&requestId=req-1`,
+      ],
+    }),
   })
   render(
     <QueryClientProvider
@@ -82,6 +98,44 @@ async function renderStats(
   }
   return get
 }
+
+afterEach(() => {
+  useAuthStore.getState().auth.reset()
+})
+
+it.each(['all', 'self', 'others'])(
+  'uses administrator statistics and the same %s row predicate without losing filters',
+  async (scope) => {
+    const get = await renderStats(
+      { quota: 40, rpm: 2, tpm: 400 },
+      { role: ROLE.ADMIN, scope }
+    )
+    await waitFor(() => expect(get).toHaveBeenCalled())
+    const url = String(get.mock.calls[0][0])
+    expect(url).toMatch(/^\/api\/log\/stat\?/)
+    const params = new URL(url, 'http://localhost').searchParams
+    expect(Object.fromEntries(params)).toMatchObject({
+      user_scope: scope,
+      channel: '42',
+      username: 'alice',
+      group: 'premium',
+      model_name: 'gpt',
+      request_id: 'req-1',
+    })
+    expect(params.has('p')).toBe(false)
+    expect(params.has('page_size')).toBe(false)
+  }
+)
+
+it('ignores a forged others URL scope for ordinary-user statistics', async () => {
+  const get = await renderStats({ quota: 10 }, { scope: 'others' })
+  const url = String(get.mock.calls[0][0])
+  expect(url).toMatch(/^\/api\/log\/self\/stat\?/)
+  const params = new URL(url, 'http://localhost').searchParams
+  expect(params.has('user_scope')).toBe(false)
+  expect(params.has('channel')).toBe(false)
+  expect(params.has('username')).toBe(false)
+})
 
 it('shows the cache-read share of the input tokens next to TPM', async () => {
   const get = await renderStats({

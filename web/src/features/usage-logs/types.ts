@@ -568,9 +568,12 @@ export interface TaskArtifactsResponse {
 // Common Log Types
 // ============================================================================
 
+export type AdminLogUserScope = 'all' | 'self' | 'others'
+
 export interface GetLogsParams {
   p?: number
   page_size?: number
+  user_scope?: AdminLogUserScope
   type?: number
   username?: string
   token_name?: string
@@ -596,6 +599,7 @@ export interface GetLogsResponse {
 }
 
 export interface GetLogStatsParams {
+  user_scope?: AdminLogUserScope
   type?: number
   username?: string
   token_name?: string
@@ -651,6 +655,8 @@ export interface GetTaskLogsParams {
 export interface FetchLogsConfig {
   logCategory: LogCategory
   isAdmin: boolean
+  userScope?: AdminLogUserScope
+  signal?: AbortSignal
   page: number
   pageSize: number
   searchParams: Record<string, unknown>

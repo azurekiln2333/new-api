@@ -35,6 +35,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import type { ChannelOptionsParams } from '@/features/channels/types'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -64,9 +65,51 @@ async function renderFilter(
   groups: Record<string, { desc: string; ratio: number }> | null = {
     default: { desc: '', ratio: 1 },
     premium: { desc: '', ratio: 2 },
-  }
+  },
+  channelOptions: Array<{
+    id: number
+    name: string
+    models: string[]
+  }> | null = []
 ) {
-  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+  vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+    if (url === '/api/channel/options') {
+      if (channelOptions === null) {
+        return { data: { success: false, message: 'Unavailable' } }
+      }
+      const params = config?.params as ChannelOptionsParams
+      const selected = channelOptions.filter(
+        (channel) => String(channel.id) === params.ids
+      )
+      const matches = channelOptions.filter(
+        (channel) =>
+          !params.keyword ||
+          String(channel.id) === params.keyword ||
+          channel.name.toLowerCase().includes(params.keyword.toLowerCase()) ||
+          channel.models.some((model) =>
+            model.toLowerCase().includes(params.keyword?.toLowerCase() ?? '')
+          )
+      )
+      const page = params.p ?? 1
+      const pageSize = params.page_size ?? 30
+      const byId = new Map(
+        [
+          ...selected,
+          ...matches.slice((page - 1) * pageSize, page * pageSize),
+        ].map((channel) => [channel.id, channel])
+      )
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [...byId.values()],
+            page,
+            page_size: pageSize,
+            has_more: page * pageSize < matches.length,
+          },
+        },
+      }
+    }
     if (url === '/api/user/self/groups' || url === '/api/group/') {
       if (groups === null) throw new Error('Group loading failed')
       return {
@@ -84,7 +127,10 @@ async function renderFilter(
     getParentRoute: () => auth,
     path: '/usage-logs/$section',
     component: FilterFixture,
-    validateSearch: (search: Record<string, unknown>) => search,
+    validateSearch: (search: Record<string, unknown>) => ({
+      ...search,
+      ...(search.channel != null ? { channel: String(search.channel) } : {}),
+    }),
   })
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
@@ -286,6 +332,352 @@ it.each([1, 10])(
     )
   }
 )
+
+async function openChannelPicker() {
+  const expand = screen.queryByRole('button', { name: /^Expand/ })
+  if (expand) await userEvent.click(expand)
+  return screen.findByRole('combobox', { name: 'Search channels' })
+}
+
+it('searches bounded channel names, disambiguates duplicates by id and submits only the selected id', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'admin',
+    role: 10,
+    permissions: { admin_permissions: { channel: { read: true } } },
+  })
+  const router = await renderFilter(
+    '/usage-logs/common?user_scope=others',
+    undefined,
+    [
+      { id: 9, name: 'Primary', models: [] },
+      { id: 42, name: 'Primary', models: [] },
+      { id: 77, name: 'Backup', models: [] },
+    ]
+  )
+  const input = await openChannelPicker()
+  await userEvent.click(input)
+  await userEvent.type(input, 'Primary')
+  await waitFor(() =>
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.some(
+          ([url, config]) =>
+            url === '/api/channel/options' &&
+            (config?.params as ChannelOptionsParams | undefined)?.keyword ===
+              'Primary'
+        )
+    ).toBe(true)
+  )
+  expect(
+    await screen.findByRole('option', { name: 'Primary (#9)' })
+  ).toBeVisible()
+  await userEvent.click(
+    await screen.findByRole('option', { name: 'Primary (#42)' })
+  )
+  expect(router.state.location.search).not.toHaveProperty('channel')
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({
+      channel: '42',
+      user_scope: 'others',
+      page: 1,
+    })
+  )
+  await waitFor(() => expect(input).toHaveValue('Primary (#42)'))
+  const optionCalls = vi
+    .mocked(api.get)
+    .mock.calls.filter(([url]) => url === '/api/channel/options')
+  expect(
+    optionCalls.some(
+      ([, config]) =>
+        (config?.params as ChannelOptionsParams | undefined)?.keyword ===
+        'Primary'
+    )
+  ).toBe(true)
+  for (const [, config] of optionCalls) {
+    const params = config?.params as ChannelOptionsParams | undefined
+    if (params?.ids) {
+      expect(params).toEqual({
+        p: 1,
+        page_size: 1,
+        keyword: '42',
+        ids: '42',
+      })
+    } else {
+      expect(params?.page_size).toBe(30)
+      expect(params).not.toHaveProperty('ids')
+    }
+    expect(config?.signal).toBeInstanceOf(AbortSignal)
+  }
+  expect(
+    vi
+      .mocked(api.get)
+      .mock.calls.some(
+        ([url]) =>
+          String(url).startsWith('/api/channel/?') || url === '/api/channel/'
+      )
+  ).toBe(false)
+})
+
+it('hydrates a selected channel outside the first page, pages options and preserves scope on reset', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'admin',
+    role: 10,
+    permissions: { admin_permissions: { channel: { read: true } } },
+  })
+  const channels = Array.from({ length: 35 }, (_, index) => ({
+    id: index + 1,
+    name: `Channel ${index + 1}`,
+    models: [],
+  }))
+  const router = await renderFilter(
+    '/usage-logs/common?channel=35&user_scope=self',
+    undefined,
+    channels
+  )
+  const input = await openChannelPicker()
+  await waitFor(() => expect(input).toHaveValue('Channel 35 (#35)'))
+  expect(api.get).toHaveBeenCalledWith(
+    '/api/channel/options',
+    expect.objectContaining({
+      params: expect.objectContaining({
+        p: 1,
+        page_size: 1,
+        ids: '35',
+        keyword: '35',
+      }),
+      signal: expect.any(AbortSignal),
+    })
+  )
+  await userEvent.click(input)
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Load more' })
+  )
+  expect(
+    await screen.findByRole('option', { name: 'Channel 34 (#34)' })
+  ).toBeVisible()
+  expect(api.get).toHaveBeenCalledWith(
+    '/api/channel/options',
+    expect.objectContaining({
+      params: { p: 2, page_size: 30 },
+    })
+  )
+  await userEvent.keyboard('{Escape}')
+  await userEvent.click(screen.getByRole('button', { name: 'Reset' }))
+  await waitFor(() =>
+    expect(router.state.location.search).not.toHaveProperty('channel')
+  )
+  expect(router.state.location.search).toHaveProperty('user_scope', 'self')
+  await router.history.push('/usage-logs/common?channel=34&user_scope=others')
+  await waitFor(() => expect(input).toHaveValue('Channel 34 (#34)'))
+})
+
+it('masks channel names in the selected input, hover text and options without changing the selected id', async () => {
+  const user = userEvent.setup()
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  const router = await renderFilter(
+    '/usage-logs/common?channel=9&user_scope=others',
+    undefined,
+    [
+      { id: 9, name: 'Private primary', models: [] },
+      { id: 77, name: 'Private backup', models: [] },
+    ]
+  )
+  const input = await openChannelPicker()
+  await waitFor(() => expect(input).toHaveValue('Private primary (#9)'))
+  expect(input).toHaveAttribute('title', 'Private primary (#9)')
+
+  await user.click(screen.getByRole('button', { name: 'Hide' }))
+  expect(input).toHaveValue('•••• (#9)')
+  expect(input).not.toHaveAttribute('title')
+  await user.hover(input)
+  expect(screen.queryByTitle('Private primary (#9)')).not.toBeInTheDocument()
+  await user.click(input)
+  expect(await screen.findByRole('option', { name: '•••• (#9)' })).toBeVisible()
+  const backup = await screen.findByRole('option', { name: '•••• (#77)' })
+  expect(backup).toBeVisible()
+  expect(
+    screen.queryByRole('option', { name: /Private/ })
+  ).not.toBeInTheDocument()
+  expect(input.closest('.\\[-webkit-text-security\\:disc\\]')).not.toBeNull()
+  await user.click(backup)
+  await waitFor(() => expect(input).toHaveValue('•••• (#77)'))
+  expect(input).not.toHaveAttribute('title')
+  expect(router.state.location.search).toHaveProperty('channel', '9')
+
+  await user.click(screen.getByRole('button', { name: 'Show' }))
+  await waitFor(() => expect(input).toHaveValue('Private backup (#77)'))
+  expect(input).toHaveAttribute('title', 'Private backup (#77)')
+  await user.click(screen.getByRole('button', { name: 'Search' }))
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({
+      channel: '77',
+      user_scope: 'others',
+    })
+  )
+})
+
+it('masks channel-name search text and results while sensitive values are hidden', async () => {
+  const user = userEvent.setup()
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  await renderFilter('/usage-logs/common?channel=9', undefined, [
+    { id: 9, name: 'Private primary', models: [] },
+    { id: 77, name: 'Private backup', models: [] },
+  ])
+  const input = await openChannelPicker()
+  await waitFor(() => expect(input).toHaveValue('Private primary (#9)'))
+  await user.click(screen.getByRole('button', { name: 'Hide' }))
+  await user.click(input)
+  await user.type(input, 'Private backup')
+  expect(input.closest('.\\[-webkit-text-security\\:disc\\]')).not.toBeNull()
+  expect(input).not.toHaveAttribute('title')
+  expect(input).toHaveValue('Private backup')
+  expect(
+    await screen.findByRole('option', { name: '•••• (#77)' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('option', { name: /Private/ })
+  ).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(input).toHaveValue('•••• (#9)'))
+
+  await user.click(screen.getByRole('button', { name: 'Show' }))
+  await waitFor(() => expect(input).toHaveValue('Private primary (#9)'))
+})
+
+it.each([
+  { keyword: 'Backup', matches: true },
+  { keyword: 'backup-model', matches: true },
+  { keyword: 'missing-channel', matches: false },
+])(
+  'keeps selected-id hydration out of keyword results for $keyword',
+  async ({ keyword, matches }) => {
+    const user = userEvent.setup()
+    useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+    const router = await renderFilter(
+      '/usage-logs/common?channel=9',
+      undefined,
+      [
+        { id: 9, name: 'Primary', models: [] },
+        { id: 77, name: 'Backup', models: ['backup-model'] },
+      ]
+    )
+    const input = await openChannelPicker()
+    await waitFor(() => expect(input).toHaveValue('Primary (#9)'))
+    await user.click(input)
+    await user.type(input, keyword)
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        '/api/channel/options',
+        expect.objectContaining({
+          params: { p: 1, page_size: 30, keyword },
+          signal: expect.any(AbortSignal),
+        })
+      )
+    )
+    if (matches) {
+      expect(
+        await screen.findByRole('option', { name: 'Backup (#77)' })
+      ).toBeVisible()
+    } else {
+      await waitFor(() =>
+        expect(screen.getByText('No matching channels')).toBeVisible()
+      )
+      expect(screen.queryByRole('option')).not.toBeInTheDocument()
+    }
+    expect(
+      screen.queryByRole('option', { name: 'Primary (#9)' })
+    ).not.toBeInTheDocument()
+    expect(router.state.location.search).toHaveProperty('channel', '9')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(input).toHaveValue('Primary (#9)'))
+  }
+)
+
+it.each([
+  { role: 1, read: true },
+  { role: 10, read: false },
+])(
+  'does not fetch channel options without both administrator role and channel.read ($role/$read)',
+  async ({ role, read }) => {
+    useAuthStore.getState().auth.setUser({
+      id: 1,
+      username: 'viewer',
+      role,
+      permissions: { admin_permissions: { channel: { read } } },
+    })
+    await renderFilter('/usage-logs/common?channel=9')
+    const expand = screen.queryByRole('button', { name: /^Expand/ })
+    if (expand) await userEvent.click(expand)
+    expect(
+      screen.queryByRole('combobox', { name: 'Search channels' })
+    ).not.toBeInTheDocument()
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.some(([url]) => url === '/api/channel/options')
+    ).toBe(false)
+    if (role === 10) {
+      expect(screen.getByPlaceholderText('Channel ID')).toHaveValue('9')
+    }
+  }
+)
+
+it('hides cached channel names immediately after channel.read is revoked', async () => {
+  const admin = {
+    id: 1,
+    username: 'admin',
+    role: 10,
+    permissions: { admin_permissions: { channel: { read: true } } },
+  }
+  useAuthStore.getState().auth.setUser(admin)
+  await renderFilter('/usage-logs/common?channel=9', undefined, [
+    { id: 9, name: 'Protected name', models: [] },
+  ])
+  const input = await openChannelPicker()
+  await waitFor(() => expect(input).toHaveValue('Protected name (#9)'))
+  useAuthStore.getState().auth.setUser({
+    ...admin,
+    permissions: { admin_permissions: { channel: { read: false } } },
+  })
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('combobox', { name: 'Search channels' })
+    ).not.toBeInTheDocument()
+  )
+  expect(
+    screen.queryByDisplayValue('Protected name (#9)')
+  ).not.toBeInTheDocument()
+  expect(screen.getByPlaceholderText('Channel ID')).toHaveValue('9')
+})
+
+it('keeps an unavailable selected channel id and offers retry instead of presenting a business error as no matches', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
+  const router = await renderFilter(
+    '/usage-logs/common?channel=99',
+    undefined,
+    null
+  )
+  const input = await openChannelPicker()
+  await userEvent.click(input)
+  expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible()
+  expect(screen.queryByText('No matching channels')).not.toBeInTheDocument()
+  expect(router.state.location.search).toHaveProperty('channel', '99')
+  const before = vi
+    .mocked(api.get)
+    .mock.calls.filter(([url]) => url === '/api/channel/options').length
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() =>
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.filter(([url]) => url === '/api/channel/options').length
+    ).toBeGreaterThan(before)
+  )
+})
 
 it('keeps historical auto values editable when auto is the only available group', async () => {
   const router = await renderFilter('/usage-logs/common?group=auto', {
