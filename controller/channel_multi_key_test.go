@@ -190,7 +190,7 @@ func TestSingleKeyDiagnosticBusyRetryPreservesMappingAndAllocation(t *testing.T)
 		Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
 		Setting:      common.GetPointer(`{"supported_endpoints":["responses"]}`),
 		ModelMapping: common.GetPointer(`{"gpt-4.1":"channel-upstream"}`),
-		ChannelInfo: model.ChannelInfo{MultiKeyModelMappings: map[int]string{0: `{"gpt-4.1":"gpt-5.1"}`}},
+		ChannelInfo:  model.ChannelInfo{MultiKeyModelMappings: map[int]string{0: `{"gpt-4.1":"gpt-5.1"}`}},
 	}
 	require.NoError(t, selected.Insert())
 	t.Cleanup(func() { require.NoError(t, selected.Delete()) })

@@ -543,8 +543,9 @@ export function MultiKeyManageDialog({
       if (
         generation !== mappingRequest.current ||
         session !== editorSession.current
-      )
+      ) {
         return
+      }
       if (response.data?.key_entry_id !== target.keyStatus.id) {
         throw new Error('Channel key configuration changed, reload and retry')
       }
@@ -558,8 +559,9 @@ export function MultiKeyManageDialog({
       if (
         generation !== mappingRequest.current ||
         session !== editorSession.current
-      )
+      ) {
         return
+      }
       if (isQuotaConflict(error)) await reloadAfterConflict()
       else handleServerError(error, t('Operation failed'))
     } finally {
