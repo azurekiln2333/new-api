@@ -342,6 +342,7 @@ export function AnnouncementsSection({
           <SettingsSwitchField
             checked={isEnabled}
             onCheckedChange={handleToggleEnabled}
+            disabled={updateOption.isPending}
             label={t('Enabled')}
             className='py-0'
           />
