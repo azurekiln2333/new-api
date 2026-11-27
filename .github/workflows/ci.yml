@@ -434,6 +434,27 @@ jobs:
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestRepairChannelMappedKeyAbilitiesUpgrade$'
           done
 
+      - name: Verify channel sync acknowledgement on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for DIALECT in sqlite mysql postgres; do
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -json ./service -run '^TestNodeSyncChannelReloadFailureKeepsRevisionUntilPublication$' | tee "node-sync-$DIALECT.jsonl"
+          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          target = "TestNodeSyncChannelReloadFailureKeepsRevisionUntilPublication"
+          for dialect in ("sqlite", "mysql", "postgres"):
+              events = [json.loads(line) for line in Path(f"node-sync-{dialect}.jsonl").read_text().splitlines() if line.strip()]
+              assert any(event.get("Test") == target and event.get("Action") == "pass" for event in events), f"missing passed {dialect} node-sync regression"
+              assert not any(event.get("Action") == "skip" for event in events), f"skipped {dialect} node-sync regression"
+          PY
+
+      - name: Verify Redis admission and waiting after lost replies
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: go test -p 1 -count=1 -v ./service -run 'TestChannelCapacityRedis|TestChannelCapacityCoordinationDiagnostics|TestChannelWaitRedis'
+
       - name: Verify management operation migrations and durable audit delivery
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: >-

@@ -22,6 +22,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Log user scopes](./log-user-scopes.md) | Shared administrator row predicates, immutable self access and viewer projections | Defined |
 | [CORS Origins](./cors-origins.md) | Exact credentialed browser origins and preflight behavior | Defined |
 | [Secure verification](./secure-verification.md) | Durable audit before proof, bounded waits and non-replayable factors | Defined |
+| [Node coordination](./node-coordination.md) | Redis retry ownership and successful channel publication before sync acknowledgement | Defined |
 | [Merge and Release Contract](./merge-release-contract.md) | Preserve both merge parents and verify actual release artifacts | Defined |
 
 ---
