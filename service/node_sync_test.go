@@ -124,6 +124,163 @@ func TestNodeSyncReloadsTopicsWhoseRevisionChanged(t *testing.T) {
 	assert.Equal(t, 4, reloads["alpha"])
 }
 
+func TestNodeSyncChannelReloadFailureKeepsRevisionUntilPublication(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		table       string
+		memoryCache bool
+		master      bool
+	}{
+		{name: "cached follower channel load", table: "channels", memoryCache: true},
+		{name: "cached follower allocation projection", table: "channel_key_entries", memoryCache: true},
+		{name: "cached follower ability load", table: "abilities", memoryCache: true},
+		{name: "uncached follower channel load", table: "channels"},
+		{name: "uncached follower allocation projection", table: "channel_key_entries"},
+		{name: "cached master channel load", table: "channels", memoryCache: true, master: true},
+		{name: "cached master allocation projection", table: "channel_key_entries", memoryCache: true, master: true},
+		{name: "cached master ability load", table: "abilities", memoryCache: true, master: true},
+		{name: "uncached master channel load", table: "channels", master: true},
+		{name: "uncached master allocation projection", table: "channel_key_entries", master: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database := useNodeSync(t)
+			previousMaster := common.IsMasterNode
+			common.IsMasterNode = tc.master
+			t.Cleanup(func() { common.IsMasterNode = previousMaster })
+			common.MemoryCacheEnabled = tc.memoryCache
+			const oldUser, newUser = 4242, 4343
+			channel := &model.Channel{
+				Name:   t.Name(),
+				Type:   1,
+				Status: common.ChannelStatusEnabled,
+				Key:    "sk-sync-public\nsk-sync-bound",
+				Models: "old-model",
+				Group:  "default",
+				ChannelInfo: model.ChannelInfo{
+					IsMultiKey:    true,
+					MultiKeySize:  2,
+					MultiKeyUsers: map[int]int{1: oldUser},
+				},
+			}
+			require.NoError(t, channel.Insert())
+			t.Cleanup(func() { model.CacheRemoveChannel(channel.Id) })
+			reloads, pluginScans := 0, 0
+			// Match main: every node reloads bindings, and only the master scans
+			// scheduled plugins after the channel publication has succeeded.
+			RegisterSyncTopic(model.SyncTopicChannels, func(ctx context.Context) error {
+				reloads++
+				if err := model.ReloadChannelCache(ctx); err != nil {
+					return err
+				}
+				if common.IsMasterNode {
+					pluginScans++
+					return ScanScheduledPlugins(ctx)
+				}
+				return nil
+			})
+			ctx := t.Context()
+			const callback = "test:channel-sync-load-failure"
+			failQueries := true
+			failures := 0
+			require.NoError(t, database.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if failQueries && tx.Statement.Table == tc.table {
+					failures++
+					_ = tx.AddError(gorm.ErrInvalidDB)
+				}
+			}))
+			t.Cleanup(func() { assert.NoError(t, database.Callback().Query().Remove(callback)) })
+
+			// Startup must load bindings even without the routing cache. Its
+			// failure leaves the startup revision unapplied until a tick succeeds.
+			ReadStartupSyncRevisions()
+			startupErr := model.ReloadChannelCache(ctx)
+			require.Error(t, startupErr)
+			SyncTopicLoadFailed(model.SyncTopicChannels, startupErr)
+			applyStartupSyncRevisions()
+			startup := NodeSyncStates()[model.SyncTopicChannels]
+			assert.Zero(t, startup.Revision)
+			assert.Zero(t, startup.AppliedAt)
+			assert.NotEmpty(t, startup.Error)
+			require.True(t, syncNodeTopics(ctx))
+			assert.Equal(t, startup, NodeSyncStates()[model.SyncTopicChannels])
+			assert.Zero(t, pluginScans, "a failed publication must not reach the plugin scan")
+			failQueries = false
+			require.True(t, syncNodeTopics(ctx))
+			applied := NodeSyncStates()[model.SyncTopicChannels]
+			require.Positive(t, applied.Revision)
+			require.NotZero(t, applied.AppliedAt)
+			require.Empty(t, applied.Error)
+			require.Equal(t, []int{channel.Id}, model.UserBoundChannelIDs(oldUser))
+			assert.Equal(t, 2, failures, "startup and the first tick must both report the load failure")
+
+			// Simulate another node's committed edit without publishing it locally.
+			require.NoError(t, database.Model(&model.Channel{}).Where("id = ?", channel.Id).
+				UpdateColumn("models", "new-model").Error)
+			require.NoError(t, database.Model(&model.ChannelKeyEntry{}).
+				Where("channel_id = ? AND position = ?", channel.Id, 1).
+				UpdateColumn("bound_user_id", newUser).Error)
+			model.BumpSyncTopic(model.SyncTopicChannels)
+			pending := storedSyncTopics(t)[model.SyncTopicChannels]
+			require.Greater(t, pending, applied.Revision)
+			failQueries = true
+
+			// Neither the failed load nor its retry may acknowledge the pending
+			// revision or replace any part of the previous good snapshot.
+			for range 2 {
+				require.True(t, syncNodeTopics(ctx))
+				failed := NodeSyncStates()[model.SyncTopicChannels]
+				assert.Equal(t, applied.Revision, failed.Revision)
+				assert.Equal(t, applied.AppliedAt, failed.AppliedAt)
+				assert.NotEmpty(t, failed.Error)
+				assert.Equal(t, []int{channel.Id}, model.UserBoundChannelIDs(oldUser))
+				assert.Empty(t, model.UserBoundChannelIDs(newUser))
+				if tc.memoryCache {
+					cached, err := model.CacheGetChannel(channel.Id)
+					require.NoError(t, err)
+					assert.Equal(t, "old-model", cached.Models)
+					selected, err := model.GetRandomSatisfiedChannel("default", "old-model", 0, nil)
+					require.NoError(t, err)
+					require.NotNil(t, selected)
+					assert.Equal(t, channel.Id, selected.Id)
+					selected, err = model.GetRandomSatisfiedChannel("default", "new-model", 0, nil)
+					require.NoError(t, err)
+					assert.Nil(t, selected)
+				}
+			}
+			assert.Equal(t, 4, failures, "each failed startup or reload must reach the real load boundary")
+
+			// Recovery needs no new topic bump: acknowledge only after publication.
+			failQueries = false
+			require.True(t, syncNodeTopics(ctx))
+			recovered := NodeSyncStates()[model.SyncTopicChannels]
+			assert.Equal(t, pending, recovered.Revision)
+			assert.NotZero(t, recovered.AppliedAt)
+			assert.Empty(t, recovered.Error)
+			assert.Empty(t, model.UserBoundChannelIDs(oldUser))
+			assert.Equal(t, []int{channel.Id}, model.UserBoundChannelIDs(newUser))
+			if tc.memoryCache {
+				cached, err := model.CacheGetChannel(channel.Id)
+				require.NoError(t, err)
+				assert.Equal(t, "new-model", cached.Models)
+				selected, err := model.GetRandomSatisfiedChannel("default", "old-model", 0, nil)
+				require.NoError(t, err)
+				assert.Nil(t, selected)
+				selected, err = model.GetRandomSatisfiedChannel("default", "new-model", 0, nil)
+				require.NoError(t, err)
+				require.NotNil(t, selected)
+				assert.Equal(t, channel.Id, selected.Id)
+			}
+			require.False(t, syncNodeTopics(ctx))
+			assert.Equal(t, 5, reloads)
+			wantPluginScans := 0
+			if tc.master {
+				wantPluginScans = 2
+			}
+			assert.Equal(t, wantPluginScans, pluginScans, "only successful master reloads scan plugins")
+		})
+	}
+}
+
 func TestNodeSyncAppliesAnOptionAnotherNodeWrote(t *testing.T) {
 	database := useNodeSync(t)
 	originalOptions := common.OptionMap

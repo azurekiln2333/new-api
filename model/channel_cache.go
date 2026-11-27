@@ -37,29 +37,27 @@ var userBoundChannels map[int][]int // user id -> channel ids carrying a bound k
 // it cannot publish bindings that a targeted publication already superseded.
 // Targeted publications update the index per channel, so this full rebuild is only
 // a fallback for callers that need to resynchronize the whole index.
-func refreshUserBoundChannelIndex() {
-	if DB == nil {
-		return
-	}
+func refreshUserBoundChannelIndex(ctx context.Context) error {
 	generation := ChannelCacheGeneration()
 	var channels []*Channel
-	ctx := WithBatchedChannelKeyEntries(context.Background())
+	ctx = WithBatchedChannelKeyEntries(ctx)
 	if err := DB.WithContext(ctx).Find(&channels).Error; err != nil {
 		common.SysLog(common.LogText("failed to load channels for the user bound index: %v", err))
-		return
+		return fmt.Errorf("failed to load channels for the user bound index: %w", err)
 	}
 	if err := ProjectChannelKeyEntries(DB, ctx, channels, false); err != nil {
 		common.SysLog(common.LogText("failed to project channel allocations for the user bound index: %v", err))
-		return
+		return fmt.Errorf("failed to project channel allocations for the user bound index: %w", err)
 	}
 	pending := buildUserBoundChannelIndex(channels)
 	channelSyncLock.Lock()
 	defer channelSyncLock.Unlock()
 	if ChannelCacheGeneration() != generation {
 		common.SysLog(common.LogText("discarded a stale user bound index refresh"))
-		return
+		return errors.New("discarded a stale user bound index refresh")
 	}
 	publishUserBoundChannelIndex(pending)
+	return nil
 }
 
 // userBoundChannelIDs lists the channels carrying a key bound to userId. The
@@ -155,17 +153,32 @@ func GetUserBoundModels(userId int) []string {
 var channelCacheReloadLock sync.Mutex
 
 func InitChannelCache() {
+	_ = ReloadChannelCache(context.Background())
+}
+
+// ReloadChannelCache reports success only after publishing the routing snapshot
+// or bound-user index. A failed load or superseded snapshot leaves the published
+// state intact, so sync callers must retry instead of acknowledging the revision.
+func ReloadChannelCache(ctx context.Context) error {
 	channelCacheReloadLock.Lock()
 	defer channelCacheReloadLock.Unlock()
+	if DB == nil {
+		return errors.New("channel cache database is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !common.MemoryCacheEnabled {
 		// There is no routing snapshot in this mode, but the bound-user index is
 		// still shared state read by the request path. The helper takes the same
 		// generation guard as the routing branch, so a reload that read the database
 		// before a targeted publication advanced it does not publish older bindings.
-		refreshUserBoundChannelIndex()
+		if err := refreshUserBoundChannelIndex(ctx); err != nil {
+			return err
+		}
 		InvalidatePricingCache()
 		rebuildTaskAliasView()
-		return
+		return nil
 	}
 	// Capture the routing generation before reading. A targeted publication that
 	// commits while this reload is reading advances it, and this reload must not
@@ -176,13 +189,13 @@ func InitChannelCache() {
 	var channels []*Channel
 	// The full reload is the busiest bulk read, so it hydrates allocations in
 	// bounded chunks instead of one query per migrated channel.
-	if err := DB.WithContext(WithBatchedChannelKeyEntries(context.Background())).Find(&channels).Error; err != nil {
+	if err := DB.WithContext(WithBatchedChannelKeyEntries(ctx)).Find(&channels).Error; err != nil {
 		common.SysLog(common.LogText("failed to load channels for the cache: %s", err.Error()))
-		return
+		return fmt.Errorf("failed to load channels for the cache: %w", err)
 	}
-	if err := ProjectChannelKeyEntries(DB, context.Background(), channels, false); err != nil {
+	if err := ProjectChannelKeyEntries(DB, ctx, channels, false); err != nil {
 		common.SysLog(common.LogText("failed to project channel allocations for the cache: %s", err.Error()))
-		return
+		return fmt.Errorf("failed to project channel allocations for the cache: %w", err)
 	}
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
@@ -193,7 +206,10 @@ func InitChannelCache() {
 		}
 	}
 	var abilities []*Ability
-	DB.Find(&abilities)
+	if err := DB.WithContext(ctx).Find(&abilities).Error; err != nil {
+		common.SysLog(common.LogText("failed to load channel abilities for the cache: %s", err.Error()))
+		return fmt.Errorf("failed to load channel abilities for the cache: %w", err)
+	}
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -251,13 +267,8 @@ func InitChannelCache() {
 		// Discard the stale snapshot instead of resurrecting replaced routes.
 		channelSyncLock.Unlock()
 		common.SysLog(common.LogText("discarded a stale channel cache reload"))
-		return
+		return errors.New("discarded a stale channel cache reload")
 	}
-	// Publish the binding index with the routing table under the same lock, so the
-	// two derived views can never disagree about which channels are bound.
-	publishUserBoundChannelIndex(pendingBoundIndex)
-	group2model2channels = newGroup2model2channels
-	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
 		if channel.ChannelInfo.IsMultiKey {
 			channel.Keys = channel.GetKeys()
@@ -271,6 +282,10 @@ func InitChannelCache() {
 			}
 		}
 	}
+	// Publish only after the complete replacement is ready, keeping the binding
+	// index, routing table, channel map and derived configs under the same lock.
+	publishUserBoundChannelIndex(pendingBoundIndex)
+	group2model2channels = newGroup2model2channels
 	channelsIDM = newChannelId2channel
 	channel2advancedCustomConfig = newChannel2advancedCustomConfig
 	channelSyncLock.Unlock()
@@ -281,6 +296,7 @@ func InitChannelCache() {
 	InvalidatePricingCache()
 	rebuildTaskAliasView()
 	common.SysLog(common.LogText("channels synced from database"))
+	return nil
 }
 
 func SyncChannelCache(frequency int) {

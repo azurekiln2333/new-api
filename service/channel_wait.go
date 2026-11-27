@@ -120,6 +120,10 @@ func channelWaitUserKey(userID int) string {
 	return fmt.Sprintf("new-api:channel-wait:user:%d", userID)
 }
 
+func channelWaitGrantKey(owner string) string {
+	return "new-api:channel-wait:grant:" + owner
+}
+
 func NewChannelWaiter(ctx context.Context, userID int) *ChannelWaiter {
 	ctx, cancel := context.WithCancel(ctx)
 	return &ChannelWaiter{
@@ -215,11 +219,23 @@ func (c *channelWaitCoordinator) notify() {
 	}
 }
 
+// A queue command can cover several channels; report the bounded candidate set
+// with the waiting request's correlation rather than the coordinator's context.
+func logChannelWaitRedisError(entry *channelWaitEntry, phase channelCapacityPhase, errorClass string) {
+	if entry.ctx.Err() != nil {
+		return
+	}
+	for _, candidate := range entry.candidates {
+		logChannelCapacityRedisError(entry.ctx, candidate.ChannelID, phase, errorClass)
+	}
+}
+
 func (c *channelWaitCoordinator) register(entry *channelWaitEntry, maxTotal, maxUser int) *types.NewAPIError {
 	if entry.ctx.Err() != nil {
 		return channelWaitContextError(entry.ctx)
 	}
 	if common.RedisEnabled && c.client == nil {
+		logChannelWaitRedisError(entry, channelCapacityQueueRegisterPhase, "coordinator_missing")
 		return channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
 	}
 	if c.client != nil {
@@ -227,10 +243,11 @@ func (c *channelWaitCoordinator) register(entry *channelWaitEntry, maxTotal, max
 		for _, candidate := range entry.candidates {
 			keys = append(keys, channelWaitQueueKey(candidate.ChannelID))
 		}
-		ctx, cancel := context.WithTimeout(entry.ctx, channelCapacityRedisTimeout)
+		ctx, cancel := context.WithTimeout(entry.ctx, channelCapacityAdmissionTimeout())
 		registered, err := channelWaitRegisterScript.Run(ctx, c.client, keys, entry.id, time.Until(entry.deadline).Milliseconds(), maxTotal, maxUser).Int()
 		cancel()
 		if err != nil {
+			logChannelWaitRedisError(entry, channelCapacityQueueRegisterPhase, channelCapacityRedisErrorClass(err))
 			c.removeRedis(entry)
 			return channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
 		}
@@ -389,15 +406,19 @@ func (c *channelWaitCoordinator) tryLocal(entry *channelWaitEntry, candidate Cha
 func ReportChannelUpstreamBusy(ctx context.Context, channelID int, retryAfter time.Duration) *types.NewAPIError {
 	c := currentChannelWaitCoordinator()
 	if common.RedisEnabled && c.client == nil {
+		logChannelCapacityRedisError(ctx, channelID, channelCapacityBusyReportPhase, "coordinator_missing")
 		return channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
 	}
 	retryAfter = max(0, min(time.Minute, retryAfter))
 	jitter := time.Duration(rand.Int64N(250)) * time.Millisecond
 	if c.client != nil {
-		commandCtx, cancel := context.WithTimeout(ctx, channelCapacityRedisTimeout)
+		commandCtx, cancel := context.WithTimeout(ctx, channelCapacityAdmissionTimeout())
 		defer cancel()
 		_, err := channelWaitBusyScript.Run(commandCtx, c.client, []string{channelWaitBusyKey(channelID)}, retryAfter.Milliseconds(), jitter.Milliseconds()).Result()
 		if err != nil {
+			if ctx.Err() == nil {
+				logChannelCapacityRedisError(ctx, channelID, channelCapacityBusyReportPhase, channelCapacityRedisErrorClass(err))
+			}
 			return channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
 		}
 		return nil
@@ -465,7 +486,7 @@ func (l *ChannelCapacityLease) releaseWaitProbe() {
 func (c *channelWaitCoordinator) dispatchRedisLocked() {
 	// One pipeline per coordinator sweep, not one round trip per waiter. The
 	// individual Lua commands remain atomic across independent gateways.
-	ctx, cancel := context.WithTimeout(context.Background(), channelCapacityRedisTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), channelCapacityAdmissionTimeout())
 	defer cancel()
 	pipe := c.client.Pipeline()
 	commands := make([]*redis.Cmd, len(c.entries))
@@ -474,8 +495,8 @@ func (c *channelWaitCoordinator) dispatchRedisLocked() {
 		if entry.ctx.Err() != nil {
 			continue
 		}
-		keys := []string{channelWaitGlobalKey, channelWaitUserKey(entry.userID)}
 		owners[i] = uuid.NewString()
+		keys := []string{channelWaitGlobalKey, channelWaitUserKey(entry.userID), channelWaitGrantKey(owners[i])}
 		args := []any{entry.id, owners[i], channelCapacityLeaseTTL.Milliseconds(), channelWaitNotifications}
 		for _, candidate := range entry.candidates {
 			keys = append(keys, channelWaitQueueKey(candidate.ChannelID), channelCapacityKey(candidate.ChannelID), channelWaitBusyKey(candidate.ChannelID))
@@ -505,6 +526,11 @@ func (c *channelWaitCoordinator) dispatchRedisLocked() {
 		case commands[i] == nil:
 			apiErr = channelWaitContextError(entry.ctx)
 		case err != nil || len(result) != 2:
+			errorClass := "invalid_response"
+			if err != nil {
+				errorClass = channelCapacityRedisErrorClass(err)
+			}
+			logChannelWaitRedisError(entry, channelCapacityQueueAcquirePhase, errorClass)
 			apiErr = channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
 		case result[0] == -1:
 			apiErr = channelCapacityError(types.ErrorCodeChannelCapacityWaitTimeout)
@@ -527,6 +553,7 @@ func (c *channelWaitCoordinator) dispatchRedisLocked() {
 			if entry.ctx.Err() != nil {
 				apiErr = channelWaitContextError(entry.ctx)
 			} else {
+				logChannelWaitRedisError(entry, channelCapacityQueueAcquirePhase, "invalid_response")
 				apiErr = channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
 			}
 		}
@@ -542,6 +569,9 @@ func (c *channelWaitCoordinator) dispatchRedisLocked() {
 				}
 			}
 			cleanup.Eval(context.Background(), channelWaitRemoveLua, keys, entry.id, channelWaitNotifications)
+		}
+		if owners[i] != "" {
+			cleanup.Del(context.Background(), channelWaitGrantKey(owners[i]))
 		}
 		entry.result <- channelWaitResult{grant: grant, err: apiErr}
 	}
@@ -566,6 +596,17 @@ var channelWaitRegisterScript = redis.NewScript(`
 local clock = redis.call('TIME')
 local now = clock[1]*1000 + math.floor(clock[2]/1000)
 local ttl = tonumber(ARGV[2])
+-- A successful registration whose reply was lost keeps its original deadline
+-- and FIFO position, even when that registration filled the queue.
+local expiry = redis.call('ZSCORE',KEYS[1],ARGV[1])
+if expiry and tonumber(expiry)>now then
+  local userExpiry = redis.call('ZSCORE',KEYS[2],ARGV[1])
+  if not userExpiry or tonumber(userExpiry)<=now then return 0 end
+  for i=4,#KEYS do
+    if not redis.call('ZSCORE',KEYS[i],ARGV[1]) then return 0 end
+  end
+  return 1
+end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
 if ttl <= 0 or redis.call('ZCARD',KEYS[1]) >= tonumber(ARGV[3]) or redis.call('ZCARD',KEYS[2]) >= tonumber(ARGV[4]) then return 0 end
@@ -591,9 +632,25 @@ var channelWaitRemoveScript = redis.NewScript(channelWaitRemoveLua)
 const channelWaitAcquireLua = `
 local clock = redis.call('TIME')
 local now = clock[1]*1000 + math.floor(clock[2]/1000)
+-- Pipeline retries may repeat a grant after its queue ticket was removed.
+-- The receipt only confirms that same live owner; it never renews ownership.
+local receipt = redis.call('HMGET',KEYS[3],'owner','index','probe')
+if receipt[1] then
+  local index = tonumber(receipt[2])
+  local probe = tonumber(receipt[3])
+  if receipt[1]~=ARGV[2] or not index or index<1 or index>(#KEYS-3)/3 or (probe~=0 and probe~=1) then return {-2,0} end
+  local i = 4+(index-1)*3
+  local ownedUntil = redis.call('ZSCORE',KEYS[i+1],ARGV[2])
+  if not ownedUntil or tonumber(ownedUntil)<=now then return {-2,0} end
+  if probe==1 then
+    local gate = redis.call('HMGET',KEYS[i+2],'probe','probe_until')
+    if gate[1]~=ARGV[2] or (tonumber(gate[2]) or 0)<=now then return {-2,0} end
+  end
+  return {index,probe}
+end
 local expiry = redis.call('ZSCORE',KEYS[1],ARGV[1])
 if not expiry or tonumber(expiry)<=now then return {-1,0} end
-for i=3,#KEYS,3 do
+for i=4,#KEYS,3 do
   local head = redis.call('ZRANGE',KEYS[i],0,0)[1]
   while head do
     local alive = redis.call('ZSCORE',KEYS[1],head)
@@ -606,7 +663,7 @@ for i=3,#KEYS,3 do
     local busyUntil = tonumber(gate[1]) or 0
     local probeUntil = tonumber(gate[2]) or 0
     redis.call('ZREMRANGEBYSCORE',KEYS[i+1],'-inf',now)
-    local index = (i-3)/3+1
+    local index = (i-4)/3+1
     local limit = tonumber(ARGV[index+4])
     if now>=busyUntil and now>=probeUntil and (limit<=0 or redis.call('ZCARD',KEYS[i+1])<limit) then
       redis.call('ZADD',KEYS[i+1],now+tonumber(ARGV[3]),ARGV[2])
@@ -617,8 +674,10 @@ for i=3,#KEYS,3 do
         redis.call('PEXPIRE',KEYS[i+2],600000)
         probe=1
       end
+      redis.call('HSET',KEYS[3],'owner',ARGV[2],'index',index,'probe',probe)
+      redis.call('PEXPIRE',KEYS[3],ARGV[3])
       redis.call('ZREM',KEYS[1],ARGV[1]); redis.call('ZREM',KEYS[2],ARGV[1])
-      for j=3,#KEYS,3 do redis.call('ZREM',KEYS[j],ARGV[1]) end
+      for j=4,#KEYS,3 do redis.call('ZREM',KEYS[j],ARGV[1]) end
       redis.call('PUBLISH',ARGV[4],'grant')
       return {index,probe}
     end
