@@ -250,7 +250,11 @@ export function buildApiParams(config: {
 export function buildLogStatsParams(
   config: Omit<Parameters<typeof buildApiParams>[0], 'page' | 'pageSize'>
 ): GetLogStatsParams {
-  const { p: _page, page_size: _pageSize, ...params } = buildApiParams({
+  const {
+    p: _page,
+    page_size: _pageSize,
+    ...params
+  } = buildApiParams({
     ...config,
     page: 1,
     pageSize: 1,

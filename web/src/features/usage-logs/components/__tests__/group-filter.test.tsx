@@ -66,8 +66,11 @@ async function renderFilter(
     default: { desc: '', ratio: 1 },
     premium: { desc: '', ratio: 2 },
   },
-  channelOptions: Array<{ id: number; name: string; models: string[] }> | null =
-    []
+  channelOptions: Array<{
+    id: number
+    name: string
+    models: string[]
+  }> | null = []
 ) {
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
     if (url === '/api/channel/options') {
@@ -357,12 +360,14 @@ it('searches bounded channel names, disambiguates duplicates by id and submits o
   await userEvent.type(input, 'Primary')
   await waitFor(() =>
     expect(
-      vi.mocked(api.get).mock.calls.some(
-        ([url, config]) =>
-          url === '/api/channel/options' &&
-          (config?.params as ChannelOptionsParams | undefined)?.keyword ===
-            'Primary'
-      )
+      vi
+        .mocked(api.get)
+        .mock.calls.some(
+          ([url, config]) =>
+            url === '/api/channel/options' &&
+            (config?.params as ChannelOptionsParams | undefined)?.keyword ===
+              'Primary'
+        )
     ).toBe(true)
   )
   expect(
@@ -407,10 +412,12 @@ it('searches bounded channel names, disambiguates duplicates by id and submits o
     expect(config?.signal).toBeInstanceOf(AbortSignal)
   }
   expect(
-    vi.mocked(api.get).mock.calls.some(
-      ([url]) =>
-        String(url).startsWith('/api/channel/?') || url === '/api/channel/'
-    )
+    vi
+      .mocked(api.get)
+      .mock.calls.some(
+        ([url]) =>
+          String(url).startsWith('/api/channel/?') || url === '/api/channel/'
+      )
   ).toBe(false)
 })
 
@@ -446,7 +453,9 @@ it('hydrates a selected channel outside the first page, pages options and preser
     })
   )
   await userEvent.click(input)
-  await userEvent.click(await screen.findByRole('button', { name: 'Load more' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Load more' })
+  )
   expect(
     await screen.findByRole('option', { name: 'Channel 34 (#34)' })
   ).toBeVisible()
@@ -677,9 +686,7 @@ it('keeps historical auto values editable when auto is the only available group'
   const input = screen.getByRole('combobox', { name: 'Group' })
   expect(input).toHaveValue('auto')
   await userEvent.click(input)
-  expect(
-    screen.queryByRole('option', { name: 'auto' })
-  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('option', { name: 'auto' })).not.toBeInTheDocument()
   await userEvent.clear(input)
   await userEvent.type(input, 'retired')
   await userEvent.click(screen.getByRole('button', { name: 'Search' }))

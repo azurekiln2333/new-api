@@ -150,9 +150,7 @@ function ChannelNameFilter({
   const debouncedKeyword = useDebounce(keyword, 300)
   const searchPending = keyword !== debouncedKeyword
   const canReadChannels =
-    !!user &&
-    user.role >= ROLE.ADMIN &&
-    hasPermission(user, 'channel', 'read')
+    !!user && user.role >= ROLE.ADMIN && hasPermission(user, 'channel', 'read')
   const channelsQuery = useInfiniteQuery({
     queryKey: [
       'usage-log-channel-options',
@@ -232,7 +230,7 @@ function ChannelNameFilter({
     <Combobox
       items={searchPending ? [] : options}
       value={selected}
-      inputValue={open ? keyword : selected?.label ?? ''}
+      inputValue={open ? keyword : (selected?.label ?? '')}
       open={open}
       filter={null}
       isItemEqualToValue={(item, selectedValue) =>

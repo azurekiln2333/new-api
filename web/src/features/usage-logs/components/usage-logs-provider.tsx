@@ -120,7 +120,8 @@ export function useLogsViewScope() {
   const navigate = route.useNavigate()
   const isCommon = section === 'common'
   const canManageScope = role >= ROLE.ADMIN
-  let requestedScope: LogsViewScope = context.viewScope === 'self' ? 'self' : 'all'
+  let requestedScope: LogsViewScope =
+    context.viewScope === 'self' ? 'self' : 'all'
   if (isCommon) requestedScope = search.user_scope ?? 'all'
   const viewScope = canManageScope ? requestedScope : 'self'
   const viewAccess =
