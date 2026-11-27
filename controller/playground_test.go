@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -19,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestPlaygroundChannelNavigationAuthorizationAndRouting(t *testing.T) {
@@ -177,4 +181,199 @@ func TestPlaygroundChannelNavigationAuthorizationAndRouting(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPlaygroundChannelNavigationProjection(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	t.Setenv("BATCH_UPDATE_ENABLED", "false")
+	previousBatch := common.BatchUpdateEnabled
+	common.BatchUpdateEnabled = false
+	t.Cleanup(func() { common.BatchUpdateEnabled = previousBatch })
+	require.NoError(t, model.InitializeChannelBudgets())
+	previousGroups, previousAuto := setting.UserUsableGroups2JSONString(), setting.AutoGroups2JsonString()
+	previousRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups))
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(previousAuto))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousRatios))
+	})
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","auto":"Auto","second":"Second","empty":"Empty"}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["second","default"]`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"second":1,"empty":1}`))
+
+	const taskPlugin = "pg-navigation-task"
+	_, err := jsplugin.DefaultRegistry.Register(`
+export const meta = {apiVersion: 1, key: "pg-navigation-task", name: "Playground task fixture",
+  version: "1.0.0", author: {name: "Test"}, models: ["alias"], fetchMode: "per_task", usageSchema: {}};
+export function buildSubmitRequest() { return {}; }
+export function parseSubmitResponse() { return {}; }
+export function buildQueryRequest() { return {}; }
+export function parseTaskResult() { return {}; }
+`, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(taskPlugin) })
+	const providerPlugin = "pg-navigation-provider"
+	_, err = jsplugin.DefaultRegistry.Register(`
+export const meta = {apiVersion: 1, key: "pg-navigation-provider", name: "Playground provider fixture",
+  version: "1.0.0", author: {name: "Test"}, relay: [
+    {incoming_path: "/v1/chat/completions", upstream_path: "/chat/completions", models: ["path-only"]},
+    {incoming_path: "/pg/chat/completions", upstream_path: "/chat/completions", models: ["alias"]}
+  ]};
+`, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(providerPlugin) })
+
+	channels := []*model.Channel{
+		{Name: "pg-mapped", Group: "default,second", Models: "alias,blocked", Key: "pg-public-mapped", ModelMapping: common.GetPointer(`{"alias":"Upstream-Case"}`), ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true, MultiKeyModels: map[int][]string{0: {"Upstream-Case"}},
+		}},
+		{Name: "pg-bound-live", Group: "private", Models: "mine,theirs", Key: "pg-my-key\npg-other-key", ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true, MultiKeyUsers: map[int]int{0: rootID, 1: rootID + 1},
+			MultiKeyModels: map[int][]string{0: {"mine"}, 1: {"theirs"}},
+		}},
+		{Name: "pg-deny-empty", Group: "default", Models: "alias", Key: "pg-empty-key", ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true, MultiKeyScopeModes: map[int]string{0: "allowlist"},
+		}},
+		{Name: "pg-path-v1-only", Group: "default", Models: "alias", Key: "pg-v1-only"},
+		{Name: "pg-path-allowed", Group: "default", Models: "alias,blocked", Key: "pg-path-key"},
+		{Name: "pg-exhausted-key", Group: "default", Models: "alias", Key: "pg-exhausted-key"},
+		{Name: "pg-exhausted-channel", Group: "default", Models: "alias", Key: "pg-exhausted-channel"},
+		{Name: "pg-unavailable", Group: "default", Models: "alias", Key: "pg-unavailable-key", ChannelInfo: model.ChannelInfo{
+			ModelUnavailable: []model.ChannelModelUnavailability{{UpstreamModel: "alias", KeyFingerprint: model.ChannelKeyFingerprint("pg-unavailable-key")}},
+		}},
+		{Name: "pg-task-only", Type: constant.ChannelTypeTaskPlugin, Group: "default", Models: "alias", Key: "pg-task-key", Setting: common.GetPointer(`{"task_plugin_key":"pg-navigation-task"}`)},
+		{Name: "pg-provider-other-path", Type: constant.ChannelTypeTaskPlugin, Group: "default", Models: "path-only", Key: "pg-provider-other-key", Setting: common.GetPointer(`{"task_plugin_key":"pg-navigation-provider"}`)},
+		{Name: "pg-provider-served", Type: constant.ChannelTypeTaskPlugin, Group: "default", Models: "alias,blocked", Key: "pg-provider-key", Setting: common.GetPointer(`{"task_plugin_key":"pg-navigation-provider"}`)},
+	}
+	channels[0].SetOtherSettings(dto.ChannelOtherSettings{GroupModels: map[string][]string{"default": {"alias"}, "second": {"blocked"}}})
+	channels[3].Type = constant.ChannelTypeAdvancedCustom
+	channels[3].SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{IncomingPath: "/v1/chat/completions", UpstreamPath: "/chat/completions"}}}})
+	channels[4].Type = constant.ChannelTypeAdvancedCustom
+	channels[4].SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{IncomingPath: "/pg/chat/completions", UpstreamPath: "/chat/completions", Models: []string{"alias"}}}}})
+	for _, channel := range channels {
+		if channel.Type == 0 {
+			channel.Type = constant.ChannelTypeOpenAI
+		}
+		channel.Status = common.ChannelStatusEnabled
+		require.NoError(t, channel.Insert())
+		t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	}
+	loaded, err := model.GetChannelById(channels[1].Id, true)
+	require.NoError(t, err)
+	// A stale compatibility document must not hide the current owner's rows.
+	stale := loaded.ChannelInfo
+	stale.MultiKeyUsers = map[int]int{0: rootID + 1, 1: rootID + 1}
+	stale.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled}
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", loaded.Id).UpdateColumn("channel_info", stale).Error)
+	keyLimited, err := model.GetChannelById(channels[5].Id, true)
+	require.NoError(t, err)
+	require.Len(t, keyLimited.KeyEntryIDs, 1)
+	accounts := []model.ChannelBudgetAccount{
+		{ScopeType: model.BudgetScopeKey, ScopeId: keyLimited.KeyEntryIDs[0], ChannelId: keyLimited.Id, Enabled: true, LimitQuota: 1, PeriodUsedQuota: 1},
+		{ScopeType: model.BudgetScopeChannel, ScopeId: int64(channels[6].Id), ChannelId: channels[6].Id, Enabled: true, LimitQuota: 1, PeriodUsedQuota: 1},
+	}
+	require.NoError(t, model.DB.Create(&accounts).Error)
+
+	for _, cached := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cache=%t", cached), func(t *testing.T) {
+			common.MemoryCacheEnabled = cached
+			model.InitChannelCache()
+			for _, group := range []string{"default", "auto"} {
+				t.Run(group, func(t *testing.T) {
+					response := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(response)
+					c.Request = httptest.NewRequest(http.MethodGet, "/pg/channels?group="+group, nil)
+					c.Set("id", rootID)
+					c.Set("role", common.RoleRootUser)
+					c.Set("group", "default")
+					PlaygroundChannels(c)
+					var body struct {
+						Success bool                       `json:"success"`
+						Data    []model.ChannelModelOption `json:"data"`
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+					require.True(t, body.Success, response.Body.String())
+					assert.Equal(t, []model.ChannelModelOption{
+						{ID: channels[10].Id, Name: channels[10].Name, Models: []string{"alias"}},
+						{ID: channels[4].Id, Name: channels[4].Name, Models: []string{"alias"}},
+						{ID: channels[1].Id, Name: channels[1].Name, Models: []string{"mine"}},
+						{ID: channels[0].Id, Name: channels[0].Name, Models: []string{"alias"}},
+					}, body.Data)
+					for _, channel := range channels {
+						for _, key := range channel.GetKeys() {
+							assert.NotContains(t, response.Body.String(), key)
+						}
+					}
+					assert.NotContains(t, response.Body.String(), "Upstream-Case")
+					assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+				})
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name, table string
+		cancel      bool
+	}{
+		{name: "activation", table: "options"},
+		{name: "channels", table: "channels"},
+		{name: "allocations", table: "channel_key_entries"},
+		{name: "budgets", table: "channel_budget_accounts"},
+		{name: "cancel during allocations", table: "channel_key_entries", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Activation is already cached in this fixture. Use an independent
+			// handle so the activation-error case exercises its SQL boundary.
+			database := model.DB
+			if tc.table == "options" {
+				model.DB = database.Session(&gorm.Session{})
+				t.Cleanup(func() { model.DB = database })
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			const callback = "test:playground-options-read-failure"
+			require.NoError(t, database.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table != tc.table {
+					return
+				}
+				if tc.cancel {
+					cancel()
+				} else {
+					tx.AddError(errors.New("playground storage unavailable"))
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, database.Callback().Query().Remove(callback)) })
+			options, readErr := service.ListPlaygroundChannels(ctx, rootID, "default", "default")
+			require.Error(t, readErr)
+			assert.Nil(t, options, "do not publish a partial catalog on storage failure")
+			if tc.cancel {
+				require.ErrorIs(t, readErr, context.Canceled)
+			}
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			c.Request = httptest.NewRequest(http.MethodGet, "/pg/channels?group=default", nil).WithContext(ctx)
+			c.Set("id", rootID)
+			c.Set("role", common.RoleRootUser)
+			c.Set("group", "default")
+			PlaygroundChannels(c)
+			var body struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+			assert.False(t, body.Success, "a failed read is not an empty catalog")
+			assert.NotContains(t, response.Body.String(), `"data"`)
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = service.ListPlaygroundChannels(ctx, rootID, "default", "default")
+	require.ErrorIs(t, err, context.Canceled)
+
+	for _, row := range channels {
+		require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", row.Id).UpdateColumn("status", common.ChannelStatusManuallyDisabled).Error)
+	}
+	empty, err := service.ListPlaygroundChannels(t.Context(), rootID, "default", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []model.ChannelModelOption{}, empty, "real denials remain a successful empty catalog")
 }
