@@ -11,3 +11,4 @@ Use `web/AGENTS.md` for the frontend's component, test and verification rules.
 | [Effective subscriptions](./effective-subscriptions.md) | Bounded active rows, administrator identity isolation and footer pagination |
 | [Official service status](./official-service-status.md) | Fixed sources, independent freshness/history, safe labels and failure states |
 | [Sidebar groups](./sidebar-groups.md) | Collapsible groups, child visibility and direct routes |
+| [Secure verification](../backend/secure-verification.md) | Cancellation, shared refresh ownership and non-replayable factors |

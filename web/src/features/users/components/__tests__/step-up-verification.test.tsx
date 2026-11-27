@@ -18,12 +18,20 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { Row } from '@tanstack/react-table'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { AUTH_REQUEST_TIMEOUT_MS } from '@/lib/auth-session'
 
 import type { User } from '../../types'
 import { DataTableRowActions } from '../data-table-row-actions'
@@ -104,6 +112,7 @@ async function completeTwoFactorVerification() {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -157,6 +166,97 @@ it('cancelling verification leaves the user untouched and returns to the confirm
   await userEvent.keyboard('{Escape}')
   await screen.findByRole('alertdialog')
   expect(del).not.toHaveBeenCalled()
+})
+
+it.each(['cancel', 'timeout'] as const)(
+  'never dispatches Disable after verification %s or a late proof',
+  async (outcome) => {
+    const proof = mockVerification('admin.user.manage', 'late-manage-proof')
+    let finish!: (value: typeof proof) => void
+    const pending = new Promise<typeof proof>((resolve) => {
+      finish = resolve
+    })
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+      if (url === '/api/verify') return pending
+      throw new Error(`Unexpected management write ${url}`)
+    })
+    const user = userEvent.setup()
+    renderInProvider(
+      <DataTableRowActions row={{ original: target } as Row<User>} />
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Disable' }))
+    await user.type(
+      await screen.findByLabelText('Authenticator code or backup code'),
+      '123456'
+    )
+    vi.useFakeTimers()
+    const submit = screen.getByRole('button', { name: 'Verify' })
+    fireEvent.click(submit)
+    fireEvent.click(submit)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(submit).toBeDisabled()
+    if (outcome === 'cancel') {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    } else {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AUTH_REQUEST_TIMEOUT_MS)
+      })
+      expect(screen.getByRole('alert')).toHaveTextContent('Request failed')
+    }
+    await act(async () => {
+      finish(proof)
+      await pending
+    })
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post).not.toHaveBeenCalledWith(
+      '/api/user/manage',
+      expect.anything(),
+      expect.anything()
+    )
+  }
+)
+
+it('closes successful verification before the pending Disable request completes', async () => {
+  const proof = mockVerification('admin.user.manage', 'manage-proof')
+  let finish!: (value: { data: { success: boolean } }) => void
+  const management = new Promise<{ data: { success: boolean } }>((resolve) => {
+    finish = resolve
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify') return proof
+    if (url === '/api/user/manage') return management
+    throw new Error(`Unexpected POST ${url}`)
+  })
+  renderInProvider(
+    <DataTableRowActions row={{ original: target } as Row<User>} />
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Open menu' }))
+  await userEvent.click(
+    await screen.findByRole('menuitem', { name: 'Disable' })
+  )
+  await completeTwoFactorVerification()
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/user/manage',
+      { id: target.id, action: 'disable' },
+      expect.objectContaining({
+        headers: { 'X-Security-Proof': 'manage-proof' },
+        singleUseAuthorization: true,
+      })
+    )
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  await act(async () => {
+    finish({ data: { success: true } })
+    await management
+  })
+  expect(
+    post.mock.calls.filter(([url]) => url === '/api/user/manage')
+  ).toHaveLength(1)
 })
 
 it('disabling a user from the row menu binds the proof to the user and action', async () => {

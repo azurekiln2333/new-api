@@ -620,8 +620,7 @@ func PasskeyVerifyFinish(c *gin.Context) {
 		return
 	}
 
-	recordUserSecurityAudit(c, user.Id, "user.security_verify", map[string]any{"method": proof.Method, "scope": proof.Scope})
-	common.ApiSuccess(c, proof)
+	writeSecurityProof(c, user.Id, proof, "")
 }
 
 func getAuthenticatedUser(c *gin.Context) (*model.User, error) {

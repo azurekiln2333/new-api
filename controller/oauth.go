@@ -357,8 +357,7 @@ func handleOAuthVerification(c *gin.Context, provider string, oauthUser *oauth.O
 		writeSecurityOperationError(c, err)
 		return
 	}
-	recordUserSecurityAudit(c, identity.UserID, "user.security_verify", map[string]any{"method": proof.Method, "scope": proof.Scope, "provider": provider})
-	common.ApiSuccess(c, proof)
+	writeSecurityProof(c, identity.UserID, proof, provider)
 }
 
 func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, token *oauth.OAuthToken, flow *model.AuthFlow) {

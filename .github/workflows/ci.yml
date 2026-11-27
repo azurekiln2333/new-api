@@ -541,6 +541,13 @@ jobs:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 ./common ./model ./service ./controller -run 'TestInitUserSessionSettings|TestUserSessionGrowthCounts|TestListActiveUserSessions|TestCreateLoginSession|TestLoginSessionCreateRefreshAndRevoke|TestIndependentRedis.*Session|TestIndependentRedisAuthVersion|TestUserAuthVersionInvalidatesExistingSession|TestSecurityLoginSession|TestSecurityLoginPasskeyConcurrentCompletion|TestRefreshAuth'
 
+      - name: Verify sensitive-action proof and durable audit on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for DIALECT in sqlite mysql postgres; do
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestAdminUser|TestSecurityEnrollment'
+          done
+
       - name: Verify API key rotation and custom keys on MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |

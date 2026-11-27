@@ -462,6 +462,7 @@ func TestSecurityEnrollmentAccessTokenStepUpDisablesTwoFA(t *testing.T) {
 	assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
 	assert.Equal(t, http.StatusOK, accessTokenRequest(router, http.MethodGet, "/api/user/self", raw, "", "").Code)
 
+	drainControllerAuditOutbox(t)
 	var audits []model.AuditLog
 	require.NoError(t, model.LOG_DB.Where("action IN ?", []string{"user.security_verify", "user.2fa_disable_self"}).Order("id").Find(&audits).Error)
 	require.Len(t, audits, 2)
