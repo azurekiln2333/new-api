@@ -56,33 +56,37 @@ function NodeDetailPanel(props: {
       <DetailRow label={t('API URL')} value={props.item.url} mono />
       <DetailRow label={t('Route')} value={props.item.route} mono />
       <DetailRow label={t('Status')} value={stateLabel} />
-      <DetailRow
-        label={t('CPU')}
-        value={
-          <ResourceUsage
-            value={instance?.resources.cpu_percent}
-            unknownLabel={t('Unknown')}
+      {instance && (
+        <>
+          <DetailRow
+            label={t('CPU')}
+            value={
+              <ResourceUsage
+                value={instance.resources.cpu_percent}
+                unknownLabel={t('Unknown')}
+              />
+            }
           />
-        }
-      />
-      <DetailRow
-        label={t('Memory')}
-        value={
-          <ResourceUsage
-            value={instance?.resources.memory_percent}
-            unknownLabel={t('Unknown')}
+          <DetailRow
+            label={t('Memory')}
+            value={
+              <ResourceUsage
+                value={instance.resources.memory_percent}
+                unknownLabel={t('Unknown')}
+              />
+            }
           />
-        }
-      />
-      <DetailRow
-        label={t('Storage')}
-        value={
-          <ResourceUsage
-            value={instance?.resources.storage_percent}
-            unknownLabel={t('Unknown')}
+          <DetailRow
+            label={t('Storage')}
+            value={
+              <ResourceUsage
+                value={instance.resources.storage_percent}
+                unknownLabel={t('Unknown')}
+              />
+            }
           />
-        }
-      />
+        </>
+      )}
       <DetailRow
         label={t('Domains')}
         value={
@@ -132,12 +136,15 @@ export function ApiInfoPanel() {
     })
   }, [list])
 
-  // Map by configured public domain; no private node identity is requested.
-  const instanceByDomain = useMemo(() => {
-    const map = new Map<string, InstanceResourceSummary>()
+  // Map by configured API entry id, never by public domain, so an unbound
+  // entry sharing a URL with a bound one never receives that node's resource
+  // readings. Legacy entries without a persistent id have no entry id here
+  // and stay unbound.
+  const instanceByEntryId = useMemo(() => {
+    const map = new Map<number, InstanceResourceSummary>()
     for (const instance of instances) {
-      for (const domain of instance.domains) {
-        map.set(domain, instance)
+      for (const entryId of instance.entry_ids ?? []) {
+        if (entryId > 0) map.set(entryId, instance)
       }
     }
     return map
@@ -145,9 +152,10 @@ export function ApiInfoPanel() {
 
   const detailItem = entries.find((entry) => entry.key === detailKey)?.item
   // Derived on every render, so the detail always reflects the newest sample.
-  const detailInstance = detailItem
-    ? instanceByDomain.get(detailItem.url)
-    : undefined
+  const detailInstance =
+    detailItem?.id != null && detailItem.id > 0
+      ? instanceByEntryId.get(detailItem.id)
+      : undefined
 
   const handleTest = useCallback(async (url: string) => {
     setPingStatus((prev) => ({
@@ -178,7 +186,8 @@ export function ApiInfoPanel() {
         contentClassName='grid gap-3 sm:grid-cols-2'
       >
         {entries.map(({ item, key }) => {
-          const instance = instanceByDomain.get(item.url)
+          const instance =
+            item.id > 0 ? instanceByEntryId.get(item.id) : undefined
           return (
             <ApiInfoItemComponent
               key={key}

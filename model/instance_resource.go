@@ -42,7 +42,10 @@ type InstanceResourceSummary struct {
 	Status string `json:"status"`
 	// Domains are the configured public API URLs bound to this instance, in
 	// configuration order. One instance may serve several of them.
-	Domains   []string              `json:"domains"`
+	Domains []string `json:"domains"`
+	// EntryIDs identify the configured API entries bound to this instance, in
+	// configuration order. Public consumers join by these ids, never by URL.
+	EntryIDs  []int                 `json:"entry_ids"`
 	Resources InstanceResourceUsage `json:"resources"`
 	// ObservedAt is nil when the instance has no usable sample, so the UI can
 	// render an explicit unknown state instead of a misleading timestamp.
@@ -94,7 +97,7 @@ func BuildInstanceResourceSummary(instances []*SystemInstance, bindings []ApiInf
 	nodeOrder := make([]string, 0, len(bindings))
 	for _, binding := range bindings {
 		node := strings.TrimSpace(binding.NodeName)
-		if node == "" {
+		if node == "" || binding.ID <= 0 {
 			continue
 		}
 		if _, ok := bindingsByNode[node]; !ok {
@@ -119,6 +122,8 @@ func BuildInstanceResourceSummary(instances []*SystemInstance, bindings []ApiInf
 	for _, node := range nodeOrder {
 		bound := bindingsByNode[node]
 		domains := make([]string, 0, len(bound))
+		entryIDs := make([]int, 0, len(bound))
+		seenIDs := make(map[int]struct{}, len(bound))
 		// The group key uses the smallest persistent entry id bound to this
 		// instance, so it stays stable regardless of array order.
 		groupID := bound[0].ID
@@ -126,14 +131,19 @@ func BuildInstanceResourceSummary(instances []*SystemInstance, bindings []ApiInf
 			if binding.Name != "" {
 				domains = append(domains, binding.Name)
 			}
+			if _, ok := seenIDs[binding.ID]; !ok {
+				seenIDs[binding.ID] = struct{}{}
+				entryIDs = append(entryIDs, binding.ID)
+			}
 			if binding.ID < groupID {
 				groupID = binding.ID
 			}
 		}
 		summary := InstanceResourceSummary{
-			Key:     apiEntryKey(groupID),
-			Name:    bound[0].Route,
-			Domains: domains,
+			Key:      apiEntryKey(groupID),
+			Name:     bound[0].Route,
+			Domains:  domains,
+			EntryIDs: entryIDs,
 		}
 
 		instance := instanceByNode[node]

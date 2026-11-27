@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +30,7 @@ func optionTestDB(t *testing.T, dialect string) *gorm.DB {
 	var driver gorm.Dialector
 	switch dialect {
 	case "sqlite":
-		driver = sqlite.Open(":memory:")
+		driver = sqlite.Open(t.TempDir() + "/options.db?_pragma=busy_timeout(2000)&_pragma=journal_mode(WAL)")
 	case "mysql":
 		dsn := os.Getenv("TEST_MYSQL_DSN")
 		if dsn == "" {
@@ -70,7 +72,7 @@ func optionTestDB(t *testing.T, dialect string) *gorm.DB {
 	var version string
 	require.NoError(t, db.Raw(versionSQL).Scan(&version).Error)
 	t.Logf("database version: %s", version)
-	require.NoError(t, db.AutoMigrate(&Option{}, &SystemTask{}, &AuditEventOutbox{}))
+	require.NoError(t, db.AutoMigrate(&Option{}, &SystemTask{}, &SystemTaskLock{}, &AuditEventOutbox{}))
 	// AuditEventOutbox has an explicit fixed table name; prefixes do not isolate
 	// it. Each fixture owns this disposable database and removes only its events.
 	t.Cleanup(func() {
@@ -326,6 +328,344 @@ func TestOrdinaryOptionsBatchValidationDoesNotPublish(t *testing.T) {
 			require.NoError(t, db.Model(&Option{}).Count(&count).Error)
 			assert.Zero(t, count)
 			assert.NotContains(t, common.OptionMap, "TestUnpublished")
+		})
+	}
+}
+
+func TestOrdinaryOptionsBatchSyncOrderingDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		for _, scenario := range []string{"empty topic", "existing topic", "cleaned topic", "first writer rolls back"} {
+			t.Run(dialect+"/"+scenario, func(t *testing.T) {
+				db := optionTestDB(t, dialect)
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(4)
+				baselineCount := 0
+				if scenario == "existing topic" || scenario == "cleaned topic" {
+					require.NoError(t, UpdateOrdinaryOptionsBatch(context.Background(), []Option{{Key: "TestSyncSeed", Value: "seed"}}, AuditEventDraft{
+						EventId: common.NewRequestId(), Action: "option.batch.test",
+					}))
+					baselineCount = 1
+				}
+				if scenario == "cleaned topic" {
+					require.NoError(t, db.Where("type = ?", SyncTaskType(SyncTopicOptions)).Delete(&SystemTask{}).Error)
+					baselineCount = 0
+				}
+				baselineRevisions, err := GetLatestSyncRevisions()
+				require.NoError(t, err)
+				firstAudit := AuditEventDraft{EventId: common.NewRequestId(), Action: "option.batch.test"}
+				firstHeld := make(chan struct{})
+				releaseFirst := make(chan struct{})
+				var releaseOnce sync.Once
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				var waitingCtx context.Context
+				attemptedWrites := make(chan error, 2)
+				const callbackName = "test:hold_option_commit_after_sync_id"
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+					if option, ok := tx.Statement.Dest.(*Option); ok && tx.Statement.Context == waitingCtx &&
+						(option.Key == "TestSyncSecond" || option.Key == "TestSyncThird") {
+						attemptedWrites <- tx.Statement.Context.Err()
+					}
+					event, ok := tx.Statement.Dest.(*AuditEventOutbox)
+					if !ok || event.EventId != firstAudit.EventId {
+						return
+					}
+					close(firstHeld)
+					select {
+					case <-releaseFirst:
+						if scenario == "first writer rolls back" {
+							tx.AddError(fmt.Errorf("audit write rejected"))
+						}
+					case <-ctx.Done():
+						tx.AddError(ctx.Err())
+					}
+				}))
+				t.Cleanup(func() { assert.NoError(t, db.Callback().Create().Remove(callbackName)) })
+				// The legacy post-commit notification has no context parameter. Give
+				// its DB handle the same bounded cancellation as the waiting saves;
+				// the first save explicitly keeps its longer request context.
+				var cancelWaiting context.CancelFunc
+				waitingCtx, cancelWaiting = context.WithTimeout(ctx, time.Second)
+				defer cancelWaiting()
+				DB = db.WithContext(waitingCtx)
+				var workers sync.WaitGroup
+				t.Cleanup(func() {
+					cancelWaiting()
+					cancel()
+					releaseOnce.Do(func() { close(releaseFirst) })
+					workers.Wait()
+					DB = db
+				})
+				firstResult := make(chan error, 1)
+				workers.Go(func() {
+					firstResult <- UpdateOrdinaryOptionsBatch(ctx, []Option{{Key: "TestSyncFirst", Value: "first"}}, firstAudit)
+				})
+				select {
+				case <-firstHeld:
+				case <-ctx.Done():
+					t.Fatal("first writer did not reach the commit barrier")
+				}
+				type saveResult struct {
+					key string
+					err error
+				}
+				results := make(chan saveResult, 3)
+				for _, key := range []string{"TestSyncSecond", "TestSyncThird"} {
+					workers.Go(func() {
+						err := UpdateOrdinaryOptionsBatch(waitingCtx, []Option{{Key: key, Value: "later"}}, AuditEventDraft{
+							EventId: common.NewRequestId(), Action: "option.batch.test",
+						})
+						results <- saveResult{key: key, err: err}
+					})
+				}
+				workers.Go(func() {
+					BumpSyncTopic(SyncTopicOptions)
+					results <- saveResult{}
+				})
+				for range 2 {
+					select {
+					case err := <-attemptedWrites:
+						require.NoError(t, err, "each waiter must attempt its write before cancellation")
+					case <-ctx.Done():
+						t.Fatal("waiting saves did not reach their database writes")
+					}
+				}
+				for range 3 {
+					select {
+					case result := <-results:
+						if result.key != "" {
+							assert.Error(t, result.err, "a later save cannot commit past the held sync ID")
+						}
+					case <-ctx.Done():
+						t.Fatal("waiting writers did not honor cancellation")
+					}
+				}
+				assert.ErrorIs(t, waitingCtx.Err(), context.DeadlineExceeded)
+				var visibleTasks []SystemTask
+				require.NoError(t, db.Where("type = ?", SyncTaskType(SyncTopicOptions)).Find(&visibleTasks).Error)
+				assert.Len(t, visibleTasks, baselineCount, "another node must not observe a revision beyond the uncommitted first write")
+				var pendingOptions []Option
+				require.NoError(t, db.Where(map[string]any{"key": []string{"TestSyncFirst", "TestSyncSecond", "TestSyncThird"}}).Find(&pendingOptions).Error)
+				assert.Empty(t, pendingOptions, "canceled waiters roll back their disjoint setting writes")
+				common.OptionMapRWMutex.RLock()
+				assert.NotContains(t, common.OptionMap, "TestSyncFirst")
+				assert.NotContains(t, common.OptionMap, "TestSyncSecond")
+				assert.NotContains(t, common.OptionMap, "TestSyncThird")
+				common.OptionMapRWMutex.RUnlock()
+				releaseOnce.Do(func() { close(releaseFirst) })
+				select {
+				case err = <-firstResult:
+				case <-ctx.Done():
+					t.Fatal("first writer did not finish after release")
+				}
+				workers.Wait()
+				DB = db
+				if scenario == "first writer rolls back" {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+					baselineCount++
+				}
+				var committedTasks []SystemTask
+				require.NoError(t, db.Where("type = ?", SyncTaskType(SyncTopicOptions)).Order("id").Find(&committedTasks).Error)
+				require.Len(t, committedTasks, baselineCount)
+				previousRevision := baselineRevisions[SyncTopicOptions]
+				if scenario != "first writer rolls back" {
+					require.Greater(t, committedTasks[len(committedTasks)-1].ID, previousRevision)
+					previousRevision = committedTasks[len(committedTasks)-1].ID
+				}
+				// A rollback releases the first-insert lock too. Later successful
+				// saves must remain discoverable from the last committed revision.
+				for _, key := range []string{"TestSyncSecond", "TestSyncThird"} {
+					require.NoError(t, UpdateOrdinaryOptionsBatch(ctx, []Option{{Key: key, Value: "retried"}}, AuditEventDraft{
+						EventId: common.NewRequestId(), Action: "option.batch.test",
+					}))
+					revisions, err := GetLatestSyncRevisions()
+					require.NoError(t, err)
+					require.Greater(t, revisions[SyncTopicOptions], previousRevision)
+					previousRevision = revisions[SyncTopicOptions]
+					require.NoError(t, LoadOptionsFromDatabase())
+					assert.Equal(t, "retried", common.OptionMap[key])
+				}
+				BumpSyncTopic(SyncTopicOptions)
+				revisions, err := GetLatestSyncRevisions()
+				require.NoError(t, err)
+				assert.Greater(t, revisions[SyncTopicOptions], previousRevision)
+			})
+		}
+	}
+}
+
+func TestOrdinaryOptionsSyncAnchorIsInternal(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := optionTestDB(t, dialect)
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return bumpSyncTopic(tx, SyncTopicOptions) }))
+			var anchor SystemTaskLock
+			require.NoError(t, db.Where("type = ?", optionsSyncAnchorType).First(&anchor).Error)
+			assert.Equal(t, optionsSyncAnchorTaskID, anchor.TaskID)
+			assert.Equal(t, optionsSyncAnchorLockedBy, anchor.LockedBy)
+			assert.Zero(t, anchor.LockedUntil)
+			var optionCount int64
+			require.NoError(t, db.Model(&Option{}).Count(&optionCount).Error)
+			assert.Zero(t, optionCount, "sync coordination must not create a user-editable option")
+			for _, taskType := range []string{optionsSyncAnchorType, strings.ToUpper(optionsSyncAnchorType), optionsSyncAnchorType + " "} {
+				acquired, _, err := acquireSystemTaskLock(taskType, "unexpected-task", "unexpected-runner", common.GetTimestamp(), common.GetTimestamp()+60)
+				require.Error(t, err)
+				assert.False(t, acquired)
+			}
+			require.NoError(t, ExpireStaleSystemTaskLocks(common.GetTimestamp()+60))
+			require.NoError(t, ReleaseSystemTaskLock(anchor.TaskID, anchor.LockedBy))
+			require.Error(t, RenewSystemTaskLock(anchor.TaskID, anchor.LockedBy, common.GetTimestamp()+60))
+			var afterCleanup SystemTaskLock
+			require.NoError(t, db.Where("type = ?", optionsSyncAnchorType).First(&afterCleanup).Error)
+			assert.Equal(t, anchor, afterCleanup, "task maintenance must leave the anchor in place")
+			// Old candidate names and collation aliases remain ordinary settings.
+			// None can address the anchor in the separate coordination table.
+			for _, key := range []string{"internal.sync_topic.options", "INTERNAL.SYNC_TOPIC.OPTIONS", "internal.sync_topic.options ", "intérnal.sync_topic.options", optionsSyncAnchorType} {
+				require.NoError(t, UpdateOption(key, "single"))
+				require.NoError(t, UpdateOptionsBulk(map[string]string{key: "bulk"}))
+				require.NoError(t, UpdateOrdinaryOptionsBatch(context.Background(), []Option{{Key: key, Value: "batch"}}, AuditEventDraft{
+					EventId: common.NewRequestId(), Action: "option.batch.test",
+				}))
+			}
+			require.NoError(t, LoadOptionsFromDatabase())
+			assert.Equal(t, "batch", common.OptionMap["internal.sync_topic.options"])
+			assert.Equal(t, "batch", common.OptionMap[optionsSyncAnchorType])
+			var retained SystemTaskLock
+			require.NoError(t, db.Where("type = ?", optionsSyncAnchorType).First(&retained).Error)
+			assert.Equal(t, anchor, retained, "cleanup, task leases and option writes preserve the permanent anchor")
+			// Removing all sync history does not remove the next write's anchor.
+			require.NoError(t, db.Where("type = ?", SyncTaskType(SyncTopicOptions)).Delete(&SystemTask{}).Error)
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return bumpSyncTopic(tx, SyncTopicOptions) }))
+			var syncCount int64
+			require.NoError(t, db.Model(&SystemTask{}).Count(&syncCount).Error)
+			assert.Equal(t, int64(1), syncCount)
+		})
+	}
+}
+
+func TestOrdinaryOptionsQueuedSyncWritersDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := optionTestDB(t, dialect)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(4)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			require.NoError(t, db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				return bumpSyncTopic(tx, SyncTopicOptions)
+			}))
+			first := db.WithContext(ctx).Begin()
+			require.NoError(t, first.Error)
+			t.Cleanup(func() { _ = first.Rollback().Error })
+			require.NoError(t, bumpSyncTopic(first, SyncTopicOptions))
+			audits := []AuditEventDraft{
+				{EventId: common.NewRequestId(), Action: "option.batch.test"},
+				{EventId: common.NewRequestId(), Action: "option.batch.test"},
+			}
+			waiterContexts := make([]context.Context, 2)
+			waiterCancels := make([]context.CancelFunc, 2)
+			for i := range 2 {
+				waiterContexts[i], waiterCancels[i] = context.WithCancel(ctx)
+			}
+			attempted := make(chan struct{}, 2)
+			held := make(chan int, 1)
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			var heldOne atomic.Bool
+			const callbackName = "test:hold_next_options_sync_writer"
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+				if option, ok := tx.Statement.Dest.(*Option); ok && strings.HasPrefix(option.Key, "TestQueuedSync") {
+					attempted <- struct{}{}
+				}
+				event, ok := tx.Statement.Dest.(*AuditEventOutbox)
+				if !ok || !heldOne.CompareAndSwap(false, true) {
+					return
+				}
+				for i := range audits {
+					if event.EventId != audits[i].EventId {
+						continue
+					}
+					held <- i
+					select {
+					case <-release:
+					case <-ctx.Done():
+						tx.AddError(ctx.Err())
+					}
+					return
+				}
+			}))
+			t.Cleanup(func() { assert.NoError(t, db.Callback().Create().Remove(callbackName)) })
+			var workers sync.WaitGroup
+			t.Cleanup(func() {
+				for _, cancelWaiter := range waiterCancels {
+					cancelWaiter()
+				}
+				cancel()
+				releaseOnce.Do(func() { close(release) })
+				_ = first.Rollback().Error
+				workers.Wait()
+			})
+			type saveResult struct {
+				index int
+				err   error
+			}
+			results := make(chan saveResult, 2)
+			for i := range 2 {
+				workers.Go(func() {
+					err := UpdateOrdinaryOptionsBatch(waiterContexts[i], []Option{{Key: fmt.Sprintf("TestQueuedSync%d", i), Value: "queued"}}, audits[i])
+					results <- saveResult{index: i, err: err}
+				})
+			}
+			for range 2 {
+				select {
+				case <-attempted:
+				case <-ctx.Done():
+					t.Fatal("both queued writers must reach the database before the first commit")
+				}
+			}
+			require.NoError(t, first.Commit().Error)
+			var heldIndex int
+			select {
+			case heldIndex = <-held:
+			case <-ctx.Done():
+				t.Fatal("no queued writer acquired the released lock")
+			}
+			// Whichever writer acquired the anchor keeps it through commit. The
+			// other request expires while that writer is held; it must not advance
+			// the visible revision by locking the first writer's obsolete task row.
+			otherIndex := 1 - heldIndex
+			expiry := time.AfterFunc(time.Second, waiterCancels[otherIndex])
+			defer expiry.Stop()
+			select {
+			case result := <-results:
+				require.Equal(t, otherIndex, result.index)
+				require.Error(t, result.err)
+			case <-ctx.Done():
+				t.Fatal("queued request did not honor cancellation")
+			}
+			var visible []SystemTask
+			require.NoError(t, db.Where("type = ?", SyncTaskType(SyncTopicOptions)).Order("id").Find(&visible).Error)
+			require.Len(t, visible, 2, "only the seed and first committed writer are visible")
+			previousRevision := visible[1].ID
+			releaseOnce.Do(func() { close(release) })
+			select {
+			case result := <-results:
+				require.Equal(t, heldIndex, result.index)
+				require.NoError(t, result.err)
+			case <-ctx.Done():
+				t.Fatal("held writer did not finish after release")
+			}
+			workers.Wait()
+			revisions, err := GetLatestSyncRevisions()
+			require.NoError(t, err)
+			assert.Greater(t, revisions[SyncTopicOptions], previousRevision)
+			require.NoError(t, LoadOptionsFromDatabase())
+			assert.Equal(t, "queued", common.OptionMap[fmt.Sprintf("TestQueuedSync%d", heldIndex)])
+			assert.NotContains(t, common.OptionMap, fmt.Sprintf("TestQueuedSync%d", otherIndex))
 		})
 	}
 }

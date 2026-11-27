@@ -42,7 +42,7 @@ func setupUserRateLimitTestDB(t *testing.T) {
 		}
 	})
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.Log{}, &model.AuditLog{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.Log{}, &model.AuditLog{}, &model.SystemTask{}, &model.SystemTaskLock{}))
 }
 
 func createUserRateLimitTestUser(t *testing.T, id int, group string) {

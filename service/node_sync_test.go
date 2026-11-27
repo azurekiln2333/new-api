@@ -22,7 +22,7 @@ import (
 func useNodeSync(t *testing.T) *gorm.DB {
 	t.Helper()
 	database := useProviderPluginDatabase(t)
-	tables := []any{&model.SystemTask{}, &model.SystemInstance{}, &model.Option{}}
+	tables := []any{&model.SystemTask{}, &model.SystemTaskLock{}, &model.SystemInstance{}, &model.Option{}}
 	require.NoError(t, database.AutoMigrate(tables...))
 	t.Cleanup(func() { require.NoError(t, database.Migrator().DropTable(tables...)) })
 	previousRegistry, previousNodeName := nodeSync, common.NodeName
@@ -512,7 +512,7 @@ func TestOAuthProviderWritesBumpTheirTopicInTheSameTransaction(t *testing.T) {
 		UserInfoEndpoint: "https://id.example.com/userinfo",
 	}
 	require.Error(t, model.CreateCustomOAuthProvider(failing))
-	require.NoError(t, database.AutoMigrate(&model.SystemTask{}))
+	require.NoError(t, database.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
 	var count int64
 	require.NoError(t, database.Model(&model.CustomOAuthProvider{}).Where("slug = ?", "lost").Count(&count).Error)
 	assert.Zero(t, count, "a provider whose bump failed is not stored")

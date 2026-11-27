@@ -494,7 +494,7 @@ jobs:
         run: |
           go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch'
           for DIALECT in sqlite mysql postgres; do
-            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestUpdateOptionRejectsNegativeClaudeDefaultMaxTokens|TestUpdateOptionRejectsInvalidGeminiSafetyThreshold|TestUpdateOptionsBatch'
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestUpdateOptionRejectsNegativeClaudeDefaultMaxTokens|TestUpdateOptionRejectsInvalidGeminiSafetyThreshold|TestUpdateOptionsBatch|TestUpdateOptionAnnouncement'
           done
 
       - name: Verify recorded subscription balance spending on SQLite, MySQL and PostgreSQL
