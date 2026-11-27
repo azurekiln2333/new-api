@@ -37,6 +37,7 @@ import { I18nextProvider } from 'react-i18next'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useStatus } from '@/hooks/use-status'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 
@@ -93,6 +94,74 @@ beforeEach(async () => {
 })
 
 describe('settings section batch mutation', () => {
+  it.each([
+    { key: 'console_setting.announcements', value: '[{"content":"new"}]', batch: false },
+    { key: 'console_setting.announcements_enabled', value: false, batch: false },
+    { key: 'console_setting.announcements', value: '[{"content":"new"}]', batch: true },
+    { key: 'console_setting.announcements_enabled', value: false, batch: true },
+  ])('refreshes an active status observer after saving $key (batch=$batch)', async ({ key, value, batch }) => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const before = { announcements_enabled: true, announcements: [{ content: 'old' }] }
+    const after = {
+      announcements_enabled: key.endsWith('_enabled') ? false : true,
+      announcements: [{ content: 'new' }],
+    }
+    client.setQueryData(['status'], before)
+    window.localStorage.setItem('status', JSON.stringify(before))
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: after },
+    })
+    const view = renderHook(() => ({ update: useUpdateOption(), status: useStatus() }), {
+      wrapper: (props) => (
+        <QueryClientProvider client={client}>{props.children}</QueryClientProvider>
+      ),
+    })
+    try {
+      await waitFor(() => expect(view.result.current.status.status).toEqual(before))
+      expect(get).not.toHaveBeenCalled()
+      const option = { key, value }
+      await act(async () => {
+        await view.result.current.update.mutateAsync(batch ? [option] : option)
+      })
+      await waitFor(() => expect(view.result.current.status.status).toEqual(after))
+      expect(get).toHaveBeenCalledWith('/api/status')
+      expect(window.localStorage.getItem('status')).not.toBe(JSON.stringify(before))
+    } finally {
+      view.unmount()
+      client.clear()
+      window.localStorage.removeItem('status')
+    }
+  })
+
+  it('keeps an active status observer unchanged after a rejected announcement save', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const before = { announcements_enabled: true, announcements: [{ content: 'old' }] }
+    client.setQueryData(['status'], before)
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data: {} } })
+    vi.mocked(api.put).mockResolvedValueOnce({ data: { success: false, message: 'Rejected' } })
+    const view = renderHook(() => ({ update: useUpdateOption(), status: useStatus() }), {
+      wrapper: (props) => (
+        <QueryClientProvider client={client}>{props.children}</QueryClientProvider>
+      ),
+    })
+    try {
+      await act(async () => {
+        await expect(view.result.current.update.mutateAsync({
+          key: 'console_setting.announcements', value: '[]',
+        })).rejects.toThrow()
+      })
+      expect(view.result.current.status.status).toEqual(before)
+      expect(get).not.toHaveBeenCalled()
+    } finally {
+      view.unmount()
+      client.clear()
+    }
+  })
+
   it('patches all committed keys without refetching the options payload', async () => {
     const client = new QueryClient({
       defaultOptions: { mutations: { retry: false } },

@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -542,6 +543,258 @@ func TestOrdinaryOptionsSyncAnchorIsInternal(t *testing.T) {
 			var syncCount int64
 			require.NoError(t, db.Model(&SystemTask{}).Count(&syncCount).Error)
 			assert.Equal(t, int64(1), syncCount)
+		})
+	}
+}
+
+// optionPublicationCommitPool delays one acknowledgement only after SQL Commit
+// really succeeds, leaving the connection free for a later committed save.
+type optionPublicationCommitPool struct {
+	*sql.DB
+	hold      atomic.Bool
+	committed chan struct{}
+	release   chan struct{}
+	ctx       context.Context
+	onCommit  func()
+}
+
+type optionPublicationCommitTx struct {
+	*sql.Tx
+	pool *optionPublicationCommitPool
+}
+
+func (pool *optionPublicationCommitPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	tx, err := pool.DB.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &optionPublicationCommitTx{Tx: tx, pool: pool}, nil
+}
+
+func (tx *optionPublicationCommitTx) Commit() error {
+	if err := tx.Tx.Commit(); err != nil {
+		return err
+	}
+	if tx.pool.onCommit != nil {
+		tx.pool.onCommit()
+	}
+	if tx.pool.hold.CompareAndSwap(true, false) {
+		close(tx.pool.committed)
+		select {
+		case <-tx.pool.release:
+		case <-tx.pool.ctx.Done():
+			return tx.pool.ctx.Err()
+		}
+	}
+	return nil
+}
+
+func TestAnnouncementPublicationOrderingDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		for _, writer := range []string{"single", "bulk", "batch"} {
+			t.Run(dialect+"/"+writer, func(t *testing.T) {
+				db := optionTestDB(t, dialect)
+				console := console_setting.GetConsoleSetting()
+				previous := *console
+				t.Cleanup(func() {
+					common.OptionMapRWMutex.Lock()
+					*console = previous
+					common.OptionMapRWMutex.Unlock()
+				})
+				const key = "console_setting.announcements"
+				require.NoError(t, UpdateOption(key, "[]"))
+				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+				defer cancel()
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(4)
+				pool := &optionPublicationCommitPool{DB: sqlDB, committed: make(chan struct{}), release: make(chan struct{}), ctx: ctx}
+				pool.hold.Store(true)
+				wrapped := db.Session(&gorm.Session{NewDB: true, Initialized: true})
+				wrapped.ConnPool, wrapped.Statement.ConnPool = pool, pool
+				DB = wrapped.Session(&gorm.Session{NewDB: true, Context: ctx})
+				var workers sync.WaitGroup
+				var releaseOnce sync.Once
+				t.Cleanup(func() {
+					releaseOnce.Do(func() { close(pool.release) })
+					cancel()
+					workers.Wait()
+					DB = db
+				})
+				const first = `[{"id":1,"content":"earlier"}]`
+				const latest = `[{"id":1,"content":"latest"}]`
+				firstResult := make(chan error, 1)
+				workers.Go(func() {
+					switch writer {
+					case "single":
+						firstResult <- UpdateOption(key, first)
+					case "bulk":
+						firstResult <- UpdateOptionsBulk(map[string]string{key: first})
+					case "batch":
+						firstResult <- UpdateOrdinaryOptionsBatch(ctx, []Option{{Key: key, Value: first}}, AuditEventDraft{
+							EventId: common.NewRequestId(), Action: "option.batch.test",
+						})
+					}
+				})
+				select {
+				case <-pool.committed:
+				case <-ctx.Done():
+					t.Fatal("first save did not reach its post-commit barrier")
+				}
+				var stored Option
+				require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+				assert.Equal(t, first, stored.Value, "the held writer already committed")
+				require.NoError(t, UpdateOrdinaryOptionsBatch(ctx, []Option{{Key: key, Value: latest}}, AuditEventDraft{
+					EventId: common.NewRequestId(), Action: "option.batch.test",
+				}))
+				common.OptionMapRWMutex.RLock()
+				assert.Equal(t, latest, common.OptionMap[key])
+				assert.Equal(t, latest, console.Announcements)
+				common.OptionMapRWMutex.RUnlock()
+				require.NoError(t, LoadOptionsFromDatabase())
+				releaseOnce.Do(func() { close(pool.release) })
+				select {
+				case err := <-firstResult:
+					require.NoError(t, err)
+				case <-ctx.Done():
+					t.Fatal("first save did not finish after acknowledgement release")
+				}
+				workers.Wait()
+				require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+				assert.Equal(t, latest, stored.Value)
+				common.OptionMapRWMutex.RLock()
+				assert.Equal(t, latest, common.OptionMap[key], "a delayed publisher cannot replay an obsolete request")
+				assert.Equal(t, latest, console.Announcements, "public status reads the latest runtime config")
+				common.OptionMapRWMutex.RUnlock()
+			})
+		}
+	}
+}
+
+func TestAnnouncementPublicationReadFailureRetainsCommittedSave(t *testing.T) {
+	db := optionTestDB(t, "sqlite")
+	const key = "console_setting.announcements"
+	console := console_setting.GetConsoleSetting()
+	previous := *console
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		*console = previous
+		common.OptionMapRWMutex.Unlock()
+	})
+	require.NoError(t, UpdateOption(key, "before"))
+	const callback = "test:reject_saved_option_readback"
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Option" {
+			tx.AddError(fmt.Errorf("read unavailable"))
+		}
+	}))
+	t.Cleanup(func() { assert.NoError(t, db.Callback().Query().Remove(callback)) })
+	require.NoError(t, UpdateOrdinaryOptionsBatch(t.Context(), []Option{{Key: key, Value: "committed"}}, AuditEventDraft{
+		EventId: common.NewRequestId(), Action: "option.batch.test",
+	}), "post-commit read failure must not prompt replay of a persisted save")
+	assert.Equal(t, "before", common.OptionMap[key])
+	assert.Equal(t, "before", console.Announcements)
+	// Unrelated settings retain immediate local publication even while the
+	// announcement readback is unavailable; no generic flag gains this failure.
+	require.NoError(t, UpdateOption("TestUnrelatedPublication", "published"))
+	assert.Equal(t, "published", common.OptionMap["TestUnrelatedPublication"])
+	require.NoError(t, db.Callback().Query().Remove(callback))
+	var stored Option
+	require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+	assert.Equal(t, "committed", stored.Value)
+	require.NoError(t, LoadOptionsFromDatabase())
+	assert.Equal(t, "committed", common.OptionMap[key], "durable reload repairs the retained local view")
+}
+
+func TestAnnouncementReloadPublicationOrderingDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := optionTestDB(t, dialect)
+			const key = "console_setting.announcements"
+			console := console_setting.GetConsoleSetting()
+			previous := *console
+			t.Cleanup(func() {
+				common.OptionMapRWMutex.Lock()
+				*console = previous
+				common.OptionMapRWMutex.Unlock()
+			})
+			require.NoError(t, UpdateOption(key, "before"))
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(4)
+			loaded := make(chan struct{})
+			release := make(chan struct{})
+			committed := make(chan struct{})
+			var releaseOnce sync.Once
+			var loadedOnce atomic.Bool
+			const callback = "test:hold_old_announcement_reload"
+			require.NoError(t, db.Callback().Query().After("gorm:after_query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Schema == nil || tx.Statement.Schema.Name != "Option" {
+					return
+				}
+				if _, fullReload := tx.Statement.Dest.(*[]*Option); !fullReload || !loadedOnce.CompareAndSwap(false, true) {
+					return
+				}
+				close(loaded)
+				select {
+				case <-release:
+				case <-ctx.Done():
+					tx.AddError(ctx.Err())
+				}
+			}))
+			t.Cleanup(func() { assert.NoError(t, db.Callback().Query().Remove(callback)) })
+			pool := &optionPublicationCommitPool{DB: sqlDB, ctx: ctx, onCommit: func() { close(committed) }}
+			wrapped := db.Session(&gorm.Session{NewDB: true, Initialized: true})
+			wrapped.ConnPool, wrapped.Statement.ConnPool = pool, pool
+			DB = wrapped.Session(&gorm.Session{NewDB: true, Context: ctx})
+			var workers sync.WaitGroup
+			t.Cleanup(func() {
+				releaseOnce.Do(func() { close(release) })
+				cancel()
+				workers.Wait()
+				DB = db
+			})
+			reloadResult := make(chan error, 1)
+			workers.Go(func() { reloadResult <- LoadOptionsFromDatabase() })
+			select {
+			case <-loaded:
+			case <-ctx.Done():
+				t.Fatal("reload did not capture the old database snapshot")
+			}
+			saveResult := make(chan error, 1)
+			workers.Go(func() {
+				saveResult <- UpdateOrdinaryOptionsBatch(ctx, []Option{{Key: key, Value: "latest"}}, AuditEventDraft{
+					EventId: common.NewRequestId(), Action: "option.batch.test",
+				})
+			})
+			select {
+			case <-committed:
+			case <-ctx.Done():
+				t.Fatal("announcement save did not commit while reload held its old snapshot")
+			}
+			var stored Option
+			require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+			assert.Equal(t, "latest", stored.Value)
+			releaseOnce.Do(func() { close(release) })
+			select {
+			case err := <-reloadResult:
+				require.NoError(t, err)
+			case <-ctx.Done():
+				t.Fatal("reload did not finish")
+			}
+			select {
+			case err := <-saveResult:
+				require.NoError(t, err)
+			case <-ctx.Done():
+				t.Fatal("saved announcement publication did not finish")
+			}
+			workers.Wait()
+			common.OptionMapRWMutex.RLock()
+			assert.Equal(t, "latest", common.OptionMap[key], "a captured reload cannot overwrite the latest local save")
+			assert.Equal(t, "latest", console.Announcements)
+			common.OptionMapRWMutex.RUnlock()
 		})
 	}
 }

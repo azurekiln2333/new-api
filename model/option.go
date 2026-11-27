@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -25,6 +26,13 @@ type Option struct {
 	Key   string `json:"key" gorm:"primaryKey"`
 	Value string `json:"value"`
 }
+
+// announcementPublicationMutex orders announcement readback and publication
+// with full reloads. Other option writers retain their existing publication
+// semantics. A delayed announcement publisher reads the latest committed value
+// instead of replaying its older request payload.
+// Lock order: request-policy, passkey-domain, announcement-publication, OptionMap.
+var announcementPublicationMutex sync.Mutex
 
 func AllOption() ([]*Option, error) {
 	var options []*Option
@@ -221,6 +229,8 @@ func LoadOptionsFromDatabase() error {
 	defer requestPolicyOptionMutex.Unlock()
 	passkeyOptionMutex.Lock()
 	defer passkeyOptionMutex.Unlock()
+	announcementPublicationMutex.Lock()
+	defer announcementPublicationMutex.Unlock()
 	options, err := AllOption()
 	if err != nil {
 		return err
@@ -429,7 +439,14 @@ func UpdateOption(key string, value string) error {
 	}); err != nil {
 		return err
 	}
-	// Update OptionMap only after the write succeeded.
+	if isAnnouncementOption(key) {
+		if err := publishCommittedAnnouncements([]string{key}); err != nil {
+			common.SysLog(common.LogText("failed to publish saved options: %s", err.Error()))
+		}
+		return nil
+	}
+	// Unrelated options, including security flags, preserve immediate local
+	// publication without introducing a post-commit database-read dependency.
 	return updateOptionMap(key, value)
 }
 
@@ -489,13 +506,23 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if err != nil {
 		return err
 	}
-	for k, v := range values {
-		if err := updateOptionMap(k, v); err != nil {
+	announcementKeys := make([]string, 0, 2)
+	for key, value := range values {
+		if isAnnouncementOption(key) {
+			announcementKeys = append(announcementKeys, key)
+			continue
+		}
+		if err := updateOptionMap(key, value); err != nil {
 			return err
 		}
 	}
 	if policySnapshot != nil {
 		requestPolicySnapshot.Store(policySnapshot)
+	}
+	if len(announcementKeys) > 0 {
+		if err := publishCommittedAnnouncements(announcementKeys); err != nil {
+			common.SysLog(common.LogText("failed to publish saved options: %s", err.Error()))
+		}
 	}
 	return nil
 }
@@ -556,20 +583,50 @@ func UpdateOrdinaryOptionsBatch(ctx context.Context, options []Option, audit Aud
 	}); err != nil {
 		return err
 	}
+	announcementKeys := make([]string, 0, 2)
+	common.OptionMapRWMutex.Lock()
+	for _, option := range options {
+		if isAnnouncementOption(option.Key) {
+			announcementKeys = append(announcementKeys, option.Key)
+			continue
+		}
+		// Preserve the existing immediate local publication for all other
+		// options. A committed section cannot be reported as an unsaved write.
+		if err := updateOptionMapLocked(option.Key, option.Value); err != nil {
+			common.SysLog(common.LogText("failed to publish saved option %s: %s", option.Key, err.Error()))
+		}
+	}
+	common.OptionMapRWMutex.Unlock()
+	if len(announcementKeys) > 0 {
+		if err := publishCommittedAnnouncements(announcementKeys); err != nil {
+			// The announcement and its durable sync obligation are committed.
+			// Keep the last good publication; reload retries without a new save.
+			common.SysLog(common.LogText("failed to publish saved options: %s", err.Error()))
+		}
+	}
+	return nil
+}
+
+func isAnnouncementOption(key string) bool {
+	return key == "console_setting.announcements" || key == "console_setting.announcements_enabled"
+}
+
+// publishCommittedAnnouncements rereads at most the two announcement fields
+// before publishing them under one OptionMap lock. Read failures never fall
+// back to an older request payload. The same mutex fences full reloads.
+func publishCommittedAnnouncements(keys []string) error {
+	announcementPublicationMutex.Lock()
+	defer announcementPublicationMutex.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var options []Option
+	if err := DB.WithContext(ctx).Session(&gorm.Session{Logger: logger.Discard}).
+		Where(map[string]any{"key": keys}).Find(&options).Error; err != nil {
+		return common.NewMessage("Failed to update settings")
+	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
 	for _, option := range options {
-		// The write is already committed, so a publication failure cannot be
-		// reported as a failed update: the caller would retry a change that
-		// persisted. The sync task enqueued in the same transaction reloads every
-		// option from the database, so a logged failure here self-heals.
-		//
-		// Publication is expected to succeed for every key the validation above
-		// accepted: validateOptionValueWithUpdates parses the same shapes with the
-		// same parsers where the shape is non-trivial, and a key without a
-		// validator is a plain map assignment or a parser that cannot reject the
-		// already-committed text differently on a second run. The lock stays held
-		// across the loop so readers cannot observe half of the saved section.
 		if err := updateOptionMapLocked(option.Key, option.Value); err != nil {
 			common.SysLog(common.LogText("failed to publish saved option %s: %s", option.Key, err.Error()))
 		}
