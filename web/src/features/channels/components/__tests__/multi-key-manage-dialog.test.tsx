@@ -451,6 +451,187 @@ test('resetting usage from a key row inside a Sheet requires confirmation and pr
   expect(onSubmit).not.toHaveBeenCalled()
 })
 
+test.each([false, true])(
+  'mapping Save targets only the selected stable Key; restore inheritance is explicit (clear=%s)',
+  async (clear) => {
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+    const keys: KeyStatus[] = [
+      {
+        ...editableAllocation,
+        id: '9007199254740993',
+        index: 0,
+        rev: 2,
+        model_mapping: '{"alias":"First-Upstream"}',
+      },
+      { ...editableAllocation, model_mapping: '{"alias":"Second-Upstream"}' },
+    ]
+    const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+      const request = body as { action: string; model_mapping?: string }
+      if (request.action === 'get_key_status') return keyStatusResponse(keys)
+      return {
+        data: {
+          success: true,
+          data: {
+            revision: 11,
+            key_entry_id: editableAllocation.id,
+            rev: 5,
+            model_mapping: request.model_mapping,
+          },
+        },
+      }
+    })
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ChannelsProvider>
+          <ManageKeysInsideSheet
+            channel={channelSchema.parse({
+              ...multiKeyChannel,
+              type: 1,
+              models: 'alias,shared',
+              model_mapping: '{"alias":"Channel-Upstream"}',
+            })}
+            onSubmit={onSubmit}
+          />
+        </ChannelsProvider>
+      </QueryClientProvider>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Manage Keys' }))
+    const manager = await screen.findByRole('dialog', {
+      name: /Multi-Key Management/,
+    })
+    const row = await within(manager).findByRole('row', { name: /^2\./ })
+    await user.click(within(row).getByRole('button', { name: 'Model Mapping' }))
+    const editor = await screen.findByRole('dialog', { name: 'Model Mapping' })
+    expect(
+      within(editor).getByRole('combobox', { name: 'Upstream Model Name' })
+    ).toHaveValue('Second-Upstream')
+    expect(
+      within(editor).queryByDisplayValue('Channel-Upstream')
+    ).not.toBeInTheDocument()
+    expect(
+      within(editor).queryByDisplayValue('First-Upstream')
+    ).not.toBeInTheDocument()
+    if (clear) {
+      await user.click(
+        within(editor).getByRole('button', { name: 'Restore inheritance' })
+      )
+      expect(
+        within(editor).queryByDisplayValue('Second-Upstream')
+      ).not.toBeInTheDocument()
+    } else {
+      const target = within(editor).getByRole('combobox', {
+        name: 'Upstream Model Name',
+      })
+      await user.clear(target)
+      await user.type(target, 'Updated-Upstream')
+      await user.tab()
+    }
+    expect(post).toHaveBeenCalledTimes(1)
+    await user.click(within(editor).getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/channel/multi_key/manage',
+        {
+          channel_id: 7,
+          action: 'set_key_model_mapping',
+          key_entry_id: '9007199254740995',
+          expected_rev: 4,
+          model_mapping: clear ? '' : '{\n  "alias": "Updated-Upstream"\n}',
+        },
+        expect.objectContaining({ singleUseAuthorization: true })
+      )
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Model Mapping' })
+      ).not.toBeInTheDocument()
+    )
+    expect(onSubmit).not.toHaveBeenCalled()
+  }
+)
+
+test('switching channels discards a mapping draft and ignores its late conflict', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  let resolveSave!: (value: {
+    data: { success: boolean; error_code: string }
+  }) => void
+  const save = new Promise<{
+    data: { success: boolean; error_code: string }
+  }>((resolve) => {
+    resolveSave = resolve
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    const request = body as { action: string; channel_id: number }
+    if (request.action === 'get_key_status') {
+      return keyStatusResponse([
+        {
+          ...editableAllocation,
+          model_mapping:
+            request.channel_id === 7 ? '{"alias":"Old-Upstream"}' : '',
+        },
+      ])
+    }
+    return save
+  })
+  const client = new QueryClient()
+  const view = (id: number, name: string) => (
+    <QueryClientProvider client={client}>
+      <ChannelsProvider>
+        <OpenDialog
+          channel={channelSchema.parse({
+            ...multiKeyChannel,
+            id,
+            name,
+            type: 1,
+          })}
+        />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  const { rerender } = render(view(7, 'Old Channel'))
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'Model Mapping' }))
+  const editor = await screen.findByRole('dialog', { name: 'Model Mapping' })
+  await user.click(within(editor).getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      '/api/channel/multi_key/manage',
+      expect.objectContaining({ action: 'set_key_model_mapping', channel_id: 7 }),
+      expect.anything()
+    )
+  )
+  rerender(view(8, 'Next Channel'))
+  await screen.findByRole('dialog', { name: /Next Channel/ })
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Model Mapping' })
+    ).not.toBeInTheDocument()
+  )
+  await act(async () => {
+    resolveSave({
+      data: { success: false, error_code: 'channel_key_revision_conflict' },
+    })
+    await save
+  })
+  expect(screen.getByRole('dialog', { name: /Next Channel/ })).toBeVisible()
+  expect(post).toHaveBeenCalledTimes(3)
+  await user.click(await screen.findByRole('button', { name: 'Model Mapping' }))
+  const nextEditor = await screen.findByRole('dialog', { name: 'Model Mapping' })
+  expect(
+    within(nextEditor).queryByDisplayValue('Old-Upstream')
+  ).not.toBeInTheDocument()
+  expect(
+    within(nextEditor).getByRole('button', { name: 'Save' })
+  ).toBeEnabled()
+})
+
 test('changing channels discards an open binding draft and ignores its late save result', async () => {
   useAuthStore
     .getState()

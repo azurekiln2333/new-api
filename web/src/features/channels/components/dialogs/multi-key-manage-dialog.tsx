@@ -76,6 +76,7 @@ import {
   deduplicateMultiKeys,
   resetMultiKeyQuota,
   setMultiKeyModels,
+  setMultiKeyModelMapping,
   setMultiKeyQuota,
   setMultiKeyUser,
   syncMultiKeyModels,
@@ -106,6 +107,7 @@ import { ChannelBalanceDetails } from '../channel-balance-details'
 import { useChannels } from '../channels-provider'
 import { MultiKeyDedupDialog } from './multi-key-dedup-dialog'
 import { MultiKeyModelsEditor } from './multi-key-models-editor'
+import { MultiKeyModelMappingEditor } from './multi-key-model-mapping-editor'
 import { MultiKeyQuotaEditor } from './multi-key-quota-editor'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeySyncDialog } from './multi-key-sync-dialog'
@@ -205,6 +207,12 @@ export function MultiKeyManageDialog({
     keyStatus: KeyStatus
     models: string[]
   } | null>(null)
+  const [mappingEditor, setMappingEditor] = useState<{
+    channelId: number
+    keyStatus: KeyStatus
+  } | null>(null)
+  const [isSavingMapping, setIsSavingMapping] = useState(false)
+  const mappingRequest = useRef(0)
   const [userEditor, setUserEditor] = useState<{
     keyStatus: KeyStatus
     userId: string
@@ -251,6 +259,7 @@ export function MultiKeyManageDialog({
     !isAppending
   const mutationInProgress =
     isPerformingAction ||
+    isSavingMapping ||
     isSavingAssignment ||
     isSavingQuota ||
     isResettingQuota ||
@@ -266,6 +275,8 @@ export function MultiKeyManageDialog({
   // Reset and load data when dialog opens
   useEffect(() => {
     setAppendKey('')
+    setMappingEditor(null)
+    setIsSavingMapping(false)
     setUserEditor(null)
     setQuotaEditor(null)
     setIsSavingAssignment(false)
@@ -293,6 +304,7 @@ export function MultiKeyManageDialog({
     return () => {
       statusRequest.current += 1
       editorSession.current += 1
+      mappingRequest.current += 1
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, currentRow?.id, singleKey, currentUser?.id, canEditSensitive])
@@ -348,6 +360,7 @@ export function MultiKeyManageDialog({
   }
 
   const reloadAfterConflict = async () => {
+    setMappingEditor(null)
     setModelsEditor(null)
     setUserEditor(null)
     setQuotaEditor(null)
@@ -509,6 +522,47 @@ export function MultiKeyManageDialog({
         scopeMode
       )
     )
+  }
+
+  const saveMapping = async (value: string) => {
+    if (!mappingEditor || !canEditSensitive || isSavingMapping) return
+    const target = mappingEditor
+    if (!target.keyStatus.id || !target.keyStatus.rev) return
+    const generation = ++mappingRequest.current
+    const session = editorSession.current
+    setIsSavingMapping(true)
+    try {
+      const response = requireServerSuccess(
+        await setMultiKeyModelMapping({
+          channelId: target.channelId,
+          keyEntryId: target.keyStatus.id,
+          expectedRev: target.keyStatus.rev,
+          modelMapping: value,
+        })
+      )
+      if (
+        generation !== mappingRequest.current ||
+        session !== editorSession.current
+      ) return
+      if (response.data?.key_entry_id !== target.keyStatus.id) {
+        throw new Error('Channel key configuration changed, reload and retry')
+      }
+      setMappingEditor(null)
+      toast.success(getServerMessage(response) || t('Operation successful'))
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      void loadKeyStatus()
+    } catch (error: unknown) {
+      if (
+        generation !== mappingRequest.current ||
+        session !== editorSession.current
+      ) return
+      if (isQuotaConflict(error)) await reloadAfterConflict()
+      else handleServerError(error, t('Operation failed'))
+    } finally {
+      if (generation === mappingRequest.current && session === editorSession.current) {
+        setIsSavingMapping(false)
+      }
+    }
   }
 
   const saveUser = () => {
@@ -1165,6 +1219,37 @@ export function MultiKeyManageDialog({
             </div>
           )}
 
+          <Dialog
+            open={
+              open && canEditSensitive && mappingEditor !== null &&
+              mappingEditor.channelId === currentRow.id
+            }
+            onOpenChange={(next) => {
+              if (!next && !isSavingMapping) {
+                mappingRequest.current += 1
+                setMappingEditor(null)
+              }
+            }}
+            onOpenChangeComplete={(next) => {
+              if (!next && open) bodyRef.current?.focus()
+            }}
+            title={t('Model Mapping')}
+          >
+            {mappingEditor && mappingEditor.channelId === currentRow.id && (
+              <MultiKeyModelMappingEditor
+                key={`${mappingEditor.channelId}:${mappingEditor.keyStatus.id}:${mappingEditor.keyStatus.rev}`}
+                value={mappingEditor.keyStatus.model_mapping ?? ''}
+                channelModels={channelModels}
+                isSaving={isSavingMapping}
+                onCancel={() => {
+                  mappingRequest.current += 1
+                  setMappingEditor(null)
+                }}
+                onSave={(value) => void saveMapping(value)}
+              />
+            )}
+          </Dialog>
+
           {/* Keep editors in the modal tree, but outside the fixed-height
               key-list layout so their fields remain scrollable and focused. */}
           <Dialog
@@ -1412,7 +1497,15 @@ export function MultiKeyManageDialog({
                           key.rev != null
                         }
                         onAction={openConfirm}
+                        onEditMapping={(keyStatus) => {
+                          mappingRequest.current += 1
+                          setModelsEditor(null)
+                          setUserEditor(null)
+                          setQuotaEditor(null)
+                          setMappingEditor({ channelId: currentRow.id, keyStatus })
+                        }}
                         onEditModels={(keyStatus) => {
+                          setMappingEditor(null)
                           setUserEditor(null)
                           setQuotaEditor(null)
                           setModelsEditor({

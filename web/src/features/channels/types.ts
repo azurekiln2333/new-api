@@ -349,6 +349,8 @@ export interface KeyStatus {
   user_id?: number
   username?: string
   scope_mode?: 'all' | 'allowlist'
+  /** Only this allocation's overrides; empty inherits the channel mapping. */
+  model_mapping?: string
   // Absent when the budget ledger is not available; never faked as unlimited.
   quota?: KeyQuotaView
 }
@@ -505,6 +507,7 @@ export type MultiKeyManageAction =
   | 'delete_key'
   | 'delete_disabled_keys'
   | 'set_key_models'
+  | 'set_key_model_mapping'
   | 'set_key_user'
   | 'set_key_quota'
   | 'reset_key_quota'
@@ -526,6 +529,7 @@ export interface MultiKeyManageParams {
   page_size?: number
   status?: number // 1=enabled, 2=manual_disabled, 3=auto_disabled
   models?: string[] // set_key_models: empty array clears the restriction
+  model_mapping?: string // set_key_model_mapping: empty restores inheritance
   user_id?: number // set_key_user: 0 unbinds
   apply?: boolean // sync_key_models / deduplicate_keys: write the previewed result
   // set_key_quota / reset_key_quota

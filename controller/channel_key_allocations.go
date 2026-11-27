@@ -136,11 +136,12 @@ func channelKeyDedupPreview(tx *gorm.DB, ch *model.Channel, entries []model.Chan
 			Owner   int
 			Scope   string
 			Models  []string
+			Mapping string
 			Status  int
 			Reason  string
 			Enabled bool
 			Limit   int64
-		}{entry.Key, entry.BoundUserId, entry.ScopeMode, models, entry.Status, entry.DisabledReason, account.Enabled, account.LimitQuota}
+		}{entry.Key, entry.BoundUserId, entry.ScopeMode, models, entry.ModelMapping, entry.Status, entry.DisabledReason, account.Enabled, account.LimitQuota}
 		data, err := common.Marshal(policy)
 		if err != nil {
 			return plan, nil, err
@@ -221,9 +222,13 @@ func channelKeyDedupPreview(tx *gorm.DB, ch *model.Channel, entries []model.Chan
 
 func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, request MultiKeyManageRequest) bool {
 	switch request.Action {
-	case "disable_key", "enable_key", "enable_all_keys", "disable_all_keys", "delete_key", "delete_disabled_keys", "set_key_models", "set_key_user", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
+	case "disable_key", "enable_key", "enable_all_keys", "disable_all_keys", "delete_key", "delete_disabled_keys", "set_key_models", "set_key_model_mapping", "set_key_user", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
 	default:
 		return false
+	}
+	if request.Action == "set_key_model_mapping" && (request.KeyEntryID == "" || request.ModelMapping == nil) {
+		common.ApiErrorT(c, "Invalid parameters")
+		return true
 	}
 	gated := request.Action == "set_key_quota" || request.Action == "reset_key_quota" || request.Action == "deduplicate_keys"
 	if gated && !model.ChannelBudgetsEnabled() {
@@ -379,6 +384,10 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 				// explicit allowlist adds names to the shared catalog.
 				current.Models = strings.Join(mergeModelNames(current.GetModels(), models), ",")
 			}
+		case "set_key_model_mapping":
+			if err := entry.SetModelMapping(*request.ModelMapping, current); err != nil {
+				return nil, nil, err
+			}
 		case "set_key_user":
 			if request.UserId == nil || *request.UserId < 0 {
 				return nil, nil, common.NewMessage("No user specified to bind")
@@ -414,7 +423,7 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			return nil, nil, nil
 		}
 		entry.ConfigRevision++
-		if request.Action == "set_key_models" {
+		if request.Action == "set_key_models" || request.Action == "set_key_model_mapping" {
 			// persistKeyEntries advances the list revision once after this callback.
 			// The audit, catalog, scope and abilities share its transaction, so any
 			// later persistence failure also removes this audit obligation.
@@ -439,7 +448,7 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 		common.ApiSuccess(c, preview)
 		return true
 	}
-	if request.Action == "set_key_models" {
+	if request.Action == "set_key_models" || request.Action == "set_key_model_mapping" {
 		markAuditLogged(c)
 	} else {
 		recordManageAudit(c, "channel.multi_key_manage", map[string]any{"id": channel.Id, "action": request.Action, "entry_id": request.KeyEntryID, "revision": updated.ChannelInfo.KeyEntryRevision})
@@ -452,6 +461,14 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 		common.ApiSuccess(c, budget)
 	} else if request.Action == "deduplicate_keys" {
 		common.ApiSuccess(c, preview)
+	} else if request.Action == "set_key_model_mapping" {
+		for i, id := range updated.KeyEntryIDs {
+			if strconv.FormatInt(id, 10) == request.KeyEntryID {
+				common.ApiSuccess(c, gin.H{"revision": updated.ChannelInfo.KeyEntryRevision, "key_entry_id": request.KeyEntryID,
+					"rev": updated.KeyEntryRevisions[i], "model_mapping": updated.ChannelInfo.MultiKeyModelMappings[i]})
+				return true
+			}
+		}
 	} else if request.Action == "set_key_models" {
 		common.ApiSuccess(c, gin.H{"revision": updated.ChannelInfo.KeyEntryRevision, "channel_models": normalizeModelNames(updated.GetModels())})
 	} else {

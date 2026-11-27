@@ -882,6 +882,40 @@ export async function setMultiKeyModels(
   }>
 }
 
+/** Save exact-source mapping overrides for one stable allocation only. */
+export async function setMultiKeyModelMapping(params: {
+  channelId: number
+  keyEntryId: string
+  expectedRev: number
+  modelMapping: string
+}): Promise<{
+  success: boolean
+  message?: string
+  data?: {
+    revision: number
+    key_entry_id: string
+    rev: number
+    model_mapping: string
+  }
+}> {
+  return manageMultiKeys({
+    channel_id: params.channelId,
+    action: 'set_key_model_mapping',
+    key_entry_id: params.keyEntryId,
+    expected_rev: params.expectedRev,
+    model_mapping: params.modelMapping,
+  }) as Promise<{
+    success: boolean
+    message?: string
+    data?: {
+      revision: number
+      key_entry_id: string
+      rev: number
+      model_mapping: string
+    }
+  }>
+}
+
 /**
  * Fetch the upstream model list with one key only. Read-only.
  */

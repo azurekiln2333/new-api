@@ -732,8 +732,7 @@ func SetupChannelTestContext(c *gin.Context, channel *model.Channel, modelName s
 	if newAPIError := applySelectedChannelContext(c, channel, modelName); newAPIError != nil {
 		return newAPIError
 	}
-	setSelectedChannelKey(c, channel, key, keyIndex)
-	return nil
+	return setSelectedChannelKey(c, channel, key, keyIndex)
 }
 
 // SetupContextForSelectedChannel prepares the relay context for a channel chosen
@@ -752,12 +751,16 @@ func SetupContextForSelectedChannelExcluding(c *gin.Context, channel *model.Chan
 	if newAPIError != nil {
 		return newAPIError
 	}
-	setSelectedChannelKey(c, channel, key, index)
-	return nil
+	return setSelectedChannelKey(c, channel, key, index)
 }
 
 // setSelectedChannelKey records the key that serves this request.
-func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, index int) {
+func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, index int) *types.NewAPIError {
+	mapping, err := channel.GetModelMappingForKey(index)
+	if err != nil {
+		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, mapping)
 	common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
@@ -771,6 +774,7 @@ func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, i
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+	return nil
 }
 
 // applySelectedChannelContext copies the selected channel's configuration into the

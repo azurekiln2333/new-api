@@ -2218,6 +2218,7 @@ func CopyChannel(c *gin.Context) {
 	clone.ChannelInfo.MultiKeyDisabledReason = maps.Clone(origin.ChannelInfo.MultiKeyDisabledReason)
 	clone.ChannelInfo.MultiKeyDisabledTime = maps.Clone(origin.ChannelInfo.MultiKeyDisabledTime)
 	clone.ChannelInfo.MultiKeyModels = maps.Clone(origin.ChannelInfo.MultiKeyModels)
+	clone.ChannelInfo.MultiKeyModelMappings = maps.Clone(origin.ChannelInfo.MultiKeyModelMappings)
 	clone.ChannelInfo.MultiKeyUsers = maps.Clone(origin.ChannelInfo.MultiKeyUsers)
 	clone.ChannelInfo.MultiKeyScopeModes = maps.Clone(origin.ChannelInfo.MultiKeyScopeModes)
 	service.DropPluginCredentials(&clone)
@@ -2250,6 +2251,7 @@ type MultiKeyManageRequest struct {
 	Action                string   `json:"action"`              // "disable_key", "enable_key", "delete_key", "delete_disabled_keys", "get_key_status", "set_key_models", "set_key_user", "fetch_key_models", "sync_key_models"
 	KeyIndex              *int     `json:"key_index,omitempty"` // for disable_key, enable_key, delete_key, fetch_key_models, set_key_models and set_key_user actions
 	Models                []string `json:"models,omitempty"`    // for set_key_models: the models this key may serve, empty clears the limit
+	ModelMapping          *string  `json:"model_mapping,omitempty"`
 	UserId                *int     `json:"user_id,omitempty"`   // for set_key_user: the user this key is bound to, 0 unbinds
 	Apply                 bool     `json:"apply,omitempty"`     // for sync_key_models: persist the discovered models and key scopes instead of previewing them
 	Page                  int      `json:"page,omitempty"`      // for get_key_status pagination
@@ -2284,9 +2286,11 @@ const multiKeyModelSyncConcurrency = 4
 
 // newSingleKeyChannel returns a copy of the channel that holds only the given
 // key, so upstream discovery uses exactly that key: multi-key polling, key
-// status and a key's own model scope cannot pick or filter another one. The
-// original channel is left untouched.
-func newSingleKeyChannel(channel *model.Channel, key string) *model.Channel {
+// status, model scope and mapping cannot pick or filter another one. When the
+// source allocation is known, its mapping override is moved to position zero;
+// an ad-hoc credential has no allocation override and inherits the channel map.
+// The original channel is left untouched.
+func newSingleKeyChannel(channel *model.Channel, key string, sourceIndex ...int) *model.Channel {
 	singleKeyChannel := *channel
 	singleKeyChannel.Key = key
 	singleKeyChannel.Keys = nil
@@ -2295,6 +2299,16 @@ func newSingleKeyChannel(channel *model.Channel, key string) *model.Channel {
 	singleKeyChannel.ChannelInfo.MultiKeyStatusList = nil
 	singleKeyChannel.ChannelInfo.MultiKeyModels = nil
 	singleKeyChannel.ChannelInfo.MultiKeyUsers = nil
+	singleKeyChannel.ChannelInfo.MultiKeyScopeModes = nil
+	if len(sourceIndex) > 0 {
+		if mapping, ok := channel.ChannelInfo.MultiKeyModelMappings[sourceIndex[0]]; ok && mapping != "" {
+			singleKeyChannel.ChannelInfo.MultiKeyModelMappings = map[int]string{0: mapping}
+		} else {
+			singleKeyChannel.ChannelInfo.MultiKeyModelMappings = nil
+		}
+	} else {
+		singleKeyChannel.ChannelInfo.MultiKeyModelMappings = nil
+	}
 	return &singleKeyChannel
 }
 
@@ -2317,6 +2331,7 @@ type KeyStatus struct {
 	Id           string                   `json:"id"`
 	Rev          int64                    `json:"rev"`
 	ScopeMode    string                   `json:"scope_mode"`
+	ModelMapping string                   `json:"model_mapping"`
 	Quota        *model.ChannelBudgetView `json:"quota,omitempty"`
 	Index        int                      `json:"index"`
 	Status       int                      `json:"status"` // 1: enabled, 2: disabled
@@ -2504,6 +2519,7 @@ func ManageMultiKeys(c *gin.Context) {
 				Id:           strconv.FormatInt(channel.ChannelKeyEntryID(i), 10),
 				Rev:          channel.KeyEntryRevisions[i],
 				ScopeMode:    scopeMode,
+				ModelMapping: channel.ChannelInfo.MultiKeyModelMappings[i],
 				Index:        i,
 				Status:       status,
 				DisabledTime: disabledTime,
@@ -3144,7 +3160,7 @@ func multiKeyActionRequiresSensitiveWrite(action string) bool {
 	// the channel, so they need the same permission as deleting a key. Applying
 	// an upstream model sync changes the channel model list the same way.
 	switch action {
-	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_user", "sync_key_models", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
+	case "delete_key", "delete_disabled_keys", "set_key_models", "set_key_model_mapping", "set_key_user", "sync_key_models", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
 		return true
 	default:
 		return false
