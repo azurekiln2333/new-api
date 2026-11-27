@@ -244,9 +244,9 @@ jobs:
           CI_CLICKHOUSE_VERSION=$(docker exec ${{ job.services.clickhouse.id }} clickhouse-client --user default --password integration --query 'SELECT version()')
           printf '::notice title=ClickHouse version::%s\n' "$CI_CLICKHOUSE_VERSION"
 
-      - name: Verify startup migration from released baseline
+      - name: Verify fresh and latest-release allocation migration twice
         env:
-          RELEASED_BASELINE_SHA: 53a71f88d5b568847cd7233a08f934824dcb22d3
+          GH_TOKEN: ${{ github.token }}
           NODE_TYPE: master
         run: |
           set -o pipefail
@@ -256,14 +256,19 @@ jobs:
           mkdir -p "$OUTPUT_DIR/logs"
 
           echo "Current source: $(git rev-parse HEAD)" | tee -a "$LOG_FILE"
-          echo "Released source: $RELEASED_BASELINE_SHA" | tee -a "$LOG_FILE"
-          git fetch --no-tags https://github.com/azurekiln2333/new-api.git "$RELEASED_BASELINE_SHA"
+          gh api repos/azurekiln2333/new-api/releases/latest > "$OUTPUT_DIR/latest-release.json"
+          jq -e '.draft == false and .prerelease == false and .published_at != null' "$OUTPUT_DIR/latest-release.json"
+          RELEASED_BASELINE_TAG=$(jq -er '.tag_name' "$OUTPUT_DIR/latest-release.json")
+          git fetch --no-tags https://github.com/azurekiln2333/new-api.git "refs/tags/$RELEASED_BASELINE_TAG"
+          RELEASED_BASELINE_SHA=$(git rev-parse 'FETCH_HEAD^{commit}')
+          echo "Released source: $RELEASED_BASELINE_SHA tag=$RELEASED_BASELINE_TAG" | tee -a "$LOG_FILE"
           git worktree add --detach "$RELEASED_DIR" "$RELEASED_BASELINE_SHA"
           mkdir -p "$RELEASED_DIR/.github/scripts"
           cp .github/scripts/released_migration_probe.go "$RELEASED_DIR/.github/scripts/"
 
-          docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -e 'CREATE DATABASE released_migration_mysql CHARACTER SET utf8mb4'
+          docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -e 'CREATE DATABASE released_migration_mysql CHARACTER SET utf8mb4; CREATE DATABASE fresh_migration_mysql CHARACTER SET utf8mb4'
           docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE released_migration_postgres'
+          docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE fresh_migration_postgres'
 
           run_probe() {
             source_dir="$1"
@@ -316,6 +321,19 @@ jobs:
           run_probe "$RELEASED_DIR" seed sqlite local "$SQLITE_RELEASE_PATH"
           run_probe "$GITHUB_WORKSPACE" verify sqlite local "$SQLITE_RELEASE_PATH"
           run_probe "$GITHUB_WORKSPACE" verify sqlite local "$SQLITE_RELEASE_PATH"
+
+          MYSQL_FRESH_DSN='root:integration@tcp(127.0.0.1:3306)/fresh_migration_mysql?charset=utf8mb4&parseTime=True&loc=Local'
+          POSTGRES_FRESH_DSN='postgres://postgres:integration@127.0.0.1:5432/fresh_migration_postgres?sslmode=disable'
+          SQLITE_FRESH_PATH="$OUTPUT_DIR/fresh-migration.sqlite"
+          run_probe "$GITHUB_WORKSPACE" seed mysql-fresh "$MYSQL_FRESH_DSN" "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify mysql-fresh "$MYSQL_FRESH_DSN" "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify mysql-fresh "$MYSQL_FRESH_DSN" "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" seed postgres-fresh "$POSTGRES_FRESH_DSN" "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify postgres-fresh "$POSTGRES_FRESH_DSN" "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify postgres-fresh "$POSTGRES_FRESH_DSN" "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" seed sqlite-fresh local "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify sqlite-fresh local "$SQLITE_FRESH_PATH"
+          run_probe "$GITHUB_WORKSPACE" verify sqlite-fresh local "$SQLITE_FRESH_PATH"
 
       - name: Upload released migration logs
         if: always()
