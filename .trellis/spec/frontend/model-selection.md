@@ -109,6 +109,22 @@ unchanged payload order and frozen input arrays.
 
 ## Playground channel visibility
 
+### 1. Scope / Trigger
+
+Apply to Playground channel/group/model navigation, account or privilege changes,
+and pending or failed metadata reads. A successful empty catalog and a failed
+eligibility query have different UI and server contracts.
+
+### 2. Signatures
+
+`GET /pg/channels?group=...` returns `{success:true,data:[{id,name,models}]}`.
+`service.ListPlaygroundChannels(ctx, userID, userGroup, group)` delegates to
+`model.ListAvailableChannelModels(ctx, groups, userID, filters)` and returns an
+error when authoritative eligibility cannot be read. The frontend
+`getPlaygroundChannels(group, signal)` validates the success envelope and array.
+
+### 3. Contracts
+
 `canSelectPlaygroundChannel(user)` requires both the administrator role and
 `channel.read`; custom permissions alone never expose manual channels. Reuse
 that predicate in the options hook and the config state owner. Query keys
@@ -123,10 +139,70 @@ same authorized administrator remains visibly unavailable rather than silently
 changing their chosen routing. The server independently rejects ordinary-user
 list/pin requests and checks group/model/key eligibility for administrators.
 
+Use the same request-path and empty task-plugin identity filters as actual
+`/pg/chat/completions` dispatch. A task-only plugin is not a chat candidate;
+provider-plugin routes must serve the selected path and model. Project enabled
+channels from authoritative allocation rows with the current user/group,
+allocation status, model scope, model-unavailability evidence and budgets.
+Keyset channel pages and SQL ID batches are limited to 200; this does not imply
+a bounded total response or measured latency. Return only `id`, `name`, and
+eligible public model IDs. Propagate request cancellation and database failures;
+never return a partially accumulated success after a read failure.
+
+The options hook carries pending/error/retry state through the input controls to
+`ModelGroupSelector`, which reuses `LoadingState` and `ErrorState`. An explicit
+pin stays selected and blocks Send while its catalog is unavailable; Retry
+refetches that source and never silently falls back to Groups. Render model and
+group options from the current query/source synchronously. Effect-only clearing
+of a previous account's independently stored model array leaks one committed
+render. Model/group queries also include live identity/role/permission inputs
+and consume AbortSignal; never use previous-identity placeholder data.
+
+When integrating per-Key mapping, resolve the upstream model inside the Key
+loop with `RoutingUpstreamModelNameForKey(i, name)` before checking that Key's
+unavailability evidence. A channel-level target cannot describe distinct Key
+overrides. Preserve the public alias in the response.
+
+### 4. Validation & Error Matrix
+
+| Situation | Required behavior |
+| --- | --- |
+| All candidates authoritatively denied | Success with `data: []`; show empty state |
+| Activation/channel/allocation/budget read fails | Error with no partial catalog; show Retry |
+| Channel query is pending | Show loading state, not empty-state copy |
+| Current identity/source changes before replacement data arrives | Hide prior channel/model/group options in every committed render |
+| Task-only plugin or provider route does not serve chat/model | Exclude it just as dispatch does |
+| Explicit pin is unavailable | Keep the pin unavailable and block Send; no automatic routing fallback |
+
+### 5. Good / Base / Bad Cases
+
+Good: a user-bound Key exposes its public model alias only when that same Key is
+eligible. Base: a valid empty group returns an empty catalog. Bad: a budget SQL
+failure becomes `[]`, or an old pinned model remains visible during an account
+switch because a state-copy effect has not run.
+
+### 6. Tests Required
+
 The existing playground options/state suites cover cached-channel hiding,
 custom grants, account switches, demotion, no pin resurrection and omission
 from the built request. `TestPlaygroundChannelNavigationAuthorizationAndRouting`
 covers forged list/pin requests and metadata-free denials.
+
+Run `^TestPlaygroundChannelNavigation(AuthorizationAndRouting|Projection)$`
+under real SQLite, MySQL and PostgreSQL using `TEST_CHANNEL_SQL_DSN` (empty uses
+the isolated SQLite fixture). Projection cases cover authoritative allocation
+state, own-bound groups, empty allowlists, budgets, unavailable models, exact
+paths, task/provider route parity, cache modes, read failures and cancellation.
+When per-Key mapping is merged, add distinct Key targets with unavailability on
+only one target. Frontend regressions use a real state/selector harness with
+deferred replacement model/group data and inspect every committed render for
+prior model labels; also cover pending/error/Retry/true-empty and late responses.
+
+### 7. Wrong vs Correct
+
+Wrong: `availableModels ?? previousModels` or `failedQuery.data ?? []` hides the
+source transition. Correct: derive visible options from the current source and
+display loading, error/retry, or verified empty according to its actual state.
 
 ## Fingerprint and group model sources
 

@@ -424,7 +424,14 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestPlaygroundChannelNavigationAuthorizationAndRouting|TestFingerprintResponsesOnlyChannelProbe'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestFingerprintResponsesOnlyChannelProbe'
+          done
+
+      - name: Verify Playground channel authorization and projection on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^TestPlaygroundChannelNavigation(AuthorizationAndRouting|Projection)$'
           done
 
       - name: Verify selected Key mapping on SQLite, MySQL and PostgreSQL
