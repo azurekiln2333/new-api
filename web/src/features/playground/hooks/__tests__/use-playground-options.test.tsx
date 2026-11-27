@@ -458,7 +458,9 @@ test('aborts model and group reads on identity changes and never renders their l
   expect(groupSignal?.aborted).toBe(true)
   await act(async () => {
     resolveModels([{ value: 'old-private-model', label: 'old-private-model' }])
-    resolveGroups([{ value: 'old-private-group', label: 'old-private-group', ratio: 1 }])
+    resolveGroups([
+      { value: 'old-private-group', label: 'old-private-group', ratio: 1 },
+    ])
   })
   expect(view.result.current.models).not.toContainEqual({
     value: 'old-private-model',
