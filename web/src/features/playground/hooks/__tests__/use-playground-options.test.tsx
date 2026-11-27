@@ -339,7 +339,9 @@ test.each(['account', 'role', 'permission', 'group'] as const)(
     const popup = privateModel.closest('[data-slot="popover-content"]')
     expect(popup).not.toBeNull()
     await user.click(privateModel)
-    await waitFor(() => expect(trigger).toHaveTextContent('private-bound-model'))
+    await waitFor(() =>
+      expect(trigger).toHaveTextContent('private-bound-model')
+    )
     await waitFor(() => expect(popup).not.toBeInTheDocument())
 
     let rejectModels!: (error: Error) => void
@@ -395,9 +397,13 @@ test.each(['account', 'role', 'permission', 'group'] as const)(
     )
     if (change !== 'group') {
       expect(api.getUserGroups).toHaveBeenCalledTimes(groupCalls + 1)
-      expect(api.getUserGroups).toHaveBeenLastCalledWith(expect.any(AbortSignal))
+      expect(api.getUserGroups).toHaveBeenLastCalledWith(
+        expect.any(AbortSignal)
+      )
       await act(async () => {
-        resolveGroups([{ value: 'default', label: 'Replacement group', ratio: 1 }])
+        resolveGroups([
+          { value: 'default', label: 'Replacement group', ratio: 1 },
+        ])
       })
     }
     await act(async () => {

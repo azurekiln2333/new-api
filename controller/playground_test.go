@@ -289,7 +289,7 @@ export const meta = {apiVersion: 1, key: "pg-navigation-provider", name: "Playgr
 					c.Set("group", "default")
 					PlaygroundChannels(c)
 					var body struct {
-					Success bool                       `json:"success"`
+						Success bool                       `json:"success"`
 						Data    []model.ChannelModelOption `json:"data"`
 					}
 					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
