@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,6 +57,186 @@ func TestPinnedChannelTestKeyUsesKeyMappingForUnavailableEvidence(t *testing.T) 
 			}
 			pinned := &pinnedChannelTestKey{index: index, value: "sk-key"}
 			assert.False(t, pinned.stillServes(channel, "alias", false))
+		})
+	}
+}
+
+func TestDuplicateKeyModelUnavailabilityUsesSelectedAllocation(t *testing.T) {
+	setupChannelCreateTest(t)
+	// Duplicate allocations are supported by the existing ledger rollout in
+	// this release tree. The observation itself never mutates accounting.
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	require.NoError(t, model.InitializeChannelBudgets())
+	common.MemoryCacheEnabled = true
+	const credential = "sk-duplicate-mapping-observation"
+	const firstMapping = `{"alias":"first-upstream"}`
+	const secondMapping = `{"alias":"second-upstream"}`
+	channel := &model.Channel{
+		Name: "duplicate-mapping-observation", Type: constant.ChannelTypeOpenAI,
+		Key: credential + "\n" + credential, Models: "alias", Group: "default",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2,
+			MultiKeyModelMappings: map[int]string{0: firstMapping, 1: secondMapping}},
+	}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	model.InitChannelCache()
+	selected, ok := channel.ChannelAllocationByPosition(1)
+	require.True(t, ok)
+	missing := types.WithOpenAIError(types.OpenAIError{Code: "model_not_found", Type: "invalid_request_error"}, http.StatusNotFound)
+
+	for _, tc := range []struct {
+		name       string
+		identity   bool
+		id         int64
+		revision   int64
+		mapping    string
+		upstream   string
+		wantMarker bool
+	}{
+		{name: "ambiguous legacy credential", mapping: firstMapping, upstream: "first-upstream"},
+		{name: "stale allocation revision", identity: true, id: selected.EntryID, revision: selected.Revision + 1, mapping: secondMapping, upstream: "second-upstream"},
+		{name: "incomplete allocation identity", identity: true, id: selected.EntryID, mapping: secondMapping, upstream: "second-upstream"},
+		{name: "missing allocation", identity: true, id: 9223372036854775807, revision: selected.Revision, mapping: secondMapping, upstream: "second-upstream"},
+		{name: "wrong effective mapping", identity: true, id: selected.EntryID, revision: selected.Revision, mapping: firstMapping, upstream: "first-upstream"},
+		{name: "wrong attempted target", identity: true, id: selected.EntryID, revision: selected.Revision, mapping: secondMapping, upstream: "first-upstream"},
+		{name: "selected second duplicate", identity: true, id: selected.EntryID, revision: selected.Revision, mapping: secondMapping, upstream: "second-upstream", wantMarker: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Set("model_mapping", tc.mapping)
+			if tc.wantMarker {
+				require.Nil(t, middleware.SetupChannelTestContext(c, channel, "alias", credential, 1))
+			} else if tc.identity {
+				service.SetSelectedChannelAllocation(c, tc.id, tc.revision)
+			}
+			service.RecordUpstreamModelUnavailability(c, types.ChannelError{ChannelId: channel.Id, UsingKey: credential}, missing,
+				&relaycommon.RelayInfo{OriginModelName: "alias", ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: tc.upstream}})
+			stored, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			if !tc.wantMarker {
+				assert.Empty(t, stored.ChannelInfo.ModelUnavailable)
+				return
+			}
+			require.Len(t, stored.ChannelInfo.ModelUnavailable, 1)
+			marker := stored.ChannelInfo.ModelUnavailable[0]
+			assert.Equal(t, "second-upstream", marker.UpstreamModel)
+			assert.Equal(t, 1, marker.KeyIndex)
+			assert.Equal(t, model.ChannelKeyFingerprint(credential), marker.KeyFingerprint)
+			encoded, err := common.Marshal(marker)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), credential)
+			cached, err := model.CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			_, index, apiErr := cached.GetNextEnabledKeyFor("alias", 0)
+			require.Nil(t, apiErr)
+			assert.Zero(t, index, "only the second duplicate's mapped target is unavailable")
+		})
+	}
+
+	_, err := model.RestoreChannelModelUnavailability(channel.Id, "", "")
+	require.NoError(t, err)
+	current, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	_, err = model.UpdateChannelKeyAllocations(channel.Id, current.ChannelInfo.KeyEntryRevision, func(entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+		entries[0], entries[1] = entries[1], entries[0]
+		return entries, nil, nil
+	})
+	require.NoError(t, err)
+	written, err := model.RecordChannelModelUnavailability(channel.Id, "alias", credential, secondMapping, "second-upstream", http.StatusNotFound, model.ChannelModelUnavailableEvidenceCode,
+		model.ChannelAllocation{ChannelID: channel.Id, EntryID: selected.EntryID, Revision: selected.Revision})
+	require.NoError(t, err)
+	require.True(t, written, "an unchanged stable allocation follows its new position")
+	current, err = model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	require.Len(t, current.ChannelInfo.ModelUnavailable, 1)
+	assert.Zero(t, current.ChannelInfo.ModelUnavailable[0].KeyIndex)
+	assert.Equal(t, selected.EntryID, current.KeyEntryIDs[0])
+
+	_, err = model.RestoreChannelModelUnavailability(channel.Id, "", "")
+	require.NoError(t, err)
+	current, err = model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	_, err = model.UpdateChannelKeyAllocations(channel.Id, current.ChannelInfo.KeyEntryRevision, func(entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+		entries[0].ConfigRevision++
+		return entries, nil, nil
+	})
+	require.NoError(t, err)
+	written, err = model.RecordChannelModelUnavailability(channel.Id, "alias", credential, secondMapping, "second-upstream", http.StatusNotFound, model.ChannelModelUnavailableEvidenceCode,
+		model.ChannelAllocation{ChannelID: channel.Id, EntryID: selected.EntryID, Revision: selected.Revision})
+	require.NoError(t, err)
+	assert.False(t, written, "even an unchanged mapping cannot accept a stale allocation revision")
+}
+
+func TestSingleKeyDiagnosticBusyRetryPreservesMappingAndAllocation(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	requests := make(chan channelDiagnosticWire, 4)
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- captureChannelDiagnostic(r)
+		w.Header().Set("Content-Type", "application/json")
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"code":"concurrency_limit_exceeded","message":"Concurrency limit exceeded"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(channelDiagnosticResponsesReply))
+	}))
+	t.Cleanup(upstream.Close)
+	selected := &model.Channel{
+		Name: "single-key-mapped-busy-retry", Type: constant.ChannelTypeOpenAI,
+		Key: "sk-single-key-busy-retry", Models: "gpt-4.1", Group: "default",
+		Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+		Setting:      common.GetPointer(`{"supported_endpoints":["responses"]}`),
+		ModelMapping: common.GetPointer(`{"gpt-4.1":"channel-upstream"}`),
+		ChannelInfo: model.ChannelInfo{MultiKeyModelMappings: map[int]string{0: `{"gpt-4.1":"gpt-5.1"}`}},
+	}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	result := testChannel(ctx, selected, userID, "gpt-4.1", "openai-response", false, -1)
+	require.NoError(t, result.localErr)
+	require.Nil(t, result.newAPIError)
+	assert.EqualValues(t, 2, calls.Load(), "the actual busy refusal is retried once")
+	for range 2 {
+		wire := takeChannelDiagnostic(t, requests)
+		assert.Equal(t, "/v1/responses", wire.path)
+		assert.Equal(t, "Bearer "+selected.Key, wire.headers.Get("Authorization"))
+		var outgoing struct {
+			Model string `json:"model"`
+		}
+		require.NoError(t, common.Unmarshal(wire.body, &outgoing))
+		assert.Equal(t, "gpt-5.1", outgoing.Model, "both actual attempts retain the position-zero Key override")
+	}
+	assert.Empty(t, requests)
+	allocation, ok := common.GetContextKeyType[model.ChannelAllocation](result.context, constant.ContextKeyChannelAllocation)
+	require.True(t, ok)
+	assert.Equal(t, selected.KeyEntryIDs[0], allocation.EntryID)
+	assert.Equal(t, selected.KeyEntryRevisions[0], allocation.Revision)
+	assert.Zero(t, allocation.Position)
+	assert.Equal(t, "gpt-4.1", common.GetContextKeyString(result.context, constant.ContextKeyOriginalModel))
+
+	for _, tc := range []struct {
+		name  string
+		multi bool
+		index int
+		key   string
+	}{
+		{name: "invalid single sentinel", index: -2, key: selected.Key},
+		{name: "single positive index", index: 1, key: selected.Key},
+		{name: "single replacement credential", index: -1, key: "different-key"},
+		{name: "multi sentinel", multi: true, index: -1, key: selected.Key},
+		{name: "multi out of range", multi: true, index: 1, key: selected.Key},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := *selected
+			candidate.ChannelInfo.IsMultiKey = tc.multi
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			apiErr := middleware.SetupChannelTestContext(c, &candidate, "gpt-4.1", tc.key, tc.index)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, types.ErrorCodeChannelKeyScopeUnsatisfied, apiErr.GetErrorCode())
 		})
 	}
 }

@@ -136,6 +136,7 @@ func (entry *ChannelKeyEntry) SetKeyModels(models []string) error {
 	}
 	return nil
 }
+
 // Key mappings overlay exact source rules on the channel mapping. Empty input
 // clears the override; bounded JSON objects retain exact model-ID spelling.
 func normalizeKeyModelMapping(raw string) (string, error) {

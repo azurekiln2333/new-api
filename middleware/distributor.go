@@ -756,6 +756,19 @@ func SetupContextForSelectedChannelExcluding(c *gin.Context, channel *model.Chan
 
 // setSelectedChannelKey records the key that serves this request.
 func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, index int) *types.NewAPIError {
+	// A pinned single-Key diagnostic uses -1 as its retry sentinel, but its
+	// authoritative allocation and per-Key settings still live at position 0.
+	if index == -1 && !channel.ChannelInfo.IsMultiKey && key != "" && key == channel.Key {
+		index = 0
+	}
+	if channel.ChannelInfo.IsMultiKey {
+		keys := channel.GetKeys()
+		if index < 0 || index >= len(keys) || keys[index] != key {
+			return types.NewError(errors.New("channel key allocation changed, retry the request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithSkipRetry())
+		}
+	} else if index != 0 || key != channel.Key {
+		return types.NewError(errors.New("channel key allocation changed, retry the request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithSkipRetry())
+	}
 	mapping, err := channel.GetModelMappingForKey(index)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())

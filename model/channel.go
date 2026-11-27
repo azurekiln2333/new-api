@@ -624,12 +624,21 @@ func channelServesConfiguredModel(channel *Channel, modelName string) bool {
 // replaced or disabled key, a changed mapping, a disabled channel, a model the
 // channel no longer serves, or a mapping that now resolves a different model
 // than the attempt sent. attemptMapping is the raw model mapping the failed
-// attempt used and attemptedUpstreamModel the model that attempt sent. It
-// reports whether it wrote.
-func RecordChannelModelUnavailability(channelID int, originModel, key, attemptMapping, attemptedUpstreamModel string, statusCode int, evidence string) (bool, error) {
+// attempt used and attemptedUpstreamModel the model that attempt sent. A supplied
+// allocation identifies the selected stable row and its configuration revision;
+// credential-only legacy callers must match exactly one current allocation.
+// Reports whether it wrote.
+func RecordChannelModelUnavailability(channelID int, originModel, key, attemptMapping, attemptedUpstreamModel string, statusCode int, evidence string, selected ...ChannelAllocation) (bool, error) {
 	fingerprint := ChannelKeyFingerprint(key)
-	if channelID <= 0 || originModel == "" || fingerprint == "" {
+	if channelID <= 0 || originModel == "" || fingerprint == "" || len(selected) > 1 {
 		return false, nil
+	}
+	var allocation ChannelAllocation
+	if len(selected) == 1 {
+		allocation = selected[0]
+		if allocation.ChannelID != channelID || allocation.EntryID <= 0 || allocation.Revision <= 0 {
+			return false, nil
+		}
 	}
 	pollingLock := GetChannelPollingLock(channelID)
 	pollingLock.Lock()
@@ -644,9 +653,24 @@ func RecordChannelModelUnavailability(channelID int, originModel, key, attemptMa
 			return nil
 		}
 		keys := channel.GetKeys()
-		index := slices.IndexFunc(keys, func(candidate string) bool {
-			return ChannelKeyFingerprint(candidate) == fingerprint
-		})
+		index := -1
+		if len(selected) == 1 {
+			index = slices.Index(channel.KeyEntryIDs, allocation.EntryID)
+			if index < 0 || index >= len(keys) || index >= len(channel.KeyEntryRevisions) ||
+				channel.KeyEntryRevisions[index] != allocation.Revision || ChannelKeyFingerprint(keys[index]) != fingerprint {
+				return nil
+			}
+		} else {
+			for i, candidate := range keys {
+				if ChannelKeyFingerprint(candidate) != fingerprint {
+					continue
+				}
+				if index >= 0 {
+					return nil // identical credential text cannot identify an allocation
+				}
+				index = i
+			}
+		}
 		if index < 0 || !channel.keyEnabled(index) || !channel.KeyServesModel(index, originModel) {
 			return nil
 		}

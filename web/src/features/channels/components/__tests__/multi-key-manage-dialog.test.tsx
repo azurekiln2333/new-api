@@ -467,21 +467,23 @@ test.each([false, true])(
       },
       { ...editableAllocation, model_mapping: '{"alias":"Second-Upstream"}' },
     ]
-    const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
-      const request = body as { action: string; model_mapping?: string }
-      if (request.action === 'get_key_status') return keyStatusResponse(keys)
-      return {
-        data: {
-          success: true,
+    const post = vi
+      .spyOn(api, 'post')
+      .mockImplementation(async (_url, body) => {
+        const request = body as { action: string; model_mapping?: string }
+        if (request.action === 'get_key_status') return keyStatusResponse(keys)
+        return {
           data: {
-            revision: 11,
-            key_entry_id: editableAllocation.id,
-            rev: 5,
-            model_mapping: request.model_mapping,
+            success: true,
+            data: {
+              revision: 11,
+              key_entry_id: editableAllocation.id,
+              rev: 5,
+              model_mapping: request.model_mapping,
+            },
           },
-        },
-      }
-    })
+        }
+      })
     const onSubmit = vi.fn()
     const user = userEvent.setup()
     render(
@@ -603,7 +605,10 @@ test('switching channels discards a mapping draft and ignores its late conflict'
   await waitFor(() =>
     expect(post).toHaveBeenCalledWith(
       '/api/channel/multi_key/manage',
-      expect.objectContaining({ action: 'set_key_model_mapping', channel_id: 7 }),
+      expect.objectContaining({
+        action: 'set_key_model_mapping',
+        channel_id: 7,
+      }),
       expect.anything()
     )
   )
@@ -623,13 +628,13 @@ test('switching channels discards a mapping draft and ignores its late conflict'
   expect(screen.getByRole('dialog', { name: /Next Channel/ })).toBeVisible()
   expect(post).toHaveBeenCalledTimes(3)
   await user.click(await screen.findByRole('button', { name: 'Model Mapping' }))
-  const nextEditor = await screen.findByRole('dialog', { name: 'Model Mapping' })
+  const nextEditor = await screen.findByRole('dialog', {
+    name: 'Model Mapping',
+  })
   expect(
     within(nextEditor).queryByDisplayValue('Old-Upstream')
   ).not.toBeInTheDocument()
-  expect(
-    within(nextEditor).getByRole('button', { name: 'Save' })
-  ).toBeEnabled()
+  expect(within(nextEditor).getByRole('button', { name: 'Save' })).toBeEnabled()
 })
 
 test('changing channels discards an open binding draft and ignores its late save result', async () => {

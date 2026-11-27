@@ -106,8 +106,8 @@ import type {
 import { ChannelBalanceDetails } from '../channel-balance-details'
 import { useChannels } from '../channels-provider'
 import { MultiKeyDedupDialog } from './multi-key-dedup-dialog'
-import { MultiKeyModelsEditor } from './multi-key-models-editor'
 import { MultiKeyModelMappingEditor } from './multi-key-model-mapping-editor'
+import { MultiKeyModelsEditor } from './multi-key-models-editor'
 import { MultiKeyQuotaEditor } from './multi-key-quota-editor'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeySyncDialog } from './multi-key-sync-dialog'
@@ -543,23 +543,30 @@ export function MultiKeyManageDialog({
       if (
         generation !== mappingRequest.current ||
         session !== editorSession.current
-      ) return
+      )
+        return
       if (response.data?.key_entry_id !== target.keyStatus.id) {
         throw new Error('Channel key configuration changed, reload and retry')
       }
       setMappingEditor(null)
       toast.success(getServerMessage(response) || t('Operation successful'))
-      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      void queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.lists(),
+      })
       void loadKeyStatus()
     } catch (error: unknown) {
       if (
         generation !== mappingRequest.current ||
         session !== editorSession.current
-      ) return
+      )
+        return
       if (isQuotaConflict(error)) await reloadAfterConflict()
       else handleServerError(error, t('Operation failed'))
     } finally {
-      if (generation === mappingRequest.current && session === editorSession.current) {
+      if (
+        generation === mappingRequest.current &&
+        session === editorSession.current
+      ) {
         setIsSavingMapping(false)
       }
     }
@@ -1221,7 +1228,9 @@ export function MultiKeyManageDialog({
 
           <Dialog
             open={
-              open && canEditSensitive && mappingEditor !== null &&
+              open &&
+              canEditSensitive &&
+              mappingEditor !== null &&
               mappingEditor.channelId === currentRow.id
             }
             onOpenChange={(next) => {
@@ -1502,7 +1511,10 @@ export function MultiKeyManageDialog({
                           setModelsEditor(null)
                           setUserEditor(null)
                           setQuotaEditor(null)
-                          setMappingEditor({ channelId: currentRow.id, keyStatus })
+                          setMappingEditor({
+                            channelId: currentRow.id,
+                            keyStatus,
+                          })
                         }}
                         onEditModels={(keyStatus) => {
                           setMappingEditor(null)
