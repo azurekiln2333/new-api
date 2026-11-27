@@ -509,6 +509,13 @@ func testChannelAttempt(ctx context.Context, channel *model.Channel, spec channe
 	prompt := channelTestPromptFromContext(ctx)
 
 	endpointType = normalizeChannelTestEndpoint(channel, endpointType)
+	if endpointType == "" && prompt != nil {
+		var err error
+		endpointType, err = fingerprintEndpoint(channel, testModel)
+		if err != nil {
+			return testResult{localErr: err}
+		}
+	}
 	if endpointType == "" {
 		endpointType = string(autoChannelTestEndpoint(channel, testModel))
 		// A task plugin tests the default route if served, otherwise its first
@@ -773,7 +780,20 @@ func runChannelTestRequest(c *gin.Context, w *httptest.ResponseRecorder, channel
 		}
 	}
 	result := w.Result()
-	respBody, err := readTestResponseBody(result.Body, info.IsStream)
+	var respBody []byte
+	if prompt != nil {
+		// Fingerprint replies are small diagnostic text, not arbitrary downloads.
+		// Bound the complete envelope before parsing/scoring; known usage is
+		// still settled by the defer above when an oversized reply is rejected.
+		const maxFingerprintResponseBytes = 64 << 10
+		respBody, err = io.ReadAll(io.LimitReader(result.Body, maxFingerprintResponseBytes+1))
+		_ = result.Body.Close()
+		if err == nil && len(respBody) > maxFingerprintResponseBytes {
+			err = errors.New("Response too large")
+		}
+	} else {
+		respBody, err = readTestResponseBody(result.Body, info.IsStream)
+	}
 	if err != nil {
 		return testResult{
 			context:     c,

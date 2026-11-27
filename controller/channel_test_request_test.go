@@ -438,7 +438,22 @@ func TestFingerprintWireOutputBudget(t *testing.T) {
 			recorder := &fingerprintRequestRecorder{}
 			adaptor := &fingerprintBoundedAdaptor{Adaptor: recorder, maxOutputTokens: 300}
 			info := &relaycommon.RelayInfo{RelayFormat: tc.format, ChannelMeta: &relaycommon.ChannelMeta{ApiType: tc.apiType}}
-			_, err := adaptor.DoRequest(nil, info, strings.NewReader(tc.body))
+			var body map[string]any
+			require.NoError(t, common.UnmarshalJsonStr(tc.body, &body))
+			switch tc.format {
+			case types.RelayFormatOpenAIResponses:
+				body["input"] = "bounded challenge"
+			case types.RelayFormatGemini:
+				body["contents"] = []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "bounded challenge"}}}}
+			default:
+				body["messages"] = []any{map[string]any{"role": "user", "content": "bounded challenge"}}
+			}
+			encoded, err := common.Marshal(body)
+			require.NoError(t, err)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx := context.WithValue(t.Context(), channelTestPromptKey, testPrompt{Prompt: "bounded challenge", MaxTokens: 300})
+			c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+			_, err = adaptor.DoRequest(c, info, strings.NewReader(string(encoded)))
 			if tc.wantErr {
 				require.Error(t, err)
 				assert.Empty(t, recorder.body, "unsupported requests never reach the upstream")
@@ -452,6 +467,66 @@ func TestFingerprintWireOutputBudget(t *testing.T) {
 			if tc.path == "max_completion_tokens" {
 				assert.False(t, gjson.GetBytes(recorder.body, "max_tokens").Exists())
 			}
+		})
+	}
+}
+
+func TestFingerprintWirePromptIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		format  types.RelayFormat
+		body    string
+		wantErr bool
+	}{
+		{name: "Chat plain text", format: types.RelayFormatOpenAI, body: `{"messages":[{"role":"user","content":"exact challenge"}],"temperature":0.2}`},
+		{name: "Chat one text block", format: types.RelayFormatOpenAI, body: `{"messages":[{"role":"user","content":[{"type":"text","text":"exact challenge"}]}]}`},
+		{name: "Responses string", format: types.RelayFormatOpenAIResponses, body: `{"input":"exact challenge"}`},
+		{name: "Responses converted user", format: types.RelayFormatOpenAIResponses, body: `{"input":[{"role":"user","content":"exact challenge"}]}`},
+		{name: "Responses input text block", format: types.RelayFormatOpenAIResponses, body: `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"exact challenge"}]}]}`},
+		{name: "Messages plain text", format: types.RelayFormatClaude, body: `{"messages":[{"role":"user","content":"exact challenge"}]}`},
+		{name: "Messages converted text block", format: types.RelayFormatClaude, body: `{"messages":[{"role":"user","content":[{"type":"text","text":"exact challenge"}]}]}`},
+		{name: "Messages adaptive effort", format: types.RelayFormatClaude, body: `{"messages":[{"role":"user","content":"exact challenge"}],"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`},
+		{name: "Gemini text part", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"generationConfig":{"maxOutputTokens":9000,"thinkingConfig":{"thinkingBudget":128}}}`},
+		{name: "Gemini safety controls", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"safetySettings":[{"category":"HARM_CATEGORY_HARASSMENT","threshold":"OFF"}]}`},
+		{name: "changed text", format: types.RelayFormatOpenAI, body: `{"messages":[{"role":"user","content":"different challenge"}]}`, wantErr: true},
+		{name: "removed text", format: types.RelayFormatOpenAI, body: `{}`, wantErr: true},
+		{name: "prepended system", format: types.RelayFormatOpenAI, body: `{"messages":[{"role":"system","content":"hidden instruction"},{"role":"user","content":"exact challenge"}]}`, wantErr: true},
+		{name: "additional user message", format: types.RelayFormatClaude, body: `{"messages":[{"role":"user","content":"exact challenge"},{"role":"user","content":"extra text"}]}`, wantErr: true},
+		{name: "message extension", format: types.RelayFormatOpenAI, body: `{"messages":[{"role":"user","content":"exact challenge","reasoning_content":"hidden instruction"}]}`, wantErr: true},
+		{name: "content extension", format: types.RelayFormatClaude, body: `{"messages":[{"role":"user","content":[{"type":"text","text":"exact challenge","content":"hidden instruction"}]}]}`, wantErr: true},
+		{name: "Responses instructions", format: types.RelayFormatOpenAIResponses, body: `{"input":"exact challenge","instructions":"hidden instruction"}`, wantErr: true},
+		{name: "Responses history", format: types.RelayFormatOpenAIResponses, body: `{"input":"exact challenge","previous_response_id":"previous-response"}`, wantErr: true},
+		{name: "Responses template", format: types.RelayFormatOpenAIResponses, body: `{"input":"exact challenge","prompt":{"id":"template"}}`, wantErr: true},
+		{name: "Responses context in reasoning", format: types.RelayFormatOpenAIResponses, body: `{"input":"exact challenge","reasoning":{"effort":"high","context":"hidden instruction"}}`, wantErr: true},
+		{name: "Messages system", format: types.RelayFormatClaude, body: `{"messages":[{"role":"user","content":"exact challenge"}],"system":"hidden instruction"}`, wantErr: true},
+		{name: "Messages output schema instruction", format: types.RelayFormatClaude, body: `{"messages":[{"role":"user","content":"exact challenge"}],"output_config":{"effort":"high","format":{"description":"hidden instruction"}}}`, wantErr: true},
+		{name: "provider extension", format: types.RelayFormatOpenAI, body: `{"messages":[{"role":"user","content":"exact challenge"}],"extra_body":{"system":"hidden instruction"}}`, wantErr: true},
+		{name: "Gemini system", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"systemInstruction":{"parts":[{"text":"hidden instruction"}]}}`, wantErr: true},
+		{name: "Gemini system alias", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"system_instruction":{"parts":[{"text":"hidden instruction"}]}}`, wantErr: true},
+		{name: "Gemini cached history", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"cachedContent":"prior-context"}`, wantErr: true},
+		{name: "Gemini schema instruction", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"generationConfig":{"responseSchema":{"description":"hidden instruction"}}}`, wantErr: true},
+		{name: "Gemini safety text", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"safetySettings":[{"category":"HARM_CATEGORY_HARASSMENT","threshold":"hidden instruction"}]}`, wantErr: true},
+		{name: "Gemini safety extension", format: types.RelayFormatGemini, body: `{"contents":[{"role":"user","parts":[{"text":"exact challenge"}]}],"safetySettings":[{"category":"HARM_CATEGORY_HARASSMENT","threshold":"OFF","instructions":"hidden instruction"}]}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &fingerprintRequestRecorder{}
+			adaptor := &fingerprintBoundedAdaptor{Adaptor: recorder, maxOutputTokens: 300}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx := context.WithValue(t.Context(), channelTestPromptKey, testPrompt{Prompt: "exact challenge", MaxTokens: 300})
+			c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+			info := &relaycommon.RelayInfo{RelayFormat: tc.format, ChannelMeta: &relaycommon.ChannelMeta{ApiType: constant.APITypeNewAPI}}
+			_, err := adaptor.DoRequest(c, info, strings.NewReader(tc.body))
+			if tc.wantErr {
+				require.ErrorIs(t, err, errFingerprintWirePromptChanged)
+				var apiErr *types.NewAPIError
+				require.ErrorAs(t, err, &apiErr)
+				assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+				assert.True(t, types.IsSkipRetryError(apiErr))
+				assert.Empty(t, recorder.body, "a misleading prompt never reaches the transport")
+				return
+			}
+			require.NoError(t, err)
+			assert.Contains(t, string(recorder.body), "exact challenge")
 		})
 	}
 }
@@ -470,17 +545,25 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 	service.InitHttpClient()
 	oldLogs := common.LogConsumeEnabled
 	oldRatios, oldGroups := ratio_setting.ModelRatio2JSONString(), ratio_setting.GroupRatio2JSONString()
+	geminiSettings := model_setting.GetGeminiSettings()
+	oldGeminiSafetySettings := geminiSettings.SafetySettings
+	oldGeminiVersionSettings := geminiSettings.VersionSettings
+	geminiSettings.SafetySettings = map[string]string{"default": "OFF"}
+	geminiSettings.VersionSettings = map[string]string{"default": "v1beta"}
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"gpt-4.1":1}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
 	common.LogConsumeEnabled = true
 	t.Cleanup(func() {
 		common.LogConsumeEnabled = oldLogs
+		geminiSettings.SafetySettings = oldGeminiSafetySettings
+		geminiSettings.VersionSettings = oldGeminiVersionSettings
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldGroups))
 	})
 	for _, tc := range []struct {
 		name, endpoint, reply string
 		messagesUpstream      bool
+		geminiUpstream        bool
 		wantErr               bool
 	}{
 		{name: "chat", endpoint: "openai", reply: "12 34 56"},
@@ -489,12 +572,19 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 		{name: "messages upstream chat client", endpoint: "openai", reply: "12 34 56", messagesUpstream: true},
 		{name: "messages upstream native client", endpoint: "anthropic", reply: "12 34 56", messagesUpstream: true},
 		{name: "messages upstream responses client", endpoint: "openai-response", reply: "12 34 56", messagesUpstream: true},
+		{name: "gemini upstream chat client", endpoint: "openai", reply: "12 34 56", geminiUpstream: true},
+		{name: "gemini upstream responses client", endpoint: "openai-response", reply: "12 34 56", geminiUpstream: true},
+		{name: "gemini upstream native client", endpoint: "gemini", reply: "12 34 56", geminiUpstream: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requests := make(chan channelDiagnosticWire, 1)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests <- captureChannelDiagnostic(r)
 				w.Header().Set("Content-Type", "application/json")
+				if tc.geminiUpstream {
+					_, _ = fmt.Fprintf(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":%q}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}`, tc.reply)
+					return
+				}
 				if tc.messagesUpstream {
 					_, _ = fmt.Fprintf(w, `{"id":"msg-fingerprint","type":"message","role":"assistant","model":"gpt-4.1","content":[{"type":"text","text":%q}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}`, tc.reply)
 					return
@@ -502,15 +592,23 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"id":"resp-fingerprint","object":"response","status":"completed","model":"gpt-4.1","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`, tc.reply)
 			}))
 			defer upstream.Close()
-			setting := `{"supported_endpoints":["responses"],"system_prompt":"diagnostic system prompt"}`
+			setting := `{"supported_endpoints":["responses"]}`
 			if tc.messagesUpstream {
-				setting = `{"supported_endpoints":["messages"],"system_prompt":"diagnostic system prompt"}`
+				setting = `{"supported_endpoints":["messages"]}`
 			}
-			override := `{"max_tokens":9000,"max_output_tokens":9000}`
+			override := `{"max_output_tokens":9000}`
+			if tc.messagesUpstream || tc.endpoint == "openai" {
+				override = `{"max_tokens":9000}`
+			}
 			selected := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "fingerprint-responses-" + tc.name, Key: "test-fingerprint-key", Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL, Setting: &setting, ParamOverride: &override}
+			if tc.geminiUpstream {
+				selected.Type = constant.ChannelTypeGemini
+				setting = ""
+				override = `{"generationConfig":{"maxOutputTokens":9000}}`
+			}
 			require.NoError(t, selected.Insert())
 			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
-			result, err := runFingerprintProbe(t.Context(), selected, rootID, "gpt-4.1", tc.endpoint, lmfp.Challenge{Prompt: "fingerprint challenge", ExpectedCount: 3}, 300)
+			result, err := runFingerprintProbe(t.Context(), selected, rootID, "gpt-4.1", tc.endpoint, lmfp.Challenge{Prompt: "fingerprint challenge", ExpectedCount: 3}, 300, service.FingerprintKeySelection{})
 			if tc.wantErr {
 				require.ErrorContains(t, err, "no text to score")
 			} else {
@@ -518,7 +616,16 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 			}
 			wire := takeChannelDiagnostic(t, requests)
 			limitField := "max_output_tokens"
-			if tc.messagesUpstream {
+			if tc.geminiUpstream {
+				assert.Equal(t, "/v1beta/models/gpt-4.1:generateContent", wire.path)
+				assert.Equal(t, "test-fingerprint-key", wire.headers.Get("x-goog-api-key"))
+				assert.Equal(t, "fingerprint challenge", gjson.GetBytes(wire.body, "contents.0.parts.0.text").String())
+				if tc.endpoint != "gemini" {
+					assert.Len(t, gjson.GetBytes(wire.body, "safetySettings").Array(), 4, "converted requests retain configured closed-enum safety controls")
+					assert.Equal(t, "OFF", gjson.GetBytes(wire.body, "safetySettings.0.threshold").String())
+				}
+				limitField = "generationConfig.maxOutputTokens"
+			} else if tc.messagesUpstream {
 				assert.Equal(t, "/v1/messages", wire.path)
 				assert.Equal(t, "2023-06-01", wire.headers.Get("anthropic-version"))
 				assert.True(t, gjson.GetBytes(wire.body, "messages").IsArray(), "Messages upstream receives a Claude body")
@@ -527,10 +634,12 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 			} else {
 				assert.Equal(t, "/v1/responses", wire.path)
 			}
-			assert.Equal(t, "Bearer test-fingerprint-key", wire.headers.Get("Authorization"))
-			assert.Empty(t, wire.headers.Get("x-api-key"), "the OpenAI channel retains its own authentication shape")
+			if !tc.geminiUpstream {
+				assert.Equal(t, "Bearer test-fingerprint-key", wire.headers.Get("Authorization"))
+				assert.Empty(t, wire.headers.Get("x-api-key"), "the OpenAI channel retains its own authentication shape")
+			}
 			assert.Contains(t, string(wire.body), "fingerprint challenge")
-			assert.Equal(t, 1, strings.Count(string(wire.body), "diagnostic system prompt"))
+			assert.NotContains(t, string(wire.body), "diagnostic system prompt", "unpreviewed system text is not part of a fingerprint probe")
 			assert.EqualValues(t, 300, gjson.GetBytes(wire.body, limitField).Uint())
 			assert.Equal(t, tc.reply, result.Text)
 			assert.Equal(t, 10, result.PromptTokens)
@@ -561,7 +670,7 @@ func TestFingerprintResponsesOnlyChannelProbe(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
-			_, err := runFingerprintProbe(ctx, selected, rootID, "gpt-4.1", "openai", lmfp.Challenge{Prompt: "fingerprint challenge", ExpectedCount: 3}, 300)
+			_, err := runFingerprintProbe(ctx, selected, rootID, "gpt-4.1", "openai", lmfp.Challenge{Prompt: "fingerprint challenge", ExpectedCount: 3}, 300, service.FingerprintKeySelection{})
 			done <- err
 		}()
 		select {
@@ -1159,7 +1268,7 @@ func TestFingerprintDiagnosticReloadsPolicyBetweenProbes(t *testing.T) {
 	require.NoError(t, selected.Insert())
 	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
 	probe := func() (service.FingerprintProbeResult, error) {
-		return runFingerprintProbe(t.Context(), selected, userID, "gpt-4.1", "", lmfp.Challenge{Prompt: "current-policy challenge", ExpectedCount: 3}, 300)
+		return runFingerprintProbe(t.Context(), selected, userID, "gpt-4.1", "", lmfp.Challenge{Prompt: "current-policy challenge", ExpectedCount: 3}, 300, service.FingerprintKeySelection{})
 	}
 	first, err := probe()
 	require.NoError(t, err)
@@ -1196,6 +1305,738 @@ func TestFingerprintDiagnosticReloadsPolicyBetweenProbes(t *testing.T) {
 	_, err = probe()
 	require.Error(t, err)
 	assert.Empty(t, requests, "a removed model or channel prevents any upstream request")
+}
+
+func TestFingerprintOptionsReflectEligibleKeyModels(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	keys := []string{"sk-fingerprint-key-b", "sk-fingerprint-key-a", "sk-fingerprint-disabled", "sk-fingerprint-deny-all"}
+	selected := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "fingerprint-options", Key: strings.Join(keys, "\n"),
+		Models: "gpt-4.1,gpt-5.1,codex-fixture,unserved-model", Group: "default", Status: common.ChannelStatusEnabled,
+		ModelMapping: lo.ToPtr(`{"gpt-4.1":"DeepSeek-R1"}`),
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true, MultiKeySize: len(keys), MultiKeyMode: constant.MultiKeyModePolling,
+			MultiKeyScopeModes: map[int]string{0: "allowlist", 1: "allowlist", 2: "allowlist", 3: "allowlist"},
+			MultiKeyModels:     map[int][]string{0: {"gpt-5.1"}, 1: {"DeepSeek-R1"}, 2: {"codex-fixture"}, 3: {}},
+			MultiKeyStatusList: map[int]int{2: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	selected, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?page_size=50", nil)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(selected.Id)}}
+	c.Set("id", userID)
+	GetChannelFingerprintOptions(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Models     []string    `json:"models"`
+			AutoModels []string    `json:"auto_models"`
+			Keys       []KeyStatus `json:"keys"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+	require.True(t, response.Success, w.Body.String())
+	assert.Equal(t, []string{"gpt-4.1", "gpt-5.1", "codex-fixture", "unserved-model"}, response.Data.Models)
+	assert.Equal(t, []string{"gpt-4.1", "gpt-5.1"}, response.Data.AutoModels, "disabled and deny-all Keys must not advertise an automatic candidate")
+	require.Len(t, response.Data.Keys, len(keys))
+	wantModels := [][]string{{"gpt-5.1"}, {"gpt-4.1"}, {"codex-fixture"}, nil}
+	for index, item := range response.Data.Keys {
+		allocation, ok := selected.ChannelAllocationByPosition(index)
+		require.True(t, ok)
+		assert.Equal(t, fmt.Sprint(allocation.EntryID), item.Id)
+		assert.Equal(t, allocation.Revision, item.Rev)
+		assert.Equal(t, index, item.Index)
+		assert.Equal(t, wantModels[index], item.Models, "Key models use the channel's request aliases")
+		assert.Equal(t, "allowlist", item.ScopeMode)
+		assert.NotEmpty(t, item.KeyPreview)
+		assert.NotContains(t, w.Body.String(), keys[index])
+	}
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, response.Data.Keys[2].Status)
+}
+
+func TestFingerprintAutomaticPreviewDispatchesOnlyModelEligibleKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, mapping, keyModel, upstreamModel string
+	}{
+		{name: "direct model scope", keyModel: "gpt-4.1", upstreamModel: "gpt-4.1"},
+		{name: "mapped upstream scope", mapping: `{"gpt-4.1":"DeepSeek-R1"}`, keyModel: "DeepSeek-R1", upstreamModel: "DeepSeek-R1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			userID := setupChannelDiagnosticRequests(t)
+			requests := make(chan channelDiagnosticWire, 4)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- captureChannelDiagnostic(r)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, channelDiagnosticChatReply)
+			}))
+			t.Cleanup(upstream.Close)
+			selected := &model.Channel{
+				Type: constant.ChannelTypeOpenAI, Name: "fingerprint-auto-key", Key: "auto-key-b\nauto-key-a",
+				Models: "gpt-4.1,gpt-5.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+				ModelMapping: lo.ToPtr(tc.mapping), Setting: lo.ToPtr(`{"supported_endpoints":["chat"]}`),
+				ChannelInfo: model.ChannelInfo{
+					IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling,
+					MultiKeyScopeModes: map[int]string{0: "allowlist", 1: "allowlist"},
+					MultiKeyModels:     map[int][]string{0: {"gpt-5.1"}, 1: {tc.keyModel}},
+				},
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			payload := fingerprintProbeRequest{Model: "gpt-4.1", EndpointType: "anthropic", Count: 1}
+			invoke := func(handler gin.HandlerFunc) *httptest.ResponseRecorder {
+				encoded, err := common.Marshal(payload)
+				require.NoError(t, err)
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(string(encoded)))
+				c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(selected.Id)}}
+				c.Set("id", userID)
+				handler(c)
+				return w
+			}
+			previewResponse := invoke(PreviewChannelFingerprint)
+			require.True(t, gjson.Get(previewResponse.Body.String(), "success").Bool(), previewResponse.Body.String())
+			var envelope struct {
+				Data service.FingerprintPreview `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(previewResponse.Body.Bytes(), &envelope))
+			require.Len(t, envelope.Data.Probes, 1)
+			assert.Empty(t, requests, "preview must not test any Key")
+			payload.PreviewID = envelope.Data.PreviewID
+			payload.EndpointType = "openai-response"
+			started := invoke(StartChannelFingerprint)
+			require.True(t, gjson.Get(started.Body.String(), "success").Bool(), started.Body.String())
+			jobID := gjson.Get(started.Body.String(), "data.id").String()
+			require.NotEmpty(t, jobID)
+			t.Cleanup(func() {
+				_, _ = service.CancelChannelFingerprint(jobID)
+				require.Eventually(t, func() bool {
+					job, err := service.GetChannelFingerprint(jobID)
+					return err != nil || job.FinishedAt != 0
+				}, 5*time.Second, 10*time.Millisecond, "stop diagnostic work before fixture DB/global teardown")
+			})
+			require.Eventually(t, func() bool {
+				job, err := service.GetChannelFingerprint(jobID)
+				return err == nil && job.FinishedAt != 0
+			}, 5*time.Second, 10*time.Millisecond)
+			job, err := service.GetChannelFingerprint(jobID)
+			require.NoError(t, err)
+			require.Len(t, job.Probes, 1)
+			require.Equal(t, "complete", job.Probes[0].State, job.Probes[0].Error)
+			assert.Equal(t, 1, job.RequestsUsed)
+			wire := takeChannelDiagnostic(t, requests)
+			assert.Equal(t, "Bearer auto-key-a", wire.headers.Get("Authorization"), "polling must skip the first Key when it cannot serve this model")
+			assert.Equal(t, "/v1/chat/completions", wire.path, "saved channel endpoints override legacy request fields")
+			assert.Equal(t, tc.upstreamModel, gjson.GetBytes(wire.body, "model").String())
+			assert.Equal(t, envelope.Data.Probes[0].Prompt, gjson.GetBytes(wire.body, "messages.0.content").String())
+			assert.Empty(t, requests, "automatic routing dispatches only the eligible Key")
+		})
+	}
+}
+
+func TestFingerprintPreviewHTTPRequiredContextAndExactDispatch(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	requests := make(chan channelDiagnosticWire, 4)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- captureChannelDiagnostic(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, channelDiagnosticChatReply)
+	}))
+	t.Cleanup(upstream.Close)
+	selected := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "fingerprint-preview-http", Key: "preview-first\npreview-selected",
+		Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+		Setting:     lo.ToPtr(`{"supported_endpoints":["chat"]}`),
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling},
+	}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	selected, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	allocation, ok := selected.ChannelAllocationByPosition(1)
+	require.True(t, ok)
+	payload := fingerprintProbeRequest{
+		Model: "gpt-4.1", EndpointType: "openai", Count: 1,
+		KeyEntryID: lo.ToPtr(fmt.Sprint(allocation.EntryID)), ExpectedRev: lo.ToPtr(allocation.Revision), KeyIndex: lo.ToPtr(1),
+	}
+	invoke := func(handler gin.HandlerFunc, owner int, input fingerprintProbeRequest) *httptest.ResponseRecorder {
+		encoded, err := common.Marshal(struct {
+			fingerprintProbeRequest
+			TokenBudget int    `json:"token_budget"`
+			Prompt      string `json:"prompt"`
+		}{fingerprintProbeRequest: input, TokenBudget: 1, Prompt: "client prompt must not replace the preview"})
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(string(encoded)))
+		c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(selected.Id)}}
+		c.Set("id", owner)
+		handler(c)
+		return w
+	}
+	missing := invoke(StartChannelFingerprint, userID, payload)
+	assert.False(t, gjson.Get(missing.Body.String(), "success").Bool())
+	assert.Equal(t, "a fingerprint preview is required", gjson.Get(missing.Body.String(), "message").String())
+	assert.Empty(t, requests)
+
+	response := invoke(PreviewChannelFingerprint, userID, payload)
+	require.True(t, gjson.Get(response.Body.String(), "success").Bool(), response.Body.String())
+	var envelope struct {
+		Data service.FingerprintPreview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &envelope))
+	preview := envelope.Data
+	require.Len(t, preview.Probes, 1)
+	assert.Empty(t, requests, "preview never sends an upstream request")
+	assert.NotEmpty(t, preview.Probes[0].Prompt)
+	assert.NotContains(t, response.Body.String(), "preview-selected")
+	payload.PreviewID = preview.PreviewID
+	for _, changed := range []fingerprintProbeRequest{
+		{PreviewID: preview.PreviewID, Model: payload.Model, EndpointType: payload.EndpointType, Count: 2, KeyEntryID: payload.KeyEntryID, ExpectedRev: payload.ExpectedRev, KeyIndex: payload.KeyIndex},
+		{PreviewID: preview.PreviewID, Model: payload.Model, EndpointType: payload.EndpointType, Count: 1},
+	} {
+		mismatched := invoke(StartChannelFingerprint, userID, changed)
+		assert.False(t, gjson.Get(mismatched.Body.String(), "success").Bool())
+		assert.Empty(t, requests, "a changed selection must not start this preview")
+	}
+	wrongOwner := invoke(StartChannelFingerprint, userID+1, payload)
+	assert.False(t, gjson.Get(wrongOwner.Body.String(), "success").Bool())
+	assert.Equal(t, "fingerprint preview is unavailable or expired", gjson.Get(wrongOwner.Body.String(), "message").String())
+	assert.Empty(t, requests)
+
+	started := invoke(StartChannelFingerprint, userID, payload)
+	require.True(t, gjson.Get(started.Body.String(), "success").Bool(), started.Body.String())
+	jobID := gjson.Get(started.Body.String(), "data.id").String()
+	require.NotEmpty(t, jobID)
+	t.Cleanup(func() {
+		_, _ = service.CancelChannelFingerprint(jobID)
+		require.Eventually(t, func() bool {
+			job, err := service.GetChannelFingerprint(jobID)
+			return err != nil || job.FinishedAt != 0
+		}, 5*time.Second, 10*time.Millisecond, "stop diagnostic work before fixture DB/global teardown")
+	})
+	var wire channelDiagnosticWire
+	select {
+	case wire = <-requests:
+	case <-time.After(5 * time.Second):
+		t.Fatal("preview job did not dispatch")
+	}
+	assert.Equal(t, "Bearer preview-selected", wire.headers.Get("Authorization"))
+	assert.Equal(t, "/v1/chat/completions", wire.path)
+	assert.Equal(t, preview.Probes[0].Prompt, gjson.GetBytes(wire.body, "messages.0.content").String())
+	assert.EqualValues(t, 4096, gjson.GetBytes(wire.body, "max_tokens").Uint())
+	assert.EqualValues(t, 24000, gjson.Get(started.Body.String(), "data.token_budget").Int(), "legacy client budget fields cannot override the server budget")
+	assert.Equal(t, preview.Probes[0].ID, gjson.Get(started.Body.String(), "data.probes.0.id").String())
+	require.Eventually(t, func() bool {
+		job, err := service.GetChannelFingerprint(jobID)
+		return err == nil && job.FinishedAt != 0
+	}, 5*time.Second, 10*time.Millisecond)
+	// Endpoint selection is server-owned; legacy request fields cannot change
+	// the accepted run or authorize a second dispatch on a different endpoint.
+	payload.EndpointType = "openai-response"
+	replayed := invoke(StartChannelFingerprint, userID, payload)
+	require.True(t, gjson.Get(replayed.Body.String(), "success").Bool(), replayed.Body.String())
+	assert.Equal(t, jobID, gjson.Get(replayed.Body.String(), "data.id").String())
+	assert.Empty(t, requests, "repeated HTTP Start never reruns a paid sample")
+	var logs []model.Log
+	require.NoError(t, model.LOG_DB.Where("channel_id = ?", selected.Id).Find(&logs).Error)
+	assert.Len(t, logs, 1, "preview/start/retry uses one existing diagnostic settlement")
+
+	// A fresh preview must also reject a Key that becomes stale before Start.
+	fresh := invoke(PreviewChannelFingerprint, userID, fingerprintProbeRequest{
+		Model: payload.Model, EndpointType: payload.EndpointType, Count: 1,
+		KeyEntryID: payload.KeyEntryID, ExpectedRev: payload.ExpectedRev, KeyIndex: payload.KeyIndex,
+	})
+	require.True(t, gjson.Get(fresh.Body.String(), "success").Bool(), fresh.Body.String())
+	payload.PreviewID = gjson.Get(fresh.Body.String(), "data.preview_id").String()
+	_, err = model.UpdateChannelKeyAllocations(selected.Id, selected.ChannelInfo.KeyEntryRevision, func(entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+		entries[1].ScopeMode = "allowlist"
+		entries[1].Models = "[]"
+		entries[1].ConfigRevision++
+		return entries, nil, nil
+	})
+	require.NoError(t, err)
+	stale := invoke(StartChannelFingerprint, userID, payload)
+	assert.False(t, gjson.Get(stale.Body.String(), "success").Bool())
+	assert.Equal(t, "the selected key is unavailable for this model", gjson.Get(stale.Body.String(), "message").String())
+	assert.Empty(t, requests, "a stale selected Key cannot be replaced by the automatic pool")
+}
+
+func TestFingerprintRetryHTTPPreservesSuccessfulSamplesAndSelection(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	requests := make(chan channelDiagnosticWire, 8)
+	var calls atomic.Int32
+	retryRunning := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- captureChannelDiagnostic(r)
+		attempt := calls.Add(1)
+		if attempt == 5 {
+			close(retryRunning)
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if attempt == 2 || attempt == 3 {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":{"message":"untrusted secret-do-not-reflect","code":"secret-do-not-reflect"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, channelDiagnosticChatReply)
+	}))
+	t.Cleanup(upstream.Close)
+	selected := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "fingerprint-retry-http", Key: "retry-first\nretry-selected",
+		Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling},
+	}
+	require.NoError(t, selected.Insert())
+	t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+	selected, err := model.GetChannelById(selected.Id, true)
+	require.NoError(t, err)
+	allocation, ok := selected.ChannelAllocationByPosition(1)
+	require.True(t, ok)
+	payload := fingerprintProbeRequest{
+		Model: "gpt-4.1", EndpointType: "openai", Count: 3,
+		KeyEntryID: lo.ToPtr(fmt.Sprint(allocation.EntryID)), ExpectedRev: lo.ToPtr(allocation.Revision), KeyIndex: lo.ToPtr(1),
+	}
+	invoke := func(handler gin.HandlerFunc, owner int, channelID int, jobID string, input any) *httptest.ResponseRecorder {
+		encoded, err := common.Marshal(input)
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(string(encoded)))
+		c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(channelID)}, {Key: "job_id", Value: jobID}}
+		c.Set("id", owner)
+		handler(c)
+		assert.NotContains(t, w.Body.String(), "secret-do-not-reflect")
+		return w
+	}
+	previewResponse := invoke(PreviewChannelFingerprint, userID, selected.Id, "", payload)
+	require.True(t, gjson.Get(previewResponse.Body.String(), "success").Bool(), previewResponse.Body.String())
+	var envelope struct {
+		Data service.FingerprintPreview `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(previewResponse.Body.Bytes(), &envelope))
+	preview := envelope.Data
+	require.Len(t, preview.Probes, 3)
+	payload.PreviewID = preview.PreviewID
+	started := invoke(StartChannelFingerprint, userID, selected.Id, "", payload)
+	require.True(t, gjson.Get(started.Body.String(), "success").Bool(), started.Body.String())
+	jobID := gjson.Get(started.Body.String(), "data.id").String()
+	require.NotEmpty(t, jobID)
+	t.Cleanup(func() {
+		_, _ = service.CancelChannelFingerprint(jobID)
+		require.Eventually(t, func() bool {
+			job, err := service.GetChannelFingerprint(jobID)
+			return err != nil || job.FinishedAt != 0
+		}, 5*time.Second, 10*time.Millisecond)
+	})
+	require.Eventually(t, func() bool {
+		job, err := service.GetChannelFingerprint(jobID)
+		return err == nil && job.FinishedAt != 0
+	}, 5*time.Second, 10*time.Millisecond)
+	before, err := service.GetChannelFingerprint(jobID)
+	require.NoError(t, err)
+	require.Equal(t, "complete", before.Probes[0].State)
+	require.True(t, before.Probes[1].RetryAllowed)
+	for _, sample := range preview.Probes {
+		wire := takeChannelDiagnostic(t, requests)
+		assert.Equal(t, sample.Prompt, gjson.GetBytes(wire.body, "messages.0.content").String())
+		assert.Equal(t, "Bearer retry-selected", wire.headers.Get("Authorization"))
+	}
+	payload.ProbeID, payload.ExpectedAttempt = preview.Probes[1].ID, 1
+	for _, tc := range []struct {
+		name    string
+		owner   int
+		channel int
+		job     string
+		input   fingerprintProbeRequest
+	}{
+		{name: "wrong owner", owner: userID + 1, channel: selected.Id, job: jobID, input: payload},
+		{name: "wrong channel", owner: userID, channel: selected.Id + 1, job: jobID, input: payload},
+		{name: "wrong job", owner: userID, channel: selected.Id, job: "other-job", input: payload},
+		{name: "successful sample", owner: userID, channel: selected.Id, job: jobID, input: fingerprintProbeRequest{
+			PreviewID: payload.PreviewID, Model: payload.Model, EndpointType: payload.EndpointType, Count: payload.Count,
+			KeyEntryID: payload.KeyEntryID, ExpectedRev: payload.ExpectedRev, KeyIndex: payload.KeyIndex, ProbeID: preview.Probes[0].ID, ExpectedAttempt: 1,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := invoke(RetryChannelFingerprintProbe, tc.owner, tc.channel, tc.job, tc.input)
+			assert.False(t, gjson.Get(response.Body.String(), "success").Bool())
+			assert.EqualValues(t, 3, calls.Load())
+			assert.Empty(t, requests)
+		})
+	}
+	retried := invoke(RetryChannelFingerprintProbe, userID, selected.Id, jobID, payload)
+	require.True(t, gjson.Get(retried.Body.String(), "success").Bool(), retried.Body.String())
+	require.Eventually(t, func() bool {
+		job, err := service.GetChannelFingerprint(jobID)
+		return err == nil && job.FinishedAt != 0
+	}, 5*time.Second, 10*time.Millisecond)
+	wire := takeChannelDiagnostic(t, requests)
+	assert.Equal(t, preview.Probes[1].Prompt, gjson.GetBytes(wire.body, "messages.0.content").String())
+	assert.Equal(t, "Bearer retry-selected", wire.headers.Get("Authorization"))
+	assert.EqualValues(t, 4096, gjson.GetBytes(wire.body, "max_tokens").Uint())
+	final, err := service.GetChannelFingerprint(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, before.Probes[0], final.Probes[0], "the successful paid sample is untouched")
+	assert.Equal(t, "complete", final.Probes[1].State)
+	assert.Equal(t, 2, final.Probes[1].Attempt)
+	assert.Equal(t, before.Revision+1, final.Revision)
+	assert.Equal(t, 24000, final.TokenBudget)
+	assert.Greater(t, final.TokensUsed, before.TokensUsed)
+	assert.Equal(t, 4, final.RequestsUsed)
+	replay := invoke(RetryChannelFingerprintProbe, userID, selected.Id, jobID, payload)
+	require.True(t, gjson.Get(replay.Body.String(), "success").Bool(), replay.Body.String())
+	assert.EqualValues(t, final.Revision, gjson.Get(replay.Body.String(), "data.revision").Int())
+	assert.EqualValues(t, 4, calls.Load(), "lost response retries dispatch no additional work")
+	assert.Empty(t, requests)
+	var logs []model.Log
+	require.NoError(t, model.LOG_DB.Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Find(&logs).Error)
+	assert.Len(t, logs, 2, "only the two successful attempts settle once each")
+
+	// A stale row revision is rejected before a new attempt is admitted. The
+	// current revision remains available for the explicit cancellation case.
+	payload.ProbeID = preview.Probes[2].ID
+	payload.ExpectedRev = lo.ToPtr(allocation.Revision + 1)
+	staleRevision := invoke(RetryChannelFingerprintProbe, userID, selected.Id, jobID, payload)
+	assert.False(t, gjson.Get(staleRevision.Body.String(), "success").Bool())
+	assert.Equal(t, "the selected key is unavailable for this model", gjson.Get(staleRevision.Body.String(), "message").String())
+	assert.EqualValues(t, 4, calls.Load())
+	payload.ExpectedRev = lo.ToPtr(allocation.Revision)
+
+	inFlight := invoke(RetryChannelFingerprintProbe, userID, selected.Id, jobID, payload)
+	require.True(t, gjson.Get(inFlight.Body.String(), "success").Bool(), inFlight.Body.String())
+	select {
+	case <-retryRunning:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second sample retry did not start")
+	}
+	for _, fence := range []any{map[string]int{"expected_revision": 1}, map[string]int{}} {
+		staleCancel := invoke(CancelChannelFingerprint, userID, selected.Id, jobID, fence)
+		assert.Equal(t, http.StatusConflict, staleCancel.Code)
+		current, err := service.GetChannelFingerprint(jobID)
+		require.NoError(t, err)
+		assert.Equal(t, "running", current.State, "stale/unfenced cancellation cannot stop a newer retry")
+	}
+	cancelled := invoke(CancelChannelFingerprint, userID, selected.Id, jobID, map[string]int{"expected_revision": final.Revision + 1})
+	require.True(t, gjson.Get(cancelled.Body.String(), "success").Bool(), cancelled.Body.String())
+	require.Eventually(t, func() bool {
+		job, err := service.GetChannelFingerprint(jobID)
+		return err == nil && job.State == "cancelled" && job.FinishedAt != 0
+	}, 5*time.Second, 10*time.Millisecond)
+	wire = takeChannelDiagnostic(t, requests)
+	assert.Equal(t, preview.Probes[2].Prompt, gjson.GetBytes(wire.body, "messages.0.content").String())
+	assert.Equal(t, "Bearer retry-selected", wire.headers.Get("Authorization"))
+
+	// A retry request cannot fall back after its selected Key changes.
+	_, err = model.UpdateChannelKeyAllocations(selected.Id, selected.ChannelInfo.KeyEntryRevision, func(entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+		entries[1].ConfigRevision++
+		return entries, nil, nil
+	})
+	require.NoError(t, err)
+	payload.ProbeID = preview.Probes[2].ID
+	stale := invoke(RetryChannelFingerprintProbe, userID, selected.Id, jobID, payload)
+	assert.False(t, gjson.Get(stale.Body.String(), "success").Bool())
+	assert.Equal(t, "the selected key is unavailable for this model", gjson.Get(stale.Body.String(), "message").String())
+	assert.EqualValues(t, 5, calls.Load())
+	assert.Empty(t, requests)
+}
+
+func TestFingerprintPreviewPromptMutationRejectedBeforeDispatch(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	for _, tc := range []struct {
+		name, endpoint, setting, override string
+	}{
+		{name: "Chat replaces user text", endpoint: "openai", override: `{"messages":[{"role":"user","content":"replacement prompt"}]}`},
+		{name: "Chat removes user text", endpoint: "openai", override: `{"messages":[]}`},
+		{name: "Chat adds system text", endpoint: "openai", setting: `{"system_prompt":"unpreviewed instruction"}`},
+		{name: "Chat to Responses replaces user text before conversion", endpoint: "openai", setting: `{"supported_endpoints":["responses"]}`, override: `{"messages":[{"role":"user","content":"replacement prompt"}]}`},
+		{name: "Chat to Responses adds system instructions", endpoint: "openai", setting: `{"supported_endpoints":["responses"],"system_prompt":"unpreviewed instruction"}`},
+		{name: "Responses replaces input", endpoint: "openai-response", setting: `{"supported_endpoints":["responses"]}`, override: `{"input":"replacement prompt"}`},
+		{name: "Responses adds hidden history", endpoint: "openai-response", setting: `{"supported_endpoints":["responses"]}`, override: `{"previous_response_id":"unpreviewed-history"}`},
+		{name: "Responses to Messages replaces converted text", endpoint: "openai-response", setting: `{"supported_endpoints":["messages"]}`, override: `{"messages":[{"role":"user","content":[{"type":"text","text":"replacement prompt"}]}]}`},
+		{name: "Chat to Messages adds hidden system", endpoint: "openai", setting: `{"supported_endpoints":["messages"],"system_prompt":"unpreviewed instruction"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.ReadAll(r.Body)
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, channelDiagnosticChatReply)
+			}))
+			t.Cleanup(upstream.Close)
+			selected := &model.Channel{
+				Type: constant.ChannelTypeOpenAI, Name: "fingerprint-prompt-integrity", Key: "test-prompt-integrity-key",
+				Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+				Setting: &tc.setting, ParamOverride: &tc.override,
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			payload := fingerprintProbeRequest{Model: "gpt-4.1", EndpointType: tc.endpoint, Count: 1}
+			invoke := func(handler gin.HandlerFunc, jobID string) *httptest.ResponseRecorder {
+				encoded, err := common.Marshal(payload)
+				require.NoError(t, err)
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(string(encoded)))
+				c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(selected.Id)}}
+				if jobID != "" {
+					c.Params = append(c.Params, gin.Param{Key: "job_id", Value: jobID})
+				}
+				c.Set("id", userID)
+				handler(c)
+				return w
+			}
+			preview := invoke(PreviewChannelFingerprint, "")
+			require.True(t, gjson.Get(preview.Body.String(), "success").Bool(), preview.Body.String())
+			prompt := gjson.Get(preview.Body.String(), "data.probes.0.prompt").String()
+			require.NotEmpty(t, prompt)
+			payload.PreviewID = gjson.Get(preview.Body.String(), "data.preview_id").String()
+			started := invoke(StartChannelFingerprint, "")
+			require.True(t, gjson.Get(started.Body.String(), "success").Bool(), started.Body.String())
+			jobID := gjson.Get(started.Body.String(), "data.id").String()
+			require.NotEmpty(t, jobID)
+			t.Cleanup(func() {
+				_, _ = service.CancelChannelFingerprint(jobID)
+				require.Eventually(t, func() bool {
+					job, err := service.GetChannelFingerprint(jobID)
+					return err != nil || job.FinishedAt != 0
+				}, 5*time.Second, 10*time.Millisecond)
+			})
+			require.Eventually(t, func() bool {
+				job, err := service.GetChannelFingerprint(jobID)
+				return err == nil && job.FinishedAt != 0
+			}, 5*time.Second, 10*time.Millisecond)
+			read := invoke(GetChannelFingerprint, jobID)
+			repeated := invoke(StartChannelFingerprint, "")
+			for _, response := range []*httptest.ResponseRecorder{read, repeated} {
+				body := response.Body.String()
+				require.True(t, gjson.Get(body, "success").Bool(), body)
+				assert.Equal(t, jobID, gjson.Get(body, "data.id").String())
+				assert.Equal(t, "failed", gjson.Get(body, "data.state").String())
+				assert.Equal(t, errFingerprintWirePromptChanged.Error(), gjson.Get(body, "data.probes.0.error").String())
+				assert.Equal(t, prompt, gjson.Get(body, "data.probes.0.prompt").String(), "a rejected run retains its original preview, not misleading substituted text")
+			}
+			payload.ProbeID = gjson.Get(started.Body.String(), "data.probes.0.id").String()
+			payload.ExpectedAttempt = 1
+			retried := invoke(RetryChannelFingerprintProbe, jobID)
+			require.True(t, gjson.Get(retried.Body.String(), "success").Bool(), retried.Body.String())
+			require.Eventually(t, func() bool {
+				job, err := service.GetChannelFingerprint(jobID)
+				return err == nil && job.FinishedAt != 0
+			}, 5*time.Second, 10*time.Millisecond)
+			read = invoke(GetChannelFingerprint, jobID)
+			assert.Equal(t, errFingerprintWirePromptChanged.Error(), gjson.Get(read.Body.String(), "data.probes.0.error").String())
+			assert.Equal(t, prompt, gjson.Get(read.Body.String(), "data.probes.0.prompt").String())
+			assert.Zero(t, calls.Load(), "initial, explicit retry and replay all retain the final-body prompt guard")
+			var logs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Count(&logs).Error)
+			assert.Zero(t, logs, "preflight rejection never records productive usage")
+		})
+	}
+}
+
+func TestFingerprintRefusalJobProjectionDoesNotExposeUpstreamFields(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	const secret = "sk-fingerprint-refusal-secret"
+	const promotion = "https://untrusted.example/pay"
+	for _, tc := range []struct {
+		name        string
+		channelType int
+		endpoint    string
+		body        string
+	}{
+		{
+			name: "OpenAI malicious code type and metadata", channelType: constant.ChannelTypeOpenAI, endpoint: "openai",
+			body: `{"error":{"code":"sk-fingerprint-refusal-secret https://untrusted.example/pay","type":"sk-fingerprint-refusal-secret https://untrusted.example/pay","message":"Contact https://untrusted.example/pay with sk-fingerprint-refusal-secret","param":"sk-fingerprint-refusal-secret","metadata":{"detail":"https://untrusted.example/pay"}}}`,
+		},
+		{
+			name: "Messages malicious type and payload", channelType: constant.ChannelTypeAnthropic, endpoint: "anthropic",
+			body: `{"type":"error","error":{"type":"sk-fingerprint-refusal-secret https://untrusted.example/pay","message":"Contact https://untrusted.example/pay with sk-fingerprint-refusal-secret"},"detail":"sk-fingerprint-refusal-secret https://untrusted.example/pay"}`,
+		},
+		{
+			name: "unstructured refusal payload", channelType: constant.ChannelTypeOpenAI, endpoint: "openai",
+			body: `sk-fingerprint-refusal-secret https://untrusted.example/pay`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.ReadAll(r.Body)
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(upstream.Close)
+			selected := &model.Channel{
+				Type: tc.channelType, Name: "fingerprint-safe-refusal", Key: "test-refusal-key",
+				Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			payload := fingerprintProbeRequest{Model: "gpt-4.1", EndpointType: tc.endpoint, Count: 1}
+			invoke := func(handler gin.HandlerFunc, jobID string) *httptest.ResponseRecorder {
+				encoded, err := common.Marshal(payload)
+				require.NoError(t, err)
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(string(encoded)))
+				c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(selected.Id)}}
+				if jobID != "" {
+					c.Params = append(c.Params, gin.Param{Key: "job_id", Value: jobID})
+				}
+				c.Set("id", userID)
+				handler(c)
+				return w
+			}
+			preview := invoke(PreviewChannelFingerprint, "")
+			require.True(t, gjson.Get(preview.Body.String(), "success").Bool(), preview.Body.String())
+			assert.Zero(t, calls.Load(), "preview never dispatches")
+			payload.PreviewID = gjson.Get(preview.Body.String(), "data.preview_id").String()
+			started := invoke(StartChannelFingerprint, "")
+			require.True(t, gjson.Get(started.Body.String(), "success").Bool(), started.Body.String())
+			jobID := gjson.Get(started.Body.String(), "data.id").String()
+			require.NotEmpty(t, jobID)
+			t.Cleanup(func() {
+				_, _ = service.CancelChannelFingerprint(jobID)
+				require.Eventually(t, func() bool {
+					job, err := service.GetChannelFingerprint(jobID)
+					return err != nil || job.FinishedAt != 0
+				}, 5*time.Second, 10*time.Millisecond, "finish refusal work before fixture teardown")
+			})
+			require.Eventually(t, func() bool {
+				job, err := service.GetChannelFingerprint(jobID)
+				return err == nil && job.FinishedAt != 0
+			}, 5*time.Second, 10*time.Millisecond)
+			assert.EqualValues(t, 1, calls.Load(), "a refusal is not replayed as new paid work")
+			read := invoke(GetChannelFingerprint, jobID)
+			repeated := invoke(StartChannelFingerprint, "")
+			for _, response := range []*httptest.ResponseRecorder{started, read, repeated} {
+				assert.NotContains(t, response.Body.String(), secret, "the entire job/probe JSON must exclude provider fields")
+				assert.NotContains(t, response.Body.String(), promotion)
+			}
+			for _, response := range []*httptest.ResponseRecorder{read, repeated} {
+				body := response.Body.String()
+				require.True(t, gjson.Get(body, "success").Bool(), body)
+				assert.Equal(t, jobID, gjson.Get(body, "data.id").String())
+				assert.Equal(t, "failed", gjson.Get(body, "data.state").String())
+				assert.Equal(t, "fingerprint request failed (HTTP 403)", gjson.Get(body, "data.error").String())
+				assert.Equal(t, "fingerprint request failed (HTTP 403)", gjson.Get(body, "data.probes.0.error").String())
+				assert.EqualValues(t, 1, gjson.Get(body, "data.requests_used").Int())
+				assert.Zero(t, gjson.Get(body, "data.probes.0.prompt_tokens").Int())
+				assert.Zero(t, gjson.Get(body, "data.probes.0.output_tokens").Int())
+			}
+			assert.EqualValues(t, 1, calls.Load(), "GET and repeated Start must not dispatch another request")
+			payload.ProbeID = gjson.Get(started.Body.String(), "data.probes.0.id").String()
+			payload.ExpectedAttempt = 1
+			retried := invoke(RetryChannelFingerprintProbe, jobID)
+			require.True(t, gjson.Get(retried.Body.String(), "success").Bool(), retried.Body.String())
+			require.Eventually(t, func() bool {
+				job, err := service.GetChannelFingerprint(jobID)
+				return err == nil && job.FinishedAt != 0
+			}, 5*time.Second, 10*time.Millisecond)
+			read = invoke(GetChannelFingerprint, jobID)
+			replayedRetry := invoke(RetryChannelFingerprintProbe, jobID)
+			for _, response := range []*httptest.ResponseRecorder{retried, read, replayedRetry} {
+				assert.NotContains(t, response.Body.String(), secret)
+				assert.NotContains(t, response.Body.String(), promotion)
+			}
+			assert.Equal(t, "fingerprint request failed (HTTP 403)", gjson.Get(read.Body.String(), "data.probes.0.error").String())
+			assert.EqualValues(t, 2, gjson.Get(read.Body.String(), "data.probes.0.attempt").Int())
+			assert.EqualValues(t, 2, calls.Load(), "explicit retry adds one refusal; replay never adds another")
+			var logs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Count(&logs).Error)
+			assert.Zero(t, logs, "a refusal without trusted usage is not settled as a success")
+		})
+	}
+}
+
+func TestFingerprintStableSelectionRevalidatedBetweenProbes(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	requests := make(chan channelDiagnosticWire, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- captureChannelDiagnostic(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, channelDiagnosticChatReply)
+	}))
+	t.Cleanup(upstream.Close)
+	for _, mutation := range []string{"remove", "revision", "scope", "reorder"} {
+		t.Run(mutation, func(t *testing.T) {
+			selected := &model.Channel{
+				Type: constant.ChannelTypeOpenAI, Name: "fingerprint-stable-" + mutation, Key: "stable-first\nstable-selected",
+				Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusManuallyDisabled, BaseURL: &upstream.URL,
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling},
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			selected, err := model.GetChannelById(selected.Id, true)
+			require.NoError(t, err)
+			allocation, ok := selected.ChannelAllocationByPosition(1)
+			require.True(t, ok)
+			selection := service.FingerprintKeySelection{EntryID: allocation.EntryID, Revision: allocation.Revision, Index: 1, HasIndex: true}
+			probe := func() error {
+				_, err := runFingerprintProbe(t.Context(), selected, userID, "gpt-4.1", "openai", lmfp.Challenge{Prompt: "stable sample", ExpectedCount: 3}, 300, selection)
+				return err
+			}
+			require.NoError(t, probe(), "named Keys and disabled channels retain admin recovery diagnostics")
+			wire := takeChannelDiagnostic(t, requests)
+			assert.Equal(t, "Bearer stable-selected", wire.headers.Get("Authorization"))
+			_, err = model.UpdateChannelKeyAllocations(selected.Id, selected.ChannelInfo.KeyEntryRevision, func(entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+				switch mutation {
+				case "remove":
+					return entries[:1], entries[1:], nil
+				case "revision":
+					entries[1].ConfigRevision++
+				case "scope":
+					entries[1].ScopeMode = "allowlist"
+					entries[1].Models = "[]"
+					entries[1].ConfigRevision++
+				case "reorder":
+					entries[0], entries[1] = entries[1], entries[0]
+				}
+				return entries, nil, nil
+			})
+			require.NoError(t, err)
+			require.ErrorContains(t, probe(), "selected key is unavailable")
+			assert.Empty(t, requests, "a later sample cannot fall back to another allocation")
+			sample := service.ReadChannelConcurrency(t.Context(), []int{selected.Id})[selected.Id]
+			if sample.Current != nil {
+				assert.Zero(t, *sample.Current)
+			}
+		})
+	}
+}
+
+func TestFingerprintPreviewRejectsInvalidKeyPayloadsWithoutSecrets(t *testing.T) {
+	for _, body := range []string{
+		`{"key_index":1}`,
+		`{"key_entry_id":"secret-do-not-reflect"}`,
+		`{"expected_rev":1}`,
+		`{"key_entry_id":"01","expected_rev":1}`,
+		`{"key_entry_id":"1","expected_rev":0}`,
+		`{"key_entry_id":"1","expected_rev":1,"key_index":-1}`,
+		`{"key_entry_id":"secret-do-not-reflect","expected_rev":"secret-do-not-reflect"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+			c.Params = gin.Params{{Key: "id", Value: "1"}}
+			c.Set("id", 9)
+			PreviewChannelFingerprint(c)
+			assert.False(t, gjson.Get(w.Body.String(), "success").Bool())
+			assert.NotContains(t, w.Body.String(), "secret-do-not-reflect")
+		})
+	}
 }
 
 func TestFingerprintJobRouteOwnershipAndRequestLifetime(t *testing.T) {

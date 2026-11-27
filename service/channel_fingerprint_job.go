@@ -120,12 +120,6 @@ func (job *FingerprintJob) tokensUsed() int {
 	return job.TokensUsed
 }
 
-func (job *FingerprintJob) addRequestsUsed(count int) {
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	job.RequestsUsed += count
-}
-
 func (job *FingerprintJob) addTokens(count int) {
 	job.mu.Lock()
 	defer job.mu.Unlock()
@@ -140,6 +134,9 @@ func (job *FingerprintJob) setProbeState(index int, state, message string, maxTo
 	}
 	job.Probes[index].State = state
 	job.Probes[index].Error = message
+	if state == "cancelled" {
+		job.Probes[index].FinishedAt = time.Now().UnixMilli()
+	}
 	if maxTokens > 0 {
 		job.Probes[index].MaxTokens = maxTokens
 	}
@@ -154,6 +151,7 @@ func (job *FingerprintJob) cancelQueuedProbes(index int, message string) {
 		if job.Probes[i].State == "queued" {
 			job.Probes[i].State = "cancelled"
 			job.Probes[i].Error = message
+			job.Probes[i].FinishedAt = time.Now().UnixMilli()
 		}
 	}
 }
@@ -165,6 +163,7 @@ func (job *FingerprintJob) completeProbe(index int, result FingerprintProbeResul
 		return
 	}
 	job.Probes[index].State = "complete"
+	job.Probes[index].FinishedAt = time.Now().UnixMilli()
 	job.Probes[index].ParsedCount = result.ParsedCount
 	job.Probes[index].PromptTokens = result.PromptTokens
 	job.Probes[index].OutputTokens = result.OutputTokens
@@ -184,6 +183,7 @@ func (job *FingerprintJob) failProbe(index int, message string, result Fingerpri
 		return
 	}
 	job.Probes[index].State = "failed"
+	job.Probes[index].FinishedAt = time.Now().UnixMilli()
 	job.Probes[index].PromptTokens = result.PromptTokens
 	job.Probes[index].OutputTokens = result.OutputTokens
 	output, outputTruncated := boundedProbeText(result.Text)
@@ -221,12 +221,20 @@ func (job *FingerprintJob) setJobError(message string) {
 func (job *FingerprintJob) setTerminal(state, message string, analysis *lmfp.Analysis) {
 	job.mu.Lock()
 	defer job.mu.Unlock()
+	if job.cancelled {
+		state, analysis = "cancelled", nil
+	}
 	job.State = state
 	if message != "" {
 		job.Error = message
 	}
 	job.Analysis = analysis
 	job.FinishedAt = time.Now().UnixMilli()
+	// Publish terminal state and retry readiness together. The worker only
+	// releases its captured context after this point, never these new handles.
+	if job.done != nil {
+		close(job.done)
+	}
 }
 
 // snapshot returns a copy safe to serialize while the run continues.
@@ -235,6 +243,7 @@ func (job *FingerprintJob) snapshot() *FingerprintJob {
 	defer job.mu.Unlock()
 	copied := &FingerprintJob{
 		ID:             job.ID,
+		Revision:       job.Revision,
 		ChannelID:      job.ChannelID,
 		ChannelName:    job.ChannelName,
 		Model:          job.Model,
@@ -255,6 +264,12 @@ func (job *FingerprintJob) snapshot() *FingerprintJob {
 		Probes:         make([]FingerprintProbe, len(job.Probes)),
 	}
 	copy(copied.Probes, job.Probes)
+	for i := range copied.Probes {
+		copied.Probes[i].RetryAllowed = job.FinishedAt != 0 && !job.cancelled &&
+			job.State != "cancelled" && copied.Probes[i].State == "failed" && copied.Probes[i].Attempt == 1 &&
+			!job.retryAccepted[copied.Probes[i].ID+":1"] &&
+			job.TokenBudget-job.TokensUsed >= fingerprintProbeInputReserve+fingerprintMinProbeTokens
+	}
 	if job.Analysis != nil {
 		analysis := *job.Analysis
 		analysis.Results = append([]lmfp.Candidate(nil), job.Analysis.Results...)

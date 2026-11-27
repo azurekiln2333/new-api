@@ -16,11 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { Loader2, Play, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import { Loader2, Play, RefreshCw, X } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CopyButton } from '@/components/copy-button'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { ModelSelector } from '@/components/model-group-selector'
@@ -28,57 +34,83 @@ import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  Combobox,
+  ComboboxCollection,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  useComboboxAnchor,
+} from '@/components/ui/combobox'
 import { getChannelOptions } from '@/features/channels/api'
+import type { ChannelOption, KeyStatus } from '@/features/channels/types'
 import { useDebounce } from '@/hooks/use-debounce'
 import { toIntlLocale } from '@/i18n/languages'
 import { hasPermission } from '@/lib/admin-permissions'
 import { formatNumber } from '@/lib/format'
+import { handleServerError } from '@/lib/handle-server-error'
 import { ROLE } from '@/lib/roles'
 import {
   getServerErrorMessage,
   requireServerSuccess,
 } from '@/lib/server-error-message'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
   cancelChannelFingerprint,
   getChannelFingerprint,
+  getFingerprintChannel,
+  getFingerprintKeys,
+  previewChannelFingerprint,
+  retryChannelFingerprintProbe,
   startChannelFingerprint,
+  type FingerprintContext,
   type FingerprintJob,
+  type FingerprintPreview,
   type FingerprintProbe,
+  type RetryFingerprintPayload,
+  type StartFingerprintPayload,
 } from './fingerprint-api'
-
-// Only endpoints whose reply text this build can read are offered; the gateway
-// rejects the others. Protocol names stay untranslated, as in the channel test.
-const ENDPOINTS = [
-  { value: 'openai', label: 'Chat Completions' },
-  { value: 'openai-response', label: 'Responses' },
-  { value: 'anthropic', label: 'Messages' },
-  { value: 'gemini', label: 'Gemini generateContent' },
-] as const
 
 const MAX_CHALLENGES = 3
 const POLL_INTERVAL_MS = 1500
 
-// The run may stop on a sentence the gateway wrote itself (no reply, out of
-// time, unscorable replies, cancelled). Those are translated; anything else is
-// an upstream or SDK message and is shown verbatim.
-const RUN_STOP_REASONS = [
+// Translate only fixed gateway/SDK messages. Unknown provider/scoring text
+// stays literal, without interpreting it as a translation key or template.
+const FIXED_FINGERPRINT_MESSAGES = [
   'No challenge produced a reply.',
   'The check ran out of time before any challenge produced a reply.',
   'The replies could not be scored.',
   'Cancelled during the request.',
   'Cancelled before dispatch.',
+  'fingerprint request no longer matches the previewed prompt',
+  'fingerprint request could not be completed',
+  'fingerprint reference data is not available',
+  'the reply contained no text to score',
+  'fingerprint preview is unavailable or expired',
+  'Fingerprint preview is unavailable. Change prompts and try again.',
+  'fingerprint check was not found or has expired',
+  'fingerprint check already finished',
+  'too many fingerprint checks are running; wait for one to finish',
+  'too many fingerprint previews; wait for one to expire',
+  'fingerprint sample cannot be retried',
+  'fingerprint retry budget is exhausted',
+  'fingerprint checks require a supported protocol with an enforceable output token limit',
+  'fingerprint endpoint type is not supported',
+  'the selected model is not available on this channel',
+  'the selected key is unavailable for this model',
+  'invalid fingerprint key selection',
+  'authenticated fingerprint owner is unavailable',
+  'a fingerprint preview is required',
+  'a model is required',
+  'invalid channel id',
+  'the challenge count must be between 1 and 3',
 ] as const
 
 const KNOWN_REPLY_REASON =
@@ -105,32 +137,24 @@ const STATE_LABELS: Record<string, string> = {
   complete: 'Complete',
 }
 
-// probeSummary describes one finished or failed challenge: how many integers it
-// returned and what it cost, or why it produced nothing.
-function probeSummary(
-  probe: FingerprintProbe,
-  t: (key: string, options?: Record<string, unknown>) => string,
-  locale: Intl.LocalesArgument
-) {
-  if (probe.state === 'complete') {
-    return ` · ${probe.parsed_count}/${probe.expected_count} · ${formatNumber(
-      probe.prompt_tokens + probe.output_tokens,
-      locale
-    )} ${t('tokens')} · ${t('output limit {{tokens}}', {
-      tokens: formatNumber(probe.max_tokens, locale),
-    })}`
-  }
-  return probe.error ? ` · ${translateRunMessage(probe.error, t)}` : ''
-}
-
-// translateRunMessage translates the fixed sentences the gateway and the SDK
-// emit in known situations, and keeps provider or scoring internals verbatim.
+// Both retained probe errors and failed API operations use the same safe
+// message contract; translate at render time so language changes update them.
 function translateRunMessage(
   message: string,
   t: (key: string, options?: Record<string, unknown>) => string
 ) {
-  if ((RUN_STOP_REASONS as readonly string[]).includes(message)) {
-    return t(message)
+  if ((FIXED_FINGERPRINT_MESSAGES as readonly string[]).includes(message)) {
+    return t(message, { skipInterpolation: true })
+  }
+  if (message === 'context deadline exceeded') return t('Timed out')
+  if (message === 'context canceled') return t('Cancelled during the request.')
+  const httpFailure = /^fingerprint request failed \(HTTP ([1-5]\d{2})\)$/.exec(
+    message
+  )
+  if (httpFailure && httpFailure[0] === message) {
+    return t('fingerprint request failed (HTTP {{status}})', {
+      status: httpFailure[1],
+    })
   }
   if (message === KNOWN_REPLY_REASON) {
     return t(KNOWN_REPLY_REASON)
@@ -188,69 +212,239 @@ function translateRunMessage(
 
 const PROBE_SLOT_COUNT = 3
 
+function FingerprintSampleCard(props: {
+  index: number
+  probe?: FingerprintProbe
+  previewProbe?: { id: string; prompt: string; expected_count: number }
+  onRetry?: () => void
+  retryPending?: boolean
+  statusUnavailable?: boolean
+}) {
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const [expanded, setExpanded] = useState(false)
+  const promptId = useId()
+  const titleId = useId()
+  const probe = props.probe
+  const [now, setNow] = useState(() => Date.now())
+  const startedAt = probe?.started_at
+  const isRunning = probe?.state === 'running' && !props.statusUnavailable
+  useEffect(() => {
+    if (!isRunning || !startedAt) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [isRunning, startedAt])
+  const elapsed = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0
+  const prompt = probe?.prompt ?? props.previewProbe?.prompt
+  let stateLabel = t('Not run')
+  if (props.previewProbe) stateLabel = t('Ready')
+  if (probe) stateLabel = t(STATE_LABELS[probe.state] ?? 'Unknown')
+  if (
+    props.statusUnavailable &&
+    (probe?.state === 'running' || probe?.state === 'queued')
+  ) {
+    stateLabel = t('Status unavailable')
+  }
+
+  return (
+    <Card
+      role='region'
+      aria-labelledby={titleId}
+      data-probe-slot={probe ? 'probe' : 'unused'}
+    >
+      <CardHeader className='border-b'>
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <CardTitle id={titleId}>
+            {t('Challenge {{index}}', { index: props.index + 1 })}
+          </CardTitle>
+          <StatusBadge
+            label={stateLabel}
+            variant={probe ? (STATE_TONES[probe.state] ?? 'neutral') : 'neutral'}
+            copyable={false}
+          />
+        </div>
+      </CardHeader>
+      <CardContent className='flex min-w-0 flex-col gap-4'>
+        <div className='flex min-w-0 flex-col gap-2'>
+          <div className='flex items-center justify-between gap-2'>
+            <span className='text-muted-foreground text-xs font-medium'>
+              {t('Prompt')}
+            </span>
+            {prompt && <CopyButton value={prompt} size='sm' />}
+          </div>
+          <p
+            id={promptId}
+            className={cn(
+              'min-h-20 text-sm leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap',
+              !expanded && 'line-clamp-4'
+            )}
+          >
+            {prompt || '-'}
+          </p>
+          {prompt && (
+            <Button
+              variant='ghost'
+              size='sm'
+              className='self-start'
+              aria-expanded={expanded}
+              aria-controls={promptId}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {t(expanded ? 'Collapse' : 'Expand')}
+            </Button>
+          )}
+          {prompt && (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Each prompt independently uses Chinese, English, Japanese, Korean, or French.'
+              )}
+            </p>
+          )}
+          {probe?.prompt_truncated && (
+            <span className='text-muted-foreground text-xs'>
+              {t('Truncated')}
+            </span>
+          )}
+        </div>
+        <div className='flex min-w-0 flex-col gap-2 border-t pt-4'>
+          <span className='text-muted-foreground text-xs font-medium'>
+            {t('Output')}
+          </span>
+          {isRunning && startedAt && (
+            <p
+              role='status'
+              className='text-muted-foreground flex items-center gap-2 text-xs'
+            >
+              <Loader2 className='size-3 animate-spin' aria-hidden='true' />
+              {t(
+                'Waiting for reply: {{seconds}}s elapsed; request timeout {{timeout}}s.',
+                {
+                  seconds: formatNumber(elapsed, locale),
+                  timeout: formatNumber(probe?.timeout_seconds ?? 0, locale),
+                }
+              )}
+            </p>
+          )}
+          <p className='bg-muted/30 min-h-40 max-h-80 overflow-y-auto rounded-lg p-3 text-sm leading-6 [overflow-wrap:anywhere] whitespace-pre-wrap'>
+            {probe?.output || '-'}
+          </p>
+          {probe?.output_truncated && (
+            <span className='text-muted-foreground text-xs'>
+              {t('Truncated')}
+            </span>
+          )}
+          <span
+            className='text-muted-foreground text-xs tabular-nums'
+            aria-live='polite'
+          >
+            {t('Parsed numbers: {{count}}', {
+              replace: { count: formatNumber(probe?.parsed_count ?? 0, locale) },
+            })}
+          </span>
+          {probe?.error && (
+            <p role='alert' className='text-destructive text-xs'>
+              {translateRunMessage(probe.error, t)}
+            </p>
+          )}
+          {props.onRetry && (
+            <div className='space-y-2'>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Retries only this failed sample using the same prompt. This sends one additional paid request within the remaining run budget.'
+                )}
+              </p>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={props.onRetry}
+                disabled={props.retryPending}
+              >
+                <RefreshCw aria-hidden='true' />
+                {t('Retry sample')}
+              </Button>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 // A fingerprint check needs channel operate rights. Reading the live identity
 // here means a demotion, a permission edit or an account switch never keeps an
 // earlier admin's channel names, models or running job on screen, because the
 // console below is keyed by exactly those facts and is unmounted when they
 // change.
 function fingerprintAccessKey(
-  user: ReturnType<typeof useAuthStore.getState>['auth']['user']
+  user: ReturnType<typeof useAuthStore.getState>['auth']['user'],
+  sessionID?: string
 ) {
   if (!user || user.role < ROLE.ADMIN) return null
   if (!hasPermission(user, 'channel', 'operate')) return null
   const channelGrants = JSON.stringify(
     user.permissions?.admin_permissions?.channel ?? null
   )
-  return `${user.id}:${user.role}:${channelGrants}`
+  return `${user.id}:${user.role}:${channelGrants}:${sessionID ?? ''}`
 }
 
 export function ChannelFingerprint() {
   const user = useAuthStore((state) => state.auth.user)
-  const accessKey = fingerprintAccessKey(user)
+  const sessionID = useAuthStore((state) => state.auth.session?.sid)
+  const accessKey = fingerprintAccessKey(user, sessionID)
   if (!accessKey) return null
   return <FingerprintConsole key={accessKey} identity={accessKey} />
 }
 
 function FingerprintConsole({ identity }: { identity: string }) {
   const { t, i18n } = useTranslation()
+  const queryClient = useQueryClient()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [channelId, setChannelId] = useState('')
   const [model, setModel] = useState('')
-  const [endpoint, setEndpoint] = useState<string>(ENDPOINTS[0].value)
-  const [count, setCount] = useState(MAX_CHALLENGES)
-  const [tokenBudget, setTokenBudget] = useState(24000)
-  const [job, setJob] = useState<FingerprintJob | null>(null)
-  const [startError, setStartError] = useState('')
+  const count = MAX_CHALLENGES
+  const [run, setRun] = useState<{
+    context: string
+    job: FingerprintJob
+  } | null>(null)
+  const [selectedTestKey, setSelectedTestKey] = useState<KeyStatus | null>(null)
+  const [previewAttempt, setPreviewAttempt] = useState(0)
+  // A Start retry must use the submitted opaque handle and exact selection,
+  // not mutable query data that a cache refresh can replace after acceptance.
+  const [submittedPreview, setSubmittedPreview] = useState<{
+    context: string
+    preview: FingerprintPreview
+  } | null>(null)
+  const currentContext = useRef<string | null>(null)
+  const startController = useRef<AbortController | null>(null)
+  const cancelController = useRef<AbortController | null>(null)
+  const retryController = useRef<AbortController | null>(null)
+  const [startError, setStartError] = useState<{
+    context: string
+    message: string
+  } | null>(null)
   const [pollError, setPollError] = useState('')
-  // Set when a poll fails: the run may have expired or been cancelled elsewhere,
-  // so this page stops polling it and allows a new run to start.
+  // A failed read stops polling; Start only replays the saved preview/job.
+  // Only an explicit Change prompts action authorizes a fresh challenge set.
   const [pollStopped, setPollStopped] = useState(false)
-  const [page, setPage] = useState(1)
+  const [channelOpen, setChannelOpen] = useState(false)
+  const channelAnchor = useComboboxAnchor()
   const [keyword, setKeyword] = useState('')
   const debouncedKeyword = useDebounce(keyword, 300)
   const searchPending = keyword !== debouncedKeyword
   // Bumped by the retry button so a stopped poll starts again.
   const [pollAttempt, setPollAttempt] = useState(0)
 
-  const channelsQuery = useQuery({
-    // The dropdown is populated from the lightweight channel options endpoint,
-    // which never returns every channel: it filters by keyword and pages, and
-    // the current selection is passed back through `ids` so a chosen channel
-    // outside the page still resolves with its models. The identity is part of
-    // the key so a demotion or account switch cannot read another identity's
-    // cached channel names.
-    queryKey: [
-      'fingerprint-channels',
-      identity,
-      channelId,
-      debouncedKeyword,
-      page,
-    ],
-    queryFn: async ({ signal }) =>
+  const channelsQuery = useInfiniteQuery({
+    // Each search has its own page snapshot; obsolete pages cannot append to
+    // another search. Selection hydration stays bounded to the chosen id.
+    queryKey: ['fingerprint-channels', identity, channelId, debouncedKeyword],
+    initialPageParam: 1,
+    queryFn: async ({ signal, pageParam }) =>
       requireServerSuccess(
         await getChannelOptions(
           {
-            p: page,
+            p: pageParam,
             page_size: 30,
             ...(debouncedKeyword.trim()
               ? { keyword: debouncedKeyword.trim() }
@@ -260,17 +454,27 @@ function FingerprintConsole({ identity }: { identity: string }) {
           signal
         )
       ),
+    getNextPageParam: (lastPage) =>
+      lastPage.data?.has_more ? lastPage.data.page + 1 : undefined,
     enabled: !searchPending,
-    // Keep the current options visible while the next page loads, but never
-    // reuse channel names across authorized identities.
+    // Only an id hydration within the same search may retain its old snapshot.
     placeholderData: (previousData, previousQuery) =>
-      previousQuery?.queryKey[1] === identity ? previousData : undefined,
+      previousQuery?.queryKey[1] === identity &&
+      previousQuery.queryKey[3] === debouncedKeyword
+        ? previousData
+        : undefined,
     staleTime: 60_000,
     meta: { errorToast: false },
   })
-  const optionsPage = channelsQuery.data?.data
-  const channels = optionsPage?.items ?? []
-  const hasMore = optionsPage?.has_more ?? false
+  const channels = useMemo(() => {
+    const byId = new Map<number, ChannelOption>()
+    for (const page of channelsQuery.data?.pages ?? []) {
+      for (const channel of page.data?.items ?? []) {
+        byId.set(channel.id, channel)
+      }
+    }
+    return [...byId.values()]
+  }, [channelsQuery.data])
   const selectedChannel = channels.find(
     (channel) => String(channel.id) === channelId
   )
@@ -281,29 +485,119 @@ function FingerprintConsole({ identity }: { identity: string }) {
     !channelsQuery.isFetching &&
     !channelsQuery.isPlaceholderData &&
     !selectedChannel
-  // A page change can drop the chosen channel from the visible list. Only the
-  // channel chosen by id is remembered, so a valid model survives that reload;
-  // changing channel still clears it because the channel itself is different.
-  const [chosenModels, setChosenModels] = useState<string[]>([])
+  const [chosenChannel, setChosenChannel] = useState<ChannelOption | null>(null)
   useEffect(() => {
     if (selectedChannelUnavailable) {
-      setChosenModels([])
+      setChosenChannel(null)
       return
     }
-    if (!selectedChannel) return
-    setChosenModels(selectedChannel.models ?? [])
+    if (selectedChannel) setChosenChannel(selectedChannel)
   }, [selectedChannel, selectedChannelUnavailable])
+  const selectedChannelLabel = selectedChannelUnavailable
+    ? `#${channelId} ${t('Unavailable')}`
+    : `#${channelId} ${selectedChannel?.name ?? chosenChannel?.name ?? ''}`
+  const channelItems = useMemo(() => {
+    const items = (searchPending ? [] : channels).map((channel) => ({
+      value: String(channel.id),
+      label: `#${channel.id} ${channel.name}`,
+    }))
+    if (channelId && !items.some((item) => item.value === channelId)) {
+      items.unshift({ value: channelId, label: selectedChannelLabel })
+    }
+    return items
+  }, [channelId, channels, searchPending, selectedChannelLabel])
+  const channelQuery = useQuery({
+    queryKey: ['fingerprint-channel', identity, channelId],
+    queryFn: ({ signal }) => getFingerprintChannel(Number(channelId), signal),
+    enabled: !!channelId && !selectedChannelUnavailable,
+    retry: false,
+    meta: { errorToast: false },
+  })
+  const channel =
+    channelQuery.data?.id === Number(channelId) ? channelQuery.data : undefined
+  const isMultiKey = channel?.is_multi_key === true
+  const keysQuery = useInfiniteQuery({
+    queryKey: ['fingerprint-keys', identity, channelId],
+    initialPageParam: 1,
+    queryFn: ({ signal, pageParam }) =>
+      getFingerprintKeys(Number(channelId), pageParam, signal),
+    getNextPageParam: (lastPage) =>
+      lastPage.page < lastPage.total_pages ? lastPage.page + 1 : undefined,
+    enabled: isMultiKey && !selectedChannelUnavailable,
+    retry: false,
+    meta: { errorToast: false },
+  })
+  const keyPages = keysQuery.data?.pages ?? []
+  const keyRevision = keyPages[0]?.revision
+  const consistentKeys =
+    keyRevision !== undefined &&
+    Number.isSafeInteger(keyRevision) &&
+    keyRevision > 0 &&
+    keyPages.every((page) => page.revision === keyRevision)
+  const keys = consistentKeys ? keyPages.flatMap((page) => page.keys) : []
+  const selectedKey = selectedTestKey
+    ? keys.find(
+        (key) =>
+          key.id === selectedTestKey.id &&
+          key.rev === selectedTestKey.rev &&
+          key.index === selectedTestKey.index
+      )
+    : undefined
+  const keyUnavailable = selectedTestKey !== null && (!isMultiKey || !selectedKey)
+  const selectedKeyValue = selectedTestKey
+    ? `${selectedTestKey.id}:${selectedTestKey.rev}:${selectedTestKey.index}`
+    : 'auto'
+  const keyItems = [
+    { value: 'auto', label: t('Auto (by tested model)') },
+    ...(keyUnavailable
+      ? [{ value: selectedKeyValue, label: t('Unavailable'), disabled: true }]
+      : []),
+    ...keys.map((key) => ({
+      value: `${key.id}:${key.rev}:${key.index}`,
+      label: `${key.index + 1} · ${key.key_preview || '-'} · ${t(key.status === 1 ? 'Enabled' : 'Disabled')}`,
+      disabled:
+        !key.id ||
+        !/^[1-9]\d*$/.test(key.id) ||
+        !key.rev ||
+        !Number.isSafeInteger(key.rev) ||
+        key.rev < 1 ||
+        !Number.isSafeInteger(key.index) ||
+        key.index < 0,
+    })),
+  ]
   const channelModels = useMemo(() => {
-    // A settled hydration response is authoritative. Do not keep offering
-    // remembered models after the selected channel has been removed.
-    if (selectedChannelUnavailable) return []
-    const names = selectedChannel
-      ? (selectedChannel.models ?? [])
-      : chosenModels
-    // A repeated alias must not appear twice, and the alias text itself must
-    // stay exactly as configured.
-    return [...new Set(names)].map((name) => ({ label: name, value: name }))
-  }, [chosenModels, selectedChannel, selectedChannelUnavailable])
+    if (selectedChannelUnavailable || keyUnavailable) return []
+    // For multi-Key channels the server's automatic projection is the
+    // authoritative union of models currently served by eligible Keys. A
+    // missing projection must fail closed instead of silently offering a model
+    // that automatic routing cannot dispatch.
+    let names: string[]
+    if (selectedTestKey) {
+      names = channel?.models ?? []
+    } else if (isMultiKey) {
+      names = channel?.auto_models ?? []
+    } else {
+      names = channel?.models ?? []
+    }
+    return [...new Set(names)]
+      .filter((name) => {
+        if (!selectedKey) return selectedTestKey === null
+        if (selectedKey.scope_mode === 'all') return true
+        const models = selectedKey.models ?? []
+        if (selectedKey.scope_mode === 'allowlist') return models.includes(name)
+        return !models.length || models.includes(name)
+      })
+      .map((name) => ({ label: name, value: name }))
+  }, [
+    channel,
+    chosenChannel,
+    isMultiKey,
+    selectedChannel,
+    selectedChannelUnavailable,
+    keyUnavailable,
+    selectedKey,
+    selectedTestKey,
+  ])
   // A channel switch replaces the candidates, so a model the new channel does
   // not serve must not stay selected and be submitted against it.
   useEffect(() => {
@@ -318,39 +612,285 @@ function FingerprintConsole({ identity }: { identity: string }) {
     !!channelModels.length &&
     channelModels.some((option) => option.value === model.trim())
 
-  const startMutation = useMutation({
-    mutationFn: () => {
-      const name = model.trim()
-      if (!channelId || !modelServable) {
-        return Promise.reject(
-          new Error('Choose a model offered by the channel')
-        )
+  const contextReady =
+    !!channel &&
+    !channelQuery.isError &&
+    !channelQuery.isFetching &&
+    !selectedChannelUnavailable &&
+    modelServable &&
+    !keyUnavailable &&
+    (!isMultiKey ||
+      (keysQuery.isSuccess &&
+        !keysQuery.isError &&
+        !keysQuery.isFetching &&
+        consistentKeys))
+  const requestContext: FingerprintContext = {
+    model: model.trim(),
+    count,
+    ...(selectedTestKey
+      ? {
+          key_entry_id: selectedTestKey.id,
+          expected_rev: selectedTestKey.rev,
+          key_index: selectedTestKey.index,
+        }
+      : {}),
+  }
+  const contextKey = JSON.stringify([channelId, requestContext, previewAttempt])
+  currentContext.current = contextReady ? contextKey : null
+  const isCurrentContext = useCallback(
+    (context: string) => {
+      const auth = useAuthStore.getState().auth
+      return (
+        currentContext.current === context &&
+        fingerprintAccessKey(auth.user, auth.session?.sid) === identity
+      )
+    },
+    [identity]
+  )
+  useEffect(() => {
+    currentContext.current = contextReady ? contextKey : null
+    return () => {
+      currentContext.current = null
+      startController.current?.abort()
+      cancelController.current?.abort()
+      retryController.current?.abort()
+    }
+  }, [contextKey, contextReady])
+  const job = contextReady && run?.context === contextKey ? run.job : null
+  const submitted =
+    submittedPreview?.context === contextKey ? submittedPreview : null
+  const previewQuery = useQuery({
+    queryKey: ['fingerprint-preview', identity, contextKey],
+    queryFn: async ({ signal }) => {
+      signal.throwIfAborted()
+      if (!isCurrentContext(contextKey)) {
+        throw new DOMException('Aborted', 'AbortError')
       }
-      return startChannelFingerprint(Number(channelId), {
-        model: name,
-        endpoint_type: endpoint,
-        count,
-        token_budget: tokenBudget,
+      const generated = await previewChannelFingerprint(
+        Number(channelId),
+        requestContext,
+        signal
+      )
+      signal.throwIfAborted()
+      if (!isCurrentContext(contextKey)) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      return generated
+    },
+    enabled: contextReady && !submitted,
+    staleTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    meta: { errorToast: false },
+  })
+  let candidatePreview = contextReady ? previewQuery.data : undefined
+  if (contextReady && submitted) candidatePreview = submitted.preview
+  const preview =
+    candidatePreview &&
+    typeof candidatePreview.preview_id === 'string' &&
+    !!candidatePreview.preview_id.trim() &&
+    Number.isFinite(candidatePreview.expires_at) &&
+    Array.isArray(candidatePreview.probes) &&
+    candidatePreview.probes.length === count &&
+    new Set(candidatePreview.probes.map((probe) => probe.id)).size === count &&
+    candidatePreview.probes.every(
+      (probe) =>
+        typeof probe.id === 'string' &&
+        !!probe.id.trim() &&
+        typeof probe.prompt === 'string' &&
+        !!probe.prompt.trim()
+    ) &&
+    candidatePreview.channel_id === Number(channelId) &&
+    candidatePreview.model === requestContext.model &&
+    !candidatePreview.endpoint_type &&
+    candidatePreview.count === requestContext.count &&
+    candidatePreview.key_entry_id === requestContext.key_entry_id &&
+    candidatePreview.expected_rev === requestContext.expected_rev &&
+    candidatePreview.key_index === requestContext.key_index
+      ? candidatePreview
+      : undefined
+
+  const startMutation = useMutation({
+    mutationFn: async (submission: {
+      context: string
+      channelId: number
+      payload: StartFingerprintPayload
+      signal: AbortSignal
+    }) => {
+      submission.signal.throwIfAborted()
+      if (!isCurrentContext(submission.context)) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      const started = await startChannelFingerprint(
+        submission.channelId,
+        submission.payload,
+        submission.signal
+      )
+      submission.signal.throwIfAborted()
+      return started
+    },
+    retry: false,
+    onSuccess: (started, submission) => {
+      if (submission.signal.aborted || !isCurrentContext(submission.context)) {
+        return
+      }
+      setStartError(null)
+      setPollError('')
+      setPollStopped(false)
+      setRun((current) => {
+        if (
+          current?.context === submission.context &&
+          current.job.id === started.id &&
+          ((started.revision ?? 0) < (current.job.revision ?? 0) ||
+            ((started.revision ?? 0) === (current.job.revision ?? 0) &&
+              current.job.state !== 'running' &&
+              started.state === 'running'))
+        ) {
+          return current
+        }
+        return { context: submission.context, job: started }
       })
     },
-    onSuccess: (started) => {
-      setStartError('')
-      setPollError('')
-      // A previous run may have stopped polling; a new run must poll again.
-      setPollStopped(false)
-      setJob(started)
+    onError: (error, submission) => {
+      if (submission.signal.aborted || !isCurrentContext(submission.context)) {
+        return
+      }
+      setStartError({
+        context: submission.context,
+        message: getServerErrorMessage(error),
+      })
     },
-    onError: (error) => setStartError(getServerErrorMessage(error)),
   })
 
   const cancelMutation = useMutation({
-    mutationFn: () => {
-      if (!job) return Promise.reject(new Error('No check to cancel'))
-      return cancelChannelFingerprint(job.channel_id, job.id)
+    mutationFn: async (request: {
+      context: string
+      channelId: number
+      jobId: string
+      revision: number
+      signal: AbortSignal
+    }) => {
+      request.signal.throwIfAborted()
+      if (!isCurrentContext(request.context)) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      const cancelled = await cancelChannelFingerprint(
+        request.channelId,
+        request.jobId,
+        request.signal,
+        request.revision
+      )
+      request.signal.throwIfAborted()
+      return cancelled
     },
-    onSuccess: (cancelled) =>
-      setJob((current) => (current?.id === cancelled.id ? cancelled : current)),
+    onSuccess: (cancelled, request) => {
+      if (
+        request.signal.aborted ||
+        !isCurrentContext(request.context) ||
+        cancelled.id !== request.jobId ||
+        cancelled.channel_id !== request.channelId ||
+        (cancelled.revision ?? 1) !== request.revision
+      ) {
+        return
+      }
+      // Disabling a query does not abort its GET. Cancel the old generation
+      // before installing the acknowledgement; a still-running cancellation
+      // may continue polling, but only with fresh reads in the next generation.
+      void queryClient.cancelQueries({
+        queryKey: [
+          'fingerprint-job',
+          identity,
+          request.context,
+          request.channelId,
+          request.jobId,
+        ],
+        exact: false,
+      })
+      setPollAttempt((attempt) => attempt + 1)
+      setPollError('')
+      setPollStopped(false)
+      setRun((current) =>
+        current?.context === request.context &&
+        current.job.id === cancelled.id &&
+        current.job.channel_id === cancelled.channel_id &&
+        (cancelled.revision ?? 1) === (current.job.revision ?? 1) &&
+        (current.job.state === 'running' || cancelled.state !== 'running')
+          ? { ...current, job: cancelled }
+          : current
+      )
+    },
+    onError: (error, request) => {
+      if (request.signal.aborted || !isCurrentContext(request.context)) return
+      handleServerError(error, undefined, {
+        title: translateRunMessage(getServerErrorMessage(error), t),
+      })
+    },
   })
+  const retryMutation = useMutation({
+    mutationFn: async (submission: {
+      context: string
+      channelId: number
+      jobId: string
+      payload: RetryFingerprintPayload
+      signal: AbortSignal
+    }) => {
+      submission.signal.throwIfAborted()
+      if (!isCurrentContext(submission.context)) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      const retried = await retryChannelFingerprintProbe(
+        submission.channelId,
+        submission.jobId,
+        submission.payload,
+        submission.signal
+      )
+      submission.signal.throwIfAborted()
+      return retried
+    },
+    retry: false,
+    onSuccess: (retried, submission) => {
+      if (submission.signal.aborted || !isCurrentContext(submission.context)) {
+        return
+      }
+      void queryClient.cancelQueries({
+        queryKey: ['fingerprint-job', identity, submission.context],
+        exact: false,
+      })
+      setPollAttempt((attempt) => attempt + 1)
+      setPollError('')
+      setPollStopped(false)
+      setStartError(null)
+      setRun((current) =>
+        current?.context === submission.context &&
+        current.job.id === retried.id &&
+        current.job.channel_id === retried.channel_id &&
+        ((retried.revision ?? 0) > (current.job.revision ?? 0) ||
+          ((retried.revision ?? 0) === (current.job.revision ?? 0) &&
+            (current.job.state === 'running' || retried.state !== 'running')))
+          ? { ...current, job: retried }
+          : current
+      )
+    },
+    onError: (error, submission) => {
+      if (submission.signal.aborted || !isCurrentContext(submission.context)) {
+        return
+      }
+      setStartError({
+        context: submission.context,
+        message: getServerErrorMessage(error),
+      })
+    },
+  })
+  const retrying =
+    retryMutation.isPending &&
+    retryMutation.variables?.context === contextKey &&
+    !retryMutation.variables.signal.aborted
+  const starting =
+    startMutation.isPending &&
+    startMutation.variables?.context === contextKey &&
+    !startMutation.variables.signal.aborted
 
   const jobId = job?.id
   const jobChannelId = job?.channel_id
@@ -358,9 +898,31 @@ function FingerprintConsole({ identity }: { identity: string }) {
   // One query drives the poll instead of a bare interval: it never overlaps a
   // request with the next tick, and stops as soon as the run is terminal.
   const pollQuery = useQuery({
-    queryKey: ['fingerprint-job', identity, jobChannelId, jobId, pollAttempt],
-    queryFn: ({ signal }) =>
-      getChannelFingerprint(jobChannelId as number, jobId as string, signal),
+    queryKey: [
+      'fingerprint-job',
+      identity,
+      contextKey,
+      jobChannelId,
+      jobId,
+      pollAttempt,
+      job?.revision,
+    ],
+    queryFn: async ({ signal }) => {
+      signal.throwIfAborted()
+      if (!isCurrentContext(contextKey)) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      const latest = await getChannelFingerprint(
+        jobChannelId as number,
+        jobId as string,
+        signal
+      )
+      signal.throwIfAborted()
+      if (!isCurrentContext(contextKey)) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      return latest
+    },
     enabled: !!running && !pollStopped && !!jobId && !!jobChannelId,
     refetchInterval: POLL_INTERVAL_MS,
     refetchIntervalInBackground: false,
@@ -369,16 +931,24 @@ function FingerprintConsole({ identity }: { identity: string }) {
   })
   useEffect(() => {
     const latest = pollQuery.data
-    if (!latest) return
+    if (!latest || !isCurrentContext(contextKey)) return
     setPollError('')
     setPollStopped(false)
-    setJob(latest)
-  }, [pollQuery.data])
+    setRun((current) =>
+      current?.context === contextKey &&
+      current.job.id === latest.id &&
+      current.job.channel_id === latest.channel_id &&
+      (latest.revision ?? 0) === (current.job.revision ?? 0) &&
+      (current.job.state === 'running' || latest.state !== 'running')
+        ? { ...current, job: latest }
+        : current
+    )
+  }, [contextKey, isCurrentContext, pollQuery.data])
   useEffect(() => {
-    if (!pollQuery.isError) return
+    if (!pollQuery.isError || !isCurrentContext(contextKey)) return
     setPollError(getServerErrorMessage(pollQuery.error))
     setPollStopped(true)
-  }, [pollQuery.isError, pollQuery.error])
+  }, [contextKey, isCurrentContext, pollQuery.isError, pollQuery.error])
 
   const retryPoll = () => {
     setPollError('')
@@ -386,19 +956,74 @@ function FingerprintConsole({ identity }: { identity: string }) {
     setPollAttempt((attempt) => attempt + 1)
   }
 
-  const completedProbes =
-    job?.probes.filter((probe) => probe.state === 'complete').length ?? 0
-  const progress = job
-    ? Math.round((completedProbes / job.probes.length) * 100)
+  const processedProbes =
+    job?.probes.filter((probe) =>
+      ['complete', 'failed', 'cancelled'].includes(probe.state)
+    ).length ?? 0
+  const progress = job?.probes.length
+    ? Math.round((processedProbes / job.probes.length) * 100)
     : 0
+  const progressLabel = t('{{done}} of {{total}} challenges processed', {
+    done: formatNumber(processedProbes, locale),
+    total: formatNumber(job?.probes.length ?? 0, locale),
+  })
   const canStart =
-    !!channelId &&
-    modelServable &&
-    !startMutation.isPending &&
-    (!running || pollStopped)
+    contextReady && !!preview && !starting && !retrying && (!job || pollStopped)
+  const resetFingerprintRun = () => {
+    setRun(null)
+    setStartError(null)
+    setPollError('')
+    setPollStopped(false)
+    setSubmittedPreview(null)
+    setPreviewAttempt((attempt) => attempt + 1)
+  }
+  const startCheck = () => {
+    if (!canStart || !preview) return
+    if (!submitted && preview.expires_at <= Date.now()) {
+      setStartError({
+        context: contextKey,
+        message:
+          'Fingerprint preview is unavailable. Change prompts and try again.',
+      })
+      return
+    }
+    const payload = Object.freeze({
+      preview_id: preview.preview_id,
+      model: preview.model,
+      count: preview.count,
+      ...(preview.key_entry_id
+        ? {
+            key_entry_id: preview.key_entry_id,
+            expected_rev: preview.expected_rev,
+            key_index: preview.key_index,
+          }
+        : {}),
+    })
+    if (!submitted) {
+      setSubmittedPreview({
+        context: contextKey,
+        preview: Object.freeze({
+          ...payload,
+          channel_id: preview.channel_id,
+          expires_at: preview.expires_at,
+          probes: preview.probes.map((probe) => Object.freeze({ ...probe })),
+        }),
+      })
+    }
+    startController.current?.abort()
+    const controller = new AbortController()
+    startController.current = controller
+    startMutation.mutate({
+      context: contextKey,
+      channelId: preview.channel_id,
+      payload,
+      signal: controller.signal,
+    })
+  }
   // Editing is allowed while a stopped run is still shown, so the operator can
   // pick another channel or model and start a fresh check.
-  const controlsDisabled = (running && !pollStopped) || startMutation.isPending
+  const controlsDisabled = (running && !pollStopped) || starting || retrying
+  const channelInput = channelOpen ? keyword : selectedChannelLabel
 
   return (
     <SectionPageLayout>
@@ -415,6 +1040,12 @@ function FingerprintConsole({ identity }: { identity: string }) {
             </AlertDescription>
           </Alert>
 
+          <p className='text-muted-foreground text-xs'>
+            {running && !pollStopped && `${t('Polling')} · `}
+            {t(
+              'Replies are not streamed. Status and elapsed request time refresh while each sample runs; output appears when its request finishes.'
+            )}
+          </p>
           <Card>
             <CardHeader>
               <CardTitle>{t('Run a check')}</CardTitle>
@@ -423,71 +1054,103 @@ function FingerprintConsole({ identity }: { identity: string }) {
               <div className='grid gap-4 sm:grid-cols-2'>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-channel'>{t('Channel')}</Label>
-                  <Select
-                    value={channelId}
-                    onValueChange={(value) => {
-                      setChannelId(value ?? '')
+                  <Combobox
+                    items={channelItems}
+                    value={
+                      channelItems.find((item) => item.value === channelId) ??
+                      null
+                    }
+                    inputValue={channelId || channelOpen ? channelInput : ''}
+                    open={channelOpen && !controlsDisabled}
+                    filter={null}
+                    isItemEqualToValue={(item, value) =>
+                      item.value === value.value
+                    }
+                    onOpenChange={(open) => {
+                      setChannelOpen(open)
+                      if (!open) setKeyword('')
+                    }}
+                    onInputValueChange={(value, details) => {
+                      if (details.reason === 'input-change') setKeyword(value)
+                    }}
+                    onValueChange={(item) => {
+                      if (!item || item.value === channelId) return
+                      setChannelId(item.value)
                       setModel('')
-                      setChosenModels([])
+                      setSelectedTestKey(null)
+                      resetFingerprintRun()
+                      setChosenChannel(
+                        channels.find(
+                          (channel) => String(channel.id) === item.value
+                        ) ?? null
+                      )
                     }}
                     disabled={controlsDisabled}
                   >
-                    <SelectTrigger id='fingerprint-channel'>
-                      <SelectValue placeholder={t('Select a channel')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {channels.map((channel) => (
-                        <SelectItem key={channel.id} value={String(channel.id)}>
-                          {`#${channel.id} ${channel.name}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <div ref={channelAnchor} className='min-w-0'>
+                      <ComboboxInput
+                        id='fingerprint-channel'
+                        placeholder={t('Search channels')}
+                        disabled={controlsDisabled}
+                        title={channelId ? selectedChannelLabel : undefined}
+                        className='w-full'
+                      />
+                    </div>
+                    <ComboboxContent
+                      anchor={channelAnchor}
+                      className='max-w-[calc(100vw-2rem)]'
+                    >
+                      <ComboboxEmpty>
+                        {t(
+                          searchPending || channelsQuery.isFetching
+                            ? 'Loading'
+                            : 'No results found'
+                        )}
+                      </ComboboxEmpty>
+                      <ComboboxList>
+                        <ComboboxGroup>
+                          <ComboboxCollection>
+                            {(item: { value: string; label: string }) => (
+                              <ComboboxItem key={item.value} value={item}>
+                                <span className='min-w-0 [overflow-wrap:anywhere] whitespace-normal'>
+                                  {item.label}
+                                </span>
+                              </ComboboxItem>
+                            )}
+                          </ComboboxCollection>
+                        </ComboboxGroup>
+                      </ComboboxList>
+                      {channelsQuery.hasNextPage && (
+                        <div className='border-t p-2'>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            className='w-full'
+                            onClick={() => void channelsQuery.fetchNextPage()}
+                            disabled={
+                              controlsDisabled ||
+                              searchPending ||
+                              channelsQuery.isFetching ||
+                              channelsQuery.isPlaceholderData
+                            }
+                          >
+                            {channelsQuery.isFetchingNextPage && (
+                              <Loader2
+                                className='animate-spin'
+                                aria-hidden='true'
+                              />
+                            )}
+                            {t('Load more')}
+                          </Button>
+                        </div>
+                      )}
+                    </ComboboxContent>
+                  </Combobox>
                   {selectedChannelUnavailable && (
                     <p role='status' className='text-destructive text-xs'>
                       {t('Unavailable')}
                     </p>
                   )}
-                  {/* The endpoint returns one bounded page per keyword, so the
-                    search box narrows the result set and paging walks it. */}
-                  <Input
-                    id='fingerprint-channel-search'
-                    value={keyword}
-                    onChange={(event) => {
-                      setKeyword(event.target.value)
-                      setPage(1)
-                    }}
-                    placeholder={t('Search channels')}
-                    disabled={controlsDisabled}
-                  />
-                  <div className='flex items-center gap-2'>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() =>
-                        setPage((current) => Math.max(1, current - 1))
-                      }
-                      disabled={controlsDisabled || searchPending || page <= 1}
-                    >
-                      {t('Previous')}
-                    </Button>
-                    <span className='text-muted-foreground text-xs tabular-nums'>
-                      {page}
-                    </span>
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => setPage((current) => current + 1)}
-                      disabled={
-                        controlsDisabled ||
-                        searchPending ||
-                        !hasMore ||
-                        channelsQuery.isFetching
-                      }
-                    >
-                      {t('Next')}
-                    </Button>
-                  </div>
                 </div>
                 <div className='space-y-2'>
                   <Label htmlFor='fingerprint-model'>{t('Model')}</Label>
@@ -496,7 +1159,11 @@ function FingerprintConsole({ identity }: { identity: string }) {
                     className='w-full justify-start'
                     selectedModel={model}
                     models={channelModels}
-                    onModelChange={setModel}
+                    onModelChange={(value) => {
+                      if (value === model) return
+                      setModel(value)
+                      resetFingerprintRun()
+                    }}
                     disabled={
                       controlsDisabled ||
                       !channelId ||
@@ -516,101 +1183,187 @@ function FingerprintConsole({ identity }: { identity: string }) {
                       </p>
                     )}
                 </div>
-                <div className='space-y-2'>
-                  <Label htmlFor='fingerprint-endpoint'>{t('Endpoint')}</Label>
-                  <Select
-                    value={endpoint}
-                    onValueChange={(value) =>
-                      setEndpoint(value ?? ENDPOINTS[0].value)
-                    }
-                    disabled={controlsDisabled}
-                  >
-                    <SelectTrigger id='fingerprint-endpoint'>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ENDPOINTS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className='space-y-2'>
-                  <Label htmlFor='fingerprint-count'>{t('Challenges')}</Label>
-                  <Input
-                    id='fingerprint-count'
-                    type='number'
-                    min={1}
-                    max={MAX_CHALLENGES}
-                    value={count}
-                    onChange={(event) =>
-                      setCount(
-                        Math.min(
-                          MAX_CHALLENGES,
-                          Math.max(1, Number(event.target.value) || 1)
+                {(isMultiKey || selectedTestKey) && (
+                  <div className='space-y-2'>
+                    <Label htmlFor='fingerprint-key'>{t('Tested key')}</Label>
+                    <Combobox
+                      id='fingerprint-key'
+                      options={keyItems}
+                      value={selectedKeyValue}
+                      onValueChange={(value) => {
+                        if (!value || value === selectedKeyValue) return
+                        const selected = keys.find(
+                          (key) => `${key.id}:${key.rev}:${key.index}` === value
                         )
-                      )
-                    }
-                    disabled={controlsDisabled}
-                  />
-                </div>
-                <div className='space-y-2'>
-                  <Label htmlFor='fingerprint-budget'>
-                    {t('Estimated token budget')}
-                  </Label>
-                  <Input
-                    id='fingerprint-budget'
-                    type='number'
-                    min={1000}
-                    step={1000}
-                    value={tokenBudget}
-                    onChange={(event) =>
-                      setTokenBudget(
-                        Math.max(1000, Number(event.target.value) || 1000)
-                      )
-                    }
-                    disabled={controlsDisabled}
-                  />
-                </div>
-              </div>
-              <p className='text-muted-foreground text-xs'>
-                {t(
-                  'Each challenge is one request whose output is hard-limited to at most {{tokens}} tokens, narrowed to the remaining budget. The run stops once reported or estimated usage reaches the budget. Input tokens are estimated, and a channel can inject prompts the gateway cannot see, so the real total can exceed the budget.',
-                  { tokens: 4096 }
-                )}
-              </p>
-              {startError && (
-                <p role='alert' className='text-destructive text-sm'>
-                  {startError}
-                </p>
-              )}
-              <div className='flex flex-wrap gap-2'>
-                <Button
-                  onClick={() => startMutation.mutate()}
-                  disabled={!canStart}
-                >
-                  {startMutation.isPending ? (
-                    <Loader2 className='animate-spin' aria-hidden='true' />
-                  ) : (
-                    <Play aria-hidden='true' />
-                  )}
-                  {t('Start check')}
-                </Button>
-                {running && job && (
-                  <Button
-                    variant='outline'
-                    onClick={() => cancelMutation.mutate()}
-                    disabled={cancelMutation.isPending}
-                  >
-                    <X aria-hidden='true' />
-                    {t('Cancel')}
-                  </Button>
+                        if (
+                          value !== 'auto' &&
+                          (!selected?.id ||
+                            !/^[1-9]\d*$/.test(selected.id) ||
+                            !selected.rev ||
+                            !Number.isSafeInteger(selected.rev) ||
+                            selected.rev < 1 ||
+                            !Number.isSafeInteger(selected.index) ||
+                            selected.index < 0)
+                        ) {
+                          return
+                        }
+                        setSelectedTestKey(selected ? { ...selected } : null)
+                        setModel('')
+                        resetFingerprintRun()
+                      }}
+                      disabled={controlsDisabled || keysQuery.isPending}
+                      className='w-full'
+                    />
+                    {(keyUnavailable ||
+                      (keysQuery.isSuccess && !consistentKeys)) && (
+                      <div className='space-y-2'>
+                        <p role='status' className='text-destructive text-xs'>
+                          {t(
+                            'Channel key configuration changed, reload and retry'
+                          )}
+                        </p>
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          onClick={() => void keysQuery.refetch()}
+                          disabled={controlsDisabled || keysQuery.isFetching}
+                        >
+                          {t('Retry')}
+                        </Button>
+                      </div>
+                    )}
+                    {keysQuery.hasNextPage && (
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        onClick={() => void keysQuery.fetchNextPage()}
+                        disabled={controlsDisabled || keysQuery.isFetching}
+                      >
+                        {t('Load more')}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
             </CardContent>
           </Card>
+
+          <div className='grid items-start gap-4 md:grid-cols-3'>
+            {Array.from({ length: PROBE_SLOT_COUNT }, (_, index) => {
+              const probe = job?.probes[index]
+              const previewProbe = preview?.probes[index]
+              return (
+                <FingerprintSampleCard
+                  key={`${job?.id ?? preview?.preview_id ?? 'initial'}:${probe?.id ?? previewProbe?.id ?? index}`}
+                  index={index}
+                  probe={probe}
+                  previewProbe={job ? undefined : previewProbe}
+                  retryPending={retrying}
+                  statusUnavailable={pollStopped}
+                  onRetry={
+                    job &&
+                    preview &&
+                    probe?.state === 'failed' &&
+                    probe.retry_allowed &&
+                    !running &&
+                    !starting
+                      ? () => {
+                          retryController.current?.abort()
+                          const controller = new AbortController()
+                          retryController.current = controller
+                          retryMutation.mutate({
+                            context: contextKey,
+                            channelId: job.channel_id,
+                            jobId: job.id,
+                            payload: {
+                              preview_id: preview.preview_id,
+                              model: preview.model,
+                              count: preview.count,
+                              ...(preview.key_entry_id
+                                ? {
+                                    key_entry_id: preview.key_entry_id,
+                                    expected_rev: preview.expected_rev,
+                                    key_index: preview.key_index,
+                                  }
+                                : {}),
+                              probe_id: probe.id,
+                              expected_attempt: probe.attempt ?? 1,
+                            },
+                            signal: controller.signal,
+                          })
+                        }
+                      : undefined
+                  }
+                />
+              )
+            })}
+          </div>
+          {startError?.context === contextKey && contextReady && (
+            <p role='alert' className='text-destructive text-sm'>
+              {translateRunMessage(startError.message, t)}
+            </p>
+          )}
+          {contextReady && previewQuery.isSuccess && !preview && (
+            <p role='alert' className='text-destructive text-sm'>
+              {t(
+                'Fingerprint preview is unavailable. Change prompts and try again.'
+              )}
+            </p>
+          )}
+          {contextReady && !submitted && previewQuery.isError && (
+            <ErrorState
+              description={translateRunMessage(
+                getServerErrorMessage(previewQuery.error),
+                t
+              )}
+              onRetry={() => void previewQuery.refetch()}
+            />
+          )}
+          <div className='flex flex-wrap justify-end gap-2'>
+            <Button
+              variant='outline'
+              onClick={resetFingerprintRun}
+              disabled={
+                !contextReady || controlsDisabled || previewQuery.isFetching
+              }
+            >
+              <RefreshCw aria-hidden='true' />
+              {t('Change prompts')}
+            </Button>
+            <Button onClick={startCheck} disabled={!canStart}>
+              {starting ? (
+                <Loader2 className='animate-spin' aria-hidden='true' />
+              ) : (
+                <Play aria-hidden='true' />
+              )}
+              {t('Start check')}
+            </Button>
+            {running && job && (
+              <Button
+                variant='outline'
+                onClick={() => {
+                  cancelController.current?.abort()
+                  const controller = new AbortController()
+                  cancelController.current = controller
+                  cancelMutation.mutate({
+                    context: contextKey,
+                    channelId: job.channel_id,
+                    jobId: job.id,
+                    revision: job.revision ?? 1,
+                    signal: controller.signal,
+                  })
+                }}
+                disabled={
+                  cancelMutation.isPending &&
+                  cancelMutation.variables?.context === contextKey &&
+                  !cancelMutation.variables.signal.aborted
+                }
+              >
+                <X aria-hidden='true' />
+                {t('Cancel')}
+              </Button>
+            )}
+          </div>
 
           {job && (
             <Card>
@@ -632,22 +1385,12 @@ function FingerprintConsole({ identity }: { identity: string }) {
               </CardHeader>
               <CardContent className='space-y-4'>
                 <div className='space-y-1'>
-                  <Progress value={progress} />
-                  <p className='text-muted-foreground text-xs'>
-                    {t('{{done}} of {{total}} challenges complete', {
-                      done: completedProbes,
-                      total: job.probes.length,
-                    })}
-                    {' · '}
-                    {t('{{used}} of {{budget}} tokens used', {
-                      used: formatNumber(job.tokens_used, locale),
-                      budget: formatNumber(job.token_budget, locale),
-                    })}
-                    {' · '}
-                    {t('{{used}} of {{budget}} requests sent', {
-                      used: job.requests_used,
-                      budget: job.request_budget,
-                    })}
+                  <Progress value={progress} aria-label={progressLabel} />
+                  <p
+                    className='text-muted-foreground text-xs'
+                    aria-live='polite'
+                  >
+                    {progressLabel}
                   </p>
                 </div>
                 {pollError && (
@@ -655,7 +1398,9 @@ function FingerprintConsole({ identity }: { identity: string }) {
                     role='alert'
                     className='flex flex-wrap items-center gap-2'
                   >
-                    <p className='text-destructive text-sm'>{pollError}</p>
+                    <p className='text-destructive text-sm'>
+                      {translateRunMessage(pollError, t)}
+                    </p>
                     <Button variant='outline' size='sm' onClick={retryPoll}>
                       {t('Retry')}
                     </Button>
@@ -671,86 +1416,6 @@ function FingerprintConsole({ identity }: { identity: string }) {
                     {translateRunMessage(job.analysis.Reason, t)}
                   </p>
                 )}
-                {/* One card per requested challenge. The slots are fixed at the
-                  maximum challenge count, so a run that used fewer probes
-                  still shows every slot with an explicit "not run" state and
-                  never implies a probe that did not happen. */}
-                <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
-                  {Array.from({ length: PROBE_SLOT_COUNT }, (_, index) => {
-                    const probe = job.probes[index]
-                    if (!probe) {
-                      return (
-                        <Card
-                          key={`probe-slot-${index}`}
-                          data-probe-slot='unused'
-                        >
-                          <CardHeader className='pb-2'>
-                            <CardTitle className='text-sm'>
-                              {t('Challenge {{index}}', { index: index + 1 })}
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent>
-                            <p className='text-muted-foreground text-xs'>
-                              {t('Not run')}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      )
-                    }
-                    return (
-                      <Card
-                        key={probe.id || `probe-slot-${index}`}
-                        data-probe-slot='probe'
-                      >
-                        <CardHeader className='pb-2'>
-                          <CardTitle className='text-sm'>
-                            {t('Challenge {{index}}', { index: index + 1 })}
-                          </CardTitle>
-                          <div className='flex items-center gap-2'>
-                            <StatusBadge
-                              label={t(STATE_LABELS[probe.state] ?? 'Unknown')}
-                              variant={STATE_TONES[probe.state] ?? 'info'}
-                              size='sm'
-                              copyable={false}
-                            />
-                          </div>
-                        </CardHeader>
-                        <CardContent className='space-y-3'>
-                          <div className='space-y-1'>
-                            <p className='text-muted-foreground text-xs font-medium'>
-                              {t('Prompt')}
-                            </p>
-                            <p className='max-h-32 overflow-y-auto text-xs break-words whitespace-pre-wrap'>
-                              {probe.prompt || '-'}
-                            </p>
-                            {probe.prompt_truncated && (
-                              <p className='text-muted-foreground text-xs'>
-                                {t('Truncated')}
-                              </p>
-                            )}
-                          </div>
-                          <div className='space-y-1'>
-                            <p className='text-muted-foreground text-xs font-medium'>
-                              {t('Output')}
-                            </p>
-                            <p className='max-h-32 overflow-y-auto text-xs break-words whitespace-pre-wrap'>
-                              {probe.output || '-'}
-                            </p>
-                            {probe.output_truncated && (
-                              <p className='text-muted-foreground text-xs'>
-                                {t('Truncated')}
-                              </p>
-                            )}
-                          </div>
-                          <p className='text-muted-foreground text-xs'>
-                            {t(STATE_LABELS[probe.state] ?? 'Unknown')}
-                            {probeSummary(probe, t, locale)}
-                          </p>
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
-                </div>
                 {job.analysis && !!job.analysis.Results?.length && (
                   <div className='space-y-2'>
                     <h3 className='text-sm font-medium'>
@@ -826,9 +1491,30 @@ function FingerprintConsole({ identity }: { identity: string }) {
             </Card>
           )}
 
+          {channelQuery.isError && (
+            <ErrorState
+              description={translateRunMessage(
+                getServerErrorMessage(channelQuery.error),
+                t
+              )}
+              onRetry={() => void channelQuery.refetch()}
+            />
+          )}
+          {isMultiKey && keysQuery.isError && (
+            <ErrorState
+              description={translateRunMessage(
+                getServerErrorMessage(keysQuery.error),
+                t
+              )}
+              onRetry={() => void keysQuery.refetch()}
+            />
+          )}
           {channelsQuery.isError && (
             <ErrorState
-              description={getServerErrorMessage(channelsQuery.error)}
+              description={translateRunMessage(
+                getServerErrorMessage(channelsQuery.error),
+                t
+              )}
               onRetry={() => void channelsQuery.refetch()}
             />
           )}
