@@ -186,7 +186,8 @@ export function ApiInfoPanel() {
         contentClassName='grid gap-3 sm:grid-cols-2'
       >
         {entries.map(({ item, key }) => {
-          const instance = item.id > 0 ? instanceByEntryId.get(item.id) : undefined
+          const instance =
+            item.id > 0 ? instanceByEntryId.get(item.id) : undefined
           return (
             <ApiInfoItemComponent
               key={key}

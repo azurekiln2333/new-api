@@ -151,9 +151,7 @@ describe('ApiInfoPanel', () => {
 
     const card = await screen.findByRole('article', { name: 'CN2 GIA' })
     expect(within(card).getByText('https://api.example.com')).toBeVisible()
-    expect(
-      within(card).getByRole('button', { name: 'Copy URL' })
-    ).toBeEnabled()
+    expect(within(card).getByRole('button', { name: 'Copy URL' })).toBeEnabled()
     for (const label of ['CPU', 'Memory', 'Storage']) {
       expect(within(card).queryByText(label)).not.toBeInTheDocument()
     }
@@ -327,9 +325,7 @@ describe('ApiInfoPanel', () => {
 
     renderPanel()
 
-    const card = within(
-      await screen.findByRole('article', { name: 'CN2 GIA' })
-    )
+    const card = within(await screen.findByRole('article', { name: 'CN2 GIA' }))
     await user.click(card.getByRole('button', { name: 'CN2 GIA' }))
     const detail = within(
       await screen.findByRole('dialog', { name: 'CN2 GIA' })
