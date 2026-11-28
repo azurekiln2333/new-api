@@ -52,8 +52,12 @@ function SectionObserver() {
   const options = query.data?.data ?? []
   return (
     <AnnouncementsSection
-      enabled={options.find((option) => option.key === enabledKey)?.value !== 'false'}
-      data={options.find((option) => option.key === announcementKey)?.value ?? '[]'}
+      enabled={
+        options.find((option) => option.key === enabledKey)?.value !== 'false'
+      }
+      data={
+        options.find((option) => option.key === announcementKey)?.value ?? '[]'
+      }
     />
   )
 }
@@ -88,8 +92,12 @@ async function editAnnouncement(content: string, rowContent: string) {
   const user = userEvent.setup()
   const row = screen.getByText(rowContent).closest('tr')
   expect(row).not.toBeNull()
-  await user.click(within(row as HTMLElement).getByRole('button', { name: 'Edit' }))
-  const dialog = await screen.findByRole('dialog', { name: 'Edit Announcement' })
+  await user.click(
+    within(row as HTMLElement).getByRole('button', { name: 'Edit' })
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Edit Announcement',
+  })
   const input = within(dialog).getByRole('textbox', { name: 'Content' })
   await user.clear(input)
   await user.type(input, content)
@@ -117,47 +125,68 @@ test('incoming cache data updates a clean list but preserves unsaved announcemen
   expect(await screen.findByText('External announcement')).toBeVisible()
   await editAnnouncement('Unsaved announcement', 'External announcement')
   act(() => updateSavedAnnouncements('New server announcement'))
-  await waitFor(() => expect(screen.getByText('Unsaved announcement')).toBeVisible())
+  await waitFor(() =>
+    expect(screen.getByText('Unsaved announcement')).toBeVisible()
+  )
   expect(screen.queryByText('New server announcement')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled()
 
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: 'Edit' }))
-  const dialog = await screen.findByRole('dialog', { name: 'Edit Announcement' })
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Edit Announcement',
+  })
   const input = within(dialog).getByRole('textbox', { name: 'Content' })
   await user.type(input, ' still editing')
   act(() => updateSavedAnnouncements('Another server announcement'))
-  await waitFor(() => expect(input).toHaveValue('Unsaved announcement still editing'))
+  await waitFor(() =>
+    expect(input).toHaveValue('Unsaved announcement still editing')
+  )
   await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(dialog).not.toBeInTheDocument())
   await user.click(screen.getByRole('button', { name: 'Save Settings' }))
   await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
   expect(api.put).toHaveBeenCalledWith('/api/option/', {
     key: announcementKey,
-    value: JSON.stringify([{ ...original[0], content: 'Unsaved announcement' }]),
+    value:
+      JSON.stringify([
+        { ...original[0], content: 'Unsaved announcement' },
+      ]),
   })
 })
 
 test('an earlier save completion and its cache echo preserve edits made while the request is pending', async () => {
   let finishSave!: (response: { data: { success: boolean } }) => void
   vi.mocked(api.put).mockImplementationOnce(
-    () => new Promise((resolve) => { finishSave = resolve })
+    () =>
+      new Promise((resolve) => {
+        finishSave = resolve
+      })
   )
   await editAnnouncement('Submitted announcement', 'Original announcement')
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: 'Save Settings' }))
-  expect(await screen.findByRole('button', { name: 'Saving...' })).toBeDisabled()
+  expect(
+    await screen.findByRole('button', { name: 'Saving...' })
+  ).toBeDisabled()
   const enabledSwitch = screen.getByRole('switch')
   expect(enabledSwitch).toHaveAttribute('aria-disabled', 'true')
   await user.click(enabledSwitch)
   expect(api.put).toHaveBeenCalledTimes(1)
   await editAnnouncement('Later draft', 'Submitted announcement')
-  await act(async () => { finishSave({ data: { success: true } }) })
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled())
+  await act(async () => {
+    finishSave({ data: { success: true } })
+  })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled()
+  )
   expect(enabledSwitch).not.toHaveAttribute('aria-disabled', 'true')
   expect(screen.getByText('Later draft')).toBeVisible()
   expect(screen.queryByText('Submitted announcement')).not.toBeInTheDocument()
-  expect(client.getQueryData<SystemOptionsResponse>(['system-options'])?.data[0].value).toBe(
+  expect(
+    client.getQueryData<SystemOptionsResponse>(['system-options'])?.data[0]
+      .value
+  ).toBe(
     JSON.stringify([{ ...original[0], content: 'Submitted announcement' }])
   )
   await user.click(screen.getByRole('button', { name: 'Save Settings' }))
@@ -166,7 +195,9 @@ test('an earlier save completion and its cache echo preserve edits made while th
     key: announcementKey,
     value: JSON.stringify([{ ...original[0], content: 'Later draft' }]),
   })
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled())
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled()
+  )
   act(() => updateSavedAnnouncements('Latest server baseline'))
   expect(await screen.findByText('Latest server baseline')).toBeVisible()
 })
@@ -174,16 +205,25 @@ test('an earlier save completion and its cache echo preserve edits made while th
 test('a rejected save keeps the later draft and retry sends that draft', async () => {
   let rejectSave!: (error: Error) => void
   vi.mocked(api.put).mockImplementationOnce(
-    () => new Promise((_resolve, reject) => { rejectSave = reject })
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectSave = reject
+      })
   )
   await editAnnouncement('Submitted announcement', 'Original announcement')
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: 'Save Settings' }))
   await editAnnouncement('Retry this draft', 'Submitted announcement')
-  await act(async () => { rejectSave(new Error('Save failed')) })
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled())
+  await act(async () => {
+    rejectSave(new Error('Save failed'))
+  })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled()
+  )
   act(() => updateSavedAnnouncements('Unrelated cache refresh'))
-  await waitFor(() => expect(screen.getByText('Retry this draft')).toBeVisible())
+  await waitFor(() =>
+    expect(screen.getByText('Retry this draft')).toBeVisible()
+  )
   await user.click(screen.getByRole('button', { name: 'Save Settings' }))
   await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2))
   expect(vi.mocked(api.put).mock.calls[1][1]).toEqual({
