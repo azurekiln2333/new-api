@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useModelStatCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
 import {
@@ -68,6 +69,10 @@ export function LogStatCards(props: LogStatCardsProps) {
   > | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [coverage, setCoverage] = useState<
+    Awaited<ReturnType<typeof getUserQuotaDates>>['coverage']
+  >()
+  const [hasRows, setHasRows] = useState(false)
 
   const [timeRangeMinutes, setTimeRangeMinutes] = useState(0)
 
@@ -79,6 +84,8 @@ export function LogStatCards(props: LogStatCardsProps) {
     setLoading(true)
 
     setError(false)
+    setCoverage(undefined)
+    setHasRows(false)
     onDataUpdate?.([], true)
 
     const timeRange = computeTimeRange(
@@ -93,7 +100,13 @@ export function LogStatCards(props: LogStatCardsProps) {
       .then((res) => {
         if (abortController.signal.aborted) return
         const data = res?.data || []
-        setStats(calculateDashboardStats(data))
+        setCoverage(res?.coverage)
+        setHasRows(data.length > 0)
+        setStats(
+          data.length === 0 && res?.coverage?.complete !== true
+            ? null
+            : calculateDashboardStats(data)
+        )
         onDataUpdate?.(data, false)
       })
       .catch(() => {
@@ -144,8 +157,12 @@ export function LogStatCards(props: LogStatCardsProps) {
   })
 
   return (
-    <div className='overflow-hidden rounded-lg border'>
-      <div className='divide-border/60 grid min-w-0 grid-cols-2 divide-x sm:grid-cols-3 lg:grid-cols-7'>
+    <div className='space-y-3'>
+      {!loading && !error && (
+        <StatisticsCoverageNotice coverage={coverage} />
+      )}
+      <div className='overflow-hidden rounded-lg border'>
+        <div className='divide-border/60 grid min-w-0 grid-cols-2 divide-x sm:grid-cols-3 lg:grid-cols-7'>
         {items.map((it, idx) => {
           const Icon = it.icon
           let valueContent
@@ -161,6 +178,17 @@ export function LogStatCards(props: LogStatCardsProps) {
               <>
                 <div className='text-muted-foreground mt-1 font-mono text-base leading-tight font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl sm:leading-normal'>
                   --
+                </div>
+                <div className='text-muted-foreground/40 mt-1 hidden text-xs md:block'>
+                  {it.desc}
+                </div>
+              </>
+            )
+          } else if (!hasRows && coverage?.complete !== true) {
+            valueContent = (
+              <>
+                <div className='text-muted-foreground mt-1 font-mono text-base leading-tight font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl sm:leading-normal'>
+                  —
                 </div>
                 <div className='text-muted-foreground/40 mt-1 hidden text-xs md:block'>
                   {it.desc}
@@ -216,12 +244,13 @@ export function LogStatCards(props: LogStatCardsProps) {
             </div>
           )
         })}
+        </div>
+        {/*<p className='text-muted-foreground border-t px-3 py-2 text-xs'>*/}
+        {/*  {t(*/}
+        {/*    'Cache usage is recorded only after the upgrade; historical data is not backfilled.'*/}
+        {/*  )}*/}
+        {/*</p>*/}
       </div>
-      {/*<p className='text-muted-foreground border-t px-3 py-2 text-xs'>*/}
-      {/*  {t(*/}
-      {/*    'Cache usage is recorded only after the upgrade; historical data is not backfilled.'*/}
-      {/*  )}*/}
-      {/*</p>*/}
     </div>
   )
 }

@@ -455,6 +455,30 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, common.NewMessage("Audio input cost {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaFromDecimal(q))}))
 	}
 
+	logModel := summary.ModelName
+	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
+		logModel = "gpt-4-gizmo-*"
+		extraContent = append(extraContent, common.NewMessage("Model {{model}}", map[string]any{"model": summary.ModelName}))
+	}
+	if strings.HasPrefix(logModel, "gpt-4o-gizmo") {
+		logModel = "gpt-4o-gizmo-*"
+		extraContent = append(extraContent, common.NewMessage("Model {{model}}", map[string]any{"model": summary.ModelName}))
+	}
+	cacheWriteTokens := cacheWriteTokensTotal(summary)
+	reportedInput := -1
+	if relayInfo.GetFinalRequestRelayFormat() != types.RelayFormatClaude && billingUsage != nil && billingUsage.UsageSource != "" && billingUsage.InputTokens > 0 {
+		reportedInput = billingUsage.InputTokens
+	}
+	cacheReadForReport, cacheWriteForReport := summary.CacheTokens, cacheWriteTokens
+	if originUsage == nil {
+		cacheReadForReport, cacheWriteForReport = -1, -1
+	}
+	usageReport := PrepareRelayUsageReport(ctx, relayInfo, model.UsageEventSourceRelay,
+		logModel, summary.TokenName, summary.PromptTokens, summary.CompletionTokens,
+		cacheReadForReport, cacheWriteForReport, summary.UsageSemantic, reportedInput, summary.Quota)
+	// Normal consume reporting is gross usage even if later settlement fails.
+	ConfirmRelayUsageReport(ctx, usageReport, model.UsageEventSourceReady, "relay_text_report")
+
 	if !summary.hasBillableUsage() {
 		extraContent = append(extraContent, common.NewMessage("Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"))
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
@@ -465,16 +489,6 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {
 		logger.LogError(ctx, common.LogText("error settling billing: %s", err.Error()))
-	}
-
-	logModel := summary.ModelName
-	if strings.HasPrefix(logModel, "gpt-4-gizmo") {
-		logModel = "gpt-4-gizmo-*"
-		extraContent = append(extraContent, common.NewMessage("Model {{model}}", map[string]any{"model": summary.ModelName}))
-	}
-	if strings.HasPrefix(logModel, "gpt-4o-gizmo") {
-		logModel = "gpt-4o-gizmo-*"
-		extraContent = append(extraContent, common.NewMessage("Model {{model}}", map[string]any{"model": summary.ModelName}))
 	}
 
 	var other *model.LogOther
@@ -521,7 +535,6 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other.SetPublic("cache_creation_tokens_12h", summary.CacheCreationTokens12h)
 		other.SetPublic("cache_creation_ratio_12h", summary.CacheCreationRatio12h)
 	}
-	cacheWriteTokens := cacheWriteTokensTotal(summary)
 	if cacheWriteTokens > 0 {
 		// cache_write_tokens: normalized cache creation total for UI display.
 		// If split 5m/1h values are present, this is their sum; otherwise it falls back
@@ -543,6 +556,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	attachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		UsageReport:      usageReport,
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     summary.PromptTokens,
 		CompletionTokens: summary.CompletionTokens,

@@ -20,6 +20,7 @@ import type {
   FlowQuotaDataItem,
   FlowUserFilterOption,
 } from '@/features/dashboard/types'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
 import { createServerError } from '@/lib/server-error-message'
 
 export type FlowDisplayState = 'loading' | 'error' | 'empty' | 'chart'
@@ -27,6 +28,7 @@ export type FlowDisplayState = 'loading' | 'error' | 'empty' | 'chart'
 export interface FlowResponse {
   success: boolean
   data?: FlowQuotaDataItem[]
+  coverage?: StatisticsCoverage
   message?: string
 }
 

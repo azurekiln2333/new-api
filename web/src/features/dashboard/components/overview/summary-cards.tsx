@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 
 import { StaggerContainer, StaggerItem } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
 import type { QuotaDataItem } from '@/features/dashboard/types'
@@ -223,12 +224,20 @@ export function SummaryCards() {
       ),
     [usageTrendQuery.data?.data]
   )
+  const hasIncompleteCoverage =
+    !usageTrendQuery.isPending &&
+    ((usageTrendQuery.isError && !usageTrendQuery.data) ||
+      (usageTrendQuery.data?.coverage?.complete !== true &&
+        (usageTrendQuery.data?.data?.length ?? 0) === 0))
+  const recentUsageDisplay = hasIncompleteCoverage
+    ? '—'
+    : formatQuota(recentUsage)
 
   const healthLevel = getHealthLevel(remainQuota, recentUsage)
   const healthCfg = HEALTH_CONFIG[healthLevel]
   const runwayDays = getRunwayDays(remainQuota, recentUsage)
 
-  const todayUsageDisplay = formatQuota(recentUsage)
+  const todayUsageDisplay = recentUsageDisplay
   let runwayDisplay: string
   if (runwayDays !== null) {
     if (runwayDays < 1) {
@@ -247,11 +256,20 @@ export function SummaryCards() {
   const items = useSummaryCardsConfig({
     ...summaryValues,
     todayUsageDisplay,
-    tokensDisplay: formatCompactNumber(recentTokens, locale),
+    tokensDisplay: hasIncompleteCoverage
+      ? '—'
+      : formatCompactNumber(recentTokens, locale),
     currencyEnabled,
     currencyLabel,
   }).map((config, index) => {
     const tones = ['accent-1', 'accent-2', 'accent-3'] as const
+    let sparkline: number[] | undefined
+    if (!hasIncompleteCoverage) {
+      sparkline =
+        config.key === 'todayUsage'
+          ? sparklineData.usage
+          : getSummarySparkline(config.key, sparklineData)
+    }
 
     return {
       key: config.key,
@@ -260,10 +278,7 @@ export function SummaryCards() {
       desc: config.description,
       icon: config.icon,
       tone: tones[index % tones.length],
-      sparkline:
-        config.key === 'todayUsage'
-          ? sparklineData.usage
-          : getSummarySparkline(config.key, sparklineData),
+      sparkline,
       sparklineVariant: 'line' as const,
     }
   })
@@ -282,6 +297,11 @@ export function SummaryCards() {
               </p>
             </div>
           </div>
+            {!usageTrendQuery.isPending && (
+              <StatisticsCoverageNotice
+                coverage={usageTrendQuery.data?.coverage}
+              />
+            )}
           <StaggerContainer className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-4'>
             {items.map((it) => (
               <StaggerItem
@@ -312,11 +332,16 @@ export function SummaryCards() {
               </span>
               <span className='flex items-center gap-1.5'>
                 <span
-                  className={cn('size-1.5 rounded-full', healthCfg.dotClass)}
+                  className={cn(
+                    'size-1.5 rounded-full',
+                    hasIncompleteCoverage
+                      ? 'bg-muted-foreground/50'
+                      : healthCfg.dotClass
+                  )}
                   aria-hidden='true'
                 />
                 <span className='text-muted-foreground text-[11px] font-medium'>
-                  {t(healthCfg.labelKey)}
+                  {hasIncompleteCoverage ? t('Unknown') : t(healthCfg.labelKey)}
                 </span>
               </span>
             </div>
@@ -332,7 +357,7 @@ export function SummaryCards() {
                   <span className='truncate'>{t('Last 24h usage')}</span>
                 </div>
                 <div className='text-foreground mt-1.5 truncate text-xs font-semibold tabular-nums'>
-                  {formatQuota(recentUsage)}
+                  {recentUsageDisplay}
                 </div>
               </div>
               <div className='bg-background/60 rounded-lg px-2.5 py-2'>
@@ -357,7 +382,7 @@ export function SummaryCards() {
                     healthLevel === 'caution' && 'text-warning'
                   )}
                 >
-                  {runwayDisplay}
+                  {hasIncompleteCoverage ? '—' : runwayDisplay}
                 </div>
               </div>
             </div>

@@ -57,6 +57,34 @@ type migrationDecimalV3 struct {
 	Price float64 `gorm:"type:decimal(12,6);not null;default:1.25"`
 }
 
+// The pre-namespace hourly schema may already contain aggregated facts. The
+// additive migration cannot infer their source membership or reset apply state.
+type migrationUsageHourWithoutNamespace struct {
+	ID                   int64  `gorm:"primaryKey;autoIncrement;index:ix_usage_hour_time,priority:3;index:ix_usage_hour_self,priority:4"`
+	ProjectionVersion    int64  `gorm:"type:bigint;not null;uniqueIndex:ux_usage_hour_key,priority:1;index:ix_usage_hour_time,priority:1;index:ix_usage_hour_self,priority:2"`
+	DimensionKey         string `gorm:"type:char(64);not null;uniqueIndex:ux_usage_hour_key,priority:2"`
+	CollectionEpoch      string `gorm:"type:char(32);not null"`
+	HourStart            int64  `gorm:"type:bigint;not null;index:ix_usage_hour_time,priority:2;index:ix_usage_hour_self,priority:3"`
+	UserID               int64  `gorm:"type:bigint;not null;index:ix_usage_hour_self,priority:1"`
+	Username             string `gorm:"type:text;not null"`
+	ModelName            string `gorm:"type:text;not null"`
+	GroupName            string `gorm:"type:text;not null"`
+	TokenID              int64  `gorm:"type:bigint;not null"`
+	ChannelID            int64  `gorm:"type:bigint;not null"`
+	ExportNode           string `gorm:"type:text;not null"`
+	DimensionKnownMask   int64  `gorm:"type:bigint;not null"`
+	ConsumeCount         int64  `gorm:"type:bigint;not null"`
+	GrossQuota           int64  `gorm:"type:bigint;not null"`
+	PromptTokens         int64  `gorm:"type:bigint;not null"`
+	CompletionTokens     int64  `gorm:"type:bigint;not null"`
+	RankingTokens        int64  `gorm:"type:bigint;not null"`
+	CacheReadTokens      int64  `gorm:"type:bigint;not null"`
+	CacheWriteTokens     int64  `gorm:"type:bigint;not null"`
+	InputDenominator     int64  `gorm:"type:bigint;not null"`
+	CacheUnknownCount    int64  `gorm:"type:bigint;not null"`
+	SemanticUnknownCount int64  `gorm:"type:bigint;not null"`
+}
+
 type migrationChannelKeyEntryV1 struct {
 	Id             int64  `gorm:"primaryKey;autoIncrement"`
 	ChannelId      int    `gorm:"not null;index:idx_channel_key_entries_order,priority:1"`
@@ -161,6 +189,103 @@ func TestMigrationSchemaStability(t *testing.T) {
 						err := db.Transaction(func(tx *gorm.DB) error { return tx.Create(&rows[0]).Error })
 						assert.Error(t, err, "migration must retain primary-key uniqueness")
 					})
+				}
+			})
+
+			t.Run("usage_statistics_foundation", func(t *testing.T) {
+				tables := []any{&UsageEvent{}, &UsageHour{}, &UsageChannelModel{}, &UsageChannel{}}
+				require.NoError(t, db.Migrator().DropTable(tables...))
+				t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(tables...)) })
+
+				// These existing-domain fixtures are deliberately separate from
+				// usage_events. The actual released-binary upgrade is hosted by
+				// the release probe, not simulated by these current Go structs.
+				const logTable, quotaTable = "logs", "quota_data"
+				require.NoError(t, db.Table(logTable).AutoMigrate(&Log{}))
+				require.NoError(t, db.Table(quotaTable).AutoMigrate(&QuotaData{}))
+				oldLog := Log{UserId: 81230, Type: LogTypeConsume, CreatedAt: 1700000123, ModelName: "historic-model", Quota: 7, PromptTokens: 100, CompletionTokens: 20}
+				oldQuota := QuotaData{UserID: 81230, CreatedAt: 1699999200, ModelName: "historic-model", Count: 1, Quota: 7, TokenUsed: 120}
+				require.NoError(t, db.Table(logTable).Create(&oldLog).Error)
+				t.Cleanup(func() { require.NoError(t, db.Table(logTable).Where("id = ?", oldLog.Id).Delete(&Log{}).Error) })
+				require.NoError(t, db.Table(quotaTable).Create(&oldQuota).Error)
+				t.Cleanup(func() {
+					require.NoError(t, db.Table(quotaTable).Where("id = ?", oldQuota.Id).Delete(&QuotaData{}).Error)
+				})
+				require.NoError(t, db.Table("usage_hours").AutoMigrate(&migrationUsageHourWithoutNamespace{}))
+				oldHour := migrationUsageHourWithoutNamespace{
+					ProjectionVersion: UsageEventProjectionVersion, DimensionKey: strings.Repeat("e", 64), CollectionEpoch: strings.Repeat("b", 32),
+					HourStart: oldQuota.CreatedAt, UserID: int64(oldQuota.UserID), Username: "legacy-owner", ModelName: oldQuota.ModelName,
+					ConsumeCount: 1, GrossQuota: 7, PromptTokens: 100, CompletionTokens: 20, RankingTokens: 120, InputDenominator: 100,
+				}
+				require.NoError(t, db.Table("usage_hours").Create(&oldHour).Error)
+				require.NoError(t, MigrateUsageStatistics(db))
+				for range 2 {
+					recorder.reset()
+					require.NoError(t, MigrateUsageStatistics(db))
+					assert.Empty(t, recorder.schemaMutations(), "repeated foundation migration is a schema no-op")
+				}
+				var savedLog Log
+				var savedQuota QuotaData
+				require.NoError(t, db.Table(logTable).First(&savedLog, oldLog.Id).Error)
+				require.NoError(t, db.Table(quotaTable).First(&savedQuota, oldQuota.Id).Error)
+				assert.Equal(t, oldLog, savedLog)
+				assert.Equal(t, oldQuota, savedQuota)
+				var savedHour migrationUsageHourWithoutNamespace
+				require.NoError(t, db.Table("usage_hours").First(&savedHour, oldHour.ID).Error)
+				assert.Equal(t, oldHour, savedHour, "namespace migration preserves every preexisting counter and dimension")
+				var migratedHour UsageHour
+				require.NoError(t, db.First(&migratedHour, oldHour.ID).Error)
+				assert.Empty(t, normalizeFixedText(migratedHour.SourceNamespace), "mixed old hours must remain unattributed, never assigned to the live codec")
+
+				for _, table := range tables {
+					assert.True(t, db.Migrator().HasTable(table))
+				}
+				for _, indexTest := range []struct {
+					model   any
+					name    string
+					columns []string
+					unique  bool
+				}{
+					{&UsageEvent{}, "ux_usage_event_key", []string{"event_key"}, true},
+					{&UsageEvent{}, "ix_usage_event_drain", []string{"source_state", "applied_version", "next_attempt_at", "id"}, false},
+					{&UsageEvent{}, "ix_usage_event_pending_time", []string{"source_state", "applied_version", "kind", "occurred_at", "id"}, false},
+					{&UsageEvent{}, "ix_usage_event_time", []string{"source_state", "kind", "occurred_at", "id"}, false},
+					{&UsageEvent{}, "ix_usage_event_self", []string{"user_id", "source_state", "kind", "occurred_at", "id"}, false},
+					{&UsageEvent{}, "ix_usage_event_channel_tail", []string{"channel_id", "source_state", "applied_version", "kind", "id"}, false},
+					{&UsageHour{}, "ux_usage_hour_key", []string{"projection_version", "dimension_key"}, true},
+					{&UsageHour{}, "ix_usage_hour_self", []string{"user_id", "projection_version", "hour_start", "id"}, false},
+					{&UsageHour{}, "ix_usage_hour_lineage", []string{"source_namespace", "collection_epoch", "projection_version", "hour_start", "id"}, false},
+					{&UsageHour{}, "ix_usage_hour_lineage_self", []string{"source_namespace", "collection_epoch", "user_id", "projection_version", "hour_start", "id"}, false},
+					{&UsageChannelModel{}, "ux_usage_channel_model", []string{"projection_version", "channel_id", "model_key"}, true},
+				} {
+					indexes, err := db.Migrator().GetIndexes(indexTest.model)
+					require.NoError(t, err)
+					var matched gorm.Index
+					for _, index := range indexes {
+						if index.Name() == indexTest.name {
+							matched = index
+							break
+						}
+					}
+					require.NotNil(t, matched, indexTest.name)
+					columns := matched.Columns()
+					if dialect == "postgres" {
+						// The installed PostgreSQL GetIndexes query does not retain
+						// key order; read the actual ordinal positions instead.
+						require.NoError(t, db.Raw(`
+SELECT attribute.attname
+FROM pg_catalog.pg_index AS index_meta
+CROSS JOIN LATERAL unnest(index_meta.indkey) WITH ORDINALITY AS index_column(attnum, ordinal_position)
+JOIN pg_catalog.pg_attribute AS attribute
+  ON attribute.attrelid = index_meta.indrelid AND attribute.attnum = index_column.attnum
+WHERE index_meta.indexrelid = to_regclass(?)
+ORDER BY index_column.ordinal_position
+`, indexTest.name).Scan(&columns).Error)
+					}
+					assert.Equal(t, indexTest.columns, columns, indexTest.name)
+					unique, known := matched.Unique()
+					require.True(t, known, indexTest.name)
+					assert.Equal(t, indexTest.unique, unique, indexTest.name)
 				}
 			})
 

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createContext, useContext } from 'react'
+import { useContext } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -34,13 +34,8 @@ import {
 import { cn } from '@/lib/utils'
 
 import type { ChannelUsageSummary } from '../types'
+import { ChannelUsageContext } from './channel-usage-context-value'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
-
-// eslint-disable-next-line react-refresh/only-export-components
-export const ChannelUsageContext = createContext<
-  Record<number, ChannelUsageSummary>
->({})
-
 type ChannelUsedTokensProps = {
   channelId: number
   /**
@@ -61,11 +56,14 @@ type ChannelUsedTokensProps = {
  */
 export function ChannelUsedTokens(props: ChannelUsedTokensProps) {
   const { t, i18n } = useTranslation()
-  const usage = useContext(ChannelUsageContext)[props.channelId]
+  const usageContext = useContext(ChannelUsageContext)
+  const usage = usageContext.usageByChannel[props.channelId]
   const layout = useContext(ChannelRowActionsLayoutContext)
   const isCompact = props.compact ?? layout === 'card'
   if (!usage) {
-    return <span className='text-muted-foreground'>-</span>
+    const missingValue =
+      usageContext.coverage?.complete === true ? '-' : '—'
+    return <span className='text-muted-foreground'>{missingValue}</span>
   }
 
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)

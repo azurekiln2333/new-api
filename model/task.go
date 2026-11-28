@@ -71,6 +71,9 @@ type Task struct {
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
+	// Transient source-owner bindings are never serialized into task payloads.
+	UsageReport     *UsageSourceReport   `json:"-" gorm:"-"`
+	UsageTransition *TaskUsageTransition `json:"-" gorm:"-"`
 }
 
 func (t *Task) SetData(data any) {
@@ -111,9 +114,12 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	Key            string `json:"key,omitempty"`
-	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
-	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	// UsageSubmissionKey links the insert to its prepared numeric occurrence;
+	// it is not a finance receipt or evidence that a pending outcome succeeded.
+	UsageSubmissionKey string `json:"usage_submission_key,omitempty"`
+	Key                string `json:"key,omitempty"`
+	UpstreamTaskID     string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
+	ResultURL          string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
 	// Execution records safe, immutable request provenance. It lives next to
 	// other private task state so public task DTOs cannot expose it by accident.
 	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`

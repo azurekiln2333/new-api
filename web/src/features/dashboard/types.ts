@@ -17,6 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { TimeGranularity } from '@/lib/time'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
+
+export type { StatisticsCoverage }
 
 // ============================================================================
 // Quota & Usage Data Types
@@ -35,6 +38,12 @@ export interface QuotaDataItem {
   quota?: number
 }
 
+export interface QuotaDataResponse {
+  success: boolean
+  data: QuotaDataItem[]
+  coverage?: StatisticsCoverage
+}
+
 export interface FlowQuotaDataItem {
   user_id?: number
   username?: string
@@ -48,6 +57,13 @@ export interface FlowQuotaDataItem {
   token_used?: number
   count?: number
   quota?: number
+}
+
+export interface FlowQuotaDataResponse {
+  success: boolean
+  data?: FlowQuotaDataItem[]
+  coverage?: StatisticsCoverage
+  message?: string
 }
 
 export type FlowMetric = 'quota' | 'tokens' | 'requests'

@@ -19,13 +19,21 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { VChart } from '@visactor/react-vchart'
 import { Users, Loader2 } from 'lucide-react'
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useCallback,
+  type ReactNode,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { useTheme } from '@/context/theme-provider'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
 import { ChartMetricToggle } from '@/features/dashboard/components/ui/chart-metric-toggle'
@@ -42,6 +50,7 @@ import {
 } from '@/features/dashboard/lib'
 import type {
   ProcessedUserChartData,
+  QuotaDataItem,
   UserChartsFilters,
 } from '@/features/dashboard/types'
 import { toIntlLocale } from '@/i18n/languages'
@@ -73,6 +82,7 @@ const USER_CHARTS: {
 ]
 
 const TOP_USER_LIMIT_OPTIONS = [5, 10, 20, 50]
+const EMPTY_USER_CHART_DATA: QuotaDataItem[] = []
 
 interface UserChartsProps {
   filters: UserChartsFilters
@@ -163,7 +173,7 @@ export function UserCharts(props: UserChartsProps) {
     updateTheme()
   }, [resolvedTheme])
 
-  const { data: userData, isLoading } = useQuery({
+  const userQuery = useQuery({
     queryKey: [
       'dashboard',
       'user-quota',
@@ -173,15 +183,21 @@ export function UserCharts(props: UserChartsProps) {
     ],
     queryFn: async ({ signal }) =>
       requireServerSuccess(await getUserQuotaDataByUsers(timeRange, signal)),
-    select: (res) => (res.success ? res.data : []),
     enabled: isAdmin,
     staleTime: 60_000,
   })
+  const isLoading = userQuery.isLoading
+  const hasUnverifiedEmptyData =
+    !isLoading &&
+    (userQuery.data?.data.length ?? 0) === 0 &&
+    userQuery.data?.coverage?.complete !== true
 
   const chartData = useMemo(
     () =>
       processUserChartData(
-        !isAdmin || isLoading ? [] : (userData ?? []),
+        !isAdmin || isLoading
+          ? EMPTY_USER_CHART_DATA
+          : (userQuery.data?.data ?? EMPTY_USER_CHART_DATA),
         timeGranularity,
         t,
         topUserLimit,
@@ -189,7 +205,7 @@ export function UserCharts(props: UserChartsProps) {
         locale
       ),
     [
-      userData,
+      userQuery.data,
       isAdmin,
       isLoading,
       timeGranularity,
@@ -204,6 +220,9 @@ export function UserCharts(props: UserChartsProps) {
 
   return (
     <div className='space-y-3'>
+      {!isLoading && userQuery.data && (
+        <StatisticsCoverageNotice coverage={userQuery.data.coverage} />
+      )}
       <div className='flex items-center gap-1.5 overflow-x-auto pb-1 sm:gap-2'>
         <Tabs
           value={String(selectedRange)}
@@ -281,6 +300,31 @@ export function UserCharts(props: UserChartsProps) {
       <div className='grid gap-3'>
         {USER_CHARTS.map((chart) => {
           const spec = chartData[chart.specKey]
+          let content: ReactNode = null
+          if (isLoading) {
+            content = <Skeleton className='h-full w-full' />
+          } else if (hasUnverifiedEmptyData) {
+            content = (
+              <div
+                role='status'
+                className='text-muted-foreground flex h-full items-center justify-center px-4 text-center text-sm'
+              >
+                {t('No verified usage data available')}
+              </div>
+            )
+          } else if (themeReady && spec) {
+            content = (
+              <VChart
+                key={`user-${chart.value}-${topUserLimit}-${metric}-${resolvedTheme}`}
+                spec={{
+                  ...spec,
+                  theme: resolvedTheme === 'dark' ? 'dark' : 'light',
+                  background: 'transparent',
+                }}
+                option={VCHART_OPTION}
+              />
+            )
+          }
 
           return (
             <div
@@ -295,22 +339,7 @@ export function UserCharts(props: UserChartsProps) {
               </div>
 
               <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
-                {isLoading ? (
-                  <Skeleton className='h-full w-full' />
-                ) : (
-                  themeReady &&
-                  spec && (
-                    <VChart
-                      key={`user-${chart.value}-${topUserLimit}-${metric}-${resolvedTheme}`}
-                      spec={{
-                        ...spec,
-                        theme: resolvedTheme === 'dark' ? 'dark' : 'light',
-                        background: 'transparent',
-                      }}
-                      option={VCHART_OPTION}
-                    />
-                  )
-                )}
+                {content}
               </div>
             </div>
           )

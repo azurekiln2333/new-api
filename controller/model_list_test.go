@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting"
@@ -36,6 +37,14 @@ type userModelsResponse struct {
 
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+	previousRedis := common.RedisEnabled
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMain, previousLog)
+		common.RedisEnabled = previousRedis
+	})
 
 	initModelListColumnNames(t)
 
@@ -46,17 +55,13 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
 	model.DB = db
 	model.LOG_DB = db
 
 	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.AuditEventOutbox{}, &model.SystemTask{}, &model.SystemTaskLock{}))
-
-	t.Cleanup(func() {
-		sqlDB, err := db.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
-	})
 
 	return db
 }
@@ -68,8 +73,16 @@ func initModelListColumnNames(t *testing.T) {
 	originalSQLitePath := common.SQLitePath
 	originalMainDatabaseType := common.MainDatabaseType()
 	originalLogDatabaseType := common.LogDatabaseType()
+	originalDB, originalLogDB := model.DB, model.LOG_DB
 	originalSQLDSN, hadSQLDSN := os.LookupEnv("SQL_DSN")
 	defer func() {
+		if model.DB != nil && model.DB != originalDB && model.DB != originalLogDB {
+			pool, err := model.DB.DB()
+			if assert.NoError(t, err) {
+				assert.NoError(t, pool.Close())
+			}
+		}
+		model.DB, model.LOG_DB = originalDB, originalLogDB
 		common.IsMasterNode = originalIsMasterNode
 		common.SQLitePath = originalSQLitePath
 		common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
@@ -91,14 +104,9 @@ func initModelListColumnNames(t *testing.T) {
 	require.NoError(t, err)
 	defer bootstrapSQL.Close()
 	require.NoError(t, bootstrap.AutoMigrate(&model.Option{}))
+	testutil.MigrateUsageStatisticsForTestDatabase(t, bootstrap)
 
 	require.NoError(t, model.InitDB())
-	if model.DB != nil {
-		sqlDB, err := model.DB.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
-	}
 }
 
 func withTieredBillingConfig(t *testing.T, modes map[string]string, exprs map[string]string) {

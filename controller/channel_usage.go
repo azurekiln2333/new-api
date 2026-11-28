@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -37,7 +38,11 @@ func GetChannelUsages(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"items": items})
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsChannels, 0, 0)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"items": items}, "coverage": coverage})
 }
 
 // GetChannelUsage returns the usage of one channel with its per-model status.
@@ -61,5 +66,9 @@ func GetChannelUsage(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, detail)
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsChannels, 0, 0)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": detail, "coverage": coverage})
 }

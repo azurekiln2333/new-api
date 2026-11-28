@@ -58,6 +58,11 @@ func GetRankingModelUsage(c *gin.Context) {
 		return
 	}
 	users := model.BuildUserRankingView(viewer, rows, names)
+	coverage, err := model.GetUsageStatisticsCoverage(ctx, model.UsageStatisticsDashboard, startTime, endTime)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	// The response is viewer-scoped, so it must never be stored in a shared
 	// cache. no-store keeps a masked or unmasked payload from being replayed
@@ -79,6 +84,7 @@ func GetRankingModelUsage(c *gin.Context) {
 			},
 			"users": users,
 		},
+		"coverage": coverage,
 	})
 }
 

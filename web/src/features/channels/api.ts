@@ -117,16 +117,21 @@ export async function getInferenceStatus(
 export async function getChannelUsageSummaries(
   ids: number[],
   signal?: AbortSignal
-): Promise<ChannelUsageSummary[]> {
+): Promise<{
+  items: ChannelUsageSummary[]
+  coverage?: ChannelUsageSummary['coverage']
+}> {
   const response = await api.get<{
     success: boolean
     data: { items: ChannelUsageSummary[] }
+    coverage?: ChannelUsageSummary['coverage']
   }>('/api/channel/usage', {
     params: { ids: ids.join(',') },
     signal,
     disableDuplicate: true,
   })
-  return requireServerSuccess(response.data).data.items ?? []
+  const result = requireServerSuccess(response.data).data
+  return { items: result.items ?? [], coverage: response.data.coverage }
 }
 
 export async function getChannelUsageDetail(
@@ -136,8 +141,12 @@ export async function getChannelUsageDetail(
   const response = await api.get<{
     success: boolean
     data: ChannelUsageDetail
+    coverage?: ChannelUsageDetail['coverage']
   }>(`/api/channel/${channelId}/usage`, { signal, disableDuplicate: true })
-  return requireServerSuccess(response.data).data
+  return {
+    ...requireServerSuccess(response.data).data,
+    coverage: response.data.coverage,
+  }
 }
 
 /** One bounded batch of live concurrency samples; callers cap `ids` at 200. */

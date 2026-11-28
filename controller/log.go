@@ -281,10 +281,15 @@ func GetLogsStat(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsFacts, filter.StartTimestamp, filter.EndTimestamp)
+	if !ok {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    logStatResponse(stat),
+		"success":  true,
+		"message":  "",
+		"data":     logStatResponse(stat),
+		"coverage": coverage,
 	})
 	return
 }
@@ -308,10 +313,15 @@ func GetLogsSelfStat(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsFacts, filter.StartTimestamp, filter.EndTimestamp)
+	if !ok {
+		return
+	}
 	c.JSON(200, gin.H{
-		"success": true,
-		"message": "",
-		"data":    logStatResponse(stat),
+		"success":  true,
+		"message":  "",
+		"data":     logStatResponse(stat),
+		"coverage": coverage,
 	})
 	return
 }

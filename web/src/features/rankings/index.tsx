@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 import { Skeleton } from '@/components/ui/skeleton'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 
 import {
   MarketShareSection,
@@ -86,25 +87,45 @@ export function Rankings() {
       />
     )
   } else {
+    const hasUnverifiedEmptySnapshot =
+      snapshot.models.length === 0 &&
+      snapshot.vendors.length === 0 &&
+      rankingsQuery.data?.coverage?.complete !== true &&
+      snapshot.totals.total_tokens === 0 &&
+      snapshot.totals.cache_read_tokens === 0 &&
+      snapshot.totals.cache_creation_tokens === 0
     content = (
       <>
-        <ModelsSection
-          totals={snapshot.totals}
-          history={snapshot.models_history}
-          rows={snapshot.models}
-          period={period}
-          onOpenModel={handleOpenModel}
+        <StatisticsCoverageNotice
+          coverage={rankingsQuery.data?.coverage}
+          previousCoverage={rankingsQuery.data?.previous_coverage}
+          previousCoverageRequired
         />
-        <MarketShareSection
-          history={snapshot.vendor_share_history}
-          rows={snapshot.vendors}
-          period={period}
-        />
-        <PulseSection
-          movers={snapshot.top_movers}
-          droppers={snapshot.top_droppers}
-          onOpenModel={handleOpenModel}
-        />
+        {hasUnverifiedEmptySnapshot ? (
+          <p role='status' className='text-muted-foreground py-12 text-center'>
+            {t('No verified usage data available')}
+          </p>
+        ) : (
+          <>
+            <ModelsSection
+              totals={snapshot.totals}
+              history={snapshot.models_history}
+              rows={snapshot.models}
+              period={period}
+              onOpenModel={handleOpenModel}
+            />
+            <MarketShareSection
+              history={snapshot.vendor_share_history}
+              rows={snapshot.vendors}
+              period={period}
+            />
+            <PulseSection
+              movers={snapshot.top_movers}
+              droppers={snapshot.top_droppers}
+              onOpenModel={handleOpenModel}
+            />
+          </>
+        )}
       </>
     )
   }

@@ -45,6 +45,16 @@ function buildApiPath(endpoint: string, isAdmin: boolean): string {
   return isAdmin ? endpoint : `${endpoint}/self`
 }
 
+function selfLogParams<T extends GetLogStatsParams>(params: T) {
+  const {
+    user_scope: _userScope,
+    username: _username,
+    channel: _channel,
+    ...selfParams
+  } = params
+  return selfParams
+}
+
 async function fetchLogs<T>(
   endpoint: string,
   params: T,
@@ -58,20 +68,27 @@ async function fetchLogs<T>(
     ...params,
   })
   const path = buildApiPath(endpoint, isAdmin)
-  const res = await api.get(`${path}?${queryParams}`, { signal })
+  const res = await api.get(
+    `${path}?${queryParams}`,
+    signal ? { signal } : undefined
+  )
   return res.data
 }
 
 async function fetchLogStats<T>(
   endpoint: string,
   params: T,
-  isAdmin: boolean
+  isAdmin: boolean,
+  signal?: AbortSignal
 ): Promise<GetLogStatsResponse> {
   const queryParams = buildQueryParams(
     params as unknown as Record<string, unknown>
   )
   const path = buildApiPath(endpoint, isAdmin)
-  const res = await api.get(`${path}/stat?${queryParams}`)
+  const res = await api.get<GetLogStatsResponse>(
+    `${path}/stat?${queryParams}`,
+    signal ? { signal } : undefined
+  )
   return res.data
 }
 
@@ -79,30 +96,30 @@ async function fetchLogStats<T>(
 // Common Log APIs
 // ============================================================================
 
-export const getAllLogs = (params: GetLogsParams = {}, signal?: AbortSignal) =>
-  fetchLogs('/api/log', params, true, signal)
+export const getAllLogs = (
+  params: GetLogsParams = {},
+  signal?: AbortSignal
+) => fetchLogs('/api/log', params, true, signal)
 
-function selfLogParams<T extends GetLogStatsParams>(params: T) {
-  const {
-    user_scope: _scope,
-    username: _username,
-    channel: _channel,
-    ...self
-  } = params
-  return self
-}
 
 export const getUserLogs = (
   params: Omit<GetLogsParams, 'username' | 'channel' | 'user_scope'> = {},
   signal?: AbortSignal
 ) => fetchLogs('/api/log', selfLogParams(params), false, signal)
 
-export const getLogStats = (params: GetLogStatsParams = {}) =>
-  fetchLogStats('/api/log', params, true)
+export const getLogStats = (
+  params: GetLogStatsParams = {},
+  signal?: AbortSignal
+) => fetchLogStats('/api/log', params, true, signal)
 
 export const getUserLogStats = (
-  params: Omit<GetLogStatsParams, 'username' | 'channel' | 'user_scope'> = {}
-) => fetchLogStats('/api/log', selfLogParams(params), false)
+  params: Omit<
+    GetLogStatsParams,
+    'username' | 'channel' | 'user_scope'
+  > = {},
+  signal?: AbortSignal
+) => fetchLogStats('/api/log', selfLogParams(params), false, signal)
+
 
 /**
  * Stream the logs matching params, newest first. The server sends one JSON

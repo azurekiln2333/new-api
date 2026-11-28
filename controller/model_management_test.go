@@ -15,6 +15,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -52,6 +53,24 @@ func modelManagementDB(t *testing.T, kind, dsn string) *gorm.DB {
 		{ratio_setting.AudioRatio2JSONString(), ratio_setting.UpdateAudioRatioByJSONString},
 		{ratio_setting.AudioCompletionRatio2JSONString(), ratio_setting.UpdateAudioCompletionRatioByJSONString},
 	}
+	t.Cleanup(func() {
+		currentDB := model.DB
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.OptionMap = previousOptions
+		common.IsMasterNode, common.SQLitePath = previousMaster, previousSQLite
+		common.RedisEnabled, common.MemoryCacheEnabled = previousRedis, previousMemory
+		common.SetDatabaseTypes(previousMain, previousLog)
+		for _, value := range restoreRatios {
+			assert.NoError(t, value.restore(value.value))
+		}
+		config.UpdateConfigFromMap(config.GlobalConfig.Get("billing_setting"), map[string]string{"billing_mode": previousConfig["billing_setting.billing_mode"], "billing_expr": previousConfig["billing_setting.billing_expr"], "plugin_billing_expr": previousConfig[billing_setting.PluginBillingExprOption]})
+		if currentDB != nil && currentDB != previousDB && currentDB != previousLogDB {
+			connection, err := currentDB.DB()
+			if assert.NoError(t, err) {
+				assert.NoError(t, connection.Close())
+			}
+		}
+	})
 	common.IsMasterNode = false
 	common.RedisEnabled, common.MemoryCacheEnabled = false, false
 	common.OptionMap = map[string]string{}
@@ -64,6 +83,7 @@ func modelManagementDB(t *testing.T, kind, dsn string) *gorm.DB {
 	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
 	// Followers expect the master to have created the options table already.
 	require.NoError(t, database.AutoMigrate(&model.Option{}))
+	testutil.MigrateUsageStatisticsForTestDatabase(t, database)
 	require.NoError(t, model.InitDB())
 	database = model.DB
 	model.LOG_DB = database
@@ -79,21 +99,6 @@ func modelManagementDB(t *testing.T, kind, dsn string) *gorm.DB {
 	}
 	require.NoError(t, database.Raw(query).Scan(&version).Error)
 	t.Logf("database version: %s", version)
-	t.Cleanup(func() {
-		for _, value := range restoreRatios {
-			require.NoError(t, value.restore(value.value))
-		}
-		config.UpdateConfigFromMap(config.GlobalConfig.Get("billing_setting"), map[string]string{"billing_mode": previousConfig["billing_setting.billing_mode"], "billing_expr": previousConfig["billing_setting.billing_expr"], "plugin_billing_expr": previousConfig[billing_setting.PluginBillingExprOption]})
-		common.OptionMap = previousOptions
-		common.IsMasterNode, common.SQLitePath = previousMaster, previousSQLite
-		common.RedisEnabled, common.MemoryCacheEnabled = previousRedis, previousMemory
-		common.SetDatabaseTypes(previousMain, previousLog)
-		connection, err := database.DB()
-		if err == nil {
-			require.NoError(t, connection.Close())
-		}
-		model.DB, model.LOG_DB = previousDB, previousLogDB
-	})
 	return database
 }
 

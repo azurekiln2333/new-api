@@ -1,11 +1,9 @@
 package model
 
 import (
+	"cmp"
 	"context"
-	"fmt"
-
-	"github.com/QuantumNous/new-api/common"
-	"gorm.io/gorm"
+	"slices"
 )
 
 type RankingQuotaTotal struct {
@@ -30,18 +28,23 @@ func GetModelUserUsageRanking(ctx context.Context, modelName string, startTime i
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	var rows []UserRankingRow
-	query := DB.WithContext(ctx).Table("quota_data").
-		Select("user_id, sum(count) as requests, sum(token_used) as tokens, sum(quota) as quota").
-		Where("model_name = ?", modelName).
-		Group("user_id").
-		Having("sum(token_used) > 0").
-		Order("tokens DESC").
-		Order("user_id ASC").
-		Limit(limit)
-	query = applyRankingQuotaTimeRange(query, startTime, endTime)
-	err := query.Find(&rows).Error
-	return rows, err
+	data, err := readUsageDashboard(ctx, startTime, endTime, usageDashboardFilter{ModelName: modelName, FilterModel: true, RankingLimit: limit}, []string{"user_id"})
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]UserRankingRow, 0, min(len(data), limit))
+	for _, row := range data {
+		if row.TokenUsed > 0 {
+			rows = append(rows, UserRankingRow{UserID: row.UserID, Requests: row.Count, Tokens: row.TokenUsed, Quota: row.Quota})
+		}
+	}
+	slices.SortFunc(rows, func(a, b UserRankingRow) int {
+		if order := cmp.Compare(b.Tokens, a.Tokens); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.UserID, b.UserID)
+	})
+	return rows[:min(limit, len(rows))], nil
 }
 
 // ModelUsageTotals is a model's aggregate usage over a time range.
@@ -55,58 +58,68 @@ type ModelUsageTotals struct {
 // range, independent of any leaderboard limit, so displayed totals are not
 // undercounted by a bounded top-N list.
 func GetModelUsageTotals(ctx context.Context, modelName string, startTime int64, endTime int64) (ModelUsageTotals, error) {
-	var totals ModelUsageTotals
-	query := DB.WithContext(ctx).Table("quota_data").
-		Select("coalesce(sum(count), 0) as requests, coalesce(sum(token_used), 0) as tokens, coalesce(sum(quota), 0) as quota").
-		Where("model_name = ?", modelName)
-	query = applyRankingQuotaTimeRange(query, startTime, endTime)
-	err := query.Scan(&totals).Error
-	return totals, err
+	rows, err := readUsageDashboard(ctx, startTime, endTime, usageDashboardFilter{ModelName: modelName, FilterModel: true}, nil)
+	if err != nil {
+		return ModelUsageTotals{}, err
+	}
+	if len(rows) == 0 {
+		return ModelUsageTotals{}, nil
+	}
+	return ModelUsageTotals{Requests: rows[0].Count, Tokens: rows[0].TokenUsed, Quota: rows[0].Quota}, nil
 }
 
 func GetRankingQuotaTotals(startTime int64, endTime int64) ([]RankingQuotaTotal, error) {
-	var rows []RankingQuotaTotal
-	query := DB.Table("quota_data").
-		Select("model_name, sum(token_used) as total_tokens, sum(cache_read_tokens) as cache_read_tokens, sum(cache_creation_tokens) as cache_creation_tokens").
-		Where("model_name <> ''").
-		Group("model_name").
-		Having("sum(token_used) > 0").
-		Order("total_tokens DESC")
-	query = applyRankingQuotaTimeRange(query, startTime, endTime)
-	err := query.Find(&rows).Error
-	return rows, err
+	data, err := readUsageDashboard(context.Background(), startTime, endTime, usageDashboardFilter{NonemptyModel: true}, []string{"model_name"})
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]RankingQuotaTotal, 0, len(data))
+	for _, row := range data {
+		if row.TokenUsed > 0 {
+			rows = append(rows, RankingQuotaTotal{ModelName: row.ModelName, TotalTokens: row.TokenUsed, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens})
+		}
+	}
+	slices.SortFunc(rows, func(a, b RankingQuotaTotal) int {
+		if order := cmp.Compare(b.TotalTokens, a.TotalTokens); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.ModelName, b.ModelName)
+	})
+	return rows, nil
 }
 
 func GetRankingQuotaBuckets(startTime int64, endTime int64, bucketSize int64) ([]RankingQuotaBucket, error) {
 	if bucketSize <= 0 {
 		bucketSize = 3600
 	}
-	bucketExpr := rankingBucketExpr(bucketSize)
-	var rows []RankingQuotaBucket
-	query := DB.Table("quota_data").
-		Select(fmt.Sprintf("model_name, %s as bucket, sum(token_used) as tokens", bucketExpr)).
-		Where("model_name <> ''").
-		Group(fmt.Sprintf("model_name, %s", bucketExpr)).
-		Having("sum(token_used) > 0").
-		Order("bucket ASC")
-	query = applyRankingQuotaTimeRange(query, startTime, endTime)
-	err := query.Find(&rows).Error
-	return rows, err
-}
-
-func rankingBucketExpr(bucketSize int64) string {
-	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-		return fmt.Sprintf("FLOOR(created_at / %d) * %d", bucketSize, bucketSize)
+	data, err := readUsageDashboard(context.Background(), startTime, endTime, usageDashboardFilter{NonemptyModel: true}, []string{"model_name", "created_at"})
+	if err != nil {
+		return nil, err
 	}
-	return fmt.Sprintf("(created_at / %d) * %d", bucketSize, bucketSize)
-}
-
-func applyRankingQuotaTimeRange(query *gorm.DB, startTime int64, endTime int64) *gorm.DB {
-	if startTime > 0 {
-		query = query.Where("created_at >= ?", startTime)
+	type bucketKey struct {
+		model     string
+		timestamp int64
 	}
-	if endTime > 0 {
-		query = query.Where("created_at <= ?", endTime)
+	byBucket := make(map[bucketKey]int64, len(data))
+	for _, row := range data {
+		key := bucketKey{row.ModelName, row.CreatedAt - row.CreatedAt%bucketSize}
+		total, err := checkedUsageAdd(byBucket[key], row.TokenUsed)
+		if err != nil {
+			return nil, err
+		}
+		byBucket[key] = total
 	}
-	return query
+	rows := make([]RankingQuotaBucket, 0, len(byBucket))
+	for key, total := range byBucket {
+		if total > 0 {
+			rows = append(rows, RankingQuotaBucket{ModelName: key.model, Bucket: key.timestamp, Tokens: total})
+		}
+	}
+	slices.SortFunc(rows, func(a, b RankingQuotaBucket) int {
+		if order := cmp.Compare(a.Bucket, b.Bucket); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.ModelName, b.ModelName)
+	})
+	return rows, nil
 }

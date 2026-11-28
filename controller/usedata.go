@@ -28,6 +28,15 @@ func parseFlowQuotaTimeRange(c *gin.Context) (int64, int64, bool) {
 	return startTimestamp, endTimestamp, true
 }
 
+func usageStatisticsCoverage(c *gin.Context, family model.UsageStatisticsFamily, start, end int64) (model.UsageStatisticsCoverageView, bool) {
+	coverage, err := model.GetUsageStatisticsCoverage(c.Request.Context(), family, start, end)
+	if err != nil {
+		common.ApiError(c, err)
+		return model.UsageStatisticsCoverageView{}, false
+	}
+	return coverage, true
+}
+
 func GetAllQuotaDates(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
@@ -37,10 +46,15 @@ func GetAllQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsDashboard, startTimestamp, endTimestamp)
+	if !ok {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
+		"coverage": coverage,
 	})
 	return
 }
@@ -53,10 +67,15 @@ func GetQuotaDatesByUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsDashboard, startTimestamp, endTimestamp)
+	if !ok {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
+		"coverage": coverage,
 	})
 }
 
@@ -74,10 +93,15 @@ func GetUserQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsDashboard, startTimestamp, endTimestamp)
+	if !ok {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
+		"coverage": coverage,
 	})
 	return
 }
@@ -93,10 +117,15 @@ func GetAllFlowQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsDashboard, startTimestamp, endTimestamp)
+	if !ok {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
+		"coverage": coverage,
 	})
 	return
 }
@@ -116,10 +145,15 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	coverage, ok := usageStatisticsCoverage(c, model.UsageStatisticsDashboard, startTimestamp, endTimestamp)
+	if !ok {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
+		"coverage": coverage,
 	})
 	return
 }

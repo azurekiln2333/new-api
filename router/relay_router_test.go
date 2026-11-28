@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/plugins"
@@ -170,6 +171,7 @@ func setupRelayRouterTestDB(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, seedSQL.Close()) })
 	require.NoError(t, seed.AutoMigrate(&model.Option{}))
+	testutil.MigrateUsageStatisticsForTestDatabase(t, seed)
 	// Register before startup so failures also close the fixture's new handle.
 	t.Cleanup(func() {
 		if model.DB != nil && model.DB != originalDB {

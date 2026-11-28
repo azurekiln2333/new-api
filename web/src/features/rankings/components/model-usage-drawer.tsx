@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
+import type { ReactNode } from 'react'
 
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import { ErrorState } from '@/components/error-state'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import {
   Sheet,
   SheetContent,
@@ -61,6 +63,48 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const query = useRankingModelUsage(props.modelName, props.period, props.open)
   const usage = query.data?.data
+  const coverage = query.data?.coverage
+  const hasUnverifiedEmptyUsage = Boolean(
+    coverage?.complete !== true &&
+      (!usage ||
+        (usage.users.length === 0 &&
+          usage.totals.requests === 0 &&
+          usage.totals.tokens === 0 &&
+          usage.totals.quota === 0))
+  )
+  const requestsValue = hasUnverifiedEmptyUsage
+    ? '—'
+    : formatRankingTokens(usage?.totals.requests ?? 0, locale)
+  const tokensValue = hasUnverifiedEmptyUsage
+    ? '—'
+    : formatRankingTokens(usage?.totals.tokens ?? 0, locale)
+  const quotaValue = hasUnverifiedEmptyUsage
+    ? '—'
+    : formatQuotaWithCurrency(usage?.totals.quota ?? 0)
+
+  let rankingContent: ReactNode
+
+  if (hasUnverifiedEmptyUsage) {
+    rankingContent = (
+      <p className='text-muted-foreground py-8 text-center text-sm'>
+        {t('No verified usage data available')}
+      </p>
+    )
+  } else if (usage && usage.users.length > 0) {
+    rankingContent = (
+      <ul className='divide-border/60 divide-y'>
+        {usage.users.map((row) => (
+          <UserRankingRow key={row.rank} row={row} locale={locale} />
+        ))}
+      </ul>
+    )
+  } else {
+    rankingContent = (
+      <p className='text-muted-foreground py-8 text-center text-sm'>
+        {t('No usage data for this period')}
+      </p>
+    )
+  }
 
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
@@ -105,24 +149,22 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
           )}
           {!query.isLoading && !query.isError && (
             <div className='flex flex-col gap-6'>
+              <StatisticsCoverageNotice coverage={coverage} />
               <section className='grid grid-cols-3 gap-2'>
                 <SummaryStat
                   label={t('Requests')}
-                  value={formatRankingTokens(
-                    usage?.totals.requests ?? 0,
-                    locale
-                  )}
+                  value={requestsValue}
                 />
                 <SummaryStat
                   label={t('Tokens')}
-                  value={formatRankingTokens(usage?.totals.tokens ?? 0, locale)}
+                  value={tokensValue}
                 />
                 <SummaryStat
                   label={t('Quota')}
                   // Quota is a token amount, not a token count: render it with
                   // the shared currency formatter so units and display setting
                   // match the rest of the console.
-                  value={formatQuotaWithCurrency(usage?.totals.quota ?? 0)}
+                  value={quotaValue}
                 />
               </section>
 
@@ -130,21 +172,7 @@ export function ModelUsageDrawer(props: ModelUsageDrawerProps) {
                 <h3 className='text-muted-foreground text-xs font-semibold tracking-wider uppercase'>
                   {t('User Ranking')}
                 </h3>
-                {usage && usage.users.length > 0 ? (
-                  <ul className='divide-border/60 divide-y'>
-                    {usage.users.map((row) => (
-                      <UserRankingRow
-                        key={row.rank}
-                        row={row}
-                        locale={locale}
-                      />
-                    ))}
-                  </ul>
-                ) : (
-                  <p className='text-muted-foreground py-8 text-center text-sm'>
-                    {t('No usage data for this period')}
-                  </p>
-                )}
+                {rankingContent}
               </section>
 
               <p className='text-muted-foreground/70 text-xs'>

@@ -284,6 +284,16 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	if billingApplied {
 		billingChannelId := midjourneyTask.GetBillingChannelId()
 		tokenName := c.GetString("token_name")
+		// Settlement determines the effective token, including zero on token failure.
+		usageInfo := &relaycommon.RelayInfo{
+			UserId:      info.UserId,
+			TokenId:     midjourneyTask.TokenId,
+			UsingGroup:  info.UsingGroup,
+			ChannelMeta: &relaycommon.ChannelMeta{ChannelId: billingChannelId},
+		}
+		usageReport := service.PrepareRelayUsageReport(c, usageInfo, model.UsageEventSourceMidjourney,
+			modelName, tokenName, 0, 0, 0, 0, "openai", -1, midjourneyTask.Quota)
+		service.ConfirmRelayUsageReport(c, usageReport, model.UsageEventSourceReady, "midjourney_consume_report")
 		logContent := []*common.Message{common.NewMessage("Model fixed price {{model_price}}, group ratio {{group_ratio}}, action {{action}}", map[string]any{
 			"model_price": fmt.Sprintf("%.2f", priceData.ModelPrice),
 			"group_ratio": fmt.Sprintf("%.2f", priceData.GroupRatioInfo.GroupRatio),
@@ -292,14 +302,15 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		other := service.GenerateMjOtherInfo(info, priceData)
 		service.AppendRelayLogAdminInfo(c, info, other)
 		model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-			ChannelId: billingChannelId,
-			ModelName: modelName,
-			TokenName: tokenName,
-			Quota:     midjourneyTask.Quota,
-			Content:   logContent,
-			TokenId:   midjourneyTask.TokenId,
-			Group:     info.UsingGroup,
-			Other:     other,
+			UsageReport: usageReport,
+			ChannelId:   billingChannelId,
+			ModelName:   modelName,
+			TokenName:   tokenName,
+			Quota:       midjourneyTask.Quota,
+			Content:     logContent,
+			TokenId:     midjourneyTask.TokenId,
+			Group:       info.UsingGroup,
+			Other:       other,
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
@@ -668,6 +679,15 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	if billingApplied {
 		billingChannelId := midjourneyTask.GetBillingChannelId()
 		tokenName := c.GetString("token_name")
+		usageInfo := &relaycommon.RelayInfo{
+			UserId:      relayInfo.UserId,
+			TokenId:     midjourneyTask.TokenId,
+			UsingGroup:  relayInfo.UsingGroup,
+			ChannelMeta: &relaycommon.ChannelMeta{ChannelId: billingChannelId},
+		}
+		usageReport := service.PrepareRelayUsageReport(c, usageInfo, model.UsageEventSourceMidjourney,
+			modelName, tokenName, 0, 0, 0, 0, "openai", -1, midjourneyTask.Quota)
+		service.ConfirmRelayUsageReport(c, usageReport, model.UsageEventSourceReady, "midjourney_consume_report")
 		logContent := []*common.Message{common.NewMessage("Model fixed price {{model_price}}, group ratio {{group_ratio}}, action {{action}}, ID {{id}}", map[string]any{
 			"model_price": fmt.Sprintf("%.2f", priceData.ModelPrice),
 			"group_ratio": fmt.Sprintf("%.2f", priceData.GroupRatioInfo.GroupRatio),
@@ -677,14 +697,15 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		other := service.GenerateMjOtherInfo(relayInfo, priceData)
 		service.AppendRelayLogAdminInfo(c, relayInfo, other)
 		model.RecordConsumeLog(c, relayInfo.UserId, model.RecordConsumeLogParams{
-			ChannelId: billingChannelId,
-			ModelName: modelName,
-			TokenName: tokenName,
-			Quota:     midjourneyTask.Quota,
-			Content:   logContent,
-			TokenId:   midjourneyTask.TokenId,
-			Group:     relayInfo.UsingGroup,
-			Other:     other,
+			UsageReport: usageReport,
+			ChannelId:   billingChannelId,
+			ModelName:   modelName,
+			TokenName:   tokenName,
+			Quota:       midjourneyTask.Quota,
+			Content:     logContent,
+			TokenId:     midjourneyTask.TokenId,
+			Group:       relayInfo.UsingGroup,
+			Other:       other,
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)

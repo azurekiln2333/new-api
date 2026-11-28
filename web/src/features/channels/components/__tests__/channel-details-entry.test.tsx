@@ -311,10 +311,10 @@ it('keeps the exact consumed token count and abbreviation visible in table view'
   ).toBeVisible()
 })
 
-it('shows a dash instead of tokens when the channel has no usage record', async () => {
+it('shows an em dash instead of tokens when channel usage is not verified', async () => {
   const card = await renderCardView(null)
 
-  expect(card.textContent).toContain('-')
+  expect(screen.getByText('—')).toBeVisible()
   expect(
     screen.queryByText(formatCompactNumber(CONSUMED_TOKENS, 'en'))
   ).not.toBeInTheDocument()

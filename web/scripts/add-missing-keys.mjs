@@ -10,6 +10,15 @@ function stableStringify(obj) {
 
 const newKeys = {
   en: {
+    'Coverage is unknown; totals may be incomplete.':
+      'Coverage is unknown; totals may be incomplete.',
+    'Totals include verified retained history; some older usage may be missing.':
+      'Totals include verified retained history; some older usage may be missing.',
+    'Totals are partial and may not include all usage.':
+      'Totals are partial and may not include all usage.',
+    'Previous-period coverage is incomplete; comparisons may be affected.':
+      'Previous-period coverage is incomplete; comparisons may be affected.',
+    'No verified usage data available': 'No verified usage data available',
     'Restore inheritance': 'Restore inheritance',
     'Invalid key model mapping': 'Invalid key model mapping',
     'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
@@ -96,6 +105,15 @@ const newKeys = {
       'fingerprint request no longer matches the previewed prompt',
   },
   zh: {
+    'Coverage is unknown; totals may be incomplete.':
+      '统计覆盖范围未知，总计可能不完整。',
+    'Totals include verified retained history; some older usage may be missing.':
+      '总计包含已核实的留存历史，部分更早的用量可能缺失。',
+    'Totals are partial and may not include all usage.':
+      '当前总计为部分数据，可能未包含全部用量。',
+    'Previous-period coverage is incomplete; comparisons may be affected.':
+      '上一周期的统计覆盖不完整，比较结果可能受影响。',
+    'No verified usage data available': '暂无已核实的用量数据',
     'Restore inheritance': '恢复继承',
     'Invalid key model mapping': '密钥模型映射无效',
     'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
@@ -172,6 +190,15 @@ const newKeys = {
       '指纹检测请求与预览的提示词不再匹配。',
   },
   'zh-TW': {
+    'Coverage is unknown; totals may be incomplete.':
+      '統計涵蓋範圍未知，總計可能不完整。',
+    'Totals include verified retained history; some older usage may be missing.':
+      '總計包含已核實的留存歷史，部分更早的用量可能缺失。',
+    'Totals are partial and may not include all usage.':
+      '目前總計為部分資料，可能未包含全部用量。',
+    'Previous-period coverage is incomplete; comparisons may be affected.':
+      '上一週期的統計涵蓋範圍不完整，比較結果可能受影響。',
+    'No verified usage data available': '暫無已核實的用量資料',
     'Restore inheritance': '恢復繼承',
     'Invalid key model mapping': '金鑰模型對應無效',
     'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
@@ -249,6 +276,16 @@ const newKeys = {
       '指紋偵測請求與預覽的提示詞不再相符。',
   },
   fr: {
+    'Coverage is unknown; totals may be incomplete.':
+      'La couverture est inconnue ; les totaux peuvent être incomplets.',
+    'Totals include verified retained history; some older usage may be missing.':
+      'Les totaux incluent les données conservées et vérifiées ; des usages plus anciens peuvent manquer.',
+    'Totals are partial and may not include all usage.':
+      'Les totaux sont partiels et peuvent ne pas inclure tous les usages.',
+    'Previous-period coverage is incomplete; comparisons may be affected.':
+      'La couverture de la période précédente est incomplète ; les comparaisons peuvent être affectées.',
+    'No verified usage data available':
+      'Aucune donnée d’utilisation vérifiée disponible',
     'Restore inheritance': 'Rétablir l’héritage',
     'Invalid key model mapping': 'Correspondance de modèles de la clé invalide',
     'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
@@ -339,6 +376,15 @@ const newKeys = {
       'La requête de détection d’empreinte ne correspond plus à l’instruction prévisualisée.',
   },
   ja: {
+    'Coverage is unknown; totals may be incomplete.':
+      '集計対象の範囲が不明なため、合計が不完全な可能性があります。',
+    'Totals include verified retained history; some older usage may be missing.':
+      '合計には検証済みの保存履歴が含まれますが、それ以前の使用量が一部欠けている可能性があります。',
+    'Totals are partial and may not include all usage.':
+      '合計は一部のデータに基づいており、すべての使用量を含まない可能性があります。',
+    'Previous-period coverage is incomplete; comparisons may be affected.':
+      '前期間の集計対象が不完全なため、比較に影響する可能性があります。',
+    'No verified usage data available': '検証済みの使用量データがありません',
     'Restore inheritance': '継承に戻す',
     'Invalid key model mapping': 'キーのモデルマッピングが無効です',
     'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
@@ -429,6 +475,16 @@ const newKeys = {
       'フィンガープリント検出のリクエストがプレビューしたプロンプトと一致しなくなりました。',
   },
   ru: {
+    'Coverage is unknown; totals may be incomplete.':
+      'Охват данных неизвестен; итоговые значения могут быть неполными.',
+    'Totals include verified retained history; some older usage may be missing.':
+      'Итоги включают проверенные сохранённые данные; часть более ранней истории использования может отсутствовать.',
+    'Totals are partial and may not include all usage.':
+      'Итоговые значения частичные и могут учитывать не всё использование.',
+    'Previous-period coverage is incomplete; comparisons may be affected.':
+      'Данные за предыдущий период неполные; это может повлиять на сравнение.',
+    'No verified usage data available':
+      'Нет проверенных данных об использовании',
     'Restore inheritance': 'Восстановить наследование',
     'Invalid key model mapping': 'Недопустимое сопоставление моделей ключа',
     'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
@@ -518,6 +574,16 @@ const newKeys = {
       'Запрос проверки отпечатка больше не соответствует промпту из предпросмотра.',
   },
   vi: {
+    'Coverage is unknown; totals may be incomplete.':
+      'Chưa rõ phạm vi dữ liệu; tổng số có thể chưa đầy đủ.',
+    'Totals include verified retained history; some older usage may be missing.':
+      'Tổng số gồm lịch sử còn lưu đã được xác minh; có thể thiếu một phần mức sử dụng cũ hơn.',
+    'Totals are partial and may not include all usage.':
+      'Tổng số chỉ phản ánh một phần dữ liệu và có thể chưa bao gồm toàn bộ mức sử dụng.',
+    'Previous-period coverage is incomplete; comparisons may be affected.':
+      'Dữ liệu của kỳ trước chưa đầy đủ; kết quả so sánh có thể bị ảnh hưởng.',
+    'No verified usage data available':
+      'Chưa có dữ liệu sử dụng đã được xác minh',
     'Restore inheritance': 'Khôi phục kế thừa',
     'Invalid key model mapping': 'Ánh xạ mô hình của khóa không hợp lệ',
     'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':

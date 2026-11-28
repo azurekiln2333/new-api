@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -22,13 +23,15 @@ const (
 )
 
 type RankingsResponse struct {
-	Totals             RankingTokenTotals `json:"totals"`
-	Models             []RankedModel      `json:"models"`
-	Vendors            []RankedVendor     `json:"vendors"`
-	TopMovers          []RankingMover     `json:"top_movers"`
-	TopDroppers        []RankingMover     `json:"top_droppers"`
-	ModelsHistory      ModelHistorySeries `json:"models_history"`
-	VendorShareHistory VendorShareSeries  `json:"vendor_share_history"`
+	Totals             RankingTokenTotals                `json:"totals"`
+	Models             []RankedModel                     `json:"models"`
+	Vendors            []RankedVendor                    `json:"vendors"`
+	TopMovers          []RankingMover                    `json:"top_movers"`
+	TopDroppers        []RankingMover                    `json:"top_droppers"`
+	ModelsHistory      ModelHistorySeries                `json:"models_history"`
+	VendorShareHistory VendorShareSeries                 `json:"vendor_share_history"`
+	Coverage           model.UsageStatisticsCoverageView `json:"-"`
+	PreviousCoverage   model.UsageStatisticsCoverageView `json:"-"`
 }
 
 type RankingTokenTotals struct {
@@ -148,27 +151,35 @@ var (
 	rankingCache   = map[string]rankingCacheItem{}
 )
 
-func GetRankingsSnapshot(period string) (*RankingsResponse, error) {
+func GetRankingsSnapshot(ctx context.Context, period string) (*RankingsResponse, error) {
 	config, err := rankingConfig(period)
 	if err != nil {
 		return nil, err
 	}
+	// The reader source changes only after an explicit lineage installation.
+	// Include that immutable digest in the cache key so a verified cutover
+	// cannot serve the pre-cutover quota_data snapshot for the full TTL.
+	lineage, err := model.GetUsageReadLineage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cacheKey := config.id + ":" + lineage.LineageDigest
 
 	now := time.Now()
 	rankingCacheMu.Lock()
-	if item, ok := rankingCache[config.id]; ok && now.Before(item.expiresAt) {
+	if item, ok := rankingCache[cacheKey]; ok && now.Before(item.expiresAt) {
 		rankingCacheMu.Unlock()
 		return item.data, nil
 	}
 	rankingCacheMu.Unlock()
 
-	data, err := buildRankingsSnapshot(config, now)
+	data, err := buildRankingsSnapshot(ctx, config, now)
 	if err != nil {
 		return nil, err
 	}
 
 	rankingCacheMu.Lock()
-	rankingCache[config.id] = rankingCacheItem{
+	rankingCache[cacheKey] = rankingCacheItem{
 		expiresAt: now.Add(rankingCacheTTL),
 		data:      data,
 	}
@@ -213,8 +224,12 @@ func rankingConfig(period string) (rankingPeriodConfig, error) {
 	}
 }
 
-func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*RankingsResponse, error) {
+func buildRankingsSnapshot(ctx context.Context, config rankingPeriodConfig, now time.Time) (*RankingsResponse, error) {
 	startTime, endTime := rankingTimeRange(config, now)
+	coverage, err := model.GetUsageStatisticsCoverage(ctx, model.UsageStatisticsDashboard, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
 	currentTotals, err := model.GetRankingQuotaTotals(startTime, endTime)
 	if err != nil {
 		return nil, err
@@ -225,8 +240,16 @@ func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*Rankings
 	}
 
 	var previousTotals []model.RankingQuotaTotal
+	previousCoverage := model.UsageStatisticsCoverageView{
+		Coverage: model.UsageCoveragePartial, HistoricalCoverage: model.UsageCoverageUnknown,
+		LiveCoverage: model.UsageCoveragePartial,
+	}
 	if config.hasPrevious {
 		previousStart, previousEnd := previousRankingTimeRange(config, startTime)
+		previousCoverage, err = model.GetUsageStatisticsCoverage(ctx, model.UsageStatisticsDashboard, previousStart, previousEnd)
+		if err != nil {
+			return nil, err
+		}
 		previousTotals, err = model.GetRankingQuotaTotals(previousStart, previousEnd)
 		if err != nil {
 			return nil, err
@@ -253,6 +276,8 @@ func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*Rankings
 		TopDroppers:        droppers,
 		ModelsHistory:      modelHistory,
 		VendorShareHistory: vendorHistory,
+		Coverage:           coverage,
+		PreviousCoverage:   previousCoverage,
 	}, nil
 }
 

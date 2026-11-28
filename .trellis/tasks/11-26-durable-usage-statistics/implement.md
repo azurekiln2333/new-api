@@ -51,3 +51,79 @@ Record exact final SHA, database versions, commands, result artifacts and any sk
 ## Rollout handoff
 
 Separate software verification from deployment readiness. Provide the all-writer migration order, old-buffer treatment, backfill/readiness/coverage procedure, native TTL prerequisite, backup reference and rollback limits. Inform the user when the implementation and required hosted checks pass; do not perform their later 24-hour production cleanup from this session.
+
+## Foundation source disposition — 2026-11-26
+
+The exact five model paths are saved/frozen and independently SOURCE ACCEPTED by
+native `r24_foundation_review`, with no concrete findings. Saved selectors are
+`TestUsageEventFoundationDatabaseMatrix`, `TestUsageEventInputBoundsAndIdentity`
+and `TestMigrationSchemaStability/usage_statistics_foundation`. No compiler,
+database, race or released-upgrade validation ran locally. Root's latest-release
+probe/workflow changes receive their separate source review before capture.
+
+The exported API is Prepare/Confirm/Apply with context and Tx variants, plus
+bounded `RecoverUsageEventProjections`. Prepare takes finalized facts and
+pending/ready state; Confirm takes `UsageEventOutcome{State, EvidenceRef}`. This
+does not authorize source promotion during recovery or claim source integration.
+The original foundation writer now performs read-only source-integration planning;
+all five saved paths stay frozen. Proposed caller/test paths require root handoff
+before implementation, especially the R34-owned violation-fee normalization seam.
+
+## Priority integration lanes — 2026-11-27
+
+The user explicitly asked whether statistics independent of logs were complete.
+Root confirmed they are not complete, merged or released, and raised this task's
+priority. The foundation-only ownership above is historical; the following
+explicit assignments now authorize the remaining implementation in the isolated
+`D:/My2KProjects/new-api-statistics-20261127` worktree. No production cleanup or
+local executable validation is authorized.
+
+- w5D:p4 owns live source capture and optional-log binding, including the saved
+  service/controller/relay seams, new `model/usage_source.go`, `model/log.go`,
+  `controller/system_task_handlers.go`, `model/usage_event_test.go` and
+  `service/text_quota_test.go`. It integrates final reader calls into the two
+  log-summary helpers and preserves the independently reviewed R33 LogFilter
+  scope semantics. Optional log publication is never the numeric authority.
+- Native `hotfix_key_actions` owns new `model/usage_event_read.go`, existing
+  `model/channel_usage.go`, `model/usedata.go`, `model/usedata_flow.go`,
+  `model/usedata_rankings.go` and suitable existing reader suites. All business
+  readers must migrate; retained log rows/count/export remain log-backed.
+- w6E:p5 owns bounded historical backfill and coverage, starting with new
+  `model/usage_event_backfill.go` and an announced existing source regression
+  suite. It publishes coverage/lineage APIs for the reader lane. The frozen
+  legacy dashboard baseline must be disjoint from live hours; historical log
+  import cannot blindly add overlapping dashboard totals or drop multiplicity.
+- Native `finish_r33` reviews only the held root CI/released-upgrade probe and
+  foundation migration dependencies while source/read/backfill remain unfrozen.
+  Root alone edits coordination records, integrates reviewed deltas, owns Git,
+  and runs hosted validation.
+
+Final acceptance still requires actual before/after log-deletion equality for
+channel/model/dashboard/flow/ranking/log-summary results, live collection with
+logs/export disabled, idempotent replay/backfill and exact-SHA real-engine
+validation. Partial source delivery is not this product guarantee.
+
+## Transition review and capture boundary — 2026-11-28
+
+p2 independently conditionally accepted the retained-set extent proof, monotonic
+reader retry, empty-model parity and proof-bearing public Install API. The
+transition anchor still commits Apply, actual quota_data mirror, exact owned hour
+and immutable acknowledgement together. Private synthetic marker seeding exists
+only in model test fixtures; service fixtures use a real imported checkpoint.
+
+This acceptance assumes the documented operator-held old-writer/buffer/source/TTL
+fence through verification and marker commit. It is not runtime enforcement,
+database compatibility, production activation or cleanup authorization. The
+released-probe/workflow source review by p6 found no actionable issue in its scope.
+
+Root added the public Install regression to the hosted required-pass verifier.
+The transition real-engine matrix and its race run remain mandatory, alongside
+source/read/backfill/retention and released-upgrade checks. No local executable
+validation was run. The earlier integration-readback research is a historical
+finding list; resolved gates are described by the current code and updated
+usage-statistics-foundation spec, not by that earlier mutable-tree snapshot.
+
+Remaining operational limits include missing pre-Prepare evidence, externally
+managed source/TTL fencing and the bounded oldest-page cleanup scan, which can
+retain later proven rows behind an unproved prefix. None permits dropping rows
+or claiming complete history. Production cleanup remains paused.

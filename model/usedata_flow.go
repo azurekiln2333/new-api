@@ -1,10 +1,13 @@
 package model
 
 import (
+	"cmp"
+	"context"
 	"fmt"
+	"math"
+	"slices"
 
 	"github.com/QuantumNous/new-api/common"
-	"gorm.io/gorm"
 )
 
 type FlowQuotaData struct {
@@ -23,72 +26,48 @@ type FlowQuotaData struct {
 }
 
 func GetFlowQuotaData(startTime int64, endTime int64, username string, userID int, role int) ([]*FlowQuotaData, error) {
+	filter := usageDashboardFilter{NonemptyGroup: true}
+	dimensions := []string{"token_id", "use_group", "model_name"}
 	switch {
 	case role >= common.RoleRootUser:
-		return getRootFlowQuotaData(startTime, endTime, username)
+		filter.Username = username
+		dimensions = []string{"user_id", "username", "node_name", "token_id", "use_group", "model_name", "channel_id"}
 	case role >= common.RoleAdminUser:
-		return getAdminFlowQuotaData(startTime, endTime, username)
+		filter.Username = username
+		dimensions = []string{"user_id", "username", "use_group", "model_name", "channel_id"}
 	default:
-		return getSelfFlowQuotaData(startTime, endTime, userID)
+		if userID <= 0 {
+			return nil, errInvalidLogUserScope
+		}
+		filter.UserID = userID
 	}
-}
-
-func flowQuotaBaseQuery(startTime int64, endTime int64) *gorm.DB {
-	query := DB.Table("quota_data").
-		Where("use_group <> ''").
-		Where("created_at >= ? and created_at <= ?", startTime, endTime)
-	return query
-}
-
-func getSelfFlowQuotaData(startTime int64, endTime int64, userID int) ([]*FlowQuotaData, error) {
-	rows := make([]*FlowQuotaData, 0)
-	err := flowQuotaBaseQuery(startTime, endTime).
-		Select("token_id, use_group, model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
-		Where("user_id = ?", userID).
-		Group("token_id, use_group, model_name").
-		Order("quota DESC").
-		Find(&rows).Error
+	data, err := readUsageDashboard(context.Background(), startTime, endTime, filter, dimensions)
 	if err != nil {
 		return nil, err
 	}
-	return rows, fillFlowTokenNames(rows)
-}
-
-func getAdminFlowQuotaData(startTime int64, endTime int64, username string) ([]*FlowQuotaData, error) {
-	rows := make([]*FlowQuotaData, 0)
-	query := flowQuotaBaseQuery(startTime, endTime).
-		Select("user_id, username, use_group, model_name, channel_id, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used")
-	if username != "" {
-		query = query.Where("username = ?", username)
+	rows := make([]*FlowQuotaData, 0, len(data))
+	for _, row := range data {
+		if row.Count > math.MaxInt || row.Quota > math.MaxInt || row.TokenUsed > math.MaxInt {
+			return nil, ErrUsageEventOverflow
+		}
+		rows = append(rows, &FlowQuotaData{
+			UserID: row.UserID, Username: row.Username, NodeName: row.NodeName,
+			TokenID: row.TokenID, UseGroup: row.UseGroup, ChannelID: row.ChannelID, ModelName: row.ModelName,
+			Count: int(row.Count), Quota: int(row.Quota), TokenUsed: int(row.TokenUsed),
+		})
 	}
-	err := query.
-		Group("user_id, username, use_group, model_name, channel_id").
-		Order("quota DESC").
-		Find(&rows).Error
-	if err != nil {
-		return nil, err
+	slices.SortStableFunc(rows, func(a, b *FlowQuotaData) int { return cmp.Compare(b.Quota, a.Quota) })
+	if role < common.RoleAdminUser || role >= common.RoleRootUser {
+		if err := fillFlowTokenNames(rows); err != nil {
+			return nil, err
+		}
 	}
-	return rows, fillFlowChannelNames(rows)
-}
-
-func getRootFlowQuotaData(startTime int64, endTime int64, username string) ([]*FlowQuotaData, error) {
-	rows := make([]*FlowQuotaData, 0)
-	query := flowQuotaBaseQuery(startTime, endTime).
-		Select("user_id, username, node_name, token_id, use_group, model_name, channel_id, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used")
-	if username != "" {
-		query = query.Where("username = ?", username)
+	if role >= common.RoleAdminUser {
+		if err := fillFlowChannelNames(rows); err != nil {
+			return nil, err
+		}
 	}
-	err := query.
-		Group("user_id, username, node_name, token_id, use_group, model_name, channel_id").
-		Order("quota DESC").
-		Find(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	if err := fillFlowTokenNames(rows); err != nil {
-		return rows, err
-	}
-	return rows, fillFlowChannelNames(rows)
+	return rows, nil
 }
 
 func fillFlowTokenNames(rows []*FlowQuotaData) error {

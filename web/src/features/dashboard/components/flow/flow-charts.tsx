@@ -52,6 +52,7 @@ import {
 } from '@/components/ui/empty'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Toggle } from '@/components/ui/toggle'
 import {
@@ -329,7 +330,7 @@ export function FlowCharts(props: FlowChartsProps) {
   )
 
   const {
-    data: flowRows,
+    data: flowResult,
     error: flowError,
     isError,
     isLoading,
@@ -337,10 +338,13 @@ export function FlowCharts(props: FlowChartsProps) {
     queryKey: ['dashboard', 'flow', flowQueryParams, flowRole],
     queryFn: async () =>
       requireServerSuccess(await getFlowQuotaDates(flowQueryParams, isAdmin)),
-    select: (res) =>
-      requireSuccessfulFlowRows(res, t('Please try again later.')),
+    select: (res) => ({
+      rows: requireSuccessfulFlowRows(res, t('Please try again later.')),
+      coverage: res.coverage,
+    }),
     staleTime: 60_000,
   })
+  const flowRows = flowResult?.rows
 
   const maskSensitive = props.sensitiveVisible === false
   const flowData = useMemo(
@@ -529,7 +533,11 @@ export function FlowCharts(props: FlowChartsProps) {
           <EmptyMedia variant='icon'>
             <Route />
           </EmptyMedia>
-          <EmptyTitle>{t('No flow data available')}</EmptyTitle>
+          <EmptyTitle>
+            {flowResult?.coverage?.complete === true
+              ? t('No flow data available')
+              : t('No verified flow data available')}
+          </EmptyTitle>
           <EmptyDescription>{t('No data available')}</EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -538,6 +546,9 @@ export function FlowCharts(props: FlowChartsProps) {
 
   return (
     <div className='flex flex-col gap-3'>
+      {!isLoading && !isError && flowResult && (
+        <StatisticsCoverageNotice coverage={flowResult.coverage} />
+      )}
       <div className='flex flex-col gap-2 xl:flex-row xl:items-end xl:justify-between'>
         <div className='flex min-w-0 flex-wrap items-end gap-2'>
           <div className='flex min-w-0 flex-col gap-1.5'>

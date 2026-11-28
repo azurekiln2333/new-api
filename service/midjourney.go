@@ -102,7 +102,47 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
+	billingChannelId := task.GetBillingChannelId()
+	input := model.UsageEventInput{
+		UserID:         int64(task.UserId),
+		TokenID:        int64(task.TokenId),
+		ChannelID:      int64(billingChannelId),
+		ModelName:      CovertMjpActionToModelName(task.Action),
+		RequestID:      common.NewRequestId(),
+		WriterNode:     common.NodeName,
+		ExportNode:     common.NodeName,
+		QuotaMagnitude: int64(quota),
+		UsageSemantic:  model.UsageSemanticOpenAI,
+		KnownMask: model.UsageEventKnownUserID | model.UsageEventKnownTokenID |
+			model.UsageEventKnownChannelID | model.UsageEventKnownModelName |
+			model.UsageEventKnownGroupName | model.UsageEventKnownRequestID |
+			model.UsageEventKnownUpstreamRequestID | model.UsageEventKnownWriterNode |
+			model.UsageEventKnownExportNode | model.UsageEventKnownPromptTokens |
+			model.UsageEventKnownCompletionTokens | model.UsageEventKnownCacheReadTokens |
+			model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownQuota | model.UsageEventKnownUsageSemantic,
+	}
+	// Freeze names before the refund, without reading credentials or inferring
+	// missing historical dimensions from task prompts or current pricing.
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	var user model.User
+	if err := model.DB.WithContext(lookupCtx).Select("username").First(&user, task.UserId).Error; err == nil {
+		input.Username = user.Username
+		input.KnownMask |= model.UsageEventKnownUsername
+	}
+	if task.TokenId == 0 {
+		input.KnownMask |= model.UsageEventKnownTokenName
+	} else {
+		var token model.Token
+		if err := model.DB.WithContext(lookupCtx).Select("name").First(&token, task.TokenId).Error; err == nil {
+			input.TokenName = token.Name
+			input.KnownMask |= model.UsageEventKnownTokenName
+		}
+	}
+	cancel()
+	usageReport := prepareUsageSourceReport(ctx, model.UsageEventSourceMidjourney, model.UsageEventKindRefund, input)
+
 	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+		confirmUsageSourceReport(ctx, usageReport, model.UsageEventSourceUnknown, "midjourney_refund_outcome_unknown")
 		logger.LogWarn(ctx, common.LogText("failed to refund Midjourney user quota, task %s: %s", task.MjId, err.Error()))
 		return false
 	}
@@ -116,20 +156,24 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		}
 	}
 
-	billingChannelId := task.GetBillingChannelId()
+	// The existing refund reporter proceeds after wallet success, even when
+	// token restoration fails. Confirmation follows that same gross-report path.
+	confirmUsageSourceReport(ctx, usageReport, model.UsageEventSourceReady, "midjourney_refund_report")
 	model.UpdateUserUsedQuota(task.UserId, -quota)
 	model.UpdateChannelUsedQuota(billingChannelId, -quota)
 	other := model.NewLogOther()
 	other.SetPublic("task_id", task.MjId)
 	other.SetPublic("reason", reason)
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   model.LogTypeRefund,
-		ChannelId: billingChannelId,
-		ModelName: CovertMjpActionToModelName(task.Action),
-		Quota:     quota,
-		TokenId:   task.TokenId,
-		Other:     other,
+		UsageReport: usageReport,
+		UserId:      task.UserId,
+		LogType:     model.LogTypeRefund,
+		ChannelId:   billingChannelId,
+		ModelName:   input.ModelName,
+		Quota:       quota,
+		TokenId:     task.TokenId,
+		RequestID:   input.RequestID,
+		Other:       other,
 	})
 
 	task.Quota = 0

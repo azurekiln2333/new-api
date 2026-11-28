@@ -1,6 +1,8 @@
 package model
 
 import (
+	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,9 +91,8 @@ func withOpenTestLogDatabase(t *testing.T, kind, dsn string) *gorm.DB {
 	return db
 }
 
-// runChannelUsageLogMatrix runs fn against SQLite and, when the matching DSN is
-// configured, MySQL, PostgreSQL and ClickHouse. The fixture rows are inserted
-// before fn and removed by the dialect cleanup.
+// runChannelUsageLogMatrix owns separate diagnostic and numeric databases.
+// ClickHouse remains log-only; its numeric facts live in primary SQLite.
 func runChannelUsageLogMatrix(t *testing.T, fn func(t *testing.T, kind string, db *gorm.DB)) {
 	t.Helper()
 	for _, dialect := range []struct{ kind, env string }{
@@ -107,6 +108,26 @@ func runChannelUsageLogMatrix(t *testing.T, fn func(t *testing.T, kind string, d
 			}
 			db := withOpenTestLogDatabase(t, dialect.kind, dsn)
 			require.NoError(t, db.Create(channelUsageTestLogs()).Error)
+			primaryDialect := dialect.kind
+			if primaryDialect == "clickhouse" {
+				primaryDialect = "sqlite"
+			}
+			primary := openUsageEventTestDatabase(t, primaryDialect)
+			require.NoError(t, primary.AutoMigrate(&Ability{}))
+			installUsageReaderTestCoverage(t, primary, 0, 1, 3000)
+			for i, log := range channelUsageTestLogs() {
+				if log.Type != LogTypeConsume {
+					continue
+				}
+				input := usageEventTestInput(int64(i + 1))
+				input.OccurredAt, input.ChannelID, input.ModelName = log.CreatedAt, int64(log.ChannelId), log.ModelName
+				input.PromptTokens, input.CompletionTokens, input.QuotaMagnitude = int64(log.PromptTokens), int64(log.CompletionTokens), int64(log.Quota)
+				receipt, err := PrepareUsageEvent(context.Background(), input, UsageEventSourceReady)
+				require.NoError(t, err)
+				if i != 2 {
+					require.NoError(t, ApplyUsageEvent(context.Background(), receipt))
+				}
+			}
 			fn(t, dialect.kind, db)
 		})
 	}
@@ -120,57 +141,64 @@ func channelUsageAbilityDelete(t *testing.T, db *gorm.DB) {
 		channelUsageTestChannel, channelUsageTestOtherChannel).Error)
 }
 
-// withOpenTestAbilityDatabase clears this suite's ability rows in the main
-// database for one dialect and registers a cleanup. SQLite uses the shared
-// TestMain handle; MySQL and PostgreSQL open their own so the enabled lookup
-// runs on a real server. ClickHouse is a log-only database and never stores
-// abilities, so the test skips there.
-func withOpenTestAbilityDatabase(t *testing.T, kind string) *gorm.DB {
+// withOpenTestAbilityDatabase uses the primary fixture already opened by the
+// matrix, including SQLite when diagnostics use ClickHouse.
+func withOpenTestAbilityDatabase(t *testing.T, _ string) *gorm.DB {
 	t.Helper()
-	if kind == "clickhouse" {
-		t.Skip("abilities live in the main database, not ClickHouse")
-	}
-	if kind == "sqlite" {
-		channelUsageAbilityDelete(t, DB)
-		t.Cleanup(func() { channelUsageAbilityDelete(t, DB) })
-		return DB
-	}
-
-	env := "TEST_" + strings.ToUpper(kind) + "_DSN"
-	dsn := os.Getenv(env)
-	if dsn == "" {
-		t.Skip("set " + env + " to run this database")
-	}
-	var driver gorm.Dialector
-	if kind == "mysql" {
-		driver = mysql.Open(dsn)
-	} else {
-		driver = postgres.Open(dsn)
-	}
-	db, err := gorm.Open(driver, &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&Ability{}))
+	db := DB
 	channelUsageAbilityDelete(t, db)
-
-	previousDB, previousType := DB, common.MainDatabaseType()
-	DB = db
-	common.SetMainDatabaseType(common.DatabaseType(kind))
-	initCol()
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM abilities WHERE channel_id IN (?, ?)",
-			channelUsageTestChannel, channelUsageTestOtherChannel)
-		DB = previousDB
-		common.SetMainDatabaseType(previousType)
-		initCol()
-		require.NoError(t, sqlDB.Close())
-	})
+	t.Cleanup(func() { channelUsageAbilityDelete(t, db) })
 	return db
 }
 
+// installUsageReadLineageTestOnly seeds synthetic reader membership for model
+// package fixtures. It deliberately bypasses the public proof-bearing cutover
+// path and must never be used by production code or treated as migration proof.
+func installUsageReadLineageTestOnly(ctx context.Context, lineage UsageReadLineage) error {
+	if ctx == nil || DB == nil || !validUsageReadLineage(lineage) {
+		return ErrUsageEventInvalid
+	}
+	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockUsageStatisticsTransition(tx); err != nil {
+			return err
+		}
+		return installUsageReadLineageTx(tx, lineage)
+	})
+}
+
+// The fixture owns an explicit closed-world source set. Production startup
+// must never manufacture these attestations from an empty queue or MIN/MAX.
+func installUsageReaderTestCoverage(t *testing.T, db *gorm.DB, legacyMaxID, start, end int64) {
+	t.Helper()
+	require.NoError(t, MigrateUsageEventBackfill(db))
+	for _, table := range []any{&UsageStatisticsCoverage{}, &UsageStatisticsLineage{}, &UsageLegacyAcknowledgement{}, &UsageLegacyHour{}, &UsageStatisticsTransition{}} {
+		require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
+	}
+	t.Cleanup(func() {
+		for _, table := range []any{&UsageStatisticsCoverage{}, &UsageStatisticsLineage{}, &UsageLegacyAcknowledgement{}, &UsageLegacyHour{}, &UsageStatisticsTransition{}} {
+			require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
+		}
+	})
+	ctx := context.Background()
+	require.NoError(t, installUsageReadLineageTestOnly(ctx, UsageReadLineage{
+		IncludeLegacyQuotaData: true, LegacyQuotaDataMaxID: legacyMaxID,
+		LegacyBaselineDigest: strings.Repeat("c", 64), FenceDigest: strings.Repeat("d", 64),
+		LegacySourceNamespace: strings.Repeat("1", 32), LegacyCollectionEpoch: strings.Repeat("2", 32),
+		LiveSourceNamespace: strings.Repeat("a", 32), LiveCollectionEpoch: strings.Repeat("b", 32),
+		DashboardEligibility: UsageEventProjectHours,
+	}))
+	lineage, err := GetUsageReadLineage(ctx)
+	require.NoError(t, err)
+	for _, family := range []UsageStatisticsFamily{UsageStatisticsFacts, UsageStatisticsChannels, UsageStatisticsDashboard} {
+		require.NoError(t, AttestUsageStatisticsCoverage(ctx, UsageStatisticsCoverage{
+			Family: family, StartAt: start, EndAt: end, LineageDigest: lineage.LineageDigest,
+			ManifestDigest: strings.Repeat("e", 64), SourceSeal: strings.Repeat("f", 64),
+		}))
+	}
+}
+
 func TestChannelUsageSumsConsumeLogsPerChannel(t *testing.T) {
-	runChannelUsageLogMatrix(t, func(t *testing.T, _ string, db *gorm.DB) {
+	runChannelUsageLogMatrix(t, func(t *testing.T, kind string, db *gorm.DB) {
 		t.Run("only consume logs are counted", func(t *testing.T) {
 			usages, err := GetChannelUsages([]int{channelUsageTestChannel, channelUsageTestOtherChannel, 9422})
 			require.NoError(t, err)
@@ -214,12 +242,31 @@ func TestChannelUsageSumsConsumeLogsPerChannel(t *testing.T) {
 			require.NoError(t, err)
 			assert.Empty(t, usages)
 		})
+		t.Run("retention and projection recovery preserve totals", func(t *testing.T) {
+			before, err := GetChannelUsages([]int{channelUsageTestChannel, channelUsageTestOtherChannel})
+			require.NoError(t, err)
+			if kind == "clickhouse" {
+				require.NoError(t, db.Exec("ALTER TABLE logs DELETE WHERE channel_id IN (?, ?) SETTINGS mutations_sync = 1", channelUsageTestChannel, channelUsageTestOtherChannel).Error)
+			} else {
+				require.NoError(t, db.Where("channel_id IN ?", []int{channelUsageTestChannel, channelUsageTestOtherChannel}).Delete(&Log{}).Error)
+			}
+			var retained int64
+			require.NoError(t, db.Model(&Log{}).Where("channel_id IN ?", []int{channelUsageTestChannel, channelUsageTestOtherChannel}).Count(&retained).Error)
+			assert.Zero(t, retained)
+			after, err := GetChannelUsages([]int{channelUsageTestChannel, channelUsageTestOtherChannel})
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			_, err = RecoverUsageEventProjections(context.Background(), 100)
+			require.NoError(t, err)
+			after, err = GetChannelUsages([]int{channelUsageTestChannel, channelUsageTestOtherChannel})
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
 	})
 }
 
 func TestChannelUsageDetailMergesConfiguredAndLoggedModels(t *testing.T) {
-	// The log matrix owns the log database; the ability side is opened for the
-	// same dialect so the per-model enabled lookup runs on matching engines.
+	// The matrix owns both stores; enabled status comes only from primary data.
 	runChannelUsageLogMatrix(t, func(t *testing.T, kind string, db *gorm.DB) {
 		withOpenTestAbilityDatabase(t, kind)
 
@@ -308,4 +355,53 @@ func TestChannelUsageDetailReadsEnabledFromAbilities(t *testing.T) {
 		assert.False(t, byName["gpt-4o-mini"].Enabled, "a disabled ability row leaves the model disabled")
 		assert.False(t, byName["unused-model"].Enabled, "a model without ability rows is disabled")
 	})
+}
+
+func TestChannelUsageDurableReadBoundaries(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := openUsageEventTestDatabase(t, dialect)
+			require.NoError(t, db.AutoMigrate(&Ability{}))
+			installUsageReaderTestCoverage(t, db, 0, 1, 2000000000)
+			ctx := context.Background()
+			t.Run("blank model contributes only to channel summary", func(t *testing.T) {
+				clearUsageEventTestRows(t, db)
+				input := usageEventTestInput(1)
+				input.ModelName = ""
+				receipt, err := PrepareUsageEvent(ctx, input, UsageEventSourceReady)
+				require.NoError(t, err)
+				require.NoError(t, ApplyUsageEvent(ctx, receipt))
+				rows, err := GetChannelUsages([]int{int(input.ChannelID)})
+				require.NoError(t, err)
+				require.Len(t, rows, 1)
+				assert.Equal(t, int64(120), rows[0].TotalTokens)
+				detail, err := GetChannelUsageDetail(int(input.ChannelID), []string{"configured"})
+				require.NoError(t, err)
+				require.Len(t, detail.Models, 1)
+				assert.Zero(t, detail.TotalTokens)
+				assert.Equal(t, "configured", detail.Models[0].ModelName)
+			})
+			t.Run("pending sentinel returns no partial total", func(t *testing.T) {
+				clearUsageEventTestRows(t, db)
+				require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+					for i := range usageReadPendingLimit + 1 {
+						if _, err := PrepareUsageEventTx(tx, usageEventTestInput(int64(i+1)), UsageEventSourceReady); err != nil {
+							return err
+						}
+					}
+					return nil
+				}))
+				rows, err := GetChannelUsages([]int{91232})
+				assert.ErrorIs(t, err, ErrUsageStatisticsNotReady)
+				assert.Nil(t, rows)
+			})
+			t.Run("overflow returns no wrapped total", func(t *testing.T) {
+				clearUsageEventTestRows(t, db)
+				require.NoError(t, db.Create(&UsageChannel{ProjectionVersion: UsageEventProjectionVersion, ChannelID: 91232, PromptTokens: math.MaxInt64, CompletionTokens: 1}).Error)
+				rows, err := GetChannelUsages([]int{91232})
+				assert.ErrorIs(t, err, ErrUsageEventOverflow)
+				assert.Nil(t, rows)
+			})
+		})
+	}
 }

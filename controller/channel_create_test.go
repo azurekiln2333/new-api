@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -54,17 +55,24 @@ func setupChannelCreateTest(t *testing.T) int {
 		seed, err = gorm.Open(sqlite.Open(common.SQLitePath), &gorm.Config{})
 		require.NoError(t, err)
 	}
-	require.NoError(t, seed.AutoMigrate(&model.Option{}))
-	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
-	require.NoError(t, seed.Where(map[string]any{"key": "internal.channel_budget.active_v1"}).Delete(&model.Option{}).Error)
 	seedSQL, err := seed.DB()
 	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, seedSQL.Close()) })
+	require.NoError(t, seed.AutoMigrate(&model.Option{}))
+	testutil.MigrateUsageStatisticsForTestDatabase(t, seed)
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "false")
+	require.NoError(t, seed.Where(map[string]any{"key": "internal.channel_budget.active_v1"}).Delete(&model.Option{}).Error)
 	require.NoError(t, seedSQL.Close())
+	t.Cleanup(func() {
+		if model.DB != nil && model.DB != previousDB && model.DB != previousLogDB {
+			pool, err := model.DB.DB()
+			if assert.NoError(t, err) {
+				assert.NoError(t, pool.Close())
+			}
+		}
+	})
 	require.NoError(t, model.InitDB())
 	database := model.DB
-	sqlDB, err := database.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	model.LOG_DB = database
 	common.SetLogDatabaseType(common.MainDatabaseType())
 	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}, &model.Log{}, &model.AuditLog{}, &model.ChannelKeyEntry{}, &model.AuditEventOutbox{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{}, &model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}, &model.Task{}, &model.SystemTask{}, &model.SystemTaskLock{}))

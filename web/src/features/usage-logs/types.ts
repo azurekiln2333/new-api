@@ -22,6 +22,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { RequestRuleTrace } from '@/features/pricing/lib/billing-expr'
 import type { PolicyEvent } from '@/features/system-settings/request-policies/api'
 import type { LocalizedTextValue } from '@/lib/localized-text'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
 
 import type { UsageLog } from './data/schema'
 // ============================================================================
@@ -617,6 +618,7 @@ export interface GetLogStatsResponse {
   success: boolean
   message?: string
   data?: LogStatistics
+  coverage?: StatisticsCoverage
 }
 
 // ============================================================================

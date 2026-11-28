@@ -25,6 +25,12 @@ import (
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
+	var usageReport *model.UsageSourceReport
+	if task != nil {
+		PrepareTaskSubmissionUsageReport(c, info, task)
+		usageReport = task.UsageReport
+	}
+	ConfirmRelayUsageReport(c, usageReport, model.UsageEventSourceReady, "task_submission_report")
 	tokenName := c.GetString("token_name")
 	logContent := []*common.Message{common.NewMessage("Action {{action}}", map[string]any{"action": info.Action})}
 	// 支持任务仅按次计费
@@ -84,14 +90,15 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	}
 	appendRequestPluginRecord(info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-		ChannelId: info.ChannelId,
-		ModelName: info.OriginModelName,
-		TokenName: tokenName,
-		Quota:     info.PriceData.Quota,
-		Content:   logContent,
-		TokenId:   info.TokenId,
-		Group:     info.UsingGroup,
-		Other:     other,
+		UsageReport: usageReport,
+		ChannelId:   info.ChannelId,
+		ModelName:   info.OriginModelName,
+		TokenName:   tokenName,
+		Quota:       info.PriceData.Quota,
+		Content:     logContent,
+		TokenId:     info.TokenId,
+		Group:       info.UsingGroup,
+		Other:       other,
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
@@ -381,8 +388,18 @@ func taskModelName(task *model.Task) string {
 // 当异步任务失败时，退还资金与令牌额度，并回减用户和渠道用量。
 // 返回资金来源是否已成功退还；失败时保留 quota，供显式重试或人工对账。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
+	if task.Quota != 0 {
+		if err := claimTaskAdjustmentUsage(ctx, task, 0, true); err != nil {
+			logger.LogError(ctx, common.LogText("usage statistics persistence failed: stage=%s", "task_refund_claim"))
+			return false
+		}
+	}
+	defer func() { task.UsageTransition = nil }()
 	delta, err := settleTaskFunding(ctx, task, 0, true)
 	if err != nil {
+		if task.UsageTransition != nil {
+			confirmUsageSourceReport(ctx, task.UsageTransition.Report, model.UsageEventSourceUnknown, "task_adjustment_outcome_unknown")
+		}
 		logger.LogWarn(ctx, common.LogText("failed to refund the funding source, task %s: %s", task.TaskID, err.Error()))
 		return false
 	}
@@ -395,6 +412,11 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 }
 
 func recordTaskQuotaRefund(ctx context.Context, task *model.Task, quota int, reason string) {
+	var usageReport *model.UsageSourceReport
+	if task.UsageTransition != nil {
+		usageReport = task.UsageTransition.Report
+	}
+	confirmUsageSourceReport(ctx, usageReport, model.UsageEventSourceReady, "task_adjustment_report")
 	// 3. 回减预扣时累计的用户和渠道用量，请求次数保持不变
 	model.UpdateUserUsedQuota(task.UserId, -quota)
 	model.UpdateChannelUsedQuota(task.ChannelId, -quota)
@@ -410,6 +432,7 @@ func recordTaskQuotaRefund(ctx context.Context, task *model.Task, quota int, rea
 		requestID = task.PrivateData.Execution.RequestID
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UsageReport:    usageReport,
 		UserId:         task.UserId,
 		LogType:        model.LogTypeRefund,
 		ChannelId:      task.ChannelId,
@@ -442,8 +465,18 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		return
 	}
 	preConsumedQuota := task.Quota
+	if actualQuota != preConsumedQuota {
+		if err := claimTaskAdjustmentUsage(ctx, task, actualQuota, false); err != nil {
+			logger.LogError(ctx, common.LogText("usage statistics persistence failed: stage=%s", "task_adjustment_claim"))
+			return
+		}
+	}
+	defer func() { task.UsageTransition = nil }()
 	quotaDelta, err := settleTaskFunding(ctx, task, actualQuota, false)
 	if err != nil {
+		if task.UsageTransition != nil {
+			confirmUsageSourceReport(ctx, task.UsageTransition.Report, model.UsageEventSourceUnknown, "task_adjustment_outcome_unknown")
+		}
 		logger.LogError(ctx, common.LogText("failed to adjust funding for the difference, task %s: %s", task.TaskID, err.Error()))
 		return
 	}
@@ -466,6 +499,11 @@ func recordTaskQuotaAdjustment(ctx context.Context, task *model.Task, preConsume
 		reason.Error(),
 	))
 
+	var usageReport *model.UsageSourceReport
+	if task.UsageTransition != nil {
+		usageReport = task.UsageTransition.Report
+	}
+	confirmUsageSourceReport(ctx, usageReport, model.UsageEventSourceReady, "task_adjustment_report")
 	task.Quota = actualQuota
 	if task.PrivateData.BudgetReservationId == 0 {
 		if err := task.UpdateQuota(); err != nil {
@@ -500,6 +538,7 @@ func recordTaskQuotaAdjustment(ctx context.Context, task *model.Task, preConsume
 		requestID = task.PrivateData.Execution.RequestID
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UsageReport:    usageReport,
 		UserId:         task.UserId,
 		LogType:        logType,
 		Content:        []*common.Message{reason},

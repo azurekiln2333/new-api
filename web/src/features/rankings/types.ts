@@ -22,6 +22,8 @@ For commercial licensing, please contact support@quantumnous.com
 //
 // Shape of the real data shown on the /rankings page.
 
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
+
 export type RankingPeriod = 'today' | 'week' | 'month' | 'year'
 
 export type RankingCategoryId =
@@ -148,6 +150,14 @@ export type RankingsSnapshot = {
   vendor_share_history: VendorShareSeries
 }
 
+export type RankingsResponse = {
+  success: boolean
+  message?: string
+  data: RankingsSnapshot
+  coverage?: StatisticsCoverage
+  previous_coverage?: StatisticsCoverage
+}
+
 // ----------------------------------------------------------------------------
 // Model usage drawer
 // ----------------------------------------------------------------------------
@@ -182,4 +192,11 @@ export type RankingModelUsage = {
   end_time: number
   totals: RankingModelUsageTotals
   users: RankingModelUsageUser[]
+}
+
+export type RankingModelUsageResponse = {
+  success: boolean
+  message?: string
+  data: RankingModelUsage
+  coverage?: StatisticsCoverage
 }

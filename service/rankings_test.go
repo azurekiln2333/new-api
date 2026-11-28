@@ -1,9 +1,11 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,16 @@ import (
 func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []common.DatabaseType{common.DatabaseTypeSQLite, common.DatabaseTypeMySQL, common.DatabaseTypePostgreSQL} {
 		t.Run(string(dialect), func(t *testing.T) {
+			rankingCacheMu.Lock()
+			previousRankingCache := rankingCache
+			rankingCache = make(map[string]rankingCacheItem)
+			rankingCacheMu.Unlock()
+			t.Cleanup(func() {
+				rankingCacheMu.Lock()
+				rankingCache = previousRankingCache
+				rankingCacheMu.Unlock()
+			})
+
 			var driver gorm.Dialector = sqlite.Open(":memory:")
 			if dialect == common.DatabaseTypeMySQL {
 				dsn := os.Getenv("TEST_MYSQL_DSN")
@@ -64,7 +76,46 @@ func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 				model.CacheQuotaData = oldCache
 			})
 			require.NoError(t, db.AutoMigrate(&model.QuotaData{}, &model.User{}))
+			require.NoError(t, model.MigrateUsageStatistics(db))
+			require.NoError(t, model.MigrateUsageEventBackfill(db))
+			for _, table := range []any{&model.UsageStatisticsCoverage{}, &model.UsageStatisticsLineage{}, &model.UsageEventBackfill{}, &model.UsageEventBackfillTuple{}, &model.UsageLegacyAcknowledgement{}, &model.UsageLegacyHour{}, &model.UsageStatisticsTransition{}, &model.UsageEvent{}, &model.UsageHour{}, &model.UsageChannel{}, &model.UsageChannelModel{}} {
+				require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
+			}
+			t.Cleanup(func() {
+				for _, table := range []any{&model.UsageStatisticsCoverage{}, &model.UsageStatisticsLineage{}, &model.UsageEventBackfill{}, &model.UsageEventBackfillTuple{}, &model.UsageLegacyAcknowledgement{}, &model.UsageLegacyHour{}, &model.UsageStatisticsTransition{}, &model.UsageEvent{}, &model.UsageHour{}, &model.UsageChannel{}, &model.UsageChannelModel{}} {
+					require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
+				}
+			})
+			ctx := context.Background()
+			coverageEnd := time.Now().Unix() + 3600
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+			baseline, err := model.InspectUsageLegacyQuotaData(ctx)
+			require.NoError(t, err)
+			lineage := model.UsageReadLineage{
+				IncludeLegacyQuotaData: true, LegacyQuotaDataMaxID: baseline.MaxID,
+				LegacyBaselineDigest: baseline.Digest, FenceDigest: strings.Repeat("d", 64),
+				LegacySourceNamespace: strings.Repeat("a", 32), LegacyCollectionEpoch: strings.Repeat("b", 32),
+				LiveSourceNamespace: model.UsageLiveSourceNamespace(), LiveCollectionEpoch: model.UsageLiveCollectionEpoch(),
+				DashboardEligibility: model.UsageEventProjectHours,
+			}
+			plan := model.UsageEventBackfillPlan{
+				SourceNamespace: lineage.LegacySourceNamespace, SourceKind: model.UsageEventSourceLegacyRelational,
+				CollectionEpoch: lineage.LegacyCollectionEpoch, StartAt: 1, EndAt: coverageEnd,
+				HighWatermark: 0, FenceDigest: lineage.FenceDigest,
+			}
+			page, err := model.InspectUsageEventBackfillBatch(ctx, logDB, plan, model.UsageEventBackfillCursor{}, 100)
+			require.NoError(t, err)
+			plan.ExpectedRows, plan.ManifestDigest = page.Next.Rows, page.Next.Digest
+			progress, err := model.RunUsageEventBackfillBatch(ctx, logDB, plan, 100)
+			require.NoError(t, err)
+			require.True(t, progress.RetainedVerified)
+			require.NoError(t, model.InstallUsageReadLineage(ctx, lineage, model.UsageStatisticsLineageProof{ExpectedBaseline: baseline}))
+			lineage, err = model.GetUsageReadLineage(ctx)
+			require.NoError(t, err)
+			require.NoError(t, model.AttestUsageStatisticsCoverage(ctx, model.UsageStatisticsCoverage{
+				Family: model.UsageStatisticsDashboard, StartAt: 1, EndAt: coverageEnd, LineageDigest: lineage.LineageDigest,
+				ManifestDigest: strings.Repeat("e", 64), SourceSeal: strings.Repeat("f", 64),
+			}))
 			query := "SELECT version()"
 			if dialect == common.DatabaseTypeSQLite {
 				query = "SELECT sqlite_version()"
@@ -86,6 +137,10 @@ func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 					modelName := "ranking-cache-" + tc.name
 					require.NoError(t, db.Where("model_name = ?", modelName).Delete(&model.QuotaData{}).Error)
 					t.Cleanup(func() { assert.NoError(t, db.Where("model_name = ?", modelName).Delete(&model.QuotaData{}).Error) })
+					t.Cleanup(func() {
+						assert.NoError(t, db.Where("model_name = ?", modelName).Delete(&model.UsageEvent{}).Error)
+						assert.NoError(t, db.Where("model_name = ?", modelName).Delete(&model.UsageHour{}).Error)
+					})
 					other := model.NewLogOther()
 					other.SetPublic("usage_semantic", tc.semantic)
 					other.SetPublic("cache_tokens", tc.read)
@@ -96,11 +151,22 @@ func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 					ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 					ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 					ctx.Set("username", "ranking-cache-test")
-					for range 2 {
-						model.RecordConsumeLog(ctx, 0, model.RecordConsumeLogParams{ModelName: modelName, PromptTokens: tc.input, CompletionTokens: tc.output, Other: other})
-						model.SaveQuotaDataCache()
+					for i := range 2 {
+						semantic := model.UsageSemanticOpenAI
+						if tc.semantic == "anthropic" {
+							semantic = model.UsageSemanticAnthropic
+						}
+						report, err := model.NewUsageSourceReport(ctx.Request.Context(), model.UsageEventSourceRelay, model.UsageEventKindConsume, model.UsageEventInput{
+							KnownMask:  model.UsageEventKnownUserID | model.UsageEventKnownUsername | model.UsageEventKnownModelName | model.UsageEventKnownPromptTokens | model.UsageEventKnownCompletionTokens | model.UsageEventKnownQuota | model.UsageEventKnownCacheReadTokens | model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownUsageSemantic,
+							OccurredAt: coverageEnd - 3600, Username: "ranking-cache-test", ModelName: modelName, PromptTokens: int64(tc.input), CompletionTokens: int64(tc.output),
+							CacheReadTokens: int64(tc.read), CacheWriteTokens: int64(tc.write), UsageSemantic: semantic,
+						})
+						require.NoError(t, err)
+						require.NoError(t, model.PrepareUsageSourceReport(ctx.Request.Context(), report))
+						require.NoError(t, model.ConfirmUsageSourceReport(ctx.Request.Context(), report, model.UsageEventSourceReady, fmt.Sprintf("ranking-fixture-%d", i)))
+						model.RecordConsumeLog(ctx, 0, model.RecordConsumeLogParams{UsageReport: report, ModelName: modelName, PromptTokens: tc.input, CompletionTokens: tc.output, Other: other})
 					}
-					rows, err := model.GetRankingQuotaTotals(0, time.Now().Unix()+3600)
+					rows, err := model.GetRankingQuotaTotals(1, coverageEnd)
 					require.NoError(t, err)
 					require.Len(t, rows, 1)
 					assert.Equal(t, int64(tc.want*2), rows[0].TotalTokens)
@@ -116,22 +182,26 @@ func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 					assert.Equal(t, int64(tc.want*2), vendors[0].TotalTokens)
 					assert.Equal(t, rows[0].CacheReadTokens, vendors[0].CacheReadTokens)
 					assert.Equal(t, rows[0].CacheCreationTokens, vendors[0].CacheCreationTokens)
-					buckets, err := model.GetRankingQuotaBuckets(0, 0, 3600)
+					buckets, err := model.GetRankingQuotaBuckets(1, coverageEnd, 3600)
 					require.NoError(t, err)
 					var bucketTotal int64
 					for _, bucket := range buckets {
 						bucketTotal += bucket.Tokens
 					}
 					assert.Equal(t, int64(tc.want*2), bucketTotal)
-					var aggregate model.QuotaData
+					var aggregate model.UsageHour
 					require.NoError(t, db.Where("model_name = ?", modelName).First(&aggregate).Error)
 					assert.Equal(t, int64(tc.read*2), aggregate.CacheReadTokens)
-					assert.Equal(t, int64(tc.write*2), aggregate.CacheCreationTokens)
+					assert.Equal(t, int64(tc.write*2), aggregate.CacheWriteTokens)
 					var logs []model.Log
 					require.NoError(t, logDB.Where("model_name = ?", modelName).Find(&logs).Error)
 					require.Len(t, logs, 2)
 					assert.Equal(t, tc.input, logs[0].PromptTokens)
 					assert.Equal(t, tc.output, logs[0].CompletionTokens)
+					require.NoError(t, logDB.Where("model_name = ?", modelName).Delete(&model.Log{}).Error)
+					after, err := model.GetRankingQuotaTotals(1, coverageEnd)
+					require.NoError(t, err)
+					assert.Equal(t, rows, after)
 				})
 			}
 			t.Run("all-model totals", func(t *testing.T) {
@@ -145,19 +215,46 @@ func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 				for index := range 21 {
 					name := fmt.Sprintf("ranking-limit-%02d", index)
 					names = append(names, name)
-					require.NoError(t, db.Create(&model.QuotaData{ModelName: name, CreatedAt: now.Unix() - 3600, TokenUsed: 100 + index, CacheReadTokens: 20, CacheCreationTokens: 10}).Error)
+					report, err := model.NewUsageSourceReport(ctx, model.UsageEventSourceRelay, model.UsageEventKindConsume, model.UsageEventInput{
+						KnownMask:  model.UsageEventKnownModelName | model.UsageEventKnownPromptTokens | model.UsageEventKnownCompletionTokens | model.UsageEventKnownQuota | model.UsageEventKnownCacheReadTokens | model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownUsageSemantic,
+						OccurredAt: now.Unix() - 3600, ModelName: name, PromptTokens: int64(100 + index), CacheReadTokens: 20, CacheWriteTokens: 10, UsageSemantic: model.UsageSemanticOpenAI,
+					})
+					require.NoError(t, err)
+					require.NoError(t, model.PrepareUsageSourceReport(ctx, report))
+					require.NoError(t, model.ConfirmUsageSourceReport(ctx, report, model.UsageEventSourceReady, "ranking-limit-fixture"))
 				}
-				t.Cleanup(func() { assert.NoError(t, db.Where("model_name IN ?", names).Delete(&model.QuotaData{}).Error) })
+				t.Cleanup(func() {
+					assert.NoError(t, db.Where("model_name IN ?", names).Delete(&model.UsageEvent{}).Error)
+					assert.NoError(t, db.Where("model_name IN ?", names).Delete(&model.UsageHour{}).Error)
+				})
 				config, err := rankingConfig("today")
 				require.NoError(t, err)
-				snapshot, err := buildRankingsSnapshot(config, now)
+				snapshot, err := buildRankingsSnapshot(ctx, config, now)
 				require.NoError(t, err)
+				start, end := rankingTimeRange(config, now)
+				assert.Equal(t, model.UsageStatisticsCoverageView{
+					Complete: true, Coverage: model.UsageCoverageComplete,
+					HistoricalCoverage: model.UsageCoverageComplete, LiveCoverage: model.UsageCoverageComplete,
+					LegacyBaselineIncluded: true, StartTimestamp: start, EndTimestamp: end,
+				}, snapshot.Coverage)
+				previousStart, previousEnd := previousRankingTimeRange(config, start)
+				assert.Equal(t, previousStart, snapshot.PreviousCoverage.StartTimestamp)
+				assert.Equal(t, previousEnd, snapshot.PreviousCoverage.EndTimestamp)
+				assert.True(t, snapshot.PreviousCoverage.Complete, "cached ranking payload must carry coverage for its comparison period")
 				require.Len(t, snapshot.Models, 20)
 				assert.Equal(t, RankingTokenTotals{TotalTokens: 2310, CacheReadTokens: 420, CacheCreationTokens: 210}, snapshot.Totals)
 				require.Len(t, snapshot.Vendors, 1)
 				assert.Equal(t, int64(2310), snapshot.Vendors[0].TotalTokens)
 				assert.Equal(t, int64(420), snapshot.Vendors[0].CacheReadTokens)
 				assert.Equal(t, int64(210), snapshot.Vendors[0].CacheCreationTokens)
+
+				cachedSnapshot, err := GetRankingsSnapshot(ctx, "today")
+				require.NoError(t, err)
+				cachedReplay, err := GetRankingsSnapshot(ctx, "today")
+				require.NoError(t, err)
+				assert.Same(t, cachedSnapshot, cachedReplay)
+				assert.Equal(t, cachedSnapshot.Coverage, cachedReplay.Coverage)
+				assert.Equal(t, cachedSnapshot.PreviousCoverage, cachedReplay.PreviousCoverage)
 			})
 		})
 	}

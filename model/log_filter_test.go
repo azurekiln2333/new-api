@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,50 @@ func runLogDatabaseMatrix(t *testing.T, fn func(t *testing.T, db *gorm.DB)) {
 	}
 }
 
+func prepareUsageBackfillFixture(t *testing.T, primary *gorm.DB) {
+	t.Helper()
+	tables := []any{&UsageEventBackfillTuple{}, &UsageEventBackfill{}, &UsageStatisticsCoverage{}, &UsageStatisticsLineage{},
+		&UsageLegacyAcknowledgement{}, &UsageLegacyHour{}, &UsageStatisticsTransition{}}
+	require.NoError(t, primary.Migrator().DropTable(tables...))
+	t.Cleanup(func() { require.NoError(t, primary.Migrator().DropTable(tables...)) })
+	require.NoError(t, MigrateUsageEventBackfill(primary))
+	require.NoError(t, MigrateUsageEventBackfill(primary))
+}
+
+func usageBackfillFixturePlan(t *testing.T, source *gorm.DB) UsageEventBackfillPlan {
+	t.Helper()
+	kind := source.Dialector.Name()
+	sourceKind := UsageEventSourceLegacyRelational
+	highWatermark := int64(0)
+	if kind == "clickhouse" {
+		sourceKind = UsageEventSourceLegacyClickHouse
+	} else {
+		require.NoError(t, source.Model(&Log{}).
+			Select("COALESCE(MAX(id), 0)").
+			Where("created_at >= ? AND created_at <= ? AND type IN ?", int64(1000), int64(1004), []int{LogTypeConsume, LogTypeRefund}).
+			Scan(&highWatermark).Error)
+	}
+	return UsageEventBackfillPlan{
+		SourceNamespace: strings.Repeat("c", 32), SourceKind: sourceKind, CollectionEpoch: strings.Repeat("d", 32),
+		StartAt: 1000, EndAt: 1004, HighWatermark: highWatermark, FenceDigest: strings.Repeat("e", 64),
+	}
+}
+
+func inspectUsageBackfillFixture(t *testing.T, source *gorm.DB, plan UsageEventBackfillPlan, limit int) UsageEventBackfillPlan {
+	t.Helper()
+	cursor := UsageEventBackfillCursor{}
+	for {
+		page, err := InspectUsageEventBackfillBatch(t.Context(), source, plan, cursor, limit)
+		require.NoError(t, err)
+		cursor = page.Next
+		if page.Exhausted {
+			break
+		}
+	}
+	plan.ExpectedRows, plan.ManifestDigest = cursor.Rows, cursor.Digest
+	return plan
+}
+
 func TestLogFilterTextMatchModes(t *testing.T) {
 	runLogDatabaseMatrix(t, func(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Create(logFilterTestRows()).Error)
@@ -149,6 +194,12 @@ func TestLogFilterTextMatchModes(t *testing.T) {
 
 func TestLogUserScopesShareListStatAndStream(t *testing.T) {
 	runLogDatabaseMatrix(t, func(t *testing.T, db *gorm.DB) {
+		primaryKind := db.Dialector.Name()
+		if primaryKind == "clickhouse" {
+			primaryKind = "sqlite"
+		}
+		primary := openUsageEventTestDatabase(t, primaryKind)
+		prepareUsageBackfillFixture(t, primary)
 		const modelName = "r33-scope-fixture"
 		now := time.Now().Unix()
 		rows := []Log{
@@ -226,26 +277,196 @@ func TestLogUserScopesShareListStatAndStream(t *testing.T) {
 func TestSumUsedQuotaCountsCacheTokensByUsageSemantics(t *testing.T) {
 	runLogDatabaseMatrix(t, func(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Create(logFilterTestRows()).Error)
+		primaryKind := db.Dialector.Name()
+		if primaryKind == "clickhouse" {
+			primaryKind = "sqlite"
+		}
+		primary := openUsageEventTestDatabase(t, primaryKind)
+		prepareUsageBackfillFixture(t, primary)
+		plan := usageBackfillFixturePlan(t, db)
+		plan = inspectUsageBackfillFixture(t, db, plan, 2)
+		progress, err := RunUsageEventBackfillBatch(t.Context(), db, plan, 100)
+		require.NoError(t, err)
+		require.True(t, progress.RetainedVerified)
+		var eventsBefore, hoursBefore, quotaBefore int64
+		require.NoError(t, primary.Model(&UsageEvent{}).Count(&eventsBefore).Error)
+		require.NoError(t, primary.Model(&UsageHour{}).Count(&hoursBefore).Error)
+		require.NoError(t, primary.Model(&UsageHour{}).Select("COALESCE(SUM(gross_quota), 0)").Scan(&quotaBefore).Error)
+		replayed, err := RunUsageEventBackfillBatch(t.Context(), db, plan, 100)
+		require.NoError(t, err)
+		assert.True(t, replayed.RetainedVerified)
+		assert.Zero(t, replayed.BatchRows, "completed import replay is a no-op")
+		var eventsAfter, hoursAfter, quotaAfter int64
+		require.NoError(t, primary.Model(&UsageEvent{}).Count(&eventsAfter).Error)
+		require.NoError(t, primary.Model(&UsageHour{}).Count(&hoursAfter).Error)
+		require.NoError(t, primary.Model(&UsageHour{}).Select("COALESCE(SUM(gross_quota), 0)").Scan(&quotaAfter).Error)
+		assert.Equal(t, eventsBefore, eventsAfter)
+		assert.Equal(t, hoursBefore, hoursAfter)
+		assert.Equal(t, quotaBefore, quotaAfter)
+		installUsageReaderTestCoverage(t, primary, 0, 1000, 1004)
 
-		t.Run("anthropic prompt excludes cache while openai prompt includes it", func(t *testing.T) {
-			stat, err := SumUsedQuota(LogFilter{UserId: logFilterTestUser})
-			require.NoError(t, err)
-			assert.Equal(t, int64(130), stat.CacheReadTokens, "only consume logs count cache reads")
-			assert.Equal(t, int64(400), stat.InputTokens, "(100 prompt + 80 read + 20 write) + 200 prompt")
+		t.Run("unknown cache semantics are unavailable rather than a false zero", func(t *testing.T) {
+			_, err := SumUsedQuota(LogFilter{UserId: logFilterTestUser})
+			assert.ErrorIs(t, err, ErrUsageStatisticsNotReady)
 		})
 
-		t.Run("the text filters apply to the summary as well", func(t *testing.T) {
-			stat, err := SumUsedQuota(LogFilter{UserId: logFilterTestUser, Group: "vi"})
+		t.Run("anthropic prompt excludes cache while openai prompt includes it", func(t *testing.T) {
+			stat, err := SumUsedQuota(LogFilter{UserId: logFilterTestUser, RequestId: "req-alpha", MatchMode: LogMatchExact})
 			require.NoError(t, err)
-			assert.Equal(t, int64(50), stat.CacheReadTokens)
+			assert.Equal(t, int64(80), stat.CacheReadTokens)
 			assert.Equal(t, int64(200), stat.InputTokens)
 		})
 
-		t.Run("a log without cache metadata contributes only its prompt", func(t *testing.T) {
-			stat, err := SumUsedQuota(LogFilter{UserId: logFilterTestUser, ModelName: "gptax"})
+		t.Run("known raw tokens remain readable independently of cache metadata", func(t *testing.T) {
+			tokens, err := SumUsageEventTokens(t.Context(), LogFilter{UserId: logFilterTestUser})
 			require.NoError(t, err)
-			assert.Zero(t, stat.CacheReadTokens)
-			assert.Zero(t, stat.InputTokens)
+			assert.Equal(t, 300, tokens)
+		})
+
+		t.Run("cache-read alone cannot prove the input semantic or cache-write quantity", func(t *testing.T) {
+			_, err := SumUsedQuota(LogFilter{UserId: logFilterTestUser, Group: "vi"})
+			assert.ErrorIs(t, err, ErrUsageStatisticsNotReady)
+		})
+
+		t.Run("a log without cache metadata is unknown rather than verified zero", func(t *testing.T) {
+			_, err := SumUsedQuota(LogFilter{UserId: logFilterTestUser, ModelName: "gptax"})
+			assert.ErrorIs(t, err, ErrUsageStatisticsNotReady)
 		})
 	})
+}
+
+func TestUsageLegacyQuotaDataBaselineIsBoundedAndStable(t *testing.T) {
+	db := openUsageEventTestDatabase(t, "sqlite")
+	tables := []any{&UsageEventBackfillTuple{}, &UsageEventBackfill{}, &UsageStatisticsCoverage{}, &UsageStatisticsLineage{}, &QuotaData{}}
+	require.NoError(t, db.AutoMigrate(tables...))
+	require.NoError(t, db.Migrator().DropTable(&UsageEventBackfillTuple{}, &UsageEventBackfill{}, &UsageStatisticsCoverage{}, &UsageStatisticsLineage{}))
+	require.NoError(t, MigrateUsageEventBackfill(db))
+	previousDB := DB
+	DB = db
+	t.Cleanup(func() { DB = previousDB })
+	require.NoError(t, db.Create(&[]QuotaData{
+		{Id: 11, UserID: 1, Username: "alice", ModelName: "m1", CreatedAt: 1000, Quota: 4, Count: 1},
+		{Id: 12, UserID: 2, Username: "bob", ModelName: "m2", CreatedAt: 2000, Quota: 8, Count: 1},
+	}).Error)
+	baseline, err := InspectUsageLegacyQuotaData(t.Context())
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, baseline.Rows)
+	assert.EqualValues(t, 12, baseline.MaxID)
+	assert.Len(t, baseline.Digest, usageEventDigestLength)
+
+	// A changed row invalidates the captured evidence before activation.
+	require.NoError(t, db.Model(&QuotaData{}).Where("id = ?", 12).Update("quota", 9).Error)
+	lineage := UsageReadLineage{
+		IncludeLegacyQuotaData: true, LegacyQuotaDataMaxID: baseline.MaxID, LegacyBaselineDigest: baseline.Digest,
+		FenceDigest: strings.Repeat("f", usageEventDigestLength), LegacySourceNamespace: strings.Repeat("1", 32),
+		LegacyCollectionEpoch: strings.Repeat("2", 32), LiveSourceNamespace: UsageLiveSourceNamespace(),
+		LiveCollectionEpoch: UsageLiveCollectionEpoch(), DashboardEligibility: UsageEventProjectHours,
+	}
+	assert.ErrorIs(t, ActivateUsageStatisticsLineage(t.Context(), lineage, baseline), ErrUsageStatisticsNotReady)
+}
+
+func TestDeleteOldLogBatchRequiresExactLinkedEventPayload(t *testing.T) {
+	for _, semantic := range []struct {
+		label string
+		value UsageSemantic
+	}{
+		{"openai", UsageSemanticOpenAI},
+		{"anthropic", UsageSemanticAnthropic},
+		{"provider-specific", UsageSemanticOtherExplicit},
+	} {
+		t.Run(semantic.label, func(t *testing.T) {
+			db := openUsageEventTestDatabase(t, "sqlite")
+			previousLogDB, previousType := LOG_DB, common.LogDatabaseType()
+			LOG_DB = db
+			common.SetLogDatabaseType(common.DatabaseTypeSQLite)
+			initCol()
+			t.Cleanup(func() {
+				LOG_DB = previousLogDB
+				common.SetLogDatabaseType(previousType)
+				initCol()
+			})
+			require.NoError(t, MigrateUsageStatistics(db))
+			require.NoError(t, db.AutoMigrate(&Log{}, &QuotaData{}))
+			prepareUsageBackfillFixture(t, db)
+			input := usageEventTestInput(77)
+			input.Identity, input.CollectionEpoch = UsageEventIdentity{}, ""
+			input.UsageSemantic = semantic.value
+			report, err := NewUsageSourceReport(t.Context(), UsageEventSourceRelay, UsageEventKindConsume, input)
+			require.NoError(t, err)
+			input = report.Input
+			require.NoError(t, PrepareUsageSourceReport(t.Context(), report))
+			require.NoError(t, ConfirmUsageSourceReport(t.Context(), report, UsageEventSourceReady, ""))
+			baseline, err := InspectUsageLegacyQuotaData(t.Context())
+			require.NoError(t, err)
+			lineage := transitionTestLineage(baseline)
+			importTransitionTestLogs(t, db, lineage, input.OccurredAt, input.OccurredAt)
+			require.NoError(t, ActivateUsageStatisticsLineage(t.Context(), lineage, baseline))
+			var before UsageHour
+			require.NoError(t, db.Take(&before).Error)
+
+			conflictingLabel := "openai"
+			if semantic.value == UsageSemanticOpenAI {
+				conflictingLabel = "anthropic"
+			}
+			for _, tc := range []struct {
+				name       string
+				cacheRead  any
+				cacheWrite any
+				label      any
+				omit       bool
+				retain     bool
+			}{
+				{"matching_label", input.CacheReadTokens, input.CacheWriteTokens, semantic.label, false, semantic.value == UsageSemanticOtherExplicit},
+				{"cache_read_conflict", input.CacheReadTokens + 1, input.CacheWriteTokens, semantic.label, false, true},
+				{"cache_write_conflict", input.CacheReadTokens, input.CacheWriteTokens + 1, semantic.label, false, true},
+				{"semantic_conflict", input.CacheReadTokens, input.CacheWriteTokens, conflictingLabel, false, true},
+				{"semantic_numeric_enum_is_not_a_label", input.CacheReadTokens, input.CacheWriteTokens, input.UsageSemantic, false, true},
+				{"optional_duplicates_absent", nil, nil, nil, true, false},
+				{"optional_duplicates_null", nil, nil, nil, false, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					log := &Log{
+						UserId: int(input.UserID), Username: input.Username, CreatedAt: input.OccurredAt, Type: LogTypeConsume,
+						TokenName: input.TokenName, ModelName: input.ModelName, PromptTokens: int(input.PromptTokens),
+						CompletionTokens: int(input.CompletionTokens), Quota: int(input.QuotaMagnitude), ChannelId: int(input.ChannelID),
+						TokenId: int(input.TokenID), Group: input.GroupName, RequestId: input.RequestID, UpstreamRequestId: input.UpstreamRequestID,
+					}
+					other := NewLogOther()
+					if !tc.omit {
+						other.SetPublic("cache_tokens", tc.cacheRead)
+						other.SetPublic("cache_write_tokens", tc.cacheWrite)
+						other.SetPublic("usage_semantic", tc.label)
+					}
+					other.SetAdmin("node_name", input.WriterNode)
+					other.SetAdmin("submit_node_name", input.ExportNode)
+					bound, err := bindUsageSourceReport(log, other, report)
+					require.NoError(t, err)
+					log.Other = bound.JSONString()
+					require.NoError(t, db.Create(log).Error)
+					deleted, err := DeleteOldLogBatch(t.Context(), input.OccurredAt+1, 10)
+					if tc.retain {
+						require.ErrorIs(t, err, ErrUsageStatisticsNotReady)
+						assert.Zero(t, deleted)
+						var count int64
+						require.NoError(t, db.Model(&Log{}).Where("id = ?", log.Id).Count(&count).Error)
+						assert.EqualValues(t, 1, count, "unproven display metadata must retain the source row")
+						// Removing optional display copies does not remove the
+						// mandatory exact typed facts emitted by the binding.
+						bound, err = bindUsageSourceReport(log, NewLogOther(), report)
+						require.NoError(t, err)
+						require.NoError(t, db.Model(&Log{}).Where("id = ?", log.Id).Update("other", bound.JSONString()).Error)
+						deleted, err = DeleteOldLogBatch(t.Context(), input.OccurredAt+1, 10)
+					}
+					require.NoError(t, err)
+					assert.EqualValues(t, 1, deleted)
+				})
+			}
+			var eventsAfter int64
+			require.NoError(t, db.Model(&UsageEvent{}).Count(&eventsAfter).Error)
+			assert.EqualValues(t, 1, eventsAfter)
+			var after UsageHour
+			require.NoError(t, db.Take(&after).Error)
+			assert.Equal(t, before, after, "deleting optional sink rows must not mutate durable usage")
+		})
+	}
 }

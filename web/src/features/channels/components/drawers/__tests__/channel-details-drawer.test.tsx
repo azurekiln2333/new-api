@@ -243,8 +243,20 @@ describe('ChannelDetailsDrawer', () => {
     expect(within(overview).getByText('Consumed quota')).toBeVisible()
   })
 
-  it('shows the empty state when the channel has no recorded usage', async () => {
-    mockDetailApi(detail())
+  it('shows a confirmed empty state when the channel has no recorded usage', async () => {
+    mockDetailApi(
+      detail({
+        coverage: {
+          complete: true,
+          coverage: 'complete',
+          historical_coverage: 'complete',
+          live_coverage: 'complete',
+          legacy_baseline_included: true,
+          start_timestamp: 1_700_000_000,
+          end_timestamp: 1_700_000_060,
+        },
+      })
+    )
     renderDrawer({ channel })
 
     expect(await screen.findByText('No usage recorded yet')).toBeVisible()

@@ -566,12 +566,37 @@ func InsertTaskWithSubmissionCharge(ctx context.Context, task *Task, snapshot *c
 	}
 	var committed *TaskBudgetInsertResult
 	insert := func(primary *gorm.DB) error {
-		if submit == nil || task.PrivateData.BudgetReservationId <= 0 {
-			return task.insertTx(primary, omitColumns...)
+		if task.UsageReport != nil {
+			if err := task.UsageReport.validate(); err != nil {
+				return err
+			}
+			if err := reserveUsageEventSQLiteWriter(primary); err != nil {
+				return err
+			}
+			task.PrivateData.UsageSubmissionKey = task.UsageReport.Input.EventKey
 		}
-		result, err := InsertTaskWithBudgetSubmit(primary, task, omitColumns, *submit)
-		committed = result
-		return err
+		var insertErr error
+		if submit == nil || task.PrivateData.BudgetReservationId <= 0 {
+			insertErr = task.insertTx(primary, omitColumns...)
+		} else {
+			committed, insertErr = InsertTaskWithBudgetSubmit(primary, task, omitColumns, *submit)
+		}
+		if insertErr != nil || task.UsageReport == nil {
+			return insertErr
+		}
+		receipt, err := PrepareUsageEventTx(primary, task.UsageReport.Input, UsageEventSourcePending)
+		if err != nil {
+			return err
+		}
+		// A receipt assigned before a failed commit is never trusted by itself:
+		// later confirmation still resolves/compares the primary event row.
+		task.UsageReport.Receipt = receipt
+		if committed != nil {
+			return ConfirmUsageEventTx(primary, receipt, UsageEventOutcome{
+				State: UsageEventSourceReady, EvidenceRef: "task_submission_report",
+			})
+		}
+		return nil
 	}
 	if snapshot == nil {
 		err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return insert(tx) })

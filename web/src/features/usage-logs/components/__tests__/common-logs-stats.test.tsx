@@ -30,7 +30,10 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
 import { useAuthStore } from '@/stores/auth-store'
+
+import type { AdminLogUserScope } from '../../types'
 
 import { CommonLogsStats } from '../common-logs-stats'
 import { UsageLogsProvider } from '../usage-logs-provider'
@@ -40,15 +43,18 @@ async function renderStats(
   options: {
     mobile?: boolean
     pending?: boolean
+    coverage?: StatisticsCoverage
+    initialEntry?: string
     role?: number
-    scope?: string
+    scope?: AdminLogUserScope
+    failOnce?: boolean
   } = {}
 ) {
-  useAuthStore.getState().auth.setUser({
-    id: 7,
-    username: 'viewer',
-    role: options.role ?? ROLE.USER,
-  })
+  useAuthStore.getState().auth.setUser(
+    options.role === undefined
+      ? null
+      : { id: 17, username: 'admin', role: options.role }
+  )
   if (options.mobile) {
     const matchMedia = window.matchMedia
     vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
@@ -56,9 +62,21 @@ async function renderStats(
       matches: query === '(max-width: 640px)' || matchMedia(query).matches,
     }))
   }
-  const get = vi.spyOn(api, 'get').mockImplementation(async () => {
+  let attempts = 0
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url !== '/api/log/stat' && url !== '/api/log/self/stat') {
+      return { data: { success: true, data: [] } }
+    }
+    attempts++
     if (options.pending) return new Promise<never>(() => {})
-    return { data: { success: true, data: stat } }
+    if (options.failOnce && attempts === 1) throw new Error('temporary failure')
+    return {
+      data: {
+        success: true,
+        data: stat,
+        coverage: options.coverage,
+      },
+    }
   })
   const root = createRootRoute()
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
@@ -72,25 +90,28 @@ async function renderStats(
     ),
     validateSearch: (search: Record<string, unknown>) => search,
   })
+  const initialEntry =
+    options.initialEntry ??
+    (options.scope
+      ? `/usage-logs/common?user_scope=${options.scope}&channel=42&username=alice&group=premium&model=gpt&requestId=req-1`
+      : '/usage-logs/common')
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
-    history: createMemoryHistory({
-      initialEntries: [
-        `/usage-logs/common?user_scope=${options.scope ?? 'all'}&channel=42&username=alice&group=premium&model=gpt&requestId=req-1`,
-      ],
-    }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   })
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  queryClient.setQueryDefaults(['usage-logs-stats'], { retry: false })
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>
   )
   if (options.pending) {
     await screen.findByRole('group', { name: 'Usage', busy: true })
+  } else if (options.failOnce) {
+    await screen.findByText('Failed to load logs')
   } else if (options.mobile) {
     await screen.findByRole('button', { name: /^Cache Hit Rate / })
   } else {
@@ -100,10 +121,11 @@ async function renderStats(
 }
 
 afterEach(() => {
-  useAuthStore.getState().auth.reset()
+  useAuthStore.getState().auth.setUser(null)
+  vi.restoreAllMocks()
 })
 
-it.each(['all', 'self', 'others'])(
+it.each(['all', 'self', 'others'] as const)(
   'uses administrator statistics and the same %s row predicate without losing filters',
   async (scope) => {
     const get = await renderStats(
@@ -112,8 +134,9 @@ it.each(['all', 'self', 'others'])(
     )
     await waitFor(() => expect(get).toHaveBeenCalled())
     const url = String(get.mock.calls[0][0])
-    expect(url).toMatch(/^\/api\/log\/stat\?/)
-    const params = new URL(url, 'http://localhost').searchParams
+    const requestUrl = new URL(url, 'http://localhost')
+    expect(requestUrl.pathname).toBe('/api/log/stat')
+    const params = requestUrl.searchParams
     expect(Object.fromEntries(params)).toMatchObject({
       user_scope: scope,
       channel: '42',
@@ -130,11 +153,24 @@ it.each(['all', 'self', 'others'])(
 it('ignores a forged others URL scope for ordinary-user statistics', async () => {
   const get = await renderStats({ quota: 10 }, { scope: 'others' })
   const url = String(get.mock.calls[0][0])
-  expect(url).toMatch(/^\/api\/log\/self\/stat\?/)
-  const params = new URL(url, 'http://localhost').searchParams
+  const requestUrl = new URL(url, 'http://localhost')
+  expect(requestUrl.pathname).toBe('/api/log/self/stat')
+  const params = requestUrl.searchParams
   expect(params.has('user_scope')).toBe(false)
   expect(params.has('channel')).toBe(false)
   expect(params.has('username')).toBe(false)
+})
+
+it('shows a retryable error when durable statistics fail to load', async () => {
+  const get = await renderStats(
+    { quota: 35, rpm: 1, tpm: 120 },
+    { failOnce: true }
+  )
+
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }))
+
+  expect(await screen.findByText('120')).toBeVisible()
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
 })
 
 it('shows the cache-read share of the input tokens next to TPM', async () => {
@@ -157,12 +193,98 @@ it('shows the cache-read share of the input tokens next to TPM', async () => {
   )
 })
 
-it('shows a dash when the filtered logs report no input tokens', async () => {
-  await renderStats({ quota: 0, rpm: 0, tpm: 0 })
+it('shows a dash when complete filtered statistics report no input tokens', async () => {
+  await renderStats(
+    { quota: 0, rpm: 0, tpm: 0 },
+    {
+      coverage: {
+        complete: true,
+        coverage: 'complete',
+        historical_coverage: 'complete',
+        live_coverage: 'complete',
+        legacy_baseline_included: true,
+        start_timestamp: 1_700_000_000,
+        end_timestamp: 1_700_000_060,
+      },
+    }
+  )
 
   expect(screen.getByText('Cache Hit Rate')).toBeVisible()
   expect(screen.getByText('-')).toBeVisible()
 })
+
+it('keeps observed log totals visible and labels partial coverage', async () => {
+  await renderStats(
+    { quota: 125, rpm: 2, tpm: 900 },
+    {
+      coverage: {
+        complete: false,
+        coverage: 'partial',
+        historical_coverage: 'partial',
+        live_coverage: 'complete',
+        legacy_baseline_included: false,
+        start_timestamp: 1_700_000_000,
+        end_timestamp: 1_700_000_060,
+      },
+    }
+  )
+
+  expect(
+    within(screen.getByRole('group', { name: 'Usage' })).getByText('Usage')
+      .parentElement
+  ).not.toHaveTextContent('—')
+  expect(screen.getByText('2')).toBeVisible()
+  expect(screen.getByText('900')).toBeVisible()
+  expect(
+    screen.getByText('Totals are partial and may not include all usage.')
+  ).toBeVisible()
+})
+
+it('does not present an empty incomplete log summary as verified zero', async () => {
+  await renderStats(
+    { quota: 0, rpm: 0, tpm: 0 },
+    {
+      mobile: true,
+      coverage: {
+        complete: false,
+        coverage: 'unknown',
+        historical_coverage: 'unknown',
+        live_coverage: 'unknown',
+        legacy_baseline_included: false,
+        start_timestamp: 1_700_000_000,
+        end_timestamp: 1_700_000_060,
+      },
+    }
+  )
+
+  const row = screen.getByRole('group', { name: 'Usage' })
+  expect(within(row).getAllByText('—')).toHaveLength(4)
+  expect(screen.getByText('No verified usage data available')).toBeVisible()
+
+  await userEvent.setup().click(
+    screen.getByRole('button', { name: 'Cache Hit Rate —' })
+  )
+  const details = await screen.findByRole('dialog', { name: 'Cache Hit Rate' })
+  expect(within(details).getByText('Cache Read')).toBeVisible()
+  expect(within(details).getAllByText('—')).toHaveLength(2)
+})
+
+it.each(['all', 'self', 'others'] as const)(
+  'requests common-log stats with the administrator %s scope',
+  async (userScope) => {
+    const get = await renderStats(
+      { quota: 1, rpm: 1, tpm: 1 },
+      {
+        initialEntry: `/usage-logs/common?user_scope=${userScope}`,
+        role: ROLE.ADMIN,
+      }
+    )
+
+    const requestUrl = new URL(String(get.mock.calls[0][0]), 'http://localhost')
+    expect(requestUrl.pathname).toBe('/api/log/stat')
+    expect(requestUrl.searchParams.get('user_scope')).toBe(userScope)
+  }
+)
 
 it.each([
   { mobile: false, viewport: 'desktop' },
@@ -229,7 +351,7 @@ it('keeps the mobile cache label icon-only and exposes its meaning and inputs on
 it('opens the cache explanation from keyboard focus and returns focus on Escape', async () => {
   await renderStats({ quota: 0, rpm: 0, tpm: 0 }, { mobile: true })
   const user = userEvent.setup()
-  const cache = screen.getByRole('button', { name: 'Cache Hit Rate -' })
+  const cache = screen.getByRole('button', { name: 'Cache Hit Rate —' })
 
   await user.tab()
   expect(cache).toHaveFocus()

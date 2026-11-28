@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,6 +149,82 @@ func TestSystemTaskLogRetention(t *testing.T) {
 	common.OptionMapRWMutex.Unlock()
 	maxRetentionPayload := handler.NewPayload().(LogCleanupPayload)
 	assert.Greater(t, maxRetentionPayload.TargetTimestamp, int64(0), "the maximum accepted retention must not create an invalid task cutoff")
+}
+
+func TestSystemTaskLogRetentionStopsWhenUsageStatisticsAreNotReady(t *testing.T) {
+	truncate(t)
+	previousLogDB := model.LOG_DB
+	previousType := common.LogDatabaseType()
+	model.LOG_DB = model.DB
+	common.SetLogDatabaseType(common.MainDatabaseType())
+	t.Cleanup(func() { model.LOG_DB = previousLogDB; common.SetLogDatabaseType(previousType) })
+	require.NoError(t, model.DB.AutoMigrate(&model.Log{}, &model.UsageEvent{}, &model.UsageHour{}, &model.UsageChannel{}, &model.UsageChannelModel{}))
+	require.NoError(t, model.MigrateUsageEventBackfill(model.DB))
+	require.NoError(t, model.DB.Create(&model.Log{UserId: 801, CreatedAt: 100, Type: model.LogTypeConsume, ModelName: "m", Quota: 1}).Error)
+	_, err := model.DeleteOldLogBatch(t.Context(), 200, 10)
+	require.ErrorIs(t, err, model.ErrUsageStatisticsNotReady)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Log{}).Where("user_id = ?", 801).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
+func TestSystemTaskLogRetentionDeletesOnlyAfterLegacyImportAndPreservesUsageTotals(t *testing.T) {
+	truncate(t)
+	previousLogDB := model.LOG_DB
+	previousType := common.LogDatabaseType()
+	model.LOG_DB = model.DB
+	common.SetLogDatabaseType(common.MainDatabaseType())
+	t.Cleanup(func() { model.LOG_DB = previousLogDB; common.SetLogDatabaseType(previousType) })
+	require.NoError(t, model.DB.AutoMigrate(&model.Log{}, &model.QuotaData{}))
+	require.NoError(t, model.MigrateUsageStatistics(model.DB))
+	require.NoError(t, model.MigrateUsageEventBackfill(model.DB))
+	const namespace = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	require.NoError(t, model.DB.Where("id = ?", 1).Delete(&model.UsageStatisticsLineage{}).Error)
+	require.NoError(t, model.DB.Where("source_namespace = ?", namespace).Delete(&model.UsageEventBackfill{}).Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Where("id = ?", 1).Delete(&model.UsageStatisticsLineage{}).Error)
+		require.NoError(t, model.DB.Where("source_namespace = ?", namespace).Delete(&model.UsageEventBackfill{}).Error)
+	})
+	log := model.Log{UserId: 802, CreatedAt: 100, Type: model.LogTypeConsume, Username: "legacy-user", ModelName: "legacy-model", Group: "default", RequestId: "legacy-request", ChannelId: 802, Quota: 17, PromptTokens: 3, CompletionTokens: 4, Other: `{"cache_tokens":0,"cache_write_tokens":0,"usage_semantic":"openai"}`}
+	require.NoError(t, model.DB.Create(&log).Error)
+	plan := model.UsageEventBackfillPlan{
+		SourceNamespace: namespace, SourceKind: model.UsageEventSourceLegacyRelational,
+		CollectionEpoch: strings.Repeat("b", 32), StartAt: 100, EndAt: 100, HighWatermark: int64(log.Id),
+		ExpectedRows: -1, FenceDigest: strings.Repeat("c", 64),
+	}
+	page, err := model.InspectUsageEventBackfillBatch(t.Context(), model.DB, plan, model.UsageEventBackfillCursor{}, 100)
+	require.NoError(t, err)
+	require.True(t, page.Exhausted)
+	plan.ExpectedRows, plan.ManifestDigest = page.Next.Rows, page.Next.Digest
+	progress, err := model.RunUsageEventBackfillBatch(t.Context(), model.DB, plan, 100)
+	require.NoError(t, err)
+	require.True(t, progress.RetainedVerified)
+	baseline, err := model.InspectUsageLegacyQuotaData(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, model.ActivateUsageStatisticsLineage(t.Context(), model.UsageReadLineage{
+		IncludeLegacyQuotaData: true, LegacyQuotaDataMaxID: baseline.MaxID, LegacyBaselineDigest: baseline.Digest,
+		FenceDigest: plan.FenceDigest, LegacySourceNamespace: plan.SourceNamespace, LegacyCollectionEpoch: plan.CollectionEpoch,
+		LiveSourceNamespace: model.UsageLiveSourceNamespace(), LiveCollectionEpoch: model.UsageLiveCollectionEpoch(),
+		DashboardEligibility: model.UsageEventProjectHours,
+	}, baseline))
+	before, err := model.SumUsedQuota(model.LogFilter{UserId: 802, StartTimestamp: 100, EndTimestamp: 100})
+	require.NoError(t, err)
+	channelsBefore, err := model.GetChannelUsages([]int{802})
+	require.NoError(t, err)
+	deleted, err := model.DeleteOldLogBatch(t.Context(), 200, 10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, deleted)
+	var logs, events int64
+	require.NoError(t, model.DB.Model(&model.Log{}).Where("user_id = ?", 802).Count(&logs).Error)
+	require.NoError(t, model.DB.Model(&model.UsageEvent{}).Count(&events).Error)
+	assert.Zero(t, logs)
+	assert.EqualValues(t, 1, events)
+	after, err := model.SumUsedQuota(model.LogFilter{UserId: 802, StartTimestamp: 100, EndTimestamp: 100})
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	channelsAfter, err := model.GetChannelUsages([]int{802})
+	require.NoError(t, err)
+	assert.Equal(t, channelsBefore, channelsAfter)
 }
 
 func TestSystemTaskSchedulerSkipsDisabled(t *testing.T) {

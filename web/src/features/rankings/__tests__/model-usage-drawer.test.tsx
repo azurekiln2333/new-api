@@ -66,6 +66,15 @@ afterEach(() => {
 
 const usagePayload = {
   success: true,
+  coverage: {
+    complete: true,
+    coverage: 'complete' as const,
+    historical_coverage: 'complete' as const,
+    live_coverage: 'complete' as const,
+    legacy_baseline_included: true,
+    start_timestamp: 0,
+    end_timestamp: 1010,
+  },
   data: {
     model_name: 'gpt-fixture',
     period: 'week',
@@ -124,6 +133,52 @@ describe('ModelUsageDrawer', () => {
     expect(
       screen.getByRole('dialog').querySelector('a[href*="/pricing"]')
     ).toBeNull()
+  })
+
+  it('preserves confirmed zero totals when the period coverage is complete', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        ...usagePayload,
+        data: {
+          ...usagePayload.data,
+          totals: { requests: 0, tokens: 0, quota: 0 },
+          users: [],
+        },
+      },
+    })
+
+    renderDrawer()
+
+    expect(await screen.findByText('No usage data for this period')).toBeVisible()
+    expect(
+      screen.queryByText('No verified usage data available')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+
+  it('keeps observed subtotals visible and labels partial history', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        ...usagePayload,
+        coverage: {
+          complete: false,
+          coverage: 'partial',
+          historical_coverage: 'partial',
+          live_coverage: 'complete',
+          legacy_baseline_included: false,
+          start_timestamp: 1,
+          end_timestamp: 2,
+        },
+      },
+    })
+
+    renderDrawer()
+
+    expect(await screen.findByText('8.0K')).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Totals are partial and may not include all usage.'
+    )
   })
 
   it('partitions by viewer identity and role and renders the server mask unchanged', async () => {

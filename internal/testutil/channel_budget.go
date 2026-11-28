@@ -13,6 +13,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// MigrateUsageStatisticsForTestDatabase prepares the explicit usage schema
+// required before a non-master InitDB call. Production startup keeps its
+// master-only migration and fail-closed lineage validation unchanged.
+func MigrateUsageStatisticsForTestDatabase(t *testing.T, database *gorm.DB) {
+	t.Helper()
+	require.NoError(t, model.MigrateUsageStatistics(database))
+	require.NoError(t, model.MigrateUsageEventBackfill(database))
+}
+
 // UseInactiveChannelBudget installs a minimal SQLite database as the main and
 // log database and turns channel-budget enforcement off for the test.
 //
