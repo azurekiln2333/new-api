@@ -212,6 +212,8 @@ type BudgetSelection struct {
 	UserID             int
 	Group              string
 	ModelName          string
+	RequestedModelName string
+	CatalogModelName   string
 }
 
 // UsesKeyScope reports whether the attempt is attributed to one allocation.
@@ -419,9 +421,12 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 	if err := tx.First(&channel, selection.ChannelID).Error; err != nil {
 		return nil, err
 	}
+	if selection.RequestedModelName != "" && !channel.AdmitsModelIdentity(selection.RequestedModelName, selection.ModelName, selection.CatalogModelName) {
+		return nil, ErrBudgetAllocationInvalid
+	}
 	// Channel-layer scope uses the routing namespace: the request name plus its
 	// RoutingMatchModelName alias, exactly as abilities and candidate lookup do.
-	if !budgetScopeServesModel(channel.GetModels(), selection.ModelName) {
+	if !budgetScopeServesModel(channel.GetModels(), selection.ModelName, selection.CatalogModelName) {
 		return nil, ErrBudgetAllocationInvalid
 	}
 	switch allocation.ScopeMode {
@@ -431,9 +436,11 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 		if common.UnmarshalJsonStr(allocation.Models, &models) != nil {
 			return nil, ErrBudgetAllocationInvalid
 		}
-		// Only allocation capability accepts the mapped upstream name. Channel
-		// and group authorization above/below stay in the request namespace.
-		if !budgetScopeServesModel(models, selection.ModelName) && !channel.keyScopeServesModel(allocation.Position, models, selection.ModelName) {
+		// Catalog identity remains exact after request/canonical admission above.
+		// A stable Key may additionally authorize its effective upstream mapping;
+		// that capability does not widen channel, token or group identity.
+		if !budgetScopeServesModel(models, selection.ModelName, selection.CatalogModelName) &&
+			!channel.keyScopeServesModel(allocation.Position, models, selection.ModelName) {
 			return nil, ErrBudgetAllocationInvalid
 		}
 	default:
@@ -449,7 +456,7 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 		}
 		// A group with no configured whitelist keeps every channel model; an
 		// explicit whitelist narrows the same namespace.
-		if models := other.GroupModels[selection.Group]; len(models) > 0 && !budgetScopeServesModel(models, selection.ModelName) {
+		if models := other.GroupModels[selection.Group]; len(models) > 0 && !budgetScopeServesModel(models, selection.ModelName, selection.CatalogModelName) {
 			return nil, ErrBudgetAllocationInvalid
 		}
 	}
@@ -459,7 +466,12 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 // budgetScopeServesModel reports whether a configured model list admits the
 // requested name. Lists may hold the exact request name or its routing alias,
 // so both are accepted; an entry that is neither admits nothing.
-func budgetScopeServesModel(models []string, modelName string) bool {
+func budgetScopeServesModel(models []string, modelName string, catalogModels ...string) bool {
+	if len(catalogModels) > 0 && catalogModels[0] != "" {
+		return slices.ContainsFunc(models, func(entry string) bool {
+			return strings.TrimSpace(entry) == catalogModels[0]
+		})
+	}
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" || len(models) == 0 {
 		return false

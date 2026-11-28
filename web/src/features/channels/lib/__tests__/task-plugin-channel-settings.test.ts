@@ -46,6 +46,79 @@ function settingsOf(payload: { settings?: string | null }) {
 }
 
 describe('plugin channel settings', () => {
+  test.each([
+    { stored: undefined, mode: 'inherit', saved: null },
+    { stored: null, mode: 'inherit', saved: null },
+    { stored: true, mode: 'enabled', saved: true },
+    { stored: false, mode: 'disabled', saved: false },
+  ])(
+    'case policy $mode survives channel create and update without retaining arbitrary raw settings',
+    ({ stored, mode, saved }) => {
+      const channel = channelSchema.parse({
+        id: 7,
+        name: 'Case policy',
+        type: 1,
+        key: '',
+        status: 1,
+        created_time: 1,
+        test_time: 0,
+        response_time: 0,
+        balance_updated_time: 0,
+        models: 'Case-Policy-Model',
+        group: 'default',
+        setting: JSON.stringify({
+          model_id_case_insensitive: stored,
+          arbitrary_legacy_member: { enabled: true },
+          http_protocol: 'http1',
+        }),
+      })
+      const defaults = transformChannelToFormDefaults(channel)
+      expect(defaults.model_id_case_insensitive).toBe(mode)
+      const form = channelFormSchema.parse({
+        ...defaults,
+        http_protocol: 'auto',
+      })
+      for (const payload of [
+        transformFormDataToCreatePayload(form).channel,
+        transformFormDataToUpdatePayload(form, channel.id),
+      ]) {
+        const setting = JSON.parse(payload.setting ?? '{}')
+        expect(setting.model_id_case_insensitive).toBe(saved)
+        expect(setting).not.toHaveProperty('arbitrary_legacy_member')
+        expect(setting).not.toHaveProperty('http_protocol')
+        expect(
+          transformChannelToFormDefaults({
+            ...channel,
+            setting: payload.setting,
+          }).model_id_case_insensitive
+        ).toBe(mode)
+      }
+    }
+  )
+
+  test('an older form preserves only the saved case override and malformed raw settings remain editable', () => {
+    const saved = transformFormDataToUpdatePayload(
+      pluginForm({
+        model_id_case_insensitive: undefined,
+        setting:
+          '{"model_id_case_insensitive":false,"arbitrary_legacy_member":true}',
+      }),
+      7
+    )
+    expect(JSON.parse(saved.setting ?? '{}')).toMatchObject({
+      model_id_case_insensitive: false,
+    })
+    expect(JSON.parse(saved.setting ?? '{}')).not.toHaveProperty(
+      'arbitrary_legacy_member'
+    )
+    expect(() =>
+      transformFormDataToUpdatePayload(
+        pluginForm({ setting: '{broken' }),
+        7
+      )
+    ).not.toThrow()
+  })
+
   test('saves the plugin settings the administrator set next to other settings', () => {
     const settings = settingsOf(
       transformFormDataToCreatePayload(

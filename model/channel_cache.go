@@ -84,7 +84,7 @@ func UserBoundChannelIDs(userId int) []int {
 // serve modelName, or nil when the request keeps its ordinary group routing.
 // Bound channels outside the user's group are reachable here, and channels whose
 // bound keys cannot serve the model are skipped.
-func GetUserBoundChannel(userId int, modelName string) *Channel {
+func GetUserBoundChannel(userId int, modelName string, filters ...dto.ChannelFilter) *Channel {
 	if userId <= 0 || modelName == "" {
 		return nil
 	}
@@ -97,7 +97,7 @@ func GetUserBoundChannel(userId int, modelName string) *Channel {
 		if !slices.Contains(channel.UserBoundModels(userId), modelName) {
 			continue
 		}
-		if channel.ModelUnavailableForServingKeys(modelName, userId) {
+		if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters, userId); !ok {
 			continue
 		}
 		candidates = append(candidates, channel)
@@ -146,6 +146,108 @@ func GetUserBoundModels(userId int) []string {
 		}
 	}
 	return models
+}
+
+// ResolveModelID resolves the caller-visible model without changing legacy
+// routing aliases. Callers selecting channels also retain its catalog spelling.
+func ResolveModelID(requested string, userID int, groups []string) (string, error) {
+	canonical, _, err := ResolveModelIDWithCatalog(requested, userID, groups)
+	return canonical, err
+}
+
+// ResolveModelIDWithCatalog resolves only spellings reachable through public
+// group models or keys bound to this caller. The catalog spelling fences exact
+// models from a legacy routing fallback on another channel. Health, budgets and
+// policy cannot break a spelling collision. No SQL string equality is used.
+func ResolveModelIDWithCatalog(requested string, userID int, groups []string) (string, string, error) {
+	var channels []*Channel
+	if common.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		for _, channel := range channelsIDM {
+			channels = append(channels, channel)
+		}
+		channelSyncLock.RUnlock()
+	} else {
+		if DB == nil {
+			return "", "", errors.New("model catalog is unavailable")
+		}
+		ctx := WithBatchedChannelKeyEntries(context.Background())
+		if err := DB.WithContext(ctx).Find(&channels).Error; err != nil {
+			return "", "", err
+		}
+		if err := ProjectChannelKeyEntries(DB, ctx, channels, false); err != nil {
+			return "", "", err
+		}
+	}
+	catalog := make(map[string]bool)
+	for _, channel := range channels {
+		if channel == nil || channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		foldEnabled := channel.ModelIDCaseInsensitive()
+		public := channel.PublicModels()
+		groupModels := channel.GetOtherSettings().GroupModels
+		for _, group := range channel.GetGroups() {
+			if slices.Contains(groups, group) {
+				for _, name := range filterGroupModels(public, groupModels[group]) {
+					catalog[name] = catalog[name] || foldEnabled
+				}
+			}
+		}
+		if userID > 0 && channel.ChannelInfo.IsMultiKey {
+			for index := range channel.GetKeys() {
+				if channel.ChannelInfo.MultiKeyUsers[index] != userID {
+					continue
+				}
+				for _, name := range channel.GetModels() {
+					if channel.KeyServesModel(index, name) {
+						catalog[name] = catalog[name] || foldEnabled
+					}
+				}
+			}
+		}
+	}
+	if _, exact := catalog[requested]; exact {
+		return requested, requested, nil
+	}
+	folded, canonical := FoldModelIDASCII(requested), ""
+	for name := range catalog {
+		if FoldModelIDASCII(name) != folded {
+			continue
+		}
+		if canonical != "" && canonical != name {
+			return "", "", errors.New("model ID is ambiguous; use an exact catalog spelling")
+		}
+		canonical = name
+	}
+	if canonical == "" {
+		// Legacy routing is considered only when no full catalog identity
+		// matches. A modifier-like catalog model cannot silently become a base.
+		if normalized := ratio_setting.RoutingMatchModelName(requested); normalized != requested {
+			if _, exact := catalog[normalized]; exact {
+				return requested, normalized, nil
+			}
+		}
+		// No case resolution occurred. Preserve the existing exact routing and
+		// plugin validation path instead of turning an unavailable model into
+		// an authorization error merely because the option exists.
+		return requested, "", nil
+	}
+	if !catalog[canonical] {
+		return "", "", errors.New("case-insensitive model IDs are disabled for this model")
+	}
+	return canonical, canonical, nil
+}
+
+// FoldModelIDASCII intentionally leaves every non-ASCII byte untouched.
+func FoldModelIDASCII(name string) string {
+	folded := []byte(name)
+	for index, value := range folded {
+		if value >= 'A' && value <= 'Z' {
+			folded[index] = value + ('a' - 'A')
+		}
+	}
+	return string(folded)
 }
 
 // channelCacheReloadLock runs one channel cache reload at a time, so a reload

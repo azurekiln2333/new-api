@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -310,6 +311,79 @@ func TestSettleAnswers(t *testing.T) {
 			{Plugin: "rp-stages", Name: name, Stage: StageOutbound, Unchecked: true},
 			{Plugin: "rp-stages", Name: name, Stage: StageEgress, Rejected: &relaycommon.RequestPluginRejected{Code: "request_plugin_failed"}},
 		}, info.RequestPluginRecord)
+	})
+}
+
+func TestPreparePassthroughBodyCanonicalModel(t *testing.T) {
+	previous := common.GetDiskCacheConfig()
+	t.Cleanup(func() { common.SetDiskCacheConfig(previous) })
+	for _, disk := range []bool{false, true} {
+		t.Run(fmt.Sprint(disk), func(t *testing.T) {
+			common.SetDiskCacheConfig(common.DiskCacheConfig{Enabled: disk, ThresholdMB: 0, MaxSizeMB: 16, Path: t.TempDir()})
+			for _, tc := range []struct {
+				name, raw, want string
+				format          types.RelayFormat
+				invalid         bool
+			}{
+				{name: "JSON unknown fields and zeros", raw: `{"model":"case-model", "temperature":0,"stream":false,"vendor":{"model":"keep"}}`, want: `{"model":"Case-Model", "temperature":0,"stream":false,"vendor":{"model":"keep"}}`},
+				{name: "Gemini model lives in path", format: types.RelayFormatGemini, raw: `{"contents":[],"generationConfig":{"temperature":0}}`, want: `{"contents":[],"generationConfig":{"temperature":0}}`},
+				{name: "repeated model rejected", raw: `{"model":"case-model","model":"other"}`, invalid: true},
+				{name: "differently cased model member rejected", raw: `{"model":"case-model","Model":"other"}`, invalid: true},
+				{name: "changed identity rejected", raw: `{"model":"other"}`, invalid: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					c := newContext(tc.raw, "default")
+					t.Cleanup(func() { common.CleanupBodyStorage(c) })
+					info := &relaycommon.RelayInfo{RequestedModelName: "case-model", OriginModelName: "Case-Model", RelayFormat: tc.format,
+						ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "ignored-map", IsModelMapped: true}}
+					storage, owned, apiErr := PreparePassthroughBody(c, info)
+					if tc.invalid {
+						require.NotNil(t, apiErr)
+						assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+						assert.Nil(t, storage)
+						return
+					}
+					require.Nil(t, apiErr)
+					require.NotNil(t, owned)
+					defer owned.Close()
+					wire, err := storage.Bytes()
+					require.NoError(t, err)
+					assert.Equal(t, tc.want, string(wire))
+					assert.Equal(t, "Case-Model", info.UpstreamModelName)
+					assert.False(t, info.IsModelMapped, "passthrough still bypasses mapping")
+					original, err := common.GetBodyStorage(c)
+					require.NoError(t, err)
+					raw, err := original.Bytes()
+					require.NoError(t, err)
+					assert.Equal(t, tc.raw, string(raw))
+				})
+			}
+		})
+	}
+	t.Run("multipart keeps files and quantities byte for byte", func(t *testing.T) {
+		var raw bytes.Buffer
+		writer := multipart.NewWriter(&raw)
+		require.NoError(t, writer.SetBoundary("case-boundary"))
+		require.NoError(t, writer.WriteField("model", "case-model"))
+		require.NoError(t, writer.WriteField("n", "1"))
+		file, err := writer.CreateFormFile("image", "fixture.bin")
+		require.NoError(t, err)
+		_, err = file.Write([]byte("file bytes with case-model stay unchanged"))
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+		c := newContext(raw.String(), "default")
+		c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+		t.Cleanup(func() { common.CleanupBodyStorage(c) })
+		info := &relaycommon.RelayInfo{RequestedModelName: "case-model", OriginModelName: "Case-Model",
+			ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "case-model"}}
+		storage, owned, apiErr := PreparePassthroughBody(c, info)
+		require.Nil(t, apiErr)
+		require.NotNil(t, owned)
+		defer owned.Close()
+		wire, err := storage.Bytes()
+		require.NoError(t, err)
+		want := strings.Replace(raw.String(), "\r\ncase-model\r\n", "\r\nCase-Model\r\n", 1)
+		assert.Equal(t, want, string(wire))
 	})
 }
 

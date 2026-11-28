@@ -7,6 +7,9 @@ const (
 	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
 	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
+	ContextKeyRequestedModel   ContextKey = "requested_model"
+	ContextKeyCanonicalModel   ContextKey = "canonical_model"
+	ContextKeyCatalogModel     ContextKey = "catalog_model"
 	ContextKeyOriginalModel    ContextKey = "original_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
 

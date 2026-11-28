@@ -36,6 +36,7 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 }
 
 type GlobalSettings struct {
+	ModelIDCaseInsensitive    bool     `json:"model_id_case_insensitive"`
 	PassThroughRequestEnabled bool     `json:"pass_through_request_enabled"`
 	ThinkingModelBlacklist    []string `json:"thinking_model_blacklist"`
 	// EffortTailModelIDs lists real model IDs that sit inside the GPT/o-series

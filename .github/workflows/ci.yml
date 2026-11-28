@@ -442,6 +442,15 @@ jobs:
             TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^(TestMultiKeyModelMappingFollowsStableKeyAndInheritsChannelRules|TestPinnedChannelTestKeyUsesKeyMappingForUnavailableEvidence|TestSingleKeyDiscoveryKeepsSelectedMappingAndChannelInheritance|TestDuplicateKeyModelUnavailabilityUsesSelectedAllocation|TestSingleKeyDiagnosticBusyRetryPreservesMappingAndAllocation)$'
           done
 
+      - name: Verify model identity policy and passthrough on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^(TestChannelModelIDCasePolicy|TestChannelModelIDCatalogFenceAndPassthroughAdmission|TestChannelUpdateCasePolicyPersistsAndKeepsReplacementSemantics)$'
+          done
+          go test -p 1 -count=1 -v ./middleware -run '^(TestTaskPluginModelCasePolicyRequiresCatalogGrant|TestRouteTaskPluginEndpointUsesSelectedChannel)$'
+          go test -p 1 -count=1 -v ./relay/requestplugin -run '^TestPreparePassthroughBodyCanonicalModel$'
+
       - name: Verify console management credentials and policy reloads on MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |

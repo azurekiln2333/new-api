@@ -329,7 +329,16 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 		if resolvedBodyText != nil {
 			c.Set(pluginruntime.ContextKeyRequestBodyText, resolvedBodyText)
 		}
-		c.Set("resolved_task_model", resolvedIntent.model)
+		requestedModel := resolvedIntent.model
+		if claimedModel != "" {
+			requestedModel = claimedModel
+		}
+		canonical, identityErr := resolveTaskPluginModelIdentity(c, requestedModel)
+		if identityErr != nil {
+			abortTaskPluginRouteErrorDetail(c, http.StatusForbidden, identityErr.Error())
+			return
+		}
+		c.Set("resolved_task_model", canonical)
 		c.Set("expected_task_plugin_key", owner.Plugin.Meta.Key)
 		c.Set("task_plugin_key", owner.Plugin.Meta.Key)
 		c.Set("platform", owner.Plugin.Meta.Key)
@@ -396,14 +405,15 @@ func checkTaskPluginRouteIntent(generation *pluginruntime.RoutingGeneration, can
 		}
 		// The task is named as on the host protocols: a case variant by the
 		// declared spelling, a channel alias by the alias.
-		served, declared, owned := model.ResolveTaskPluginModel(generation, modelName, candidate.Plugin.Meta.Models)
+		_, declared, owned := model.ResolveTaskPluginModel(generation, modelName, candidate.Plugin.Meta.Models)
 		if !owned {
 			return intent, "model_not_owned", fmt.Sprintf("model %q is not served by this plugin", modelName)
 		}
 		if len(candidate.Route.Models) > 0 && !slices.Contains(candidate.Route.Models, declared) {
 			return intent, "resolved_model_not_allowed", fmt.Sprintf("model %q is not allowed on this route", modelName)
 		}
-		intent.model = served
+		// Keep the decoded spelling until the caller-catalog policy gate runs.
+		intent.model = modelName
 		intent.action = candidate.Route.Action
 		if resolvedAction, present := resolved["action"]; present {
 			actionValue, actionOK := resolvedAction.(string)
@@ -526,7 +536,21 @@ func RouteTaskPluginEndpoint() gin.HandlerFunc {
 			pinEndpoint(c)
 			return
 		}
-		endpoint, found := lookupTaskPluginEndpoint(generation, c.Request.Method, c.Request.URL.Path, request.Model)
+		if request.Model == "" {
+			pinEndpoint(c)
+			return
+		}
+		canonical, identityErr := resolveTaskPluginModelIdentity(c, request.Model)
+		if identityErr != nil {
+			abortWithOpenAiMessage(c, http.StatusForbidden, identityErr.Error())
+			return
+		}
+		request.Model = canonical
+		endpoint, found, invalidIdentity := lookupTaskPluginEndpoint(generation, c.Request.Method, c.Request.URL.Path, request.Model)
+		if invalidIdentity {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "task plugin model identity is ambiguous or does not match its configured mapping")
+			return
+		}
 		if !found {
 			c.Set(contextKeyTaskPluginEndpointModel, *request)
 			c.Next()
@@ -569,25 +593,29 @@ func RouteTaskPluginEndpoint() gin.HandlerFunc {
 	}
 }
 
-func lookupTaskPluginEndpoint(generation *pluginruntime.RoutingGeneration, method, path, modelName string) (pluginruntime.PinnedEndpoint, bool) {
+func lookupTaskPluginEndpoint(generation *pluginruntime.RoutingGeneration, method, path, modelName string) (pluginruntime.PinnedEndpoint, bool, bool) {
 	lookupModel, pinModel, mappedModel := modelName, modelName, ""
-	if declared, ok := generation.CanonicalModel(modelName); ok {
-		lookupModel, pinModel = declared, declared
-	} else if target, ok := model.ResolveTaskModelAlias(generation, modelName); ok {
+	if len(generation.PluginsByModel(modelName)) > 0 {
+		// An exact plugin declaration beats an alias whose spelling only folds
+		// to it; model mappings remain exact-source/exact-target configuration.
+		lookupModel, pinModel = modelName, modelName
+	} else if target, ok := model.ResolveTaskModelAliasIdentity(generation, modelName); ok {
 		if target.Declared == "" {
-			return pluginruntime.PinnedEndpoint{}, false
+			return pluginruntime.PinnedEndpoint{}, false, true
 		}
 		lookupModel, pinModel, mappedModel = target.Declared, target.Alias, target.Declared
+	} else if declared, ok := generation.CanonicalModel(modelName); ok {
+		lookupModel, pinModel = declared, declared
 	}
 	candidates := generation.LookupEndpointCandidates(method, path, lookupModel)
 	if len(candidates) == 0 {
-		return pluginruntime.PinnedEndpoint{}, false
+		return pluginruntime.PinnedEndpoint{}, false, false
 	}
 	binding := candidates[0]
 	return pluginruntime.PinnedEndpoint{
 		Generation: generation, Plugin: binding.Plugin, Protocol: binding.Protocol,
 		Operation: binding.Operation, Model: pinModel, MappedModel: mappedModel, Candidates: candidates,
-	}, true
+	}, true, false
 }
 
 // PinTaskPluginEndpoint decides shared-endpoint ownership without executing
@@ -621,13 +649,27 @@ func PinTaskPluginEndpoint() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		pinnedEndpoint, found := lookupTaskPluginEndpoint(generation, c.Request.Method, c.Request.URL.Path, claimedModel)
+		canonical, identityErr := resolveTaskPluginModelIdentity(c, claimedModel)
+		if identityErr != nil {
+			abortWithOpenAiMessage(c, http.StatusForbidden, identityErr.Error())
+			return
+		}
+		claimedModel = canonical
+		pinnedEndpoint, found, invalidIdentity := lookupTaskPluginEndpoint(generation, c.Request.Method, c.Request.URL.Path, claimedModel)
+		if invalidIdentity {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "task plugin model identity is ambiguous or does not match its configured mapping")
+			return
+		}
 		if !found {
 			c.Set(contextKeyTaskPluginEndpointModel, *modelRequest)
 			c.Next()
 			return
 		}
-		if claimedModel != pinnedEndpoint.Model {
+		if pinnedEndpoint.Model != canonical {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "task plugin model identity does not match the caller catalog")
+			return
+		}
+		if common.GetContextKeyString(c, constant.ContextKeyRequestedModel) != pinnedEndpoint.Model {
 			if rewriteErr := rewriteTaskPluginJSONModel(c, pinnedEndpoint.Model); rewriteErr != nil {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, "Invalid task protocol request")
 				return
@@ -1833,26 +1875,18 @@ func PrepareTaskPluginSubmit() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "model is required", "type": "invalid_request_error"}})
 			return
 		}
-		exactOwned := slices.Contains(plugin.Meta.Models, modelName)
-		exactAlias := false
-		if target, resolved := model.ResolveTaskModelAlias(generation, modelName); resolved && target.Alias == modelName && target.PluginKey == plugin.Meta.Key {
-			exactAlias = true
+		canonical, identityErr := resolveTaskPluginModelIdentity(c, modelName)
+		if identityErr != nil {
+			abortWithOpenAiMessage(c, http.StatusForbidden, identityErr.Error())
+			return
 		}
-		if !exactOwned && !exactAlias {
-			folded := ""
-			if declared, ok := generation.CanonicalModel(modelName); ok && slices.Contains(plugin.Meta.Models, declared) && declared != modelName {
-				folded = declared
-			} else if target, resolved := model.ResolveTaskModelAlias(generation, modelName); resolved && target.PluginKey == plugin.Meta.Key && target.Alias != "" && target.Alias != modelName {
-				folded = target.Alias
+		if canonical != modelName {
+			if rewriteErr := rewriteTaskPluginJSONModel(c, canonical); rewriteErr != nil {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, rewriteErr.Error())
+				return
 			}
-			if folded != "" {
-				if rewriteErr := rewriteTaskPluginJSONModel(c, folded); rewriteErr != nil {
-					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": rewriteErr.Error(), "type": "invalid_request_error"}})
-					return
-				}
-				requestBody["model"] = folded
-				modelName = folded
-			}
+			requestBody["model"] = canonical
+			modelName = canonical
 		}
 		c.Set("task_request", requestBody)
 		if plugin.Meta.PreservesJSONOrder() {

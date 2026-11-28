@@ -26,6 +26,7 @@ import (
 	builtinplugins "github.com/QuantumNous/new-api/plugins"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -445,6 +446,53 @@ func TestBuildTaskPluginRouteRequestBodyUnion(t *testing.T) {
 	require.Len(t, files, 1)
 	assert.Equal(t, "image.png", files[0]["filename"])
 	assert.NotContains(t, fmt.Sprint(files[0]), "file bytes stay in Go")
+}
+
+func TestTaskPluginModelCasePolicyRequiresCatalogGrant(t *testing.T) {
+	setupTaskPluginRouteDB(t)
+	previousCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousCache })
+	settings := model_setting.GetGlobalSettings()
+	previousPolicy := settings.ModelIDCaseInsensitive
+	settings.ModelIDCaseInsensitive = false
+	t.Cleanup(func() { settings.ModelIDCaseInsensitive = previousPolicy })
+	channel := model.Channel{Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Key: "key",
+		Models: "plugin-case-model", ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeyUsers: map[int]int{0: 7}}}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	for _, tc := range []struct {
+		name, requested, setting string
+		allowed                  bool
+	}{
+		{name: "exact remains available", requested: "plugin-case-model", allowed: true},
+		{name: "default off rejects variant", requested: "PLUGIN-CASE-MODEL"},
+		{name: "enabled resolves catalog model", requested: "PLUGIN-CASE-MODEL", setting: `{"model_id_case_insensitive":true}`, allowed: true},
+		{name: "disabled rejects again", requested: "PLUGIN-CASE-MODEL", setting: `{"model_id_case_insensitive":false}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, model.DB.Model(&channel).Update("setting", tc.setting).Error)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/tasks/test", strings.NewReader(`{}`))
+			c.Set("id", 7)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+			common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"plugin-case-model": true})
+			canonical, err := resolveTaskPluginModelIdentity(c, tc.requested)
+			if !tc.allowed {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "plugin-case-model", canonical)
+			assert.Equal(t, tc.requested, common.GetContextKeyString(c, constant.ContextKeyRequestedModel))
+		})
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/tasks/test", nil)
+	c.Set("id", 7)
+	common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+	common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{"PLUGIN-CASE-MODEL": true})
+	_, err := resolveTaskPluginModelIdentity(c, "plugin-case-model")
+	require.ErrorContains(t, err, "token is not allowed", "a case-only token scope is not a new permission grant")
 }
 
 func TestTaskPluginModelRewriteKeepsBorrowedBodies(t *testing.T) {
@@ -2417,6 +2465,124 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 							}
 						})
 					}
+
+					t.Run("case-only mapped aliases", func(t *testing.T) {
+						settings := model_setting.GetGlobalSettings()
+						previousPolicy := settings.ModelIDCaseInsensitive
+						settings.ModelIDCaseInsensitive = false
+						t.Cleanup(func() { settings.ModelIDCaseInsensitive = previousPolicy })
+						const key = "case-alias-routing-test"
+						const publicModel = "deepseek-r1"
+						const upstreamModel = "DeepSeek-R1"
+						decode := `const request = {model: ctx.model};
+if (ctx.upstreamModel !== undefined) request.upstream = ctx.upstreamModel;
+return {model: ctx.model, requestBody: request};`
+						_, err := jsplugin.DefaultRegistry.Register(taskProtocolPluginSource(key, "1.0.0", `["DeepSeek-R1","case-alias-other-model"]`, "/v1/responses", decode), jsplugin.Options{})
+						require.NoError(t, err)
+						t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(key)) })
+						for _, tc := range []struct {
+							name, requested, mapping      string
+							secondCatalog, secondMapping string
+							tokenModel, groupModel        string
+							keyModel, wantModel           string
+							wantUpstream                 string
+							fold, pin, alternate         bool
+							unmapped                     bool
+							wantStatus                   int
+						}{
+							{name: "exact mapped alias works with policy off"},
+							{name: "allowed variant keeps the catalog alias", requested: "DEEPSEEK-R1", fold: true},
+							{name: "variant cannot bypass disabled policy", requested: "DEEPSEEK-R1", wantStatus: http.StatusForbidden},
+							{name: "exact lower alias wins a spelling collision", secondCatalog: "DEEPSEEK-R1", secondMapping: `{"DEEPSEEK-R1":"case-alias-other-model"}`, fold: true},
+							{name: "exact upper alias keeps its distinct target", requested: "DEEPSEEK-R1", secondCatalog: "DEEPSEEK-R1", secondMapping: `{"DEEPSEEK-R1":"case-alias-other-model"}`, wantModel: "DEEPSEEK-R1", wantUpstream: "case-alias-other-model", alternate: true, fold: true},
+							{name: "exact declaration is not a folded alias", requested: upstreamModel, secondCatalog: upstreamModel, secondMapping: `{}`, wantModel: upstreamModel, alternate: true, unmapped: true},
+							{name: "nonexact spelling collision rejects", requested: "Deepseek-R1", secondCatalog: "DEEPSEEK-R1", secondMapping: `{"DEEPSEEK-R1":"DeepSeek-R1"}`, fold: true, wantStatus: http.StatusForbidden},
+							{name: "conflicting exact mapping tails cannot use the registry shortcut", secondCatalog: publicModel, secondMapping: `{"deepseek-r1":"case-alias-other-model"}`, wantStatus: http.StatusForbidden},
+							{name: "mapping target is never case folded", mapping: `{"deepseek-r1":"DEEPSEEK-R1"}`, wantStatus: http.StatusForbidden},
+							{name: "upstream token grant does not authorize the alias", tokenModel: upstreamModel, pin: true, wantStatus: http.StatusForbidden},
+							{name: "pin cannot borrow a differently cased group grant", groupModel: upstreamModel, pin: true, wantStatus: http.StatusBadRequest},
+							{name: "pin cannot borrow a differently cased Key grant", keyModel: upstreamModel, pin: true, wantStatus: http.StatusServiceUnavailable},
+						} {
+							t.Run(tc.name, func(t *testing.T) {
+								for _, table := range []any{&model.ChannelKeyEntry{}, &model.Ability{}, &model.Channel{}, &model.Task{}} {
+									require.NoError(t, database.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(table).Error)
+								}
+								mapping := common.GetStringIfEmpty(tc.mapping, `{"deepseek-r1":"DeepSeek-R1"}`)
+								channels := []*model.Channel{{Models: publicModel, ModelMapping: &mapping}}
+								if tc.secondCatalog != "" {
+									channels = append(channels, &model.Channel{Models: tc.secondCatalog, ModelMapping: &tc.secondMapping})
+								}
+								for _, channel := range channels {
+									channel.Type, channel.Status = constant.ChannelTypeTaskPlugin, common.ChannelStatusEnabled
+									channel.Group, channel.Key = "route-test", "case-alias-fixture-key"
+									channel.SetSetting(kitdto.ChannelSettings{TaskPluginKey: key, ModelIDCaseInsensitive: &tc.fold})
+									channel.ChannelInfo = model.ChannelInfo{IsMultiKey: true,
+										MultiKeyScopeModes: map[int]string{0: "allowlist"},
+										MultiKeyModels:     map[int][]string{0: {common.GetStringIfEmpty(tc.keyModel, channel.Models)}},
+									}
+									if tc.groupModel != "" {
+										channel.OtherSettings = fmt.Sprintf(`{"group_models":{"route-test":[%q]}}`, tc.groupModel)
+									}
+									require.NoError(t, channel.Insert())
+								}
+								model.InitChannelCache()
+								requested := common.GetStringIfEmpty(tc.requested, publicModel)
+								wantModel := common.GetStringIfEmpty(tc.wantModel, publicModel)
+								wantUpstream := common.GetStringIfEmpty(tc.wantUpstream, upstreamModel)
+								wantChannel := channels[0]
+								if tc.alternate {
+									wantChannel = channels[1]
+								}
+								reached := false
+								router := gin.New()
+								router.POST("/v1/responses", func(c *gin.Context) {
+									common.SetContextKey(c, constant.ContextKeyUsingGroup, "route-test")
+									common.SetContextKey(c, constant.ContextKeyUserId, 7)
+									common.SetContextKey(c, constant.ContextKeyTokenModelLimitEnabled, true)
+									common.SetContextKey(c, constant.ContextKeyTokenModelLimit, map[string]bool{common.GetStringIfEmpty(tc.tokenModel, wantModel): true})
+									if tc.pin {
+										service.GetChannelConstraints(c).AddPin(dto.ChannelPin{ChannelId: channels[0].Id, Source: dto.PinSourceToken, Rank: dto.PinRankToken})
+									}
+								}, RouteTaskPluginEndpoint(), PrepareTaskPluginEndpoint(), Distribute(), func(c *gin.Context) {
+									reached = true
+									pinned := c.MustGet(jsplugin.ContextKeyPinnedEndpoint).(jsplugin.PinnedEndpoint)
+									assert.Equal(t, wantModel, pinned.Model)
+									assert.Equal(t, requested, common.GetContextKeyString(c, constant.ContextKeyRequestedModel))
+									assert.Equal(t, wantModel, c.GetString("resolved_task_model"))
+									assert.Equal(t, wantModel, common.GetContextKeyString(c, constant.ContextKeyCatalogModel))
+									assert.Equal(t, wantChannel.Id, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+									assert.Equal(t, wantChannel.Key, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+									served, declared, owned := model.ResolveTaskPluginModel(pinned.Generation, wantModel, pinned.Plugin.Meta.Models)
+									require.True(t, owned, "the final decoder must retain the pinned public identity")
+									assert.Equal(t, wantModel, served)
+									assert.Equal(t, wantUpstream, declared)
+									request := map[string]any{"model": wantModel}
+									if tc.unmapped {
+										assert.Empty(t, pinned.MappedModel)
+									} else {
+										assert.Equal(t, wantUpstream, pinned.MappedModel)
+										request["upstream"] = wantUpstream
+									}
+									assert.Equal(t, request, c.MustGet("task_request"), "the plugin reads the public alias and exact upstream spelling separately")
+									resolved, ok := wantChannel.RoutingUpstreamModelName(wantModel)
+									require.True(t, ok)
+									assert.Equal(t, wantUpstream, resolved)
+									c.Status(http.StatusNoContent)
+								})
+								request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(fmt.Sprintf(`{"model":%q,"input":"hello"}`, requested)))
+								request.Header.Set("Content-Type", "application/json")
+								recorder := httptest.NewRecorder()
+								router.ServeHTTP(recorder, request)
+								status := tc.wantStatus
+								if status == 0 {
+									status = http.StatusNoContent
+								}
+								assert.Equal(t, status, recorder.Code, recorder.Body.String())
+								assert.Equal(t, status == http.StatusNoContent, reached)
+								assert.NotContains(t, recorder.Body.String(), "case-alias-fixture-key")
+							})
+						}
+					})
 				})
 			}
 		})
@@ -2522,7 +2688,9 @@ func TestPrepareTaskPluginRouteMatchesChannelAliases(t *testing.T) {
 	setupTaskPluginRouteDB(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
 	require.NoError(t, model.DB.Create(&model.Channel{Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Key: "key",
-		Models:       "scoped-alias,outside-alias,shared-alias",
+		Models:       "scoped-alias,outside-alias,shared-alias,scoped-model,shared-model",
+		Setting:      common.GetPointer(`{"model_id_case_insensitive":true}`),
+		ChannelInfo:  model.ChannelInfo{IsMultiKey: true, MultiKeyUsers: map[int]int{0: 7}},
 		ModelMapping: common.GetPointer(`{"scoped-alias":"scoped-model","outside-alias":"other-model","shared-alias":"shared-model"}`)}).Error)
 	// Replace any cached alias view, so the routes' generation builds its own
 	// from this channel.

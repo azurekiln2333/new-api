@@ -38,6 +38,7 @@ type ChannelPin struct {
 type ChannelFilterKind string
 
 const (
+	FilterModelIdentity      ChannelFilterKind = "model_identity"
 	FilterRequestPath        ChannelFilterKind = "request_path"
 	FilterTaskPluginEndpoint ChannelFilterKind = "task_plugin_endpoint"
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
@@ -49,6 +50,11 @@ const (
 
 type ChannelFilter struct {
 	Kind                   ChannelFilterKind
+	RequestedModel         string
+	CanonicalModel         string
+	CatalogModel           string
+	ModelGroups            []string
+	ModelUserID            int
 	RequestPath            string
 	TaskPluginKey          string
 	TaskPluginKeys         []string

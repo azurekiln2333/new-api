@@ -308,9 +308,18 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	if modelName == "" {
 		return newResponsesWSInvalidRequestError(errors.New("model is required"))
 	}
-	if s.lockedModel != "" && modelName != s.lockedModel {
-		return newResponsesWSInvalidRequestError(fmt.Errorf("responses websocket connection is locked to model %q", s.lockedModel))
+	// A socket turn owns a fresh identity; retries within that turn keep it.
+	common.SetContextKey(c, appconstant.ContextKeyCanonicalModel, "")
+	common.SetContextKey(c, appconstant.ContextKeyCatalogModel, "")
+	common.SetContextKey(c, appconstant.ContextKeyRequestedModel, "")
+	constraints := service.GetChannelConstraints(c)
+	filters := constraints.Filters[:0]
+	for _, filter := range constraints.Filters {
+		if filter.Kind != appdto.FilterModelIdentity {
+			filters = append(filters, filter)
+		}
 	}
+	constraints.Filters = filters
 	common.SetContextKey(c, appconstant.ContextKeyOriginalModel, modelName)
 	common.SetContextKey(c, appconstant.ContextKeyRequestStartTime, time.Now())
 	// As on HTTP, the request plugins' ingress reads the create before the
@@ -327,6 +336,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			return apiErr
 		}
 	}
+	canonical, resolveErr := service.ResolveRequestModelIdentity(c, create.Request.Model)
+	if resolveErr != nil {
+		return types.NewErrorWithStatusCode(resolveErr, types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+	}
+	modelName = canonical
+	if s.lockedModel != "" && modelName != s.lockedModel {
+		return newResponsesWSInvalidRequestError(fmt.Errorf("responses websocket connection is locked to model %q", s.lockedModel))
+	}
+	create.Request.Model = modelName
 	if apiErr = checkResponsesWSModelAccess(c, modelName); apiErr != nil {
 		return apiErr
 	}
@@ -1208,9 +1226,7 @@ func buildResponsesWSErrorPayload(eventID, streamID string, apiErr *types.NewAPI
 }
 
 // checkResponsesWSModelAccess applies the token model limit with the same name
-// matching as the HTTP distributor. Unlike HTTP, it also runs for requests
-// pinned to a channel: the check is stricter there on purpose, because a
-// persistent connection keeps serving the model after the pin was resolved.
+// matching as the HTTP distributor, including pinned requests.
 func checkResponsesWSModelAccess(c *gin.Context, modelName string) *types.NewAPIError {
 	if !common.GetContextKeyBool(c, appconstant.ContextKeyTokenModelLimitEnabled) {
 		return nil
@@ -1223,7 +1239,7 @@ func checkResponsesWSModelAccess(c *gin.Context, modelName string) *types.NewAPI
 	if !ok {
 		tokenModelLimit = map[string]bool{}
 	}
-	if !middleware.TokenModelLimitAllows(tokenModelLimit, modelName) {
+	if !middleware.TokenModelLimitAllows(tokenModelLimit, modelName, common.GetContextKeyString(c, appconstant.ContextKeyCatalogModel)) {
 		return types.NewErrorWithStatusCode(fmt.Errorf("token is not allowed to use model %s", modelName), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 	}
 	return nil

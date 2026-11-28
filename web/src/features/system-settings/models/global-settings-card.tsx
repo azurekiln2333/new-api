@@ -89,6 +89,7 @@ const jsonString = z.string().refine((value) => {
 
 const schema = z.object({
   global: z.object({
+    model_id_case_insensitive: z.boolean(),
     pass_through_request_enabled: z.boolean(),
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
@@ -103,6 +104,7 @@ type GlobalModelSettingsFormValues = z.output<typeof schema>
 type GlobalModelSettingsFormInput = z.input<typeof schema>
 
 type FlatGlobalModelSettings = {
+  'global.model_id_case_insensitive': boolean
   'global.pass_through_request_enabled': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
@@ -113,6 +115,7 @@ type FlatGlobalModelSettings = {
 const flattenGlobalValues = (
   values: GlobalModelSettingsFormValues
 ): FlatGlobalModelSettings => ({
+  'global.model_id_case_insensitive': values.global.model_id_case_insensitive,
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
   'global.thinking_model_blacklist': normalizeJsonText(
@@ -182,6 +185,23 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
             isSaving={updateOption.isPending}
+          />
+          <FormField
+            control={form.control}
+            name='global.model_id_case_insensitive'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>{t('Case-insensitive model IDs')}</FormLabel>
+                  <FormDescription>
+                    {t('Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.')}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
           />
           <FormField
             control={form.control}

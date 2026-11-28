@@ -53,14 +53,14 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 	}
 	adaptor.Init(info)
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-		}
-		if apiErr := requestplugin.PassThrough(c, info, storage); apiErr != nil {
+		storage, owned, apiErr := requestplugin.PreparePassthroughBody(c, info)
+		if apiErr != nil {
 			return nil, nil, nil, apiErr
 		}
 		body := common.NewReplayableBodyReader(storage)
+		if owned != nil {
+			return adaptor, body, owned, nil
+		}
 		return adaptor, body, io.NopCloser(body), nil
 	}
 

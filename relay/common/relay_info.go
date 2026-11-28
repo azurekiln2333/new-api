@@ -98,6 +98,7 @@ type RelayInfo struct {
 	IsPlayground           bool
 	UsePrice               bool
 	RelayMode              int
+	RequestedModelName     string
 	OriginModelName        string
 	ResponseModel          *ResponseModel
 
@@ -649,6 +650,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	}
 	reasoningEffort := reasoningEffortFromRequest(request)
 	originModelName := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	if request != nil && originModelName != "" && common.GetContextKeyString(c, constant.ContextKeyCanonicalModel) != "" {
+		request.SetModelName(originModelName)
+	}
 	info := &RelayInfo{
 		Request:         request,
 		ReasoningEffort: reasoningEffort,
@@ -660,7 +664,8 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		UserQuota:  common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
 		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
-		OriginModelName: originModelName,
+		RequestedModelName: common.GetContextKeyString(c, constant.ContextKeyRequestedModel),
+		OriginModelName:    originModelName,
 
 		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),

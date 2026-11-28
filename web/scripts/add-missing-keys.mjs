@@ -608,6 +608,55 @@ const newKeys = {
   },
 }
 
+const casePolicyTranslations = {
+  en: {
+    'Case-insensitive model IDs': 'Case-insensitive model IDs',
+    'Inherit site policy': 'Inherit site policy',
+    'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.': 'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.',
+    'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.': 'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.',
+  },
+  zh: {
+    'Case-insensitive model IDs': '模型 ID 不区分大小写',
+    'Inherit site policy': '继承站点策略',
+    'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.': '优先精确匹配模型 ID。大小写变体必须唯一匹配到有权限访问的目录名称；映射规则和上游名称保持不变。',
+    'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.': '默认关闭。优先精确匹配模型 ID，仅允许无歧义的 ASCII 大小写变体匹配。渠道可覆盖此策略。',
+  },
+  'zh-TW': {
+    'Case-insensitive model IDs': '模型 ID 不區分大小寫',
+    'Inherit site policy': '繼承網站原則',
+    'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.': '優先精確比對模型 ID。大小寫變體必須唯一對應至有權存取的目錄名稱；對應規則和上游名稱保持不變。',
+    'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.': '預設停用。優先精確比對模型 ID，僅允許無歧義的 ASCII 大小寫變體比對。渠道可覆寫此原則。',
+  },
+  fr: {
+    'Case-insensitive model IDs': 'ID de modèle insensibles à la casse',
+    'Inherit site policy': 'Hériter de la politique du site',
+    'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.': 'Les ID exacts sont prioritaires. Une variante de casse doit correspondre à un seul nom autorisé du catalogue ; les correspondances et les noms en amont restent inchangés.',
+    'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.': 'Désactivé par défaut. Les ID exacts sont prioritaires ; seules les variantes de casse ASCII non ambiguës sont acceptées. Les canaux peuvent remplacer cette politique.',
+  },
+  ja: {
+    'Case-insensitive model IDs': 'モデル ID の大文字・小文字を区別しない',
+    'Inherit site policy': 'サイトのポリシーを継承',
+    'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.': 'モデル ID の完全一致を優先します。大文字・小文字の違いは、アクセスが許可されたカタログ名に一意に解決できる場合のみ認められます。マッピングと上流の表記は変更しません。',
+    'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.': '既定では無効です。モデル ID の完全一致を優先し、曖昧さのない ASCII の大文字・小文字の違いのみ許容します。チャネルごとに上書きできます。',
+  },
+  ru: {
+    'Case-insensitive model IDs': 'ID моделей без учёта регистра',
+    'Inherit site policy': 'Наследовать политику сайта',
+    'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.': 'Точные ID имеют приоритет. Вариант регистра должен однозначно соответствовать разрешённому имени в каталоге; сопоставления и имена у провайдера не меняются.',
+    'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.': 'По умолчанию отключено. Точные ID имеют приоритет; допустимы только однозначные варианты регистра ASCII. Каналы могут переопределить политику.',
+  },
+  vi: {
+    'Case-insensitive model IDs': 'ID mô hình không phân biệt hoa thường',
+    'Inherit site policy': 'Kế thừa chính sách trang',
+    'Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.': 'Ưu tiên ID mô hình khớp chính xác. Biến thể hoa thường phải khớp duy nhất với tên được phép trong danh mục; ánh xạ và tên thượng nguồn không thay đổi.',
+    'Disabled by default. Exact model IDs take priority; only an unambiguous ASCII case variant may resolve. Channels can override this policy.': 'Mặc định tắt. Ưu tiên ID mô hình khớp chính xác; chỉ chấp nhận biến thể hoa thường ASCII không mơ hồ. Kênh có thể ghi đè chính sách này.',
+  },
+}
+
+for (const [locale, translations] of Object.entries(casePolicyTranslations)) {
+  Object.assign(newKeys[locale], translations)
+}
+
 async function main() {
   let totalAdded = 0
 

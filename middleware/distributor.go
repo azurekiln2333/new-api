@@ -54,6 +54,25 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		if modelRequest.Group != "" && c.Request.URL.Path == "/pg/chat/completions" {
+			if !service.GroupInUserUsableGroups(c.GetString("group"), modelRequest.Group) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+				return
+			}
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, modelRequest.Group)
+		}
+		if shouldSelectChannel && modelRequest.Model != "" {
+			requested := modelRequest.Model
+			if raw := common.GetContextKeyString(c, constant.ContextKeyRequestedModel); raw != "" {
+				requested = raw
+			}
+			canonical, resolveErr := service.ResolveRequestModelIdentity(c, requested)
+			if resolveErr != nil {
+				abortWithOpenAiMessage(c, http.StatusForbidden, resolveErr.Error())
+				return
+			}
+			modelRequest.Model = canonical
+		}
 		// Rejections before channel selection still need the parsed model in
 		// their error log. No channel identity exists until selection succeeds.
 		common.SetContextKey(c, constant.ContextKeyOriginalModel, modelRequest.Model)
@@ -131,7 +150,8 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		_, pinned, _ := constraints.ResolvedPin()
-		if !pinned {
+		{
+			// Model scopes apply to pins too; a pin is not a model grant.
 			// Select a channel for the user
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
@@ -147,7 +167,7 @@ func Distribute() func(c *gin.Context) {
 				if !ok {
 					tokenModelLimit = map[string]bool{}
 				}
-				if !TokenModelLimitAllows(tokenModelLimit, modelRequest.Model) {
+				if !TokenModelLimitAllows(tokenModelLimit, modelRequest.Model, common.GetContextKeyString(c, constant.ContextKeyCatalogModel)) {
 					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
 					return
 				}
@@ -236,6 +256,10 @@ func Distribute() func(c *gin.Context) {
 				}), setupErr.GetErrorCode())
 				return
 			}
+		}
+		if setupErr != nil && (pinned || shouldSelectChannel) {
+			abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+			return
 		}
 		c.Next()
 		// A channel reached through a user-bound key is exclusive to that user, so
@@ -692,12 +716,16 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 // model. Exact name, wildcard-normalized name, and routing-normalized name
 // (modifiers and legacy aliases stripped) are all accepted. The Responses
 // WebSocket relay shares this rule so both transports admit the same names.
-func TokenModelLimitAllows(limit map[string]bool, model string) bool {
+func TokenModelLimitAllows(limit map[string]bool, model string, catalogModels ...string) bool {
 	if limit[model] {
 		return true
 	}
 	if formatted := ratio_setting.FormatMatchingModelName(model); limit[formatted] {
 		return true
+	}
+	if len(catalogModels) > 0 && catalogModels[0] == model {
+		// A concrete catalog model is not a grant for a different legacy base.
+		return false
 	}
 	return limit[ratio_setting.RoutingMatchModelName(model)]
 }
@@ -795,6 +823,12 @@ func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, i
 func applySelectedChannelContext(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	expectedPlugin := c.GetString("expected_task_plugin_key")
+	if channel != nil {
+		if canonical := common.GetContextKeyString(c, constant.ContextKeyCanonicalModel); canonical != "" &&
+			(modelName != canonical || !channel.AdmitsModelIdentity(common.GetContextKeyString(c, constant.ContextKeyRequestedModel), canonical, common.GetContextKeyString(c, constant.ContextKeyCatalogModel))) {
+			return types.NewErrorWithStatusCode(errors.New("channel does not admit the resolved model identity"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+	}
 	if channel == nil {
 		logTaskPluginChannelDecision(c, nil, modelName, "channel_rejected", "nil_channel")
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -142,7 +143,24 @@ func attemptBudgetReserveQuota(info *relaycommon.RelayInfo) int64 {
 // account. It must be called after the validated estimate exists and before the
 // request is forwarded.
 func ReserveAttemptChannelBudget(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
-	if c == nil || info == nil || info.IsChannelTest || !model.ChannelBudgetsEnabled() {
+	if c == nil || info == nil || info.IsChannelTest {
+		return nil
+	}
+	// Recheck the frozen catalog fence and live channel policy after queue
+	// admission, including with the ledger off. Passthrough canonicalizes only
+	// the model field at preparation; it is not a reason to reject admission.
+	catalogModel := common.GetContextKeyString(c, constant.ContextKeyCatalogModel)
+	if catalogModel != "" || info.RequestedModelName != "" && info.RequestedModelName != info.OriginModelName {
+		channel, err := model.GetChannelById(info.ChannelId, true)
+		if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled ||
+			!channel.AdmitsModelIdentity(info.RequestedModelName, info.OriginModelName, catalogModel) {
+			return types.NewErrorWithStatusCode(errors.New("channel does not admit the resolved model identity"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		if matches, _ := model.ChannelSatisfiesFilters(channel, info.OriginModelName, GetChannelConstraints(c).Filters, info.UserId); !matches {
+			return types.NewErrorWithStatusCode(errors.New("channel does not admit the resolved model identity"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+	}
+	if !model.ChannelBudgetsEnabled() {
 		return nil
 	}
 	if err := model.EnsureChannelBudgetRuntimePrerequisite(); err != nil {
@@ -178,6 +196,8 @@ func ReserveAttemptChannelBudget(c *gin.Context, info *relaycommon.RelayInfo) *t
 		UserID:             info.UserId,
 		Group:              info.UsingGroup,
 		ModelName:          info.OriginModelName,
+		RequestedModelName: info.RequestedModelName,
+		CatalogModelName:   catalogModel,
 	}
 	reservation, err := model.ReserveChannelBudgets(c.Request.Context(), model.BudgetReserveRequest{
 		AttemptKey:   attemptBudgetKey(info),
