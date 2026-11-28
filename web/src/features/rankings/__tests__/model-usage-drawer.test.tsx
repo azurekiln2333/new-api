@@ -126,6 +126,30 @@ describe('ModelUsageDrawer', () => {
     ).toBeNull()
   })
 
+  it('keeps observed subtotals visible and labels partial history', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        ...usagePayload,
+        coverage: {
+          complete: false,
+          coverage: 'partial',
+          historical_coverage: 'partial',
+          live_coverage: 'complete',
+          legacy_baseline_included: false,
+          start_timestamp: 1,
+          end_timestamp: 2,
+        },
+      },
+    })
+
+    renderDrawer()
+
+    expect(await screen.findByText('8.0K')).toBeVisible()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Totals are partial and may not include all usage.'
+    )
+  })
+
   it('partitions by viewer identity and role and renders the server mask unchanged', async () => {
     const response = (users: typeof usagePayload.data.users) => ({
       data: {

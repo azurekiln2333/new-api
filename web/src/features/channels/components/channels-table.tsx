@@ -54,6 +54,7 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { hasPermission } from '@/lib/admin-permissions'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -368,8 +369,17 @@ export function ChannelsTable() {
     () => (pageChannels ?? []).map((channel) => channel.id),
     [pageChannels]
   )
-  const { usageByChannel, refetch: refetchUsage } =
+  const {
+    usageByChannel,
+    coverage: usageCoverage,
+    refetch: refetchUsage,
+    isLoading: isUsageLoading,
+  } =
     useChannelUsageSummaries(pageChannelIds)
+  const usageContext = useMemo(
+    () => ({ usageByChannel, coverage: usageCoverage }),
+    [usageByChannel, usageCoverage]
+  )
   // Only real channels have accounts. Keep the query key stable across sorts.
   const budgetChannelIds = useMemo(
     () =>
@@ -645,7 +655,7 @@ export function ChannelsTable() {
   return (
     <ChannelPriorityContext.Provider value={dragControls}>
       <ChannelBudgetContext.Provider value={budgetContext}>
-        <ChannelUsageContext.Provider value={usageByChannel}>
+        <ChannelUsageContext.Provider value={usageContext}>
           {priorityActionContainer &&
             createPortal(
               <ChannelPriorityModeToggle
@@ -661,6 +671,11 @@ export function ChannelsTable() {
             order={priorityOrder}
             channels={channels}
           />
+          {pageChannelIds.length > 0 && !isUsageLoading && (
+            <div className='mb-3'>
+              <StatisticsCoverageNotice coverage={usageCoverage} />
+            </div>
+          )}
           <div
             ref={drag.root}
             role='region'

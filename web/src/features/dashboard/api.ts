@@ -19,9 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import type {
-  FlowQuotaDataItem,
   InstanceResourceSummaryResponse,
-  QuotaDataItem,
+  QuotaDataResponse,
+  FlowQuotaDataResponse,
   UptimeGroupResult,
 } from './types'
 
@@ -45,7 +45,7 @@ export async function getUserQuotaDates(
   isAdmin = false
 ) {
   const endpoint = isAdmin ? '/api/data' : '/api/data/self'
-  const res = await api.get<{ success: boolean; data: QuotaDataItem[] }>(
+  const res = await api.get<QuotaDataResponse>(
     endpoint,
     { params }
   )
@@ -63,7 +63,7 @@ export async function getUserQuotaDataByUsers(
   },
   signal?: AbortSignal
 ) {
-  const res = await api.get<{ success: boolean; data: QuotaDataItem[] }>(
+  const res = await api.get<QuotaDataResponse>(
     '/api/data/users',
     { params, signal }
   )
@@ -80,11 +80,7 @@ export async function getFlowQuotaDates(
   isAdmin = false
 ) {
   const endpoint = isAdmin ? '/api/data/flow' : '/api/data/flow/self'
-  const res = await api.get<{
-    success: boolean
-    data?: FlowQuotaDataItem[]
-    message?: string
-  }>(endpoint, { params })
+  const res = await api.get<FlowQuotaDataResponse>(endpoint, { params })
   return res.data
 }
 

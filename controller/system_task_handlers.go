@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,7 +23,32 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+	service.RegisterSystemTaskHandler(usageProjectionRecoveryHandler{})
 	service.RegisterSystemTaskHandler(systemTaskCleanupHandler{})
+}
+
+// usageProjectionRecoveryHandler retries only a bounded page of ready facts.
+// A successful page is not coverage, source reconciliation or cleanup readiness.
+// Pending/unknown outcomes never trigger billing or become ready by scheduling.
+type usageProjectionRecoveryHandler struct{}
+
+func (usageProjectionRecoveryHandler) Type() string { return "usage_projection_recovery" }
+
+func (usageProjectionRecoveryHandler) Enabled() bool { return true }
+
+func (usageProjectionRecoveryHandler) Interval() time.Duration { return 30 * time.Second }
+
+func (usageProjectionRecoveryHandler) NewPayload() any { return nil }
+
+func (usageProjectionRecoveryHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	applied, err := model.RecoverUsageEventProjections(ctx, 100)
+	status := model.SystemTaskStatusSucceeded
+	if err != nil {
+		status = model.SystemTaskStatusFailed
+		// Do not persist driver errors or fact dimensions in task diagnostics.
+		err = errors.New("usage statistics projection recovery failed")
+	}
+	finishSystemTaskHandler(task, runnerID, status, map[string]int{"successful_apply_calls": applied}, err)
 }
 
 // systemTaskCleanupHandler deletes, once a day, the finished system tasks

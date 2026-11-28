@@ -1286,6 +1286,7 @@ func executeTaskSubmissionWith(
 			insertOmits = append(insertOmits, "data")
 		}
 	}
+	service.PrepareTaskSubmissionUsageReport(c, relayInfo, task)
 	diagnostics.insertStart(task)
 	var requestContent *common.RequestContentSnapshot
 	if common.LogConsumeEnabled || constant.ErrorLogEnabled {
@@ -1319,6 +1320,7 @@ func executeTaskSubmissionWith(
 			// session path also refunds the hold it just reserved.
 			if c.Writer.Written() {
 				if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+					service.ConfirmRelayUsageReport(c, task.UsageReport, model.UsageEventSourceUnknown, "task_submission_outcome_unknown")
 					common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
 					return nil, taskErr
 				}
@@ -1374,6 +1376,7 @@ func executeTaskSubmissionWith(
 	relayInfo.ChannelBudgetSettlementOpen = task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailure
 
 	if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+		service.ConfirmRelayUsageReport(c, task.UsageReport, model.UsageEventSourceUnknown, "task_submission_outcome_unknown")
 		common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to settle task billing"), "task_billing_settlement_failed", http.StatusInternalServerError)
 		diagnostics.failed("settle", "billing_error", taskErr, true)

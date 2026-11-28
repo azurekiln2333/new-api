@@ -22,6 +22,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { RequestRuleTrace } from '@/features/pricing/lib/billing-expr'
 import type { PolicyEvent } from '@/features/system-settings/request-policies/api'
 import type { LocalizedTextValue } from '@/lib/localized-text'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage'
 
 import type { UsageLog } from './data/schema'
 // ============================================================================
@@ -568,9 +569,12 @@ export interface TaskArtifactsResponse {
 // Common Log Types
 // ============================================================================
 
+export type AdminLogUserScope = 'all' | 'self' | 'others'
+
 export interface GetLogsParams {
   p?: number
   page_size?: number
+  user_scope?: AdminLogUserScope
   type?: number
   username?: string
   token_name?: string
@@ -596,6 +600,7 @@ export interface GetLogsResponse {
 }
 
 export interface GetLogStatsParams {
+  user_scope?: AdminLogUserScope
   type?: number
   username?: string
   token_name?: string
@@ -613,6 +618,7 @@ export interface GetLogStatsResponse {
   success: boolean
   message?: string
   data?: LogStatistics
+  coverage?: StatisticsCoverage
 }
 
 // ============================================================================
@@ -651,6 +657,7 @@ export interface GetTaskLogsParams {
 export interface FetchLogsConfig {
   logCategory: LogCategory
   isAdmin: boolean
+  userScope?: AdminLogUserScope
   page: number
   pageSize: number
   searchParams: Record<string, unknown>

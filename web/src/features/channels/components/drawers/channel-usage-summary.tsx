@@ -29,6 +29,7 @@ import { useTranslation } from 'react-i18next'
 import { StaticDataTable } from '@/components/data-table'
 import { EmptyState } from '@/components/empty-state'
 import { StatusBadge } from '@/components/status-badge'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatNumber, formatTimestampToDate, formatTokens } from '@/lib/format'
@@ -66,7 +67,10 @@ function OverviewMetric(props: {
   )
 }
 
-function UsageOverview(props: { usage: ChannelUsageDetail }) {
+function UsageOverview(props: {
+  usage: ChannelUsageDetail
+  unknownEmpty: boolean
+}) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const usage = props.usage
@@ -76,31 +80,45 @@ function UsageOverview(props: { usage: ChannelUsageDetail }) {
       <OverviewMetric
         icon={Sigma}
         label={t('Total tokens')}
-        value={formatTokens(usage.total_tokens, locale)}
+        value={
+          props.unknownEmpty ? '—' : formatTokens(usage.total_tokens, locale)
+        }
       />
       <OverviewMetric
         icon={ArrowDownToLine}
         label={t('Input tokens')}
-        value={formatTokens(usage.prompt_tokens, locale)}
+        value={
+          props.unknownEmpty ? '—' : formatTokens(usage.prompt_tokens, locale)
+        }
       />
       <OverviewMetric
         icon={ArrowUpFromLine}
         label={t('Output tokens')}
-        value={formatTokens(usage.completion_tokens, locale)}
+        value={
+          props.unknownEmpty
+            ? '—'
+            : formatTokens(usage.completion_tokens, locale)
+        }
       />
       <OverviewMetric
         icon={Waypoints}
         label={t('Requests')}
-        value={formatNumber(usage.request_count, locale)}
+        value={
+          props.unknownEmpty ? '—' : formatNumber(usage.request_count, locale)
+        }
       />
       <OverviewMetric
         icon={Coins}
         label={t('Consumed quota')}
-        value={formatQuotaWithCurrency(usage.quota, {
-          digitsLarge: 2,
-          digitsSmall: 4,
-          locale,
-        })}
+        value={
+          props.unknownEmpty
+            ? '—'
+            : formatQuotaWithCurrency(usage.quota, {
+                digitsLarge: 2,
+                digitsSmall: 4,
+                locale,
+              })
+        }
       />
     </div>
   )
@@ -187,14 +205,23 @@ function ModelUsageTable(props: { models: ChannelModelUsage[] }) {
 export function ChannelUsageSummary(props: { usage: ChannelUsageDetail }) {
   const { t } = useTranslation()
   const usage = props.usage
+  const unknownEmpty =
+    usage.coverage?.complete !== true &&
+    usage.models.length === 0 &&
+    usage.request_count === 0 &&
+    usage.prompt_tokens === 0 &&
+    usage.completion_tokens === 0 &&
+    usage.total_tokens === 0 &&
+    usage.quota === 0
 
   return (
     <div className='space-y-6'>
+      <StatisticsCoverageNotice coverage={usage.coverage} />
       <section className='space-y-3' aria-label={t('Model usage')}>
         <h3 className='text-muted-foreground text-xs font-semibold tracking-wider uppercase'>
           {t('Model usage')}
         </h3>
-        <UsageOverview usage={usage} />
+        <UsageOverview usage={usage} unknownEmpty={unknownEmpty} />
       </section>
 
       <section className='space-y-3' aria-label={t('Model status')}>
@@ -206,7 +233,11 @@ export function ChannelUsageSummary(props: { usage: ChannelUsageDetail }) {
         ) : (
           <EmptyState
             icon={Server}
-            title={t('No usage recorded yet')}
+            title={
+              usage.coverage?.complete === true
+                ? t('No usage recorded yet')
+                : t('No verified usage data available')
+            }
             className='min-h-[200px] border'
           />
         )}

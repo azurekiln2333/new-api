@@ -725,7 +725,19 @@ func recordChannelTestUsage(c *gin.Context, channelID, userID int, info *relayco
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+	// Match this branch's existing raw prompt/completion and cache log fields;
+	// diagnostics do not charge funding or alter selection/admission behavior.
+	usageInfo := &relaycommon.RelayInfo{
+		UserId:      userID,
+		UsingGroup:  info.UsingGroup,
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channelID},
+	}
+	usageReport := service.PrepareRelayUsageReport(c, usageInfo, model.UsageEventSourceDiagnostic,
+		info.OriginModelName, "Model test", usage.PromptTokens, usage.CompletionTokens,
+		usage.PromptTokensDetails.CachedTokens, 0, "openai", -1, quota)
+	service.ConfirmRelayUsageReport(c, usageReport, model.UsageEventSourceReady, "channel_diagnostic_report")
 	model.RecordConsumeLog(c, userID, model.RecordConsumeLogParams{
+		UsageReport:      usageReport,
 		ChannelId:        channelID,
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,

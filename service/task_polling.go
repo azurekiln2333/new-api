@@ -723,18 +723,26 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	perfmetrics.RecordTaskResult(task, taskResult)
 	if task.PrivateData.BudgetReservationId == 0 {
-		settled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
-		if !settled && task.Status == model.TaskStatusFailure && task.Quota != 0 {
-			RefundTaskQuota(ctx, task, task.FailReason)
+		if transition := task.UsageTransition; transition != nil {
+			// Use the exact final values frozen by the winning CAS. Do not
+			// evaluate an adaptor or billing expression again after claiming it.
+			if transition.Refund {
+				RefundTaskQuota(ctx, task, task.FailReason)
+			} else if transition.Reason != nil {
+				RecalculateTaskQuota(ctx, task, transition.TargetQuota, transition.Reason, transition.Clamp)
+			}
+			task.UsageTransition = nil
+		} else {
+			settled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+			if !settled && task.Status == model.TaskStatusFailure && task.Quota != 0 {
+				RefundTaskQuota(ctx, task, task.FailReason)
+			}
 		}
 	}
 	reportFinalTask(task)
 }
 
 func commitTaskTerminal(ctx context.Context, task *model.Task, previous model.TaskStatus, adaptor TaskPollingAdaptor, result *relaycommon.TaskInfo, refundFailure bool) (bool, error) {
-	if task.PrivateData.BudgetReservationId == 0 {
-		return task.UpdateWithStatus(previous)
-	}
 	actual := task.Quota
 	var reason *common.Message
 	var clamp *common.QuotaClamp
@@ -748,6 +756,29 @@ func commitTaskTerminal(ctx context.Context, task *model.Task, previous model.Ta
 	if refund {
 		actual = 0
 	}
+	transition := &model.TaskUsageTransition{PreviousQuota: task.Quota, TargetQuota: actual, Refund: refund, Reason: reason, Clamp: clamp}
+	if actual != task.Quota {
+		var err error
+		transition, err = prepareTaskAdjustmentUsage(ctx, task, actual, refund)
+		if err != nil {
+			return false, err
+		}
+		transition.Reason, transition.Clamp = reason, clamp
+	}
+	task.UsageTransition = transition
+	if task.PrivateData.BudgetReservationId == 0 {
+		persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		var obligation *model.TaskUsageTransition
+		if actual != task.Quota {
+			obligation = transition
+		}
+		won, err := model.CommitTaskTerminalWithUsage(persist, task, previous, obligation)
+		if err != nil || !won {
+			task.UsageTransition = nil
+		}
+		return won, err
+	}
 	subscriptionID := 0
 	if taskIsSubscription(task) {
 		subscriptionID = task.PrivateData.SubscriptionId
@@ -756,8 +787,10 @@ func commitTaskTerminal(ctx context.Context, task *model.Task, previous model.Ta
 	defer cancel()
 	delta, won, err := model.CommitTaskBudgetTerminalTransition(persist, task, previous, actual, subscriptionID, refund)
 	if err != nil || !won {
+		task.UsageTransition = nil
 		return won, err
 	}
+	defer func() { task.UsageTransition = nil }()
 	if err := model.ApplyQueuedChannelBudgetSettlement(persist, task.PrivateData.BudgetReservationId); err != nil {
 		logger.LogWarn(ctx, common.LogText("queued channel budget settlement for task %s: %s", task.TaskID, err.Error()))
 	}

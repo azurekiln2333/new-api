@@ -8,7 +8,7 @@ import (
 )
 
 func GetRankings(c *gin.Context) {
-	result, err := service.GetRankingsSnapshot(c.DefaultQuery("period", "week"))
+	result, err := service.GetRankingsSnapshot(c.Request.Context(), c.DefaultQuery("period", "week"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -20,5 +20,7 @@ func GetRankings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    result,
+		"coverage": result.Coverage,
+		"previous_coverage": result.PreviousCoverage,
 	})
 }

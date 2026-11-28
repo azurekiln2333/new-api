@@ -26,6 +26,7 @@ import { toast } from 'sonner'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { useTheme } from '@/context/theme-provider'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
 import { ChartMetricToggle } from '@/features/dashboard/components/ui/chart-metric-toggle'
@@ -163,7 +164,7 @@ export function UserCharts(props: UserChartsProps) {
     updateTheme()
   }, [resolvedTheme])
 
-  const { data: userData, isLoading } = useQuery({
+  const userQuery = useQuery({
     queryKey: [
       'dashboard',
       'user-quota',
@@ -173,10 +174,15 @@ export function UserCharts(props: UserChartsProps) {
     ],
     queryFn: async ({ signal }) =>
       requireServerSuccess(await getUserQuotaDataByUsers(timeRange, signal)),
-    select: (res) => (res.success ? res.data : []),
     enabled: isAdmin,
     staleTime: 60_000,
   })
+  const userData = userQuery.data?.data ?? []
+  const isLoading = userQuery.isLoading
+  const hasUnverifiedEmptyData =
+    !isLoading &&
+    userData.length === 0 &&
+    userQuery.data?.coverage?.complete !== true
 
   const chartData = useMemo(
     () =>
@@ -204,6 +210,9 @@ export function UserCharts(props: UserChartsProps) {
 
   return (
     <div className='space-y-3'>
+      {!isLoading && userQuery.data && (
+        <StatisticsCoverageNotice coverage={userQuery.data.coverage} />
+      )}
       <div className='flex items-center gap-1.5 overflow-x-auto pb-1 sm:gap-2'>
         <Tabs
           value={String(selectedRange)}
@@ -297,6 +306,13 @@ export function UserCharts(props: UserChartsProps) {
               <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
                 {isLoading ? (
                   <Skeleton className='h-full w-full' />
+                ) : hasUnverifiedEmptyData ? (
+                  <div
+                    role='status'
+                    className='text-muted-foreground flex h-full items-center justify-center px-4 text-center text-sm'
+                  >
+                    {t('No verified usage data available')}
+                  </div>
                 ) : (
                   themeReady &&
                   spec && (

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -408,6 +407,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 }
 
 type RecordConsumeLogParams struct {
+	UsageReport      *UsageSourceReport `json:"-"`
 	ChannelId        int               `json:"channel_id"`
 	PromptTokens     int               `json:"prompt_tokens"`
 	CompletionTokens int               `json:"completion_tokens"`
@@ -470,11 +470,39 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		UpstreamRequestId: upstreamRequestId,
 		Other:             otherStr,
 	}
+	if params.UsageReport != nil {
+		bound, bindErr := bindUsageSourceReport(log, other, params.UsageReport)
+		if bindErr != nil {
+			logger.LogError(c, common.LogText("usage statistics persistence failed: stage=%s", "consume_log_link"))
+		} else {
+			other = bound
+			createdAt, username = log.CreatedAt, log.Username
+		}
+	}
 	err := createRequestLog(c, log, other)
 	if err != nil {
 		logger.LogError(c, common.LogText("failed to record log: %s", err.Error()))
 	}
+	// Keep the legacy writer active until an explicit lineage fence is
+	// installed. This preserves the old dashboard during rolling rollout while
+	// the durable fact is captured independently. After the fence, fail closed
+	// if its state cannot be read; adding an unbounded legacy row then could
+	// overlap the attested baseline.
+	legacyWriterAllowed := false
 	if common.DataExportEnabled {
+		var fenceErr error
+		legacyWriterAllowed, fenceErr = LegacyQuotaDataWriterAllowed(context.Background())
+		if fenceErr != nil {
+			logger.LogError(c, common.LogText("usage statistics persistence failed: stage=%s", "legacy_writer_fence"))
+		}
+	}
+	if legacyWriterAllowed && params.UsageReport != nil {
+		if err := mirrorUsageLegacyReport(context.Background(), params.UsageReport); err != nil {
+			logger.LogError(c, common.LogText("usage statistics persistence failed: stage=%s", "legacy_ownership"))
+		}
+		return
+	}
+	if legacyWriterAllowed {
 		var cacheReadTokens, cacheCreationTokens int
 		tokenUsed := params.PromptTokens + params.CompletionTokens
 		if other != nil {
@@ -507,6 +535,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
+	UsageReport    *UsageSourceReport
 	UserId         int
 	LogType        int
 	Content        []*common.Message
@@ -549,6 +578,15 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		RequestId: params.RequestID,
 		Other:     other.JSONString(),
 	}
+	if params.UsageReport != nil {
+		bound, bindErr := bindUsageSourceReport(log, other, params.UsageReport)
+		if bindErr != nil {
+			common.SysError(common.LogText("usage statistics persistence failed: stage=%s", "task_log_link"))
+		} else {
+			other = bound
+			createdAt, username = log.CreatedAt, log.Username
+		}
+	}
 	snapshot := params.RequestContent.Snapshot(params.UserId)
 	if log.RequestId == "" && snapshot != nil {
 		log.RequestId = snapshot.RequestID
@@ -557,7 +595,21 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	if err != nil {
 		common.SysLog(common.LogText("failed to record task billing log: %s", err.Error()))
 	}
+	legacyWriterAllowed := false
 	if params.LogType == LogTypeConsume && common.DataExportEnabled {
+		var fenceErr error
+		legacyWriterAllowed, fenceErr = LegacyQuotaDataWriterAllowed(context.Background())
+		if fenceErr != nil {
+			common.SysError(common.LogText("usage statistics persistence failed: stage=%s", "legacy_writer_fence"))
+		}
+	}
+	if legacyWriterAllowed && params.UsageReport != nil {
+		if err := mirrorUsageLegacyReport(context.Background(), params.UsageReport); err != nil {
+			common.SysError(common.LogText("usage statistics persistence failed: stage=%s", "legacy_ownership"))
+		}
+		return
+	}
+	if legacyWriterAllowed {
 		nodeName := params.NodeName
 		if nodeName == "" {
 			nodeName = common.NodeName
@@ -576,11 +628,25 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
+// LogUserScope chooses which users' rows are visible in an administrator log view.
+type LogUserScope string
+
+const (
+	LogUserScopeAll    LogUserScope = "all"
+	LogUserScopeSelf   LogUserScope = "self"
+	LogUserScopeOthers LogUserScope = "others"
+)
+
+var errInvalidLogUserScope = errors.New("invalid usage log user scope")
+
 // LogFilter is the usage-log search shared by the log list, the log export and
 // the log statistics. Username and Channel are administrator filters. UserId
-// scopes the search to a single user and stays zero for every user.
+// scopes a self endpoint to its authenticated owner. UserScope/ScopeUserId are
+// only populated by an administrator handler from that authenticated context.
 type LogFilter struct {
 	UserId            int
+	UserScope         LogUserScope
+	ScopeUserId       int
 	Type              int
 	StartTimestamp    int64
 	EndTimestamp      int64
@@ -616,8 +682,29 @@ func (f LogFilter) textFilters() []logTextFilter {
 
 func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	var err error
+	if f.UserScope != "" {
+		switch f.UserScope {
+		case LogUserScopeAll:
+		case LogUserScopeSelf, LogUserScopeOthers:
+			if f.ScopeUserId <= 0 {
+				return nil, errInvalidLogUserScope
+			}
+		default:
+			return nil, errInvalidLogUserScope
+		}
+	} else if f.ScopeUserId != 0 {
+		return nil, errInvalidLogUserScope
+	}
 	if f.UserId != 0 {
 		tx = tx.Where("logs.user_id = ?", f.UserId)
+	}
+	if f.ScopeUserId > 0 {
+		switch f.UserScope {
+		case LogUserScopeSelf:
+			tx = tx.Where("logs.user_id = ?", f.ScopeUserId)
+		case LogUserScopeOthers:
+			tx = tx.Where("logs.user_id <> ?", f.ScopeUserId)
+		}
 	}
 	if f.Type != LogTypeUnknown {
 		tx = tx.Where("logs.type = ?", f.Type)
@@ -821,32 +908,44 @@ type Stat struct {
 	InputTokens     int64 `json:"input_tokens"`
 }
 
-// SumUsedQuota summarizes the consume logs matching filter.
-func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
-	// The summary always covers consume logs, whatever log type the list is
-	// filtered by.
-	filter.Type = LogTypeUnknown
+// SumUsedQuota delegates business totals to durable primary statistics. Actual
+// retained-row lists, counts and exports continue using LOG_DB and LogFilter.
+func SumUsedQuota(filter LogFilter) (Stat, error) {
+	installed, err := UsageReadLineageInstalled(context.Background())
+	if err != nil {
+		return Stat{}, err
+	}
+	if !installed {
+		legacy, legacyErr := sumUsedQuotaFromLogs(filter)
+		// The three legacy queries must finish before checking the monotonic
+		// marker again. Activation followed by cleanup may invalidate any of
+		// their snapshots; retry the entire summary from durable facts then.
+		installed, err = UsageReadLineageInstalled(context.Background())
+		if err != nil {
+			return Stat{}, err
+		}
+		if !installed {
+			return legacy, legacyErr
+		}
+	}
+	return SumUsageEventQuota(context.Background(), filter)
+}
 
+func sumUsedQuotaFromLogs(filter LogFilter) (stat Stat, err error) {
+	filter.Type = LogTypeUnknown
 	tx, err := filter.apply(LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota"))
 	if err != nil {
 		return stat, err
 	}
-
-	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery, err := filter.apply(LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm"))
 	if err != nil {
 		return stat, err
 	}
-
 	tx = tx.Where("logs.type = ?", LogTypeConsume)
 	rpmTpmQuery = rpmTpmQuery.Where("logs.type = ?", LogTypeConsume)
-
-	// 只统计最近60秒的rpm和tpm
-	rpmTpmQuery = rpmTpmQuery.Where("logs.created_at >= ?", time.Now().Add(-60*time.Second).Unix())
-
-	// 执行查询
+	recent := common.GetTimestamp() - 60
+	rpmTpmQuery = rpmTpmQuery.Where("logs.created_at >= ?", recent)
 	if err := tx.Scan(&stat).Error; err != nil {
-		common.SysError(common.LogText("failed to query log stat: %s", err.Error()))
 		return stat, common.NewMessage("Failed to query statistics")
 	}
 	var rateStat struct {
@@ -854,14 +953,10 @@ func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
 		Tpm int
 	}
 	if err := rpmTpmQuery.Scan(&rateStat).Error; err != nil {
-		common.SysError(common.LogText("failed to query rpm/tpm stat: %s", err.Error()))
 		return stat, common.NewMessage("Failed to query statistics")
 	}
 	stat.Rpm = rateStat.Rpm
 	stat.Tpm = rateStat.Tpm
-
-	// Cache usage is a best-effort card: a log database that cannot read the
-	// metadata must not take the usage cards down with it.
 	cacheQuery, err := filter.apply(LOG_DB.Table("logs").Select(logCacheTokenSelect()))
 	if err != nil {
 		return stat, err
@@ -870,13 +965,10 @@ func SumUsedQuota(filter LogFilter) (stat Stat, err error) {
 		CacheReadTokens int64
 		InputTokens     int64
 	}
-	if err := cacheQuery.Where("logs.type = ?", LogTypeConsume).Scan(&cacheStat).Error; err != nil {
-		common.SysError(common.LogText("failed to query log cache stat: %s", err.Error()))
-		return stat, nil
+	if err := cacheQuery.Where("logs.type = ?", LogTypeConsume).Scan(&cacheStat).Error; err == nil {
+		stat.CacheReadTokens = cacheStat.CacheReadTokens
+		stat.InputTokens = cacheStat.InputTokens
 	}
-	stat.CacheReadTokens = cacheStat.CacheReadTokens
-	stat.InputTokens = cacheStat.InputTokens
-
 	return stat, nil
 }
 
@@ -919,27 +1011,6 @@ func logCacheTokenSelect() string {
 		"COALESCE(SUM(prompt_tokens + CASE WHEN " + semantic + " = 'anthropic' THEN " + cacheRead + " + " + cacheWrite + " ELSE 0 END), 0) AS input_tokens"
 }
 
-func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string) (token int) {
-	tx := LOG_DB.Table("logs").Select("COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0)")
-	if username != "" {
-		tx = tx.Where("username = ?", username)
-	}
-	if tokenName != "" {
-		tx = tx.Where("token_name = ?", tokenName)
-	}
-	if startTimestamp != 0 {
-		tx = tx.Where("created_at >= ?", startTimestamp)
-	}
-	if endTimestamp != 0 {
-		tx = tx.Where("created_at <= ?", endTimestamp)
-	}
-	if modelName != "" {
-		tx = tx.Where("model_name = ?", modelName)
-	}
-	tx.Where("type = ?", LogTypeConsume).Scan(&token)
-	return token
-}
-
 func CountOldLog(ctx context.Context, targetTimestamp int64) (int64, error) {
 	var total int64
 	if err := LOG_DB.WithContext(ctx).Model(&Log{}).Where("created_at < ?", targetTimestamp).Count(&total).Error; err != nil {
@@ -949,53 +1020,82 @@ func CountOldLog(ctx context.Context, targetTimestamp int64) (int64, error) {
 }
 
 func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {
+	if ctx == nil || LOG_DB == nil || targetTimestamp <= 0 {
+		return 0, ErrUsageEventInvalid
+	}
 	if limit <= 0 {
 		limit = 100
 	}
 	if nil != ctx.Err() {
 		return 0, ctx.Err()
 	}
+	// Even a perfectly linked fact cannot replace a log while serving readers
+	// still depend on that log. The immutable cutover marker is necessary in
+	// addition to row-local ready/applied payload proof, never Complete history.
+	installed, err := UsageReadLineageInstalled(ctx)
+	if err != nil {
+		return 0, err
+	}
 
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		// ClickHouse DELETE is a heavy mutation that rewrites data parts, so
-		// per-batch mutations would be pathologically slow. Remove all matching
-		// rows in a single synchronous mutation regardless of limit; the reported
-		// count lets the caller's progress loop complete in one pass.
-		total, err := CountOldLog(ctx, targetTimestamp)
-		if err != nil {
-			return 0, err
-		}
-		if total == 0 {
-			return 0, nil
-		}
-		if err := LOG_DB.WithContext(ctx).Exec(
-			"ALTER TABLE logs DELETE WHERE created_at < ? SETTINGS mutations_sync = 1",
-			targetTimestamp,
-		).Error; err != nil {
-			return 0, err
-		}
-		reclaimRequestContentAfterLogDeletion(ctx, targetTimestamp)
-		return total, nil
+		// A retained multiset checkpoint does not fence late writes while a
+		// broad ClickHouse mutation runs. Keep application deletion closed
+		// until that source-owner fence is implemented. Native TTL remains
+		// a separate operator responsibility.
+		return 0, ErrUsageStatisticsNotReady
 	}
 
 	// DELETE LIMIT is ignored by PostgreSQL. Materialize only one bounded page
 	// of IDs first; this also avoids MySQL's LIMIT-in-IN-subquery restriction.
-	var ids []int
-	if err := LOG_DB.WithContext(ctx).Model(&Log{}).
-		Where("created_at < ?", targetTimestamp).Order("created_at, id").Limit(min(limit, 100)).Pluck("id", &ids).Error; err != nil {
+	var deleted int64
+	err = LOG_DB.WithContext(ctx).Transaction(func(sourceTx *gorm.DB) error {
+		if sourceTx.Dialector.Name() == "sqlite" {
+			if err := sourceTx.Model(&Log{}).Where("1 = 0").UpdateColumn("id", gorm.Expr("id")).Error; err != nil {
+				return err
+			}
+		}
+		var candidates []Log
+		// Read numeric dimensions and transient metadata only; never Content.
+		if err := lockForUpdateLogDB(sourceTx).Select("id", "user_id", "created_at", "type", "username", "token_name", "model_name", "quota", "prompt_tokens", "completion_tokens", "channel_id", "token_id", logGroupCol, "request_id", "upstream_request_id", "other").
+			Where("created_at < ?", targetTimestamp).Order("created_at, id").Limit(min(limit, 100)).Find(&candidates).Error; err != nil {
+			return err
+		}
+		proofDB := DB.WithContext(ctx)
+		if LOG_DB == DB {
+			proofDB = sourceTx
+		}
+		verifiedIDs := make([]int, 0, len(candidates))
+		for _, candidate := range candidates {
+			if candidate.Type == LogTypeConsume || candidate.Type == LogTypeRefund {
+				if !installed {
+					continue // serving legacy readers still require this numeric row
+				}
+				if err := verifyUsageLogDeletion(proofDB, candidate); err != nil {
+					if errors.Is(err, ErrUsageStatisticsNotReady) {
+						continue // leave this unproven row intact
+					}
+					return err
+				}
+			}
+			verifiedIDs = append(verifiedIDs, candidate.Id)
+		}
+		if len(verifiedIDs) == 0 {
+			if len(candidates) > 0 {
+				return ErrUsageStatisticsNotReady
+			}
+			return nil
+		}
+		result := sourceTx.Where("id IN ? AND created_at < ?", verifiedIDs, targetTimestamp).Delete(&Log{})
+		deleted = result.RowsAffected
+		return result.Error
+	})
+	if err != nil {
 		return 0, err
 	}
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	result := LOG_DB.WithContext(ctx).Where("id IN ? AND created_at < ?", ids, targetTimestamp).Delete(&Log{})
-	if nil != result.Error {
-		return 0, result.Error
-	}
-	if result.RowsAffected > 0 {
+	if deleted > 0 {
 		reclaimRequestContentAfterLogDeletion(ctx, targetTimestamp)
 	}
-	return result.RowsAffected, nil
+	return deleted, nil
 }
 
 func reclaimRequestContentAfterLogDeletion(ctx context.Context, cutoff int64) {

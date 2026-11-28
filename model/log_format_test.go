@@ -355,26 +355,35 @@ func TestLogRequestDetailRetentionDatabaseMatrix(t *testing.T) {
 			})
 		}
 		// Relational DELETE must respect its bound on PostgreSQL as well as
-		// MySQL/SQLite; ClickHouse deliberately uses one time-cutoff mutation.
+		// MySQL/SQLite; uncertified ClickHouse broad mutation remains paused.
+		require.NoError(t, MigrateUsageStatistics(DB))
+		require.NoError(t, MigrateUsageEventBackfill(DB))
 		for range 5 {
 			require.NoError(t, db.Create(&Log{UserId: logFilterTestUser, RequestId: common.NewRequestId(), CreatedAt: 500, Type: LogTypeError}).Error)
 		}
 		deletedTotal := int64(0)
 		for range 6 {
 			deleted, err := DeleteOldLogBatch(t.Context(), 600, 2)
+			if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+				require.ErrorIs(t, err, ErrUsageStatisticsNotReady, "broad cleanup stays paused without a no-late-write fence")
+				assert.Zero(t, deleted)
+				break
+			}
 			require.NoError(t, err)
 			deletedTotal += deleted
 			if deleted == 0 {
 				break
 			}
-			if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-				assert.LessOrEqual(t, deleted, int64(2))
-			}
+			assert.LessOrEqual(t, deleted, int64(2))
 		}
-		assert.EqualValues(t, 5, deletedTotal)
 		remaining, err := CountOldLog(t.Context(), 600)
 		require.NoError(t, err)
-		assert.Zero(t, remaining, "repeated bounded batches leave no old rows behind")
+		if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+			assert.EqualValues(t, 5, remaining, "an application guard does not fence native TTL or external deletion")
+		} else {
+			assert.EqualValues(t, 5, deletedTotal)
+			assert.Zero(t, remaining, "repeated bounded batches leave no old rows behind")
+		}
 		for _, table := range GetLogStorageTables(t.Context()) {
 			if common.UsingLogDatabase(common.DatabaseTypeSQLite) {
 				assert.Nil(t, table.Bytes, "SQLite without cheap per-table metadata reports unknown")

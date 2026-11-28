@@ -110,6 +110,14 @@ func queueTaskBudgetSettlement(ctx context.Context, task *Task, total, subscript
 		if current.Quota != task.Quota || current.Quota < 0 {
 			return ErrBudgetAttemptConflict
 		}
+		if task.UsageTransition != nil {
+			if task.UsageTransition.TargetQuota != total || task.UsageTransition.PreviousQuota != current.Quota {
+				return ErrUsageEventStateConflict
+			}
+			if err := prepareTaskUsageTransitionTx(tx, task, task.UsageTransition); err != nil {
+				return err
+			}
+		}
 		if previous != nil {
 			if task.Status != TaskStatusSuccess && task.Status != TaskStatusFailure {
 				return ErrBudgetConfigInvalid
@@ -134,6 +142,13 @@ func queueTaskBudgetSettlement(ctx context.Context, task *Task, total, subscript
 				}
 			}
 			if err := tx.Model(&current).UpdateColumn("quota", total).Error; err != nil {
+				return err
+			}
+		}
+		if task.UsageTransition != nil && task.UsageTransition.Report != nil {
+			if err := ConfirmUsageEventTx(tx, task.UsageTransition.Report.Receipt, UsageEventOutcome{
+				State: UsageEventSourceReady, EvidenceRef: "task_adjustment_report",
+			}); err != nil {
 				return err
 			}
 		}

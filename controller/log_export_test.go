@@ -225,6 +225,63 @@ func TestLogExportRules(t *testing.T) {
 	})
 }
 
+func TestLogStatisticsReturnsCoverageAndHonorsAdminUserScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, _ := newAuditTestDatabase(t, "sqlite", "")
+	useLogExportDatabases(t, db, db, common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.QuotaData{}))
+	require.NoError(t, model.MigrateUsageStatistics(db))
+	require.NoError(t, model.MigrateUsageEventBackfill(db))
+	now := time.Now().Unix()
+	seedUsageStatControllerFact(t, now-30, 1, 11)
+	seedUsageStatControllerFact(t, now-30, 2, 13)
+	query := fmt.Sprintf("start_timestamp=%d&end_timestamp=%d", now-60, now)
+
+	self := callLogHandler(t, GetLogsStat, 1, common.RoleAdminUser, query+"&user_scope=self")[0]
+	require.Equal(t, true, self["success"])
+	assert.EqualValues(t, 11, self["data"].(map[string]any)["quota"])
+	assertUsageFactCoverageMap(t, self["coverage"].(map[string]any), now-60, now)
+
+	others := callLogHandler(t, GetLogsStat, 1, common.RoleAdminUser, query+"&user_scope=others")[0]
+	require.Equal(t, true, others["success"])
+	assert.EqualValues(t, 13, others["data"].(map[string]any)["quota"])
+	assertUsageFactCoverageMap(t, others["coverage"].(map[string]any), now-60, now)
+
+	invalid := callLogHandler(t, GetLogsStat, 1, common.RoleAdminUser, query+"&user_scope=self&user_scope=others")[0]
+	assert.Equal(t, false, invalid["success"], "duplicate authenticated scope selectors must fail closed")
+
+	own := callLogHandler(t, GetLogsSelfStat, 1, common.RoleCommonUser, query)[0]
+	require.Equal(t, true, own["success"])
+	assert.EqualValues(t, 11, own["data"].(map[string]any)["quota"])
+	assertUsageFactCoverageMap(t, own["coverage"].(map[string]any), now-60, now)
+}
+
+func seedUsageStatControllerFact(t *testing.T, occurredAt int64, userID, quota int64) {
+	t.Helper()
+	known := model.UsageEventKnownUserID | model.UsageEventKnownUsername | model.UsageEventKnownModelName |
+		model.UsageEventKnownPromptTokens | model.UsageEventKnownCompletionTokens | model.UsageEventKnownQuota |
+		model.UsageEventKnownCacheReadTokens | model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownUsageSemantic
+	report, err := model.NewUsageSourceReport(context.Background(), model.UsageEventSourceRelay, model.UsageEventKindConsume, model.UsageEventInput{
+		KnownMask: known, OccurredAt: occurredAt, UserID: userID, Username: fmt.Sprintf("user-%d", userID),
+		ModelName: "coverage-test", PromptTokens: 3, CompletionTokens: 2, QuotaMagnitude: quota,
+		UsageSemantic: model.UsageSemanticOpenAI,
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.PrepareUsageSourceReport(context.Background(), report))
+	require.NoError(t, model.ConfirmUsageSourceReport(context.Background(), report, model.UsageEventSourceReady, fmt.Sprintf("coverage-test-%d", userID)))
+}
+
+func assertUsageFactCoverageMap(t *testing.T, coverage map[string]any, start, end int64) {
+	t.Helper()
+	assert.Equal(t, false, coverage["complete"])
+	assert.Equal(t, string(model.UsageCoveragePartial), coverage["coverage"])
+	assert.Equal(t, string(model.UsageCoverageUnknown), coverage["historical_coverage"])
+	assert.Equal(t, string(model.UsageCoveragePartial), coverage["live_coverage"])
+	assert.EqualValues(t, start, coverage["start_timestamp"])
+	assert.EqualValues(t, end, coverage["end_timestamp"])
+	assert.Equal(t, false, coverage["legacy_baseline_included"])
+}
+
 func TestLogRequestContentAuthorizationAndLinks(t *testing.T) {
 	admin, _ := setupAccessTokenAudit(t)
 	db := model.DB

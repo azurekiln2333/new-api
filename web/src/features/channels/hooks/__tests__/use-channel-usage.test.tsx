@@ -83,9 +83,19 @@ afterEach(() => {
 })
 
 test('summaries hook keys usage by channel id and requests duplicate ids once', async () => {
+  const coverage = {
+    complete: false,
+    coverage: 'partial' as const,
+    historical_coverage: 'partial' as const,
+    live_coverage: 'complete' as const,
+    legacy_baseline_included: false,
+    start_timestamp: 0,
+    end_timestamp: 0,
+  }
   const get = vi.spyOn(api, 'get').mockResolvedValue({
     data: {
       success: true,
+      coverage,
       data: {
         items: [
           usage({ channel_id: 3, total_tokens: 30 }),
@@ -102,6 +112,7 @@ test('summaries hook keys usage by channel id and requests duplicate ids once', 
   await waitFor(() => expect(result.current.usageByChannel[3]).toBeDefined())
   expect(result.current.usageByChannel[3].total_tokens).toBe(30)
   expect(result.current.usageByChannel[5].total_tokens).toBe(50)
+  expect(result.current.coverage).toEqual(coverage)
   expect(get).toHaveBeenCalledOnce()
   expect(get).toHaveBeenCalledWith(
     '/api/channel/usage',
@@ -170,7 +181,7 @@ function renderUsedTokens(
 ) {
   render(
     <I18nextProvider i18n={i18n}>
-      <ChannelUsageContext.Provider value={map}>
+      <ChannelUsageContext.Provider value={{ usageByChannel: map }}>
         <ChannelRowActionsLayoutContext.Provider value={layout}>
           <ChannelUsedTokens channelId={1} tooltipOpen={tooltipOpen} />
         </ChannelRowActionsLayoutContext.Provider>

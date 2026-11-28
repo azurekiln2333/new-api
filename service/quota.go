@@ -232,7 +232,13 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		logContent = append(logContent, common.NewMessage("Possibly an upstream timeout"))
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d",
 			relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
-	} else {
+	}
+	// This occurrence belongs to this turn; request IDs can span many turns.
+	// Audio/realtime logs report inclusive input and no separate cache totals.
+	usageReport := PrepareRelayUsageReport(ctx, relayInfo, model.UsageEventSourceRelay,
+		modelName, tokenName, usage.InputTokens, usage.OutputTokens, 0, 0, "openai", -1, quota)
+	ConfirmRelayUsageReport(ctx, usageReport, model.UsageEventSourceReady, "relay_realtime_report")
+	if totalTokens != 0 {
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
@@ -250,6 +256,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		UsageReport:      usageReport,
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
 		CompletionTokens: usage.OutputTokens,
@@ -371,7 +378,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logContent = append(logContent, common.NewMessage("Possibly an upstream timeout"))
 		logger.LogError(ctx, common.LogText("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d",
 			relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, billingModelName, relayInfo.FinalPreConsumedQuota))
-	} else {
+	}
+	usageReport := PrepareRelayUsageReport(ctx, relayInfo, model.UsageEventSourceRelay,
+		billingModelName, tokenName, usage.PromptTokens, usage.CompletionTokens, 0, 0, "openai", -1, quota)
+	ConfirmRelayUsageReport(ctx, usageReport, model.UsageEventSourceReady, "relay_audio_report")
+	if totalTokens != 0 || fixedPriceBilling {
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
@@ -389,6 +400,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		UsageReport:      usageReport,
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,

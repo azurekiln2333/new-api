@@ -63,6 +63,9 @@ func TestMain(m *testing.M) {
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
+	if err := model.MigrateUsageStatistics(db); err != nil {
+		panic("failed to migrate usage statistics: " + err.Error())
+	}
 
 	os.Exit(m.Run())
 }
@@ -74,6 +77,10 @@ func TestMain(m *testing.M) {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		model.DB.Exec("DELETE FROM usage_events")
+		model.DB.Exec("DELETE FROM usage_hours")
+		model.DB.Exec("DELETE FROM usage_channel_models")
+		model.DB.Exec("DELETE FROM usage_channels")
 		model.DB.Exec("DELETE FROM tasks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/url"
@@ -218,7 +219,12 @@ func InitDB() (err error) {
 			if err := EnsureLegacyAccessTokenRetireAt(common.GetTimestamp()); err != nil {
 				common.SysError(common.LogText("initialize legacy access token deadline: %s", err.Error()))
 			}
-			return InitializeChannelBudgets()
+			if err := InitializeChannelBudgets(); err != nil {
+				return err
+			}
+			lineageContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return ValidateInstalledUsageLiveLineage(lineageContext)
 		}
 		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
@@ -390,6 +396,20 @@ func migrateDB() error {
 		&AuditEventOutbox{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := MigrateUsageStatistics(DB); err != nil {
+		return err
+	}
+	if err := MigrateUsageEventBackfill(DB); err != nil {
+		return err
+	}
+	// Do not install legacy membership automatically. A deployment owner must
+	// run the bounded baseline inspection and provide an external old-writer /
+	// buffer / TTL fence before activation.
+	lineageContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := ValidateInstalledUsageLiveLineage(lineageContext); err != nil {
 		return err
 	}
 	if err := MigrateChannelKeyEntries(); err != nil {

@@ -46,13 +46,13 @@ export function useChannelUsageSummaries(ids: number[]) {
   })
 
   const usageByChannel = useMemo(() => {
-    if (!query.data) return EMPTY_USAGE
+    if (!query.data?.items) return EMPTY_USAGE
     return Object.fromEntries(
-      query.data.map((item) => [item.channel_id, item])
+      query.data.items.map((item) => [item.channel_id, item])
     ) as Record<number, ChannelUsageSummary>
   }, [query.data])
 
-  return { ...query, usageByChannel }
+  return { ...query, usageByChannel, coverage: query.data?.coverage }
 }
 
 /** Per-model usage and status for one channel; idle while `channelId` is null. */

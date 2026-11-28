@@ -27,12 +27,14 @@ import { useMediaQuery } from '@/hooks/use-media-query'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatLogQuota, formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { StatisticsCoverageNotice } from '@/lib/statistics-coverage'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
 import { formatCacheHitRate } from '../lib/format'
-import { buildApiParams } from '../lib/utils'
+import { buildLogStatsParams } from '../lib/utils'
 import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -59,31 +61,61 @@ export function CommonLogsStats() {
   const { t, i18n } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
-  const { isAdminView: isAdmin } = useLogsViewScope()
+  const { isAdminView: isAdmin, userScope } = useLogsViewScope()
+  const userId = useAuthStore((state) => state.auth.user?.id ?? 0)
   const searchParams = route.useSearch()
   const { sensitiveVisible } = useUsageLogsContext()
 
-  const { data: stats, isLoading } = useQuery({
-    queryKey: ['usage-logs-stats', isAdmin, searchParams],
-    queryFn: async () => {
-      const params = buildApiParams({
-        page: 1,
-        pageSize: 1,
+  const { data: statsResult, isLoading } = useQuery({
+    queryKey: [
+      'usage-logs-stats',
+      isAdmin,
+      userScope,
+      userId,
+      searchParams,
+    ],
+    queryFn: async ({ signal }) => {
+      const params = buildLogStatsParams({
         searchParams,
         columnFilters: [],
         isAdmin,
+        userScope,
       })
 
       const result = isAdmin
-        ? requireServerSuccess(await getLogStats(params))
-        : requireServerSuccess(await getUserLogStats(params))
+        ? requireServerSuccess(await getLogStats(params, signal))
+        : requireServerSuccess(await getUserLogStats(params, signal))
 
-      return result.success
-        ? result.data || DEFAULT_LOG_STATS
-        : DEFAULT_LOG_STATS
+      return {
+        stats: result.data ?? DEFAULT_LOG_STATS,
+        coverage: result.coverage,
+      }
     },
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData, previousQuery) => {
+      const previousKey = previousQuery?.queryKey
+      if (
+        previousKey?.[1] !== isAdmin ||
+        previousKey?.[2] !== userScope ||
+        previousKey?.[3] !== userId
+      ) {
+        return undefined
+      }
+      return previousData
+    },
   })
+  const stats = statsResult?.stats
+  const coverage = statsResult?.coverage
+  const hasObservedUsage = Boolean(
+    stats &&
+      [
+        stats.quota,
+        stats.rpm,
+        stats.tpm,
+        stats.cache_read_tokens ?? 0,
+        stats.input_tokens ?? 0,
+      ].some((value) => value !== 0)
+  )
+  const hasNoVerifiedUsage = coverage?.complete !== true && !hasObservedUsage
 
   const rowClassName =
     'flex max-w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto sm:flex-wrap sm:gap-2 sm:overflow-visible'
@@ -104,57 +136,81 @@ export function CommonLogsStats() {
     )
   }
 
-  const cacheHitRate = formatCacheHitRate(
-    stats?.cache_read_tokens,
-    stats?.input_tokens
-  )
+  const cacheHitRate = hasNoVerifiedUsage
+    ? '—'
+    : formatCacheHitRate(
+        stats?.cache_read_tokens,
+        stats?.input_tokens
+      )
+  let usageValue = '••••'
+  if (hasNoVerifiedUsage) {
+    usageValue = '—'
+  } else if (sensitiveVisible) {
+    usageValue = formatLogQuota(stats?.quota ?? 0)
+  }
+  const rpmValue = hasNoVerifiedUsage ? '—' : String(stats?.rpm ?? 0)
+  const tpmValue = hasNoVerifiedUsage
+    ? '—'
+    : formatNumber(stats?.tpm ?? 0, locale)
 
   return (
-    <div role='group' aria-label={t('Usage')} className={rowClassName}>
-      <StatBadge
-        label={t('Usage')}
-        value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
-        accent='bg-sky-500/70'
-      />
-      <StatBadge
-        label={t('RPM')}
-        value={stats?.rpm || 0}
-        accent='bg-rose-500/65'
-      />
-      <StatBadge
-        label={t('TPM')}
-        value={formatNumber(stats?.tpm ?? 0, locale)}
-        accent='bg-slate-400/70'
-      />
-      {isMobile ? (
-        <QuotaDetailsPopover
-          title={t('Cache Hit Rate')}
-          triggerLabel={`${t('Cache Hit Rate')} ${cacheHitRate}`}
-          className='w-auto shrink-0'
-          triggerClassName='border-border/60 bg-muted/25 text-foreground/85 h-7 w-auto justify-center gap-1 rounded-md border px-1.5 py-0 text-[10px] shadow-xs'
-          details={[
-            { label: t('Cache Hit Rate'), value: cacheHitRate },
-            {
-              label: t('Cache Read'),
-              value: formatNumber(stats?.cache_read_tokens ?? 0, locale),
-            },
-            {
-              label: t('Input Tokens'),
-              value: formatNumber(stats?.input_tokens ?? 0, locale),
-            },
-          ]}
-        >
-          <Zap className='size-3 text-emerald-500/70' aria-hidden='true' />
-          <span className='font-mono font-semibold tabular-nums'>
-            {cacheHitRate}
-          </span>
-        </QuotaDetailsPopover>
-      ) : (
+    <div className='flex min-w-0 flex-col gap-1'>
+      <div role='group' aria-label={t('Usage')} className={rowClassName}>
         <StatBadge
-          label={t('Cache Hit Rate')}
-          value={cacheHitRate}
-          accent='bg-emerald-500/70'
+          label={t('Usage')}
+          value={usageValue}
+          accent='bg-sky-500/70'
         />
+        <StatBadge
+          label={t('RPM')}
+          value={rpmValue}
+          accent='bg-rose-500/65'
+        />
+        <StatBadge
+          label={t('TPM')}
+          value={tpmValue}
+          accent='bg-slate-400/70'
+        />
+        {isMobile ? (
+          <QuotaDetailsPopover
+            title={t('Cache Hit Rate')}
+            triggerLabel={`${t('Cache Hit Rate')} ${cacheHitRate}`}
+            className='w-auto shrink-0'
+            triggerClassName='border-border/60 bg-muted/25 text-foreground/85 h-7 w-auto justify-center gap-1 rounded-md border px-1.5 py-0 text-[10px] shadow-xs'
+            details={[
+              { label: t('Cache Hit Rate'), value: cacheHitRate },
+              {
+                label: t('Cache Read'),
+                value: hasNoVerifiedUsage
+                  ? '—'
+                  : formatNumber(stats?.cache_read_tokens ?? 0, locale),
+              },
+              {
+                label: t('Input Tokens'),
+                value: hasNoVerifiedUsage
+                  ? '—'
+                  : formatNumber(stats?.input_tokens ?? 0, locale),
+              },
+            ]}
+          >
+            <Zap className='size-3 text-emerald-500/70' aria-hidden='true' />
+            <span className='font-mono font-semibold tabular-nums'>
+              {cacheHitRate}
+            </span>
+          </QuotaDetailsPopover>
+        ) : (
+          <StatBadge
+            label={t('Cache Hit Rate')}
+            value={cacheHitRate}
+            accent='bg-emerald-500/70'
+          />
+        )}
+      </div>
+      <StatisticsCoverageNotice coverage={coverage} />
+      {hasNoVerifiedUsage && (
+        <p role='status' className='text-muted-foreground text-xs'>
+          {t('No verified usage data available')}
+        </p>
       )}
     </div>
   )

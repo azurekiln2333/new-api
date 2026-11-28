@@ -166,6 +166,10 @@ jobs:
       TEST_MYSQL_DSN: 'root:integration@tcp(127.0.0.1:3306)/relay_policy?charset=utf8mb4&parseTime=True&loc=Local'
       TEST_POSTGRES_DSN: 'postgres://postgres:integration@127.0.0.1:5432/relay_policy?sslmode=disable'
       TEST_CLICKHOUSE_DSN: 'clickhouse://default:integration@127.0.0.1:9000/relay_policy'
+      TEST_FIXED_MYSQL_DSN: 'root:integration@tcp(127.0.0.1:3306)/usage_reporting?charset=utf8mb4&parseTime=True&loc=Local'
+      TEST_FIXED_MYSQL_LOG_DSN: 'root:integration@tcp(127.0.0.1:3306)/usage_reporting_log?charset=utf8mb4&parseTime=True&loc=Local'
+      TEST_FIXED_POSTGRES_DSN: 'postgres://postgres:integration@127.0.0.1:5432/usage_reporting?sslmode=disable'
+      TEST_FIXED_POSTGRES_LOG_DSN: 'postgres://postgres:integration@127.0.0.1:5432/usage_reporting_log?sslmode=disable'
       TEST_REDIS_ADDR: '127.0.0.1:6379'
     services:
       mysql:
@@ -244,10 +248,20 @@ jobs:
           CI_CLICKHOUSE_VERSION=$(docker exec ${{ job.services.clickhouse.id }} clickhouse-client --user default --password integration --query 'SELECT version()')
           printf '::notice title=ClickHouse version::%s\n' "$CI_CLICKHOUSE_VERSION"
 
-      - name: Verify startup migration from released baseline
+      - name: Prepare fixed usage reporting databases
+        run: |
+          docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -e "CREATE DATABASE IF NOT EXISTS usage_reporting CHARACTER SET utf8mb4; CREATE DATABASE IF NOT EXISTS usage_reporting_log CHARACTER SET utf8mb4"
+          for DATABASE_NAME in usage_reporting usage_reporting_log; do
+            if ! docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres -Atc "SELECT 1 FROM pg_database WHERE datname = '$DATABASE_NAME'" | grep -q '^1$'; then
+              docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $DATABASE_NAME"
+            fi
+          done
+
+      - name: Verify fresh and latest-release startup twice with separate log stores
         env:
-          RELEASED_BASELINE_SHA: 53a71f88d5b568847cd7233a08f934824dcb22d3
+          GH_TOKEN: ${{ github.token }}
           NODE_TYPE: master
+          LOG_SQL_CLICKHOUSE_TTL_DAYS: '0'
         run: |
           set -o pipefail
           OUTPUT_DIR="$RUNNER_TEMP/released-migration"
@@ -256,35 +270,37 @@ jobs:
           mkdir -p "$OUTPUT_DIR/logs"
 
           echo "Current source: $(git rev-parse HEAD)" | tee -a "$LOG_FILE"
-          echo "Released source: $RELEASED_BASELINE_SHA" | tee -a "$LOG_FILE"
-          git fetch --no-tags https://github.com/azurekiln2333/new-api.git "$RELEASED_BASELINE_SHA"
+          gh api repos/azurekiln2333/new-api/releases/latest > "$OUTPUT_DIR/latest-release.json"
+          jq -e '.draft == false and .prerelease == false and .published_at != null' \
+            "$OUTPUT_DIR/latest-release.json"
+          RELEASED_BASELINE_TAG=$(jq -er '.tag_name' "$OUTPUT_DIR/latest-release.json")
+          git fetch --no-tags https://github.com/azurekiln2333/new-api.git "refs/tags/$RELEASED_BASELINE_TAG"
+          RELEASED_BASELINE_SHA=$(git rev-parse 'FETCH_HEAD^{commit}')
+          echo "Released source: $RELEASED_BASELINE_SHA tag=$RELEASED_BASELINE_TAG" | tee -a "$LOG_FILE"
           git worktree add --detach "$RELEASED_DIR" "$RELEASED_BASELINE_SHA"
           mkdir -p "$RELEASED_DIR/.github/scripts"
           cp .github/scripts/released_migration_probe.go "$RELEASED_DIR/.github/scripts/"
 
-          docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -e 'CREATE DATABASE released_migration_mysql CHARACTER SET utf8mb4'
-          docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE released_migration_postgres'
-
           run_probe() {
-            source_dir="$1"
-            phase="$2"
-            engine="$3"
-            dsn="$4"
-            sqlite_path="$5"
-            manifest="$OUTPUT_DIR/$engine.indexes"
-            source_sha="$RELEASED_BASELINE_SHA"
+            local source_dir="$1" phase="$2" scenario="$3" dsn="$4" sqlite_path="$5"
+            local log_dsn="$6" log_dialect="$7" shared="$8"
+            local source_sha="$RELEASED_BASELINE_SHA"
             if [ "$source_dir" = "$GITHUB_WORKSPACE" ]; then
               source_sha="$(git rev-parse HEAD)"
             fi
-            echo "Invoking model.InitDB: source=$source_sha engine=$engine phase=$phase" | tee -a "$LOG_FILE"
-            echo "COMMAND: (cd $source_dir && SQL_DSN=<engine DSN redacted> SQLITE_PATH=$sqlite_path REDEMPTION_INDEX_MANIFEST=$manifest MIGRATION_LOG_DIR=$OUTPUT_DIR/logs/$engine-$phase-$source_sha go run .github/scripts/released_migration_probe.go $phase)" | tee -a "$LOG_FILE"
+            echo "Invoking model.InitDB + model.InitLogDB: source=$source_sha scenario=$scenario phase=$phase log=$log_dialect shared=$shared" | tee -a "$LOG_FILE"
+            echo "COMMAND: (cd $source_dir && SQL_DSN=<isolated DSN> LOG_SQL_DSN=<isolated DSN or shared> SQLITE_PATH=$sqlite_path REDEMPTION_INDEX_MANIFEST=$OUTPUT_DIR/$scenario.legacy.json MIGRATION_USAGE_MANIFEST=$OUTPUT_DIR/$scenario.usage.json MIGRATION_LOG_DIALECT=$log_dialect MIGRATION_SHARED_LOG=$shared MIGRATION_LOG_DIR=$OUTPUT_DIR/logs/$scenario-$phase go run .github/scripts/released_migration_probe.go $phase)" | tee -a "$LOG_FILE"
             set +e
             (
               cd "$source_dir" || exit
               SQL_DSN="$dsn" \
+              LOG_SQL_DSN="$log_dsn" \
               SQLITE_PATH="$sqlite_path" \
-              REDEMPTION_INDEX_MANIFEST="$manifest" \
-              MIGRATION_LOG_DIR="$OUTPUT_DIR/logs/$engine-$phase-$source_sha" \
+              REDEMPTION_INDEX_MANIFEST="$OUTPUT_DIR/$scenario.legacy.json" \
+              MIGRATION_USAGE_MANIFEST="$OUTPUT_DIR/$scenario.usage.json" \
+              MIGRATION_LOG_DIALECT="$log_dialect" \
+              MIGRATION_SHARED_LOG="$shared" \
+              MIGRATION_LOG_DIR="$OUTPUT_DIR/logs/$scenario-$phase" \
               go run .github/scripts/released_migration_probe.go "$phase"
             ) 2>&1 | tee -a "$LOG_FILE"
             probe_status=("${PIPESTATUS[@]}")
@@ -295,27 +311,85 @@ jobs:
               failure_context="${failure_context//%/%25}"
               failure_context="${failure_context//$'\r'/%0D}"
               failure_context="${failure_context//$'\n'/%0A}"
-              printf '::error title=Released migration failure::engine=%s phase=%s source=%s%%0A%s\n' "$engine" "$phase" "$source_sha" "$failure_context"
+              printf '::error title=Startup migration failure::scenario=%s phase=%s source=%s%%0A%s\n' "$scenario" "$phase" "$source_sha" "$failure_context"
               return "${probe_status[0]}"
             fi
-            return "${probe_status[1]}"
+            if [ "${probe_status[1]}" -ne 0 ]; then
+              return "${probe_status[1]}"
+            fi
+            printf '%s\t%s\t%s\n' "$scenario" "$phase" "$source_sha" >> "$OUTPUT_DIR/completed.tsv"
           }
 
-          MYSQL_RELEASE_DSN='root:integration@tcp(127.0.0.1:3306)/released_migration_mysql?charset=utf8mb4&parseTime=True&loc=Local'
-          POSTGRES_RELEASE_DSN='postgres://postgres:integration@127.0.0.1:5432/released_migration_postgres?sslmode=disable'
-          SQLITE_RELEASE_PATH="$OUTPUT_DIR/released-migration.sqlite"
+          create_store() {
+            local engine="$1" name="$2"
+            case "$engine" in
+              sqlite)
+                printf 'local'
+                ;;
+              mysql)
+                docker exec ${{ job.services.mysql.id }} mysql -uroot -pintegration -e "CREATE DATABASE $name CHARACTER SET utf8mb4" > /dev/null || return
+                printf 'root:integration@tcp(127.0.0.1:3306)/%s?charset=utf8mb4&parseTime=True&loc=Local' "$name"
+                ;;
+              postgres)
+                docker exec ${{ job.services.postgres.id }} psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $name" > /dev/null || return
+                printf 'postgres://postgres:integration@127.0.0.1:5432/%s?sslmode=disable' "$name"
+                ;;
+              clickhouse)
+                docker exec ${{ job.services.clickhouse.id }} clickhouse-client --user default --password integration --query "CREATE DATABASE $name" > /dev/null || return
+                printf 'clickhouse://default:integration@127.0.0.1:9000/%s' "$name"
+                ;;
+              *) return 1 ;;
+            esac
+          }
 
-          run_probe "$RELEASED_DIR" seed mysql "$MYSQL_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
-          run_probe "$GITHUB_WORKSPACE" verify mysql "$MYSQL_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
-          run_probe "$GITHUB_WORKSPACE" verify mysql "$MYSQL_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
+          # local opens SQLITE_PATH for both stores when primary is SQLite.
+          # Use a MySQL primary to exercise a genuinely separate SQLite LOG_DB.
+          for topology in sqlite-shared mysql-shared postgres-shared mysql-sqlite mysql-mysql postgres-postgres sqlite-clickhouse; do
+            primary_engine="${topology%%-*}"
+            log_engine="${topology#*-}"
+            for installation in fresh upgrade; do
+              scenario="$topology-$installation"
+              database_name="migration_${scenario//-/_}"
+              primary_dsn="$(create_store "$primary_engine" "${database_name}_primary")"
+              sqlite_path="$OUTPUT_DIR/$scenario.sqlite"
+              shared=false
+              if [ "$log_engine" = shared ]; then
+                log_dsn=''
+                log_dialect="$primary_engine"
+                shared=true
+              else
+                log_dsn="$(create_store "$log_engine" "${database_name}_log")"
+                log_dialect="$log_engine"
+              fi
+              if [ "$installation" = upgrade ]; then
+                run_probe "$RELEASED_DIR" seed "$scenario" "$primary_dsn" "$sqlite_path" "$log_dsn" "$log_dialect" "$shared"
+              fi
+              run_probe "$GITHUB_WORKSPACE" "$installation-first" "$scenario" "$primary_dsn" "$sqlite_path" "$log_dsn" "$log_dialect" "$shared"
+              run_probe "$GITHUB_WORKSPACE" "$installation-second" "$scenario" "$primary_dsn" "$sqlite_path" "$log_dsn" "$log_dialect" "$shared"
+            done
+          done
+          python3 - "$OUTPUT_DIR" "$(git rev-parse HEAD)" "$RELEASED_BASELINE_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
 
-          run_probe "$RELEASED_DIR" seed postgres "$POSTGRES_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
-          run_probe "$GITHUB_WORKSPACE" verify postgres "$POSTGRES_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
-          run_probe "$GITHUB_WORKSPACE" verify postgres "$POSTGRES_RELEASE_DSN" "$SQLITE_RELEASE_PATH"
-
-          run_probe "$RELEASED_DIR" seed sqlite local "$SQLITE_RELEASE_PATH"
-          run_probe "$GITHUB_WORKSPACE" verify sqlite local "$SQLITE_RELEASE_PATH"
-          run_probe "$GITHUB_WORKSPACE" verify sqlite local "$SQLITE_RELEASE_PATH"
+          output, current_sha, released_sha = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          topologies = ("sqlite-shared", "mysql-shared", "postgres-shared", "mysql-sqlite", "mysql-mysql", "postgres-postgres", "sqlite-clickhouse")
+          expected = set()
+          for topology in topologies:
+              for installation in ("fresh", "upgrade"):
+                  scenario = f"{topology}-{installation}"
+                  for phase in (f"{installation}-first", f"{installation}-second"):
+                      expected.add((scenario, phase, current_sha))
+                  if installation == "upgrade":
+                      expected.add((scenario, "seed", released_sha))
+          actual = [tuple(line.split("\t")) for line in (output / "completed.tsv").read_text().splitlines()]
+          if len(actual) != len(expected) or set(actual) != expected:
+              raise SystemExit(f"Incomplete startup matrix: missing={expected - set(actual)}, unexpected={set(actual) - expected}")
+          report = {"scope": "usage event/projection/lineage/coverage/backfill physical schema; behavioral and end-to-end gates remain separate", "current_sha": current_sha, "released_sha": released_sha, "completed": sorted(actual)}
+          (output / "matrix-report.json").write_text(json.dumps(report, indent=2) + "\n")
+          print(f"Verified {len(actual)} startup invocations, including both current startups in every fresh/upgrade topology")
+          PY
 
       - name: Upload released migration logs
         if: always()
@@ -453,6 +527,174 @@ jobs:
         run: >-
           go test -race -p 1 -count=1 -v ./model
           -run '^(TestManagementMutationOutboxDatabaseMatrix|TestConcurrentCodeBatchSubmitCollapsesToOneBatch|TestAuditOutboxReplayAfterLostAcknowledgement|TestCodeOperationRecoveryRequiresAuthorization)$'
+
+      - name: Verify durable usage schema and race matrix with required branch evidence
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          : "${TEST_MYSQL_DSN:?Required usage MySQL fixture DSN is missing}"
+          : "${TEST_POSTGRES_DSN:?Required usage PostgreSQL fixture DSN is missing}"
+          OUTPUT_DIR="$RUNNER_TEMP/usage-foundation-tests"
+          mkdir -p "$OUTPUT_DIR"
+          run_usage_tests() {
+            local label="$1"
+            shift
+            set +e
+            go test -json -p 1 -count=1 "$@" 2>&1 | tee "$OUTPUT_DIR/$label.jsonl"
+            local command_status=("${PIPESTATUS[@]}")
+            set -e
+            if [ "${command_status[0]}" -ne 0 ]; then
+              return "${command_status[0]}"
+            fi
+            return "${command_status[1]}"
+          }
+          run_usage_tests schema ./model -run '^TestMigrationSchemaStability$/^(sqlite|mysql|postgres)$/^usage_statistics_foundation$'
+          run_usage_tests race -race ./model -run '^TestUsageEventFoundationDatabaseMatrix$'
+          python3 - "$OUTPUT_DIR" "$GITHUB_SHA" <<'PY'
+          import collections
+          import json
+          import pathlib
+          import sys
+
+          output, source_sha = pathlib.Path(sys.argv[1]), sys.argv[2]
+          cases = (
+              "canonical_claim_replay_and_full_payload_conflict",
+              "source_confirmation_never_promotes_on_prepare_or_recovery",
+              "atomic_projection_rollback_and_delayed_recovery",
+              "overflow_does_not_commit_any_target_or_marker",
+              "explicit_semantics_unknownness_refunds_and_timestamp_max",
+              "two_connection_first_claim_and_apply_once",
+              "source_report_freezes_identity_and_optional_log_link",
+              "transaction_variants_use_only_the_caller_connection",
+          )
+          expected = {"schema": set(), "race": {"TestUsageEventFoundationDatabaseMatrix"}}
+          for engine in ("sqlite", "mysql", "postgres"):
+              expected["schema"].add(f"TestMigrationSchemaStability/{engine}/usage_statistics_foundation")
+              prefix = f"TestUsageEventFoundationDatabaseMatrix/{engine}"
+              expected["race"].add(prefix)
+              expected["race"].update(f"{prefix}/{case}" for case in cases)
+              expected["race"].update(f"{prefix}/atomic_projection_rollback_and_delayed_recovery/{table}" for table in ("usage_channel_models", "usage_hours", "usage_events"))
+              expected["race"].update(f"{prefix}/overflow_does_not_commit_any_target_or_marker/{table}" for table in ("usage_channels", "usage_channel_models", "usage_hours"))
+          report = {"source_sha": source_sha, "scope": "foundation schema and in-process concurrency/recovery", "passed": {}}
+          for label, required in expected.items():
+              passed = collections.Counter()
+              skipped = []
+              for line in (output / f"{label}.jsonl").read_text().splitlines():
+                  try:
+                      event = json.loads(line)
+                  except json.JSONDecodeError:
+                      continue  # Toolchain download/build diagnostics are not test events.
+                  if event.get("Package") != "github.com/QuantumNous/new-api/model":
+                      continue
+                  name, action = event.get("Test", ""), event.get("Action")
+                  if action == "pass":
+                      passed[name] += 1
+                  elif action in ("skip", "fail"):
+                      skipped.append((name, action))
+              missing = sorted(name for name in required if passed[name] != 1)
+              if missing or skipped:
+                  raise SystemExit(f"{label}: missing/repeated required passes={missing}; skipped/failed={skipped}")
+              report["passed"][label] = sorted(required)
+          (output / "required-branches.json").write_text(json.dumps(report, indent=2) + "\n")
+          print("Every required SQLite/MySQL/PostgreSQL foundation schema, recovery and concurrency branch passed")
+          PY
+
+      - name: Upload durable usage foundation test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: usage-foundation-tests-${{ github.sha }}
+          path: ${{ runner.temp }}/usage-foundation-tests/
+          if-no-files-found: warn
+
+      - name: Verify hosted durable usage source, reader, backfill, and retention evidence
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          : "${TEST_FIXED_MYSQL_DSN:?Required fixed-price MySQL fixture DSN is missing}"
+          : "${TEST_FIXED_MYSQL_LOG_DSN:?Required separate MySQL log fixture DSN is missing}"
+          : "${TEST_FIXED_POSTGRES_DSN:?Required fixed-price PostgreSQL fixture DSN is missing}"
+          : "${TEST_FIXED_POSTGRES_LOG_DSN:?Required separate PostgreSQL log fixture DSN is missing}"
+          OUTPUT_DIR="${RUNNER_TEMP}/usage-statistics-tests"
+          mkdir -p "${OUTPUT_DIR}"
+          run_stats_tests() {
+            local label="${1}"
+            shift
+            set +e
+            go test -json -p 1 -count=1 "${@}" 2>&1 | tee "${OUTPUT_DIR}/${label}.jsonl"
+            local command_status=("${PIPESTATUS[@]}")
+            set -e
+            if [ "${command_status[0]}" -ne 0 ]; then return "${command_status[0]}"; fi
+            return "${command_status[1]}"
+          }
+          run_stats_tests sources ./service -run '^(TestFixedPriceBillingDatabaseMatrix|TestRelayUsageReportsDatabaseMatrix|TestTaskUsageReportsDatabaseMatrix)$'
+          run_stats_tests readers ./model -run '^TestUsageStatisticsReadersDatabaseMatrix$'
+          run_stats_tests transition ./model -run '^(TestUsageStatisticsTransition(DatabaseMatrix|RejectsAmbiguousHistoryAndBuffers)|TestInstallUsageReadLineageRequiresRetainedSetProof)$'
+          run_stats_tests transition-race -race ./model -run '^TestUsageStatisticsTransitionDatabaseMatrix$'
+          run_stats_tests backfill ./model -run '^(TestSumUsedQuotaCountsCacheTokensByUsageSemantics|TestUsageLegacyQuotaDataBaselineIsBoundedAndStable|TestDeleteOldLogBatchRequiresExactLinkedEventPayload|TestDeleteOldLogBatchRejectsLegacyNodeMutation|TestDeleteOldLogBatchRejectsLinkedNodeMutation|TestUsageEventBackfillBatchResumesAfterTransactionalFailure)$'
+          run_stats_tests retention-service ./service -run '^(TestSystemTaskLogRetentionStopsWhenUsageStatisticsAreNotReady|TestSystemTaskLogRetentionDeletesOnlyAfterLegacyImportAndPreservesUsageTotals)$'
+          run_stats_tests retention-model ./model -run '^TestLogRequestDetailRetentionDatabaseMatrix$'
+          python3 - "${OUTPUT_DIR}" "${GITHUB_SHA}" <<'PY'
+          import collections, json, pathlib, sys
+          output, source_sha = pathlib.Path(sys.argv[1]), sys.argv[2]
+          expected = {
+              "sources": ("github.com/QuantumNous/new-api/service", {
+                  "TestFixedPriceBillingDatabaseMatrix", "TestFixedPriceBillingDatabaseMatrix/sqlite", "TestFixedPriceBillingDatabaseMatrix/mysql", "TestFixedPriceBillingDatabaseMatrix/postgres",
+                  "TestRelayUsageReportsDatabaseMatrix", "TestRelayUsageReportsDatabaseMatrix/sqlite", "TestRelayUsageReportsDatabaseMatrix/mysql", "TestRelayUsageReportsDatabaseMatrix/postgres",
+                  "TestTaskUsageReportsDatabaseMatrix", "TestTaskUsageReportsDatabaseMatrix/sqlite", "TestTaskUsageReportsDatabaseMatrix/mysql", "TestTaskUsageReportsDatabaseMatrix/postgres",
+              }),
+              "readers": ("github.com/QuantumNous/new-api/model", {
+                  "TestUsageStatisticsReadersDatabaseMatrix", "TestUsageStatisticsReadersDatabaseMatrix/sqlite", "TestUsageStatisticsReadersDatabaseMatrix/mysql", "TestUsageStatisticsReadersDatabaseMatrix/postgres",
+              }),
+              "backfill": ("github.com/QuantumNous/new-api/model", {"TestSumUsedQuotaCountsCacheTokensByUsageSemantics", "TestUsageLegacyQuotaDataBaselineIsBoundedAndStable", "TestDeleteOldLogBatchRequiresExactLinkedEventPayload", "TestDeleteOldLogBatchRejectsLegacyNodeMutation", "TestDeleteOldLogBatchRejectsLinkedNodeMutation", "TestUsageEventBackfillBatchResumesAfterTransactionalFailure", "TestUsageEventBackfillBatchResumesAfterTransactionalFailure/sqlite", "TestUsageEventBackfillBatchResumesAfterTransactionalFailure/mysql", "TestUsageEventBackfillBatchResumesAfterTransactionalFailure/postgres"}),
+              "retention-service": ("github.com/QuantumNous/new-api/service", {"TestSystemTaskLogRetentionStopsWhenUsageStatisticsAreNotReady", "TestSystemTaskLogRetentionDeletesOnlyAfterLegacyImportAndPreservesUsageTotals"}),
+              "retention-model": ("github.com/QuantumNous/new-api/model", {"TestLogRequestDetailRetentionDatabaseMatrix"}),
+          }
+          transition_names = {"TestUsageStatisticsTransitionDatabaseMatrix"}
+          for engine in ("sqlite", "mysql", "postgres"):
+              prefix = f"TestUsageStatisticsTransitionDatabaseMatrix/{engine}"
+              transition_names.add(prefix)
+              retained = f"{prefix}/global_activation_requires_all_retained_numeric_logs"
+              transition_names.add(retained)
+              transition_names.update(f"{retained}/{case}" for case in (
+                  "before_verified_range", "after_verified_range", "after_verified_high_watermark", "changed_retained_payload",
+              ))
+              readers = f"{prefix}/legacy_read_activation_cleanup_barriers"
+              transition_names.add(readers)
+              transition_names.update(f"{readers}/{case}" for case in (
+                  "channel_summary", "channel_detail_before_usage", "channel_detail_after_usage",
+                  "quota_before_usage", "quota_after_quota", "quota_after_rates",
+                  "dashboard_all", "dashboard_username", "dashboard_self", "dashboard_users",
+                  "rankings", "model_totals", "flow",
+              ))
+              transition_names.add(f"{prefix}/empty_model_detail_equal_before_cutover_and_after_cleanup")
+          expected["transition"] = ("github.com/QuantumNous/new-api/model", transition_names | {"TestUsageStatisticsTransitionRejectsAmbiguousHistoryAndBuffers", "TestInstallUsageReadLineageRequiresRetainedSetProof"})
+          expected["transition-race"] = ("github.com/QuantumNous/new-api/model", transition_names)
+          report = {"source_sha": source_sha, "scope": "saved source/read/backfill/retention statistics suites", "fixed_primary_and_log_dsn_matrix": ["sqlite-separate-log", "mysql-separate-log", "postgres-separate-log"], "passed": {}}
+          for label, (package, names) in expected.items():
+              passed = collections.Counter(); skipped = []
+              for line in (output / f"{label}.jsonl").read_text().splitlines():
+                  try: event = json.loads(line)
+                  except json.JSONDecodeError: continue
+                  if event.get("Package") != package: continue
+                  name, action = event.get("Test", ""), event.get("Action")
+                  if action == "pass": passed[name] += 1
+                  elif action in ("skip", "fail"): skipped.append((name, action))
+              missing = sorted(name for name in names if passed[name] != 1)
+              if missing or skipped: raise SystemExit(f"{label}: missing/repeated={missing}; skipped/failed={skipped}")
+              report["passed"][label] = sorted(names)
+          (output / "required-branches.json").write_text(json.dumps(report, indent=2) + "\n")
+          PY
+
+      - name: Upload durable usage statistics test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: usage-statistics-tests-${{ github.sha }}
+          path: ${{ runner.temp }}/usage-statistics-tests/
+          if-no-files-found: warn
 
       - name: Verify allocation identity and quota management on MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}

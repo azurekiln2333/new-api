@@ -122,21 +122,26 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		return false
 	}
 
+	tokenName := ctx.GetString("token_name")
+	usageReport := PrepareRelayUsageReport(ctx, relayInfo, model.UsageEventSourceViolationFee,
+		relayInfo.OriginModelName, tokenName, 0, 0, 0, 0, "openai", -1, feeQuota)
 	result, err := postConsumeQuotaWithResult(relayInfo, feeQuota, 0, true)
 	if result.FundingApplied {
 		relayInfo.ChannelBudget.ChargedQuota += feeQuota
 		settleAttemptChannelBudget(ctx, relayInfo, relayInfo.ChannelBudget.ChargedQuota, true)
 	}
 	if err != nil {
+		// A generic error can follow a funding/token split or an uncertain commit.
+		ConfirmRelayUsageReport(ctx, usageReport, model.UsageEventSourceUnknown, "violation_fee_outcome_unknown")
 		logger.LogError(ctx, common.LogText("failed to charge violation fee: %s", err.Error()))
 		return false
 	}
+	ConfirmRelayUsageReport(ctx, usageReport, model.UsageEventSourceReady, "violation_fee_report")
 
 	model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota)
 	model.UpdateChannelUsedQuota(relayInfo.ChannelId, feeQuota)
 
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
-	tokenName := ctx.GetString("token_name")
 	oai := apiErr.ToOpenAIError(common.UpstreamAddresses(ctx)...)
 
 	other := model.NewLogOther()
@@ -153,6 +158,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	})
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		UsageReport:   usageReport,
 		ChannelId:      relayInfo.ChannelId,
 		ModelName:      relayInfo.OriginModelName,
 		TokenName:      tokenName,

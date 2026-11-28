@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http/httptest"
@@ -16,6 +18,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
@@ -32,6 +35,15 @@ import (
 // The configured DSNs must point at isolated test databases. Each dialect runs
 // the real reservation, settlement and log paths with the same billing cases.
 func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
+	runQuotaReportingDatabaseMatrix(t, runFixedPriceAccountingCases)
+}
+
+func TestRelayUsageReportsDatabaseMatrix(t *testing.T) {
+	runQuotaReportingDatabaseMatrix(t, runDurableUsageReportCases)
+}
+
+func runQuotaReportingDatabaseMatrix(t *testing.T, runCases func(*testing.T, *gorm.DB, *gorm.DB)) {
+	t.Helper()
 	for _, dialect := range []struct {
 		name   common.DatabaseType
 		env    string
@@ -81,6 +93,8 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 			common.SetDatabaseTypes(dialect.name, dialect.name)
 			t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldMainType, oldLogType) })
 			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
+			require.NoError(t, model.MigrateUsageStatistics(db))
+			require.NoError(t, model.MigrateUsageEventBackfill(db))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
 			versionQuery := "select version()"
 			if dialect.name == common.DatabaseTypeSQLite {
@@ -89,7 +103,7 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 			var version string
 			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 			t.Logf("database: %s", version)
-			runFixedPriceAccountingCases(t, db, logDB)
+			runCases(t, db, logDB)
 		})
 	}
 }
@@ -1671,6 +1685,588 @@ func TestAppendToolSurchargeLogInfoWritesOnlyStructuredFields(t *testing.T) {
 	assert.NotContains(t, fields, "file_search")
 	assert.NotContains(t, fields, "image_generation_call")
 	assert.NotContains(t, fields, "image_generation_call_price")
+}
+
+func runDurableUsageReportCases(t *testing.T, db, logDB *gorm.DB) {
+	t.Helper()
+	require.NoError(t, model.MigrateUsageStatistics(db))
+	require.NoError(t, db.AutoMigrate(&model.Midjourney{}))
+	oldRedis, oldBatch, oldQuotaPerUnit := common.RedisEnabled, common.BatchUpdateEnabled, common.QuotaPerUnit
+	oldLogs, oldExport, oldNotify := common.LogConsumeEnabled, common.DataExportEnabled, common.QuotaRemindEnabled
+	common.RedisEnabled, common.BatchUpdateEnabled, common.QuotaRemindEnabled = false, false, false
+	common.QuotaPerUnit = 500_000
+	t.Cleanup(func() {
+		common.RedisEnabled, common.BatchUpdateEnabled, common.QuotaPerUnit = oldRedis, oldBatch, oldQuotaPerUnit
+		common.LogConsumeEnabled, common.DataExportEnabled, common.QuotaRemindEnabled = oldLogs, oldExport, oldNotify
+	})
+	t.Setenv("REQUEST_CONTENT_LOG_ENABLED", "false")
+
+	for _, flags := range []struct {
+		name         string
+		logs, export bool
+	}{
+		{name: "all_optional_capture_off"},
+		{name: "logs_off", export: true},
+		{name: "export_off", logs: true},
+	} {
+		t.Run(flags.name, func(t *testing.T) {
+			common.LogConsumeEnabled, common.DataExportEnabled = flags.logs, flags.export
+			for _, name := range []string{"anthropic", "normalized_model", "zero_usage", "missing_usage", "audio", "audio_fixed_zero", "realtime_turns", "settlement_error", "prepare_retry"} {
+				t.Run(name, func(t *testing.T) {
+					user, token, channel := seedUsageReportingAccount(t, db, logDB)
+					c, _ := gin.CreateTestContext(httptest.NewRecorder())
+					parent, cancel := context.WithCancel(context.Background())
+					cancel()
+					c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil).WithContext(parent)
+					c.Set("username", "historical-user")
+					c.Set("token_name", "historical-token")
+					c.Set(common.RequestIdKey, "same-report-request")
+					c.Set(common.UpstreamRequestIdKey, "upstream-report-request")
+					info := &relaycommon.RelayInfo{
+						UserId: user.Id, TokenId: token.Id, TokenKey: token.Key,
+						ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id},
+						OriginModelName: "usage-report-test", UsingGroup: "default", StartTime: time.Now(),
+						RelayFormat: types.RelayFormatOpenAI,
+						PriceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, CacheRatio: 1,
+							CacheCreationRatio: 1, CacheCreation5mRatio: 1, CacheCreation1hRatio: 1,
+							GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
+					}
+					usage := &dto.Usage{PromptTokens: 17, CompletionTokens: 3, TotalTokens: 20,
+						PromptTokensDetails: dto.InputTokenDetails{TextTokens: 17},
+						CompletionTokenDetails: dto.OutputTokenDetails{TextTokens: 3}}
+					wantQuota, wantPrompt, wantCompletion, wantCount := 20, 17, 3, int64(1)
+					wantRead, wantWrite, wantRanking, wantInput := int64(0), int64(0), int64(20), int64(17)
+					var failedPrepareKey string
+					switch name {
+					case "anthropic":
+						usage.UsageSemantic, usage.UsageSource, usage.InputTokens = "anthropic", "anthropic", 99
+						usage.PromptTokensDetails.CachedTokens = 7
+						usage.PromptTokensDetails.CachedCreationTokens = 4
+						usage.ClaudeCacheCreation5mTokens, usage.ClaudeCacheCreation1hTokens = 2, 3
+						wantQuota, wantRead, wantWrite, wantRanking, wantInput = 32, 7, 5, 32, 29
+					case "normalized_model":
+						info.OriginModelName = "gpt-4-gizmo-specific"
+					case "zero_usage":
+						usage = &dto.Usage{}
+						wantQuota, wantPrompt, wantCompletion, wantRanking, wantInput = 0, 0, 0, 0, 0
+					case "missing_usage":
+						usage = nil
+						info.SetEstimatePromptTokens(17)
+						wantQuota, wantCompletion, wantRanking = 17, 0, 17
+					case "audio_fixed_zero":
+						usage = &dto.Usage{}
+						const expression = `tier("request", fixed(0.01))`
+						info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{
+							BillingMode: "tiered_expr", ExprString: expression, ExprHash: billingexpr.ExprHashString(expression),
+							QuotaPerUnit: 500_000, GroupRatio: 1, EstimatedBillingUnit: billingexpr.BillingUnitRequest,
+						}
+						wantQuota, wantPrompt, wantCompletion, wantRanking, wantInput = 5000, 0, 0, 0, 0
+					case "realtime_turns":
+						wantCount = 2
+					case "prepare_retry":
+						const callback = "usage_report_prepare_failure"
+						require.NoError(t, db.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+							if candidate, ok := tx.Statement.Dest.(*model.UsageEvent); ok && failedPrepareKey == "" {
+								failedPrepareKey = candidate.EventKey
+								_ = tx.AddError(errors.New("forced statistics prepare failure"))
+							}
+						}))
+						t.Cleanup(func() { require.NoError(t, db.Callback().Create().Remove(callback)) })
+					case "settlement_error":
+						const callback = "usage_report_token_failure"
+						require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+							if tx.Statement.Table == "tokens" {
+								_ = tx.AddError(errors.New("forced token settlement failure"))
+							}
+						}))
+						t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+					}
+					var reports []*model.UsageSourceReport
+					for range wantCount {
+						switch name {
+						case "audio", "audio_fixed_zero":
+							PostAudioConsumeQuota(c, info, usage, nil)
+						case "realtime_turns":
+							PostWssConsumeQuota(c, info, info.OriginModelName, &dto.RealtimeUsage{
+								InputTokens: 17, OutputTokens: 3, TotalTokens: 20,
+								InputTokenDetails: dto.InputTokenDetails{TextTokens: 17}, OutputTokenDetails: dto.OutputTokenDetails{TextTokens: 3},
+							}, nil)
+						default:
+							PostTextConsumeQuota(c, info, usage, nil)
+						}
+						value, ok := common.GetContextKey(c, constant.ContextKeyConsumeLog)
+						require.True(t, ok)
+						params, ok := value.(*model.RecordConsumeLogParams)
+						require.True(t, ok)
+						require.NotNil(t, params.UsageReport)
+						assert.Equal(t, wantQuota, params.Quota)
+						reports = append(reports, params.UsageReport)
+					}
+					if len(reports) == 2 {
+						assert.NotEqual(t, reports[0].Input.EventKey, reports[1].Input.EventKey, "turn identity is not request identity")
+					}
+					var events []model.UsageEvent
+					require.NoError(t, db.Where("user_id = ?", user.Id).Order("id").Find(&events).Error)
+					require.Len(t, events, int(wantCount))
+					for index, event := range events {
+						assert.Equal(t, model.UsageEventSourceReady, event.SourceState)
+						assert.Equal(t, model.UsageEventProjectionVersion, event.AppliedVersion)
+						assert.Equal(t, int64(wantQuota), event.QuotaMagnitude)
+						assert.Equal(t, int64(wantPrompt), event.PromptTokens)
+						assert.Equal(t, int64(wantCompletion), event.CompletionTokens)
+						assert.Equal(t, wantRead, event.CacheReadTokens)
+						assert.Equal(t, wantWrite, event.CacheWriteTokens)
+						assert.Equal(t, "historical-user", event.Username)
+						assert.Equal(t, "historical-token", event.TokenName)
+						assert.Equal(t, reports[index].Input.OccurredAt, event.OccurredAt)
+						assert.Equal(t, "same-report-request", event.RequestID)
+						assert.Equal(t, "upstream-report-request", event.UpstreamRequestID)
+						if name == "missing_usage" {
+							assert.Zero(t, event.KnownMask&model.UsageEventKnownCacheReadTokens)
+							assert.Zero(t, event.KnownMask&model.UsageEventKnownCacheWriteTokens)
+						} else {
+							assert.NotZero(t, event.KnownMask&model.UsageEventKnownCacheReadTokens)
+							assert.NotZero(t, event.KnownMask&model.UsageEventKnownCacheWriteTokens)
+						}
+						if name == "prepare_retry" {
+							require.NotEmpty(t, failedPrepareKey)
+							assert.Equal(t, failedPrepareKey, event.EventKey)
+						}
+						if name == "anthropic" {
+							assert.Equal(t, model.UsageSemanticAnthropic, event.UsageSemantic)
+							assert.Equal(t, int64(99), event.ReportedInputTokens)
+						} else {
+							assert.Zero(t, event.KnownMask&model.UsageEventKnownReportedInputTokens)
+						}
+						if name == "normalized_model" {
+							assert.Equal(t, "gpt-4-gizmo-*", event.ModelName)
+						}
+					}
+					var projection model.UsageChannel
+					require.NoError(t, db.Where("channel_id = ?", channel.Id).Take(&projection).Error)
+					assert.Equal(t, wantCount, projection.ConsumeCount)
+					assert.Equal(t, int64(wantQuota)*wantCount, projection.GrossQuota)
+					var hours []model.UsageHour
+					require.NoError(t, db.Where("user_id = ?", user.Id).Find(&hours).Error)
+					var ranking, input, cacheUnknown int64
+					for _, hour := range hours {
+						ranking += hour.RankingTokens
+						input += hour.InputDenominator
+						cacheUnknown += hour.CacheUnknownCount
+					}
+					assert.Equal(t, wantRanking*wantCount, ranking)
+					assert.Equal(t, wantInput*wantCount, input)
+					if name == "missing_usage" {
+						assert.Equal(t, int64(1), cacheUnknown)
+					} else {
+						assert.Zero(t, cacheUnknown)
+					}
+					evidence := "relay_text_report"
+					if name == "audio" || name == "audio_fixed_zero" {
+						evidence = "relay_audio_report"
+					} else if name == "realtime_turns" {
+						evidence = "relay_realtime_report"
+					}
+					for _, report := range reports {
+						require.NoError(t, model.PrepareUsageSourceReport(context.Background(), report))
+						require.NoError(t, model.ConfirmUsageSourceReport(context.Background(), report, model.UsageEventSourceReady, evidence))
+					}
+					require.NoError(t, db.Where("channel_id = ?", channel.Id).Take(&projection).Error)
+					assert.Equal(t, wantCount, projection.ConsumeCount, "numeric replay never repeats billing or projections")
+					var logs []model.Log
+					require.NoError(t, logDB.Where("user_id = ?", user.Id).Order("id").Find(&logs).Error)
+					if flags.logs {
+						require.Len(t, logs, int(wantCount))
+						for index, log := range logs {
+							assert.Equal(t, events[index].OccurredAt, log.CreatedAt)
+							assert.Contains(t, log.Other, events[index].EventKey)
+						}
+					} else {
+						assert.Empty(t, logs)
+					}
+					require.NoError(t, db.First(&user, user.Id).Error)
+					require.NoError(t, db.First(&token, token.Id).Error)
+					assert.Equal(t, 100_000-int(wantCount)*wantQuota, user.Quota)
+					if name == "settlement_error" {
+						assert.Equal(t, 100_000, token.RemainQuota)
+					} else {
+						assert.Equal(t, 100_000-int(wantCount)*wantQuota, token.RemainQuota)
+					}
+				})
+			}
+		})
+	}
+
+	common.LogConsumeEnabled, common.DataExportEnabled = false, false
+	t.Run("logging_off_projection_recovery_never_replays_money", func(t *testing.T) {
+		user, token, channel := seedUsageReportingAccount(t, db, logDB)
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		c.Set("username", "recovery-owner")
+		c.Set("token_name", "recovery-token")
+		info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key,
+			ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "recovery-model", StartTime: time.Now(),
+			PriceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
+		const callback = "usage_report_projection_unavailable"
+		require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+			if tx.Statement.Table == "usage_hours" {
+				_ = tx.AddError(errors.New("forced projection failure"))
+			}
+		}))
+		t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+		PostTextConsumeQuota(c, info, &dto.Usage{PromptTokens: 17, CompletionTokens: 3, TotalTokens: 20}, nil)
+		require.NoError(t, db.Callback().Update().Remove(callback))
+		var event model.UsageEvent
+		require.NoError(t, db.Where("user_id = ?", user.Id).Take(&event).Error)
+		assert.Equal(t, model.UsageEventSourceReady, event.SourceState)
+		assert.Zero(t, event.AppliedVersion, "failed projection retains the committed numeric obligation")
+		var logs int64
+		require.NoError(t, logDB.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logs).Error)
+		assert.Zero(t, logs)
+		var beforeUser model.User
+		var beforeToken model.Token
+		var beforeChannel model.Channel
+		require.NoError(t, db.First(&beforeUser, user.Id).Error)
+		require.NoError(t, db.First(&beforeToken, token.Id).Error)
+		require.NoError(t, db.First(&beforeChannel, channel.Id).Error)
+		assert.Equal(t, 99_980, beforeUser.Quota)
+		assert.Equal(t, 99_980, beforeToken.RemainQuota)
+		_, err := model.RecoverUsageEventProjections(t.Context(), 100)
+		require.NoError(t, err)
+		_, err = model.RecoverUsageEventProjections(t.Context(), 100)
+		require.NoError(t, err)
+		require.NoError(t, db.First(&event, event.ID).Error)
+		assert.Equal(t, model.UsageEventProjectionVersion, event.AppliedVersion)
+		var projection model.UsageChannel
+		require.NoError(t, db.Where("channel_id = ?", channel.Id).Take(&projection).Error)
+		assert.EqualValues(t, 1, projection.ConsumeCount)
+		assert.EqualValues(t, 20, projection.GrossQuota)
+		var hour model.UsageHour
+		require.NoError(t, db.Where("user_id = ?", user.Id).Take(&hour).Error)
+		assert.Equal(t, model.UsageLiveSourceNamespace(), hour.SourceNamespace)
+		assert.Equal(t, model.UsageLiveCollectionEpoch(), hour.CollectionEpoch)
+		assert.EqualValues(t, 1, hour.ConsumeCount)
+		require.NoError(t, db.First(&user, user.Id).Error)
+		require.NoError(t, db.First(&token, token.Id).Error)
+		require.NoError(t, db.First(&channel, channel.Id).Error)
+		assert.Equal(t, beforeUser, user, "projection recovery must not charge or increment user counters")
+		assert.Equal(t, beforeToken, token, "projection recovery must not repeat token settlement")
+		assert.Equal(t, beforeChannel, channel, "projection recovery must not repeat channel accounting")
+	})
+	settings := model_setting.GetGrokSettings()
+	oldSettings := *settings
+	settings.ViolationDeductionEnabled, settings.ViolationDeductionAmount = true, 0.001
+	t.Cleanup(func() { *settings = oldSettings })
+	for _, stage := range []string{"success", "funding_error", "token_error"} {
+		t.Run("violation_fee/"+stage, func(t *testing.T) {
+			user, token, channel := seedUsageReportingAccount(t, db, logDB)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key,
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fee-model", StartTime: time.Now(),
+				PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
+			observedPending := false
+			const callback = "usage_fee_outcome"
+			require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+				if !observedPending && tx.Statement.Table == "users" {
+					var candidate model.UsageEvent
+					if err := tx.Session(&gorm.Session{NewDB: true}).Where("user_id = ?", user.Id).Take(&candidate).Error; assert.NoError(t, err) {
+						observedPending = candidate.SourceState == model.UsageEventSourcePending && candidate.AppliedVersion == 0
+					}
+				}
+				if stage == "funding_error" && tx.Statement.Table == "users" || stage == "token_error" && tx.Statement.Table == "tokens" {
+					_ = tx.AddError(errors.New("forced fee outcome failure"))
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+			apiErr := types.NewError(errors.New("violation fee"), types.ErrorCodeViolationFeeGrokCSAM)
+			assert.Equal(t, stage == "success", ChargeViolationFeeIfNeeded(c, info, apiErr))
+			assert.True(t, observedPending, "fee candidate must be durable before funding")
+			var event model.UsageEvent
+			require.NoError(t, db.Where("user_id = ?", user.Id).Take(&event).Error)
+			assert.Equal(t, model.UsageEventSourceViolationFee, event.SourceKind)
+			assert.Equal(t, int64(500), event.QuotaMagnitude)
+			assert.Zero(t, event.PromptTokens)
+			assert.Zero(t, event.CompletionTokens)
+			if stage == "success" {
+				assert.Equal(t, model.UsageEventSourceReady, event.SourceState)
+				assert.Equal(t, model.UsageEventProjectionVersion, event.AppliedVersion)
+			} else {
+				assert.Equal(t, model.UsageEventSourceUnknown, event.SourceState)
+				assert.Zero(t, event.AppliedVersion)
+				_, err := model.RecoverUsageEventProjections(context.Background(), 10)
+				require.NoError(t, err)
+				require.NoError(t, db.First(&event, event.ID).Error)
+				assert.Equal(t, model.UsageEventSourceUnknown, event.SourceState)
+			}
+			require.NoError(t, db.First(&user, user.Id).Error)
+			require.NoError(t, db.First(&token, token.Id).Error)
+			if stage == "funding_error" {
+				assert.Equal(t, 100_000, user.Quota)
+			} else {
+				assert.Equal(t, 99_500, user.Quota)
+			}
+			if stage == "success" {
+				assert.Equal(t, 99_500, token.RemainQuota)
+			} else {
+				assert.Equal(t, 100_000, token.RemainQuota)
+			}
+		})
+	}
+
+	for _, stage := range []string{"success", "funding_error", "token_error"} {
+		t.Run("midjourney_refund/"+stage, func(t *testing.T) {
+			user, token, channel := seedUsageReportingAccount(t, db, logDB)
+			task := model.Midjourney{UserId: user.Id, TokenId: token.Id, ChannelId: channel.Id,
+				BillingChannelId: channel.Id, MjId: "usage-refund", Action: "IMAGINE", Quota: 500}
+			require.NoError(t, db.Create(&task).Error)
+			t.Cleanup(func() { require.NoError(t, db.Delete(&task).Error) })
+			observedPending := false
+			const callback = "usage_midjourney_refund_outcome"
+			require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+				if !observedPending && tx.Statement.Table == "users" {
+					var candidate model.UsageEvent
+					if err := tx.Session(&gorm.Session{NewDB: true}).Where("user_id = ?", user.Id).Take(&candidate).Error; assert.NoError(t, err) {
+						observedPending = candidate.SourceState == model.UsageEventSourcePending && candidate.AppliedVersion == 0
+					}
+				}
+				if stage == "funding_error" && tx.Statement.Table == "users" || stage == "token_error" && tx.Statement.Table == "tokens" {
+					_ = tx.AddError(errors.New("forced Midjourney refund failure"))
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove(callback)) })
+			assert.Equal(t, stage != "funding_error", RefundMidjourneyQuota(context.Background(), &task, "test failure"))
+			assert.True(t, observedPending, "refund candidate must precede wallet mutation")
+			var event model.UsageEvent
+			require.NoError(t, db.Where("user_id = ?", user.Id).Take(&event).Error)
+			assert.Equal(t, model.UsageEventKindRefund, event.Kind)
+			assert.Zero(t, event.Eligibility)
+			assert.Equal(t, int64(token.Id), event.TokenID)
+			assert.Equal(t, int64(channel.Id), event.ChannelID)
+			assert.Equal(t, int64(500), event.QuotaMagnitude)
+			if stage == "funding_error" {
+				assert.Equal(t, model.UsageEventSourceUnknown, event.SourceState)
+				assert.Zero(t, event.AppliedVersion)
+			} else {
+				assert.Equal(t, model.UsageEventSourceReady, event.SourceState)
+				assert.Equal(t, model.UsageEventProjectionVersion, event.AppliedVersion)
+				var log model.Log
+				require.NoError(t, logDB.Where("user_id = ?", user.Id).Take(&log).Error)
+				assert.Equal(t, event.OccurredAt, log.CreatedAt)
+				assert.Equal(t, event.RequestID, log.RequestId)
+				assert.Contains(t, log.Other, event.EventKey)
+				assert.True(t, RefundMidjourneyQuota(context.Background(), &task, "repeat poll"))
+				var count int64
+				require.NoError(t, db.Model(&model.UsageEvent{}).Where("user_id = ?", user.Id).Count(&count).Error)
+				assert.Equal(t, int64(1), count)
+			}
+			var channelCount int64
+			require.NoError(t, db.Model(&model.UsageChannel{}).Where("channel_id = ?", channel.Id).Count(&channelCount).Error)
+			assert.Zero(t, channelCount, "refunds never reduce or create gross-consume totals")
+			require.NoError(t, db.First(&user, user.Id).Error)
+			require.NoError(t, db.First(&token, token.Id).Error)
+			if stage == "funding_error" {
+				assert.Equal(t, 100_000, user.Quota)
+			} else {
+				assert.Equal(t, 100_500, user.Quota)
+			}
+			if stage == "success" {
+				assert.Equal(t, 100_500, token.RemainQuota)
+			} else {
+				assert.Equal(t, 100_000, token.RemainQuota)
+			}
+		})
+	}
+}
+
+func TestTaskUsageReportsDatabaseMatrix(t *testing.T) {
+	runQuotaReportingDatabaseMatrix(t, func(t *testing.T, db, logDB *gorm.DB) {
+		require.NoError(t, db.AutoMigrate(&model.Task{}))
+		oldLogs, oldExport, oldRedis, oldBatch, oldNotify := common.LogConsumeEnabled, common.DataExportEnabled, common.RedisEnabled, common.BatchUpdateEnabled, common.QuotaRemindEnabled
+		common.LogConsumeEnabled, common.DataExportEnabled, common.RedisEnabled, common.BatchUpdateEnabled, common.QuotaRemindEnabled = false, false, false, false, false
+		t.Cleanup(func() {
+			common.LogConsumeEnabled, common.DataExportEnabled, common.RedisEnabled, common.BatchUpdateEnabled, common.QuotaRemindEnabled = oldLogs, oldExport, oldRedis, oldBatch, oldNotify
+		})
+		t.Setenv("REQUEST_CONTENT_LOG_ENABLED", "false")
+		t.Run("submission_adjustment_refund_and_replay", func(t *testing.T) {
+			user, token, channel := seedUsageReportingAccount(t, db, logDB)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/tasks", nil)
+			c.Set("username", "submission-user")
+			c.Set("token_name", "submission-token")
+			c.Set(common.RequestIdKey, "same-task-request")
+			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, OriginModelName: "task-model", UsingGroup: "default",
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, PriceData: hosttypes.PriceData{Quota: 300}}
+			task := &model.Task{TaskID: "stats-" + token.Key, UserId: user.Id, ChannelId: channel.Id, Quota: 300,
+				Status: model.TaskStatusInProgress, Group: "default", Properties: model.Properties{OriginModelName: "task-model"},
+				PrivateData: model.TaskPrivateData{TokenId: token.Id, BillingSource: BillingSourceWallet}}
+			t.Cleanup(func() { require.NoError(t, db.Delete(task).Error) })
+			PrepareTaskSubmissionUsageReport(c, info, task)
+			require.NotNil(t, task.UsageReport)
+			uid := task.UsageReport.Input.Identity.OccurrenceUID
+			require.NoError(t, model.InsertTaskWithRequestContent(t.Context(), task, nil))
+			var event model.UsageEvent
+			require.NoError(t, db.Where("event_key = ?", task.UsageReport.Input.EventKey).Take(&event).Error)
+			assert.Equal(t, model.UsageEventSourcePending, event.SourceState)
+			var stored model.Task
+			require.NoError(t, db.First(&stored, task.ID).Error)
+			assert.Equal(t, event.EventKey, stored.PrivateData.UsageSubmissionKey)
+			LogTaskConsumption(c, info, task)
+			require.NoError(t, db.First(&event, event.ID).Error)
+			assert.Equal(t, uid, event.OccurrenceUID)
+			assert.Equal(t, model.UsageEventSourceReady, event.SourceState)
+			assert.Equal(t, model.UsageEventProjectionVersion, event.AppliedVersion)
+			RecalculateTaskQuota(t.Context(), task, 500, common.NewMessage("Adjusted by the channel adaptor"))
+			assert.Equal(t, 500, task.Quota)
+			require.True(t, RefundTaskQuota(t.Context(), task, "task failure"))
+			require.True(t, RefundTaskQuota(t.Context(), task, "duplicate poll"))
+			var events []model.UsageEvent
+			require.NoError(t, db.Where("user_id = ?", user.Id).Order("id").Find(&events).Error)
+			require.Len(t, events, 3)
+			assert.Equal(t, model.UsageEventSourceTaskSubmission, events[0].SourceKind)
+			assert.Equal(t, model.UsageEventKindConsume, events[1].Kind)
+			assert.EqualValues(t, 200, events[1].QuotaMagnitude)
+			assert.EqualValues(t, 1, events[1].TaskOperationSequence)
+			assert.Equal(t, model.UsageEventKindRefund, events[2].Kind)
+			assert.EqualValues(t, 500, events[2].QuotaMagnitude)
+			assert.EqualValues(t, 2, events[2].TaskOperationSequence)
+			var projection model.UsageChannel
+			require.NoError(t, db.Where("channel_id = ?", channel.Id).Take(&projection).Error)
+			assert.EqualValues(t, 2, projection.ConsumeCount)
+			assert.EqualValues(t, 500, projection.GrossQuota)
+			var logs int64
+			require.NoError(t, logDB.Model(&model.Log{}).Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Count(&logs).Error)
+			assert.Zero(t, logs, "consume capture does not require optional logs")
+			for _, item := range events {
+				receipt := model.UsageEventReceipt{EventKey: item.EventKey, Identity: model.UsageEventIdentity{
+					SourceNamespace: item.SourceNamespace, SourceKind: item.SourceKind, OccurrenceUID: item.OccurrenceUID,
+					TaskPrimaryID: item.TaskPrimaryID, TaskOperationSequence: item.TaskOperationSequence}, PayloadDigest: item.PayloadDigest}
+				require.NoError(t, model.ApplyUsageEvent(t.Context(), receipt))
+			}
+			require.NoError(t, db.Where("channel_id = ?", channel.Id).Take(&projection).Error)
+			assert.EqualValues(t, 2, projection.ConsumeCount)
+			require.NoError(t, db.First(&user, user.Id).Error)
+			require.NoError(t, db.First(&token, token.Id).Error)
+			assert.Equal(t, 100_300, user.Quota, "only the existing +200/-500 adjustment money ran; submission fixture reports an already-settled charge")
+			assert.Equal(t, 100_300, token.RemainQuota)
+		})
+		t.Run("submission_restore_reuses_key_without_reconstructing_or_confirming_outcome", func(t *testing.T) {
+			user, token, channel := seedUsageReportingAccount(t, db, logDB)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/tasks", nil)
+			c.Set("username", "frozen-submitter")
+			c.Set("token_name", "frozen-token")
+			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, OriginModelName: "submission-model", UsingGroup: "default",
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, PriceData: hosttypes.PriceData{Quota: 999}}
+			task := &model.Task{TaskID: "restore-" + token.Key, UserId: user.Id, ChannelId: channel.Id, Quota: 300,
+				Status: model.TaskStatusInProgress, PrivateData: model.TaskPrivateData{TokenId: token.Id}}
+			PrepareTaskSubmissionUsageReport(c, info, task)
+			require.NotNil(t, task.UsageReport)
+			assert.EqualValues(t, 300, task.UsageReport.Input.QuotaMagnitude, "the accepted task amount, not a stale estimate, is frozen")
+			require.NoError(t, model.InsertTaskWithRequestContent(t.Context(), task, nil))
+			t.Cleanup(func() { require.NoError(t, db.Delete(task).Error) })
+			frozen := task.UsageReport.Input
+			var restored model.Task
+			require.NoError(t, db.First(&restored, task.ID).Error)
+			require.Nil(t, restored.UsageReport)
+			c.Set("username", "renamed-submitter")
+			c.Set("token_name", "renamed-token")
+			PrepareTaskSubmissionUsageReport(c, info, &restored)
+			require.NotNil(t, restored.UsageReport)
+			assert.Equal(t, frozen, restored.UsageReport.Input)
+			var event model.UsageEvent
+			require.NoError(t, db.Where("event_key = ?", frozen.EventKey).Take(&event).Error)
+			assert.Equal(t, model.UsageEventSourcePending, event.SourceState, "restoring a task is not source confirmation")
+			_, err := model.RecoverUsageEventProjections(t.Context(), 100)
+			require.NoError(t, err)
+			require.NoError(t, db.First(&user, user.Id).Error)
+			require.NoError(t, db.First(&token, token.Id).Error)
+			assert.Equal(t, 100_000, user.Quota)
+			assert.Equal(t, 100_000, token.RemainQuota)
+			missing := restored
+			missing.UsageReport = nil
+			missing.PrivateData.UsageSubmissionKey = fmt.Sprintf("%064x", 1)
+			PrepareTaskSubmissionUsageReport(c, info, &missing)
+			assert.Nil(t, missing.UsageReport, "an unavailable saved occurrence must not allocate a replacement UID")
+			var count int64
+			require.NoError(t, db.Model(&model.UsageEvent{}).Where("user_id = ?", user.Id).Count(&count).Error)
+			assert.EqualValues(t, 1, count)
+		})
+		t.Run("terminal_cas_loser_never_captures_or_redebits", func(t *testing.T) {
+			user, token, channel := seedUsageReportingAccount(t, db, logDB)
+			task := &model.Task{TaskID: "cas-" + token.Key, UserId: user.Id, ChannelId: channel.Id, Quota: 300,
+				Status: model.TaskStatusInProgress, Group: "default", Properties: model.Properties{OriginModelName: "task-model"},
+				PrivateData: model.TaskPrivateData{TokenId: token.Id, BillingSource: BillingSourceWallet}}
+			require.NoError(t, db.Create(task).Error)
+			t.Cleanup(func() { require.NoError(t, db.Delete(task).Error) })
+			loser := *task
+			task.Status, loser.Status = model.TaskStatusFailure, model.TaskStatusFailure
+			won, err := commitTaskTerminal(t.Context(), task, model.TaskStatusInProgress, nil, nil, true)
+			require.NoError(t, err)
+			require.True(t, won)
+			won, err = commitTaskTerminal(t.Context(), &loser, model.TaskStatusInProgress, nil, nil, true)
+			require.NoError(t, err)
+			assert.False(t, won)
+			var events []model.UsageEvent
+			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&events).Error)
+			require.Len(t, events, 1)
+			assert.Equal(t, model.UsageEventSourcePending, events[0].SourceState)
+			require.True(t, RefundTaskQuota(t.Context(), task, "terminal failure"))
+			require.False(t, RefundTaskQuota(t.Context(), &loser, "stale terminal poll"))
+			require.NoError(t, db.First(&user, user.Id).Error)
+			require.NoError(t, db.First(&token, token.Id).Error)
+			assert.Equal(t, 100_300, user.Quota)
+			assert.Equal(t, 100_300, token.RemainQuota)
+			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&events).Error)
+			require.Len(t, events, 1)
+			assert.Equal(t, model.UsageEventSourceReady, events[0].SourceState)
+		})
+		t.Run("unknown_adjustment_is_not_a_finance_retry", func(t *testing.T) {
+			user, token, channel := seedUsageReportingAccount(t, db, logDB)
+			task := &model.Task{TaskID: "unknown-" + token.Key, UserId: user.Id, ChannelId: channel.Id, Quota: 300,
+				Status: model.TaskStatusFailure, Group: "default", Properties: model.Properties{OriginModelName: "task-model"},
+				PrivateData: model.TaskPrivateData{TokenId: token.Id, BillingSource: BillingSourceSubscription, SubscriptionId: 999999}}
+			require.NoError(t, db.Create(task).Error)
+			t.Cleanup(func() { require.NoError(t, db.Delete(task).Error) })
+			require.False(t, RefundTaskQuota(t.Context(), task, "funding failed"))
+			var events []model.UsageEvent
+			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&events).Error)
+			require.Len(t, events, 1)
+			assert.Equal(t, model.UsageEventSourceUnknown, events[0].SourceState)
+			task.PrivateData.BillingSource = BillingSourceWallet
+			require.False(t, RefundTaskQuota(t.Context(), task, "must not retry an unknown debit"))
+			_, err := model.RecoverUsageEventProjections(t.Context(), 100)
+			require.NoError(t, err)
+			require.NoError(t, db.First(&user, user.Id).Error)
+			assert.Equal(t, 100_000, user.Quota)
+			require.NoError(t, db.Where("user_id = ?", user.Id).Find(&events).Error)
+			require.Len(t, events, 1)
+			assert.Zero(t, events[0].AppliedVersion)
+		})
+	})
+}
+
+func seedUsageReportingAccount(t *testing.T, db, logDB *gorm.DB) (model.User, model.Token, model.Channel) {
+	t.Helper()
+	uid, err := model.NewUsageOccurrenceUID()
+	require.NoError(t, err)
+	user := model.User{Username: "usage_" + uid[:16], Quota: 100_000, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&user).Error)
+	token := model.Token{UserId: user.Id, Key: "usage-report-" + uid, Name: "usage-token", RemainQuota: 100_000, Status: common.TokenStatusEnabled}
+	require.NoError(t, db.Create(&token).Error)
+	channel := model.Channel{Name: "usage-report", Key: "unused", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&channel).Error)
+	t.Cleanup(func() {
+		require.NoError(t, logDB.Where("user_id = ?", user.Id).Delete(&model.Log{}).Error)
+		require.NoError(t, db.Where("user_id = ?", user.Id).Delete(&model.UsageEvent{}).Error)
+		require.NoError(t, db.Where("user_id = ?", user.Id).Delete(&model.UsageHour{}).Error)
+		require.NoError(t, db.Where("channel_id = ?", channel.Id).Delete(&model.UsageChannelModel{}).Error)
+		require.NoError(t, db.Where("channel_id = ?", channel.Id).Delete(&model.UsageChannel{}).Error)
+		require.NoError(t, db.Unscoped().Delete(&token).Error)
+		require.NoError(t, db.Unscoped().Delete(&user).Error)
+		require.NoError(t, db.Unscoped().Delete(&channel).Error)
+	})
+	return user, token, channel
 }
 
 // A request whose upstream returns no usage is logged without a charge. The

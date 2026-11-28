@@ -46,12 +46,12 @@ const DEFAULT_MAX_RANGE_DAYS = 365
 /**
  * Export button for the common logs page. It asks for the time range, then
  * downloads the logs of the current view with the page's other filters as a
- * CSV file. Administrators in the all-users view export every user's logs.
+ * CSV file. Administrator row scopes retain the administrator projection.
  */
 export function ExportLogsDialog() {
   const { t } = useTranslation()
   const searchParams = route.useSearch()
-  const { canManageScope, isAdminView } = useLogsViewScope()
+  const { canManageScope, isAdminView, userScope } = useLogsViewScope()
   const { status } = useStatus()
   const [open, setOpen] = useState(false)
   const [range, setRange] = useState<{ start?: Date; end?: Date }>({})
@@ -108,6 +108,7 @@ export function ExportLogsDialog() {
             pageSize: 1,
             searchParams,
             isAdmin: isAdminView,
+            userScope,
           }),
           p: undefined,
           page_size: undefined,
