@@ -1647,7 +1647,12 @@ func UpdateChannel(c *gin.Context) {
 			return nil
 		},
 		Apply: func(baseline, stored *model.Channel) error {
+			if err := stored.MergeSettingPatch(channel.Setting); err != nil {
+				return err
+			}
+			mergedSetting := stored.Setting
 			applyChannelConfigEdit(&channel, stored)
+			stored.Setting = mergedSetting
 			// The audit baseline is the locked row before this edit, so a field
 			// another writer changed in the meantime is not misreported as ours.
 			auditBaseline = baseline

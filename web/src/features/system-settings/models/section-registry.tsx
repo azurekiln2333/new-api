@@ -42,6 +42,8 @@ const MODELS_SECTIONS = [
       <GlobalSettingsCard
         defaultValues={{
           global: {
+            model_id_case_insensitive:
+              settings['global.model_id_case_insensitive'] ?? false,
             pass_through_request_enabled:
               settings['global.pass_through_request_enabled'],
             thinking_model_blacklist: formatJsonForEditor(

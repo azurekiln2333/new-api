@@ -266,7 +266,7 @@ func validateOptionValueWithUpdates(key string, value string, updates map[string
 	if key == requestPolicyRetryDefaultsMigrationKey || IsLoginVerificationUserOption(key) {
 		return common.NewMessage("Invalid parameters")
 	}
-	if (key == "InviteRegisterEnabled" || key == "RegisterAffiliateLinkEnabled" || key == "LoginVerificationRequiredEnabled") && value != "true" && value != "false" {
+	if (key == "InviteRegisterEnabled" || key == "RegisterAffiliateLinkEnabled" || key == "LoginVerificationRequiredEnabled" || key == "global.model_id_case_insensitive") && value != "true" && value != "false" {
 		return common.NewMessage("Invalid parameters")
 	}
 	// Match the parsers used during local publication without changing live

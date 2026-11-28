@@ -402,6 +402,7 @@ const SENSITIVE_FORM_FIELDS = [
   'http_protocol',
   'http2_connection_shards',
   'tls_insecure_skip_verify',
+  'model_id_case_insensitive',
   'pass_through_body_enabled',
   'responses_websocket_enabled',
   'system_prompt',
@@ -2330,6 +2331,41 @@ export function ChannelMutateDrawer({
               onCheckedChange={field.onChange}
             />
           </FormControl>
+        </FormItem>
+      )}
+    />
+  )
+
+  const modelCasePolicyFields = (
+    <FormField
+      control={form.control}
+      name='model_id_case_insensitive'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{t('Case-insensitive model IDs')}</FormLabel>
+          <Select
+            disabled={sensitiveLocked || isSubmitting}
+            value={field.value ?? 'inherit'}
+            onValueChange={field.onChange}
+            items={[
+              { value: 'inherit', label: t('Inherit site policy') },
+              { value: 'enabled', label: t('Enabled') },
+              { value: 'disabled', label: t('Disabled') },
+            ]}
+          >
+            <FormControl>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+            </FormControl>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectItem value='inherit'>{t('Inherit site policy')}</SelectItem>
+              <SelectItem value='enabled'>{t('Enabled')}</SelectItem>
+              <SelectItem value='disabled'>{t('Disabled')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <FormDescription>
+            {t('Exact model IDs take priority. Case variants must resolve to one authorized catalog spelling; mapping and upstream spelling stay unchanged.')}
+          </FormDescription>
+          <FormMessage />
         </FormItem>
       )}
     />
@@ -5421,6 +5457,7 @@ export function ChannelMutateDrawer({
                   supported={responsesWebsocketSupported}
                   disabled={sensitiveLocked || isSubmitting}
                 />
+                {modelCasePolicyFields}
                 {denyGoalFields}
                 {formatFields}
                 {ollamaOpenAIChatFields}

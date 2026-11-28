@@ -1,6 +1,7 @@
 package model
 
 import (
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,7 @@ type taskAliasView struct {
 	// the save path.
 	channelRevision uint64
 	expiresAt       time.Time
+	byExact         map[string]TaskAliasTarget
 	byFold          map[string]TaskAliasTarget
 }
 
@@ -50,10 +52,10 @@ var (
 	taskAliasRebuildMu sync.Mutex
 )
 
-// ResolveTaskModelAlias returns the mapping-derived alias target for name
-// (exact or ASCII-folded). g is the caller's routing generation: a Number
-// mismatch or TTL expiry rebuilds the view against that generation.
-func ResolveTaskModelAlias(g *jsplugin.RoutingGeneration, name string) (TaskAliasTarget, bool) {
+// ResolveTaskModelAliasIdentity returns only an exact configured alias. Relay
+// selection already holds the catalog spelling from authorization, so it must
+// not substitute a different source from the folded alias index.
+func ResolveTaskModelAliasIdentity(g *jsplugin.RoutingGeneration, name string) (TaskAliasTarget, bool) {
 	if g == nil || name == "" {
 		return TaskAliasTarget{}, false
 	}
@@ -61,17 +63,45 @@ func ResolveTaskModelAlias(g *jsplugin.RoutingGeneration, name string) (TaskAlia
 	if view == nil {
 		return TaskAliasTarget{}, false
 	}
-	target, ok := view.byFold[jsplugin.ASCIIFold(name)]
+	target, ok := view.byExact[name]
 	return target, ok
 }
 
+// ResolveTaskModelAlias resolves an exact configured alias first, then an
+// unambiguous ASCII-folded alias for display and pricing projections.
+func ResolveTaskModelAlias(g *jsplugin.RoutingGeneration, name string) (TaskAliasTarget, bool) {
+	target, found := ResolveTaskModelAliasIdentity(g, name)
+	if !found {
+		if g == nil || name == "" {
+			return TaskAliasTarget{}, false
+		}
+		view := loadFreshTaskAliasView(g)
+		if view == nil {
+			return TaskAliasTarget{}, false
+		}
+		target, found = view.byFold[jsplugin.ASCIIFold(name)]
+	}
+	if !found || target.Declared == "" || target.PluginKey == "" {
+		return TaskAliasTarget{}, false
+	}
+	return target, true
+}
+
 // ResolveTaskPluginModel matches a client model name against a plugin's
-// declared models as the host protocols do: a case variant is served under
-// the declared spelling, a channel alias under the alias. declared is the
-// model of models the name stands for. A nil g matches exact names only.
+// declared models as the host protocols do: an exact declaration or configured
+// alias takes precedence over a case-folded declaration. A case variant is
+// served under the declared spelling, while a channel alias keeps its exact
+// public spelling. declared is the model the name stands for. A nil g matches
+// exact names only.
 func ResolveTaskPluginModel(g *jsplugin.RoutingGeneration, name string, models []string) (served, declared string, ok bool) {
 	if slices.Contains(models, name) {
 		return name, name, true
+	}
+	if target, found := ResolveTaskModelAliasIdentity(g, name); found {
+		if target.Declared == "" || !slices.Contains(models, target.Declared) {
+			return "", "", false
+		}
+		return target.Alias, target.Declared, true
 	}
 	if canonical, found := g.CanonicalModel(name); found {
 		if !slices.Contains(models, canonical) {
@@ -79,11 +109,7 @@ func ResolveTaskPluginModel(g *jsplugin.RoutingGeneration, name string, models [
 		}
 		return canonical, canonical, true
 	}
-	target, found := ResolveTaskModelAlias(g, name)
-	if !found || target.Declared == "" || !slices.Contains(models, target.Declared) {
-		return "", "", false
-	}
-	return target.Alias, target.Declared, true
+	return "", "", false
 }
 
 func loadFreshTaskAliasView(g *jsplugin.RoutingGeneration) *taskAliasView {
@@ -118,9 +144,13 @@ func rebuildTaskAliasView() {
 	taskAliasViewPtr.Store(buildTaskAliasView(jsplugin.DefaultRegistry.Generation()))
 }
 
+type taskAliasSpelling struct {
+	byPlugin map[string]map[string]struct{}
+	invalid  bool
+}
+
 type taskAliasDraft struct {
-	spellings []string
-	byPlugin  map[string]map[string]struct{}
+	bySpelling map[string]*taskAliasSpelling
 }
 
 func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
@@ -132,6 +162,7 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 		generation:      genNum,
 		channelRevision: taskAliasChannelRevision.Load(),
 		expiresAt:       time.Now().Add(taskAliasViewTTL),
+		byExact:         make(map[string]TaskAliasTarget),
 		byFold:          make(map[string]TaskAliasTarget),
 	}
 	if DB == nil {
@@ -170,67 +201,89 @@ func buildTaskAliasView(generation *jsplugin.RoutingGeneration) *taskAliasView {
 			if _, exposed := inModels[alias]; !exposed {
 				continue
 			}
-			if _, declared := generation.CanonicalModel(alias); declared {
+			if len(generation.PluginsByModel(alias)) > 0 {
 				continue
 			}
+
 			tail, cyclic := followChannelModelMapping(modelMap, alias)
 			if cyclic {
 				common.SysError(common.LogText("task alias mapping cycle dropped: channel=%d key=%q", channel.Id, alias))
+				if _, foldedSource := generation.CanonicalModel(alias); foldedSource {
+					fold := jsplugin.ASCIIFold(alias)
+					draft := drafts[fold]
+					if draft == nil {
+						draft = &taskAliasDraft{bySpelling: make(map[string]*taskAliasSpelling)}
+						drafts[fold] = draft
+					}
+					draft.bySpelling[alias] = &taskAliasSpelling{invalid: true}
+				}
 				continue
 			}
-			declared, ok := generation.CanonicalModel(tail)
-			if !ok {
+			plugin, exactPluginTarget := generation.GetByModel(tail)
+			if !exactPluginTarget {
+				_, foldedSource := generation.CanonicalModel(alias)
+				_, foldedTarget := generation.CanonicalModel(tail)
+				if !foldedSource && !foldedTarget {
+					continue
+				}
+				fold := jsplugin.ASCIIFold(alias)
+				draft := drafts[fold]
+				if draft == nil {
+					draft = &taskAliasDraft{bySpelling: make(map[string]*taskAliasSpelling)}
+					drafts[fold] = draft
+				}
+				draft.bySpelling[alias] = &taskAliasSpelling{invalid: true}
 				continue
 			}
-			plugin, ok := generation.GetByModel(declared)
-			if !ok {
-				continue
-			}
+
 			fold := jsplugin.ASCIIFold(alias)
 			draft := drafts[fold]
 			if draft == nil {
-				draft = &taskAliasDraft{byPlugin: make(map[string]map[string]struct{})}
+				draft = &taskAliasDraft{bySpelling: make(map[string]*taskAliasSpelling)}
 				drafts[fold] = draft
 			}
-			draft.spellings = append(draft.spellings, alias)
-			declareds := draft.byPlugin[plugin.Meta.Key]
+			spelling := draft.bySpelling[alias]
+			if spelling == nil {
+				spelling = &taskAliasSpelling{byPlugin: make(map[string]map[string]struct{})}
+				draft.bySpelling[alias] = spelling
+			}
+			declareds := spelling.byPlugin[plugin.Meta.Key]
 			if declareds == nil {
 				declareds = make(map[string]struct{})
-				draft.byPlugin[plugin.Meta.Key] = declareds
+				spelling.byPlugin[plugin.Meta.Key] = declareds
 			}
-			declareds[declared] = struct{}{}
+			declareds[tail] = struct{}{}
 		}
 	}
 
-	for _, draft := range drafts {
-		alias := draft.spellings[0]
-		for _, spelling := range draft.spellings[1:] {
-			if spelling < alias {
-				alias = spelling
-			}
-		}
-		if len(draft.byPlugin) != 1 {
-			pluginKeys := make([]string, 0, len(draft.byPlugin))
-			for key := range draft.byPlugin {
-				pluginKeys = append(pluginKeys, key)
-			}
-			common.SysLog(common.LogText("task model alias %q dropped: maps to multiple plugins %v", alias, pluginKeys))
-			continue
-		}
-		var pluginKey, declared string
-		for key, declareds := range draft.byPlugin {
-			pluginKey = key
-			if len(declareds) == 1 {
-				for name := range declareds {
-					declared = name
+	for fold, draft := range drafts {
+		spellings := slices.Sorted(maps.Keys(draft.bySpelling))
+		for _, alias := range spellings {
+			spelling := draft.bySpelling[alias]
+			target := TaskAliasTarget{Alias: alias}
+			if !spelling.invalid && len(spelling.byPlugin) == 1 {
+				for pluginKey, declareds := range spelling.byPlugin {
+					target.PluginKey = pluginKey
+					if len(declareds) == 1 {
+						for declared := range declareds {
+							target.Declared = declared
+						}
+					}
 				}
 			}
+			if target.Declared == "" {
+				target.PluginKey = ""
+			}
+			view.byExact[alias] = target
 		}
-		view.byFold[jsplugin.ASCIIFold(alias)] = TaskAliasTarget{
-			Alias:     alias,
-			Declared:  declared,
-			PluginKey: pluginKey,
+		if len(spellings) == 1 && view.byExact[spellings[0]].Declared != "" {
+			view.byFold[fold] = view.byExact[spellings[0]]
+			continue
 		}
+		// Distinct exact catalog aliases that fold together, or a configured
+		// alias with an invalid/ambiguous destination, must never resolve via a
+		// case-folded plugin declaration.
+		view.byFold[fold] = TaskAliasTarget{Alias: spellings[0]}
 	}
 	return view
 }

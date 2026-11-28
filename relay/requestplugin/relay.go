@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -396,6 +398,97 @@ func Egress(c *gin.Context, info *relaycommon.RelayInfo, body []byte) *types.New
 	info.RequestPluginSteps = append(info.RequestPluginSteps, auditSteps(outcome)...)
 	info.RequestPluginRecord = append(info.RequestPluginRecord, outcome.Record...)
 	return settle(c, outcome)
+}
+
+// PreparePassthroughBody keeps the client's reusable body immutable across
+// attempts. Case resolution changes only the model-bearing field, never the
+// remaining provider fields or billing quantities. The caller closes owned.
+// Passthrough still bypasses mapping and request conversion.
+func PreparePassthroughBody(c *gin.Context, info *relaycommon.RelayInfo) (common.BodyStorage, io.Closer, *types.NewAPIError) {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, nil, storeBodyError(err)
+	}
+	var owned io.Closer
+	if info.RequestedModelName != "" && info.RequestedModelName != info.OriginModelName {
+		raw, err := storage.Bytes()
+		if err != nil {
+			return nil, nil, storeBodyError(err)
+		}
+		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+		if err != nil {
+			return nil, nil, types.NewErrorWithStatusCode(errors.New("invalid model-bearing request body"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		var patched []byte
+		switch {
+		case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
+			root := gjson.ParseBytes(raw)
+			if !gjson.ValidBytes(raw) || !root.IsObject() {
+				return nil, nil, types.NewErrorWithStatusCode(errors.New("invalid model-bearing request body"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			modelFields := 0
+			root.ForEach(func(key, value gjson.Result) bool {
+				if strings.EqualFold(key.Str, "model") {
+					modelFields++
+				}
+				return true
+			})
+			value := root.Get("model")
+			if info.RelayFormat == types.RelayFormatGemini && modelFields == 0 {
+				// Native Gemini carries the model in the path, built from info.
+				patched = raw
+			} else {
+				if modelFields != 1 || value.Type != gjson.String || value.Str != info.RequestedModelName && value.Str != info.OriginModelName {
+					return nil, nil, types.NewErrorWithStatusCode(errors.New("model identity changed during the request"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+				}
+				patched, err = ojson.SetBytes(raw, "model", info.OriginModelName)
+			}
+		case mediaType == "multipart/form-data":
+			form, view, readErr := readForm(formBoundary(c.GetHeader("Content-Type")), raw)
+			if readErr != nil {
+				return nil, nil, types.NewErrorWithStatusCode(errors.New("invalid model-bearing request body"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			value := gjson.GetBytes(view, "model")
+			modelFields := 0
+			for _, field := range form.fields {
+				if strings.EqualFold(field.name, "model") {
+					modelFields++
+				}
+			}
+			if modelFields != 1 || value.Type != gjson.String || value.Str != info.RequestedModelName && value.Str != info.OriginModelName {
+				return nil, nil, types.NewErrorWithStatusCode(errors.New("model identity changed during the request"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			patched, err = ojson.SetBytes(view, "model", info.OriginModelName)
+			if err == nil {
+				err = form.check(view, patched)
+			}
+			if err == nil {
+				patched, err = form.rebuild(patched)
+			}
+		default:
+			return nil, nil, types.NewErrorWithStatusCode(errors.New("invalid model-bearing request body"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if err != nil {
+			return nil, nil, types.NewErrorWithStatusCode(errors.New("invalid model-bearing request body"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if OverBodyLimit(patched) {
+			return nil, nil, storeBodyError(common.ErrRequestBodyTooLarge)
+		}
+		storage, err = common.CreateBodyStorage(patched)
+		if err != nil {
+			return nil, nil, storeBodyError(err)
+		}
+		owned = storage
+		info.UpstreamModelName = info.OriginModelName
+		info.IsModelMapped = false
+	}
+	if apiErr := PassThrough(c, info, storage); apiErr != nil {
+		if owned != nil {
+			_ = owned.Close()
+		}
+		return nil, nil, apiErr
+	}
+	return storage, owned, nil
 }
 
 // PassThrough runs the attempt stages of a channel attempt whose upstream

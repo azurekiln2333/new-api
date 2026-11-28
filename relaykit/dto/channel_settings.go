@@ -13,6 +13,8 @@ import (
 )
 
 type ChannelSettings struct {
+	// Nil inherits the site policy; false is an explicit case-sensitive override.
+	ModelIDCaseInsensitive *bool `json:"model_id_case_insensitive,omitempty"`
 	// SupportedEndpoints declares upstream text API capabilities. Empty preserves
 	// legacy routing; it does not restrict the protocols accepted from clients.
 	SupportedEndpoints []string `json:"supported_endpoints,omitempty"`

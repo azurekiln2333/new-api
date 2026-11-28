@@ -128,6 +128,7 @@ export type Channel = z.infer<typeof channelSchema>
 // ============================================================================
 
 export interface ChannelSettings {
+  model_id_case_insensitive?: boolean | null
   max_concurrent_requests?: number
   upstream_first_byte_timeout_seconds?: number | null
   supported_endpoints?: ('chat' | 'responses' | 'messages')[]

@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 
@@ -2141,6 +2142,79 @@ func (channel *Channel) ValidateSettings() error {
 			return fmt.Errorf("advanced custom channels require a %s route when upstream model update checks are enabled", dto.AdvancedCustomModelListPath)
 		}
 	}
+	return nil
+}
+
+// ModelIDCaseInsensitive resolves inheritance at admission time, not cache load.
+func (channel *Channel) ModelIDCaseInsensitive() bool {
+	if channel == nil {
+		return false
+	}
+	var settings dto.ChannelSettings
+	if channel.Setting != nil && *channel.Setting != "" {
+		if common.UnmarshalJsonStr(*channel.Setting, &settings) != nil {
+			return false
+		}
+	}
+	if settings.ModelIDCaseInsensitive != nil {
+		return *settings.ModelIDCaseInsensitive
+	}
+	return model_setting.GetGlobalSettings().ModelIDCaseInsensitive
+}
+
+// AdmitsModelIdentity never folds scopes, mappings, prices or upstream names.
+// A resolved catalog spelling must remain configured exactly, even when the
+// caller-visible name also has a legacy routing alias on another channel.
+func (channel *Channel) AdmitsModelIdentity(requested, canonical string, catalogModels ...string) bool {
+	if channel == nil {
+		return false
+	}
+	if len(catalogModels) > 0 && catalogModels[0] != "" {
+		if !slices.Contains(channel.GetModels(), catalogModels[0]) {
+			return false
+		}
+	} else if !channelServesConfiguredModel(channel, canonical) {
+		return false
+	}
+	return requested == "" || requested == canonical ||
+		FoldModelIDASCII(requested) == FoldModelIDASCII(canonical) && channel.ModelIDCaseInsensitive()
+}
+
+// MergeSettingPatch preserves the model-case override for older clients that
+// replace settings without knowing this field. Every other setting keeps the
+// existing replacement semantics; explicit null restores policy inheritance.
+func (channel *Channel) MergeSettingPatch(patch *string) error {
+	if patch == nil {
+		return nil
+	}
+	var updates map[string]json.RawMessage
+	if *patch != "" {
+		if err := common.UnmarshalJsonStr(*patch, &updates); err != nil {
+			return err
+		}
+	}
+	if _, supplied := updates["model_id_case_insensitive"]; supplied || channel.Setting == nil || *channel.Setting == "" {
+		channel.Setting = patch
+		return nil
+	}
+	var stored map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(*channel.Setting, &stored); err != nil {
+		return err
+	}
+	value, exists := stored["model_id_case_insensitive"]
+	if !exists {
+		channel.Setting = patch
+		return nil
+	}
+	if updates == nil {
+		updates = make(map[string]json.RawMessage)
+	}
+	updates["model_id_case_insensitive"] = value
+	encoded, err := common.Marshal(updates)
+	if err != nil {
+		return err
+	}
+	channel.Setting = common.GetPointer(string(encoded))
 	return nil
 }
 

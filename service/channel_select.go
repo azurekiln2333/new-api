@@ -437,7 +437,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 		// A key bound to the requesting user routes the first attempt to the
 		// channel carrying it, before session affinity. Retries keep the
 		// ordinary group routing so a failing bound channel can fail over.
-		if bound := model.GetUserBoundChannel(c.GetInt("id"), modelName); bound != nil {
+		if bound := model.GetUserBoundChannel(c.GetInt("id"), modelName, constraints.Filters...); bound != nil {
 			if ok, _ := model.ChannelSatisfiesFilters(bound, modelName, constraints.Filters, c.GetInt("id")); ok {
 				c.Set(ginKeyUserBoundChannel, true)
 				return bound, "", nil

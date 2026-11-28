@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,10 +12,16 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	appdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -79,6 +86,216 @@ func setupChannelCreateTest(t *testing.T) int {
 	require.NoError(t, database.Raw(versionQuery).Scan(&version).Error)
 	t.Logf("database=%s version=%s", common.MainDatabaseType(), version)
 	return root.Id
+}
+
+func TestChannelModelIDCasePolicy(t *testing.T) {
+	setupChannelCreateTest(t)
+	common.MemoryCacheEnabled = true
+	settings := model_setting.GetGlobalSettings()
+	previous := settings.ModelIDCaseInsensitive
+	t.Cleanup(func() { settings.ModelIDCaseInsensitive = previous })
+	settings.ModelIDCaseInsensitive = false
+	for _, tc := range []struct {
+		name, models, request, override, other, want, catalog, wantError string
+		global, priced                                               bool
+		userID                                                       int
+		info                                                         model.ChannelInfo
+	}{
+		{name: "default off retains exact", models: "Case-Policy-Model", request: "Case-Policy-Model", want: "Case-Policy-Model", catalog: "Case-Policy-Model"},
+		{name: "default off rejects variant", models: "Case-Policy-Model", request: "case-policy-model", wantError: "disabled"},
+		{name: "global inherited", models: "Case-Policy-Model", request: "case-policy-model", global: true, want: "Case-Policy-Model", catalog: "Case-Policy-Model"},
+		{name: "explicit enabled", models: "Case-Policy-Model", request: "case-policy-model", override: `{"model_id_case_insensitive":true}`, want: "Case-Policy-Model", catalog: "Case-Policy-Model"},
+		{name: "explicit disabled overrides global", models: "Case-Policy-Model", request: "case-policy-model", global: true, override: `{"model_id_case_insensitive":false}`, wantError: "disabled"},
+		{name: "null inherits", models: "Case-Policy-Model", request: "case-policy-model", global: true, override: `{"model_id_case_insensitive":null}`, want: "Case-Policy-Model", catalog: "Case-Policy-Model"},
+		{name: "separate price cannot be substituted", models: "Case-Policy-Model", request: "case-policy-model", global: true, priced: true, wantError: "separate pricing"},
+		{name: "exact collision wins", models: "Case-Policy-Model,case-policy-model", request: "case-policy-model", global: true, want: "case-policy-model", catalog: "case-policy-model"},
+		{name: "folded collision rejects", models: "Case-Policy-Model,case-policy-model", request: "CASE-POLICY-MODEL", global: true, wantError: "ambiguous"},
+		{name: "group scope remains exact", models: "Case-Policy-Model,case-policy-model", request: "CASE-POLICY-MODEL", global: true, other: `{"group_models":{"default":["Case-Policy-Model"]}}`, want: "Case-Policy-Model", catalog: "Case-Policy-Model"},
+		{name: "group cannot borrow spelling", models: "Case-Policy-Model", request: "case-policy-model", global: true, other: `{"group_models":{"default":["case-policy-model"]}}`, want: "case-policy-model"},
+		{name: "legacy alias retained", models: "claude-3-7-sonnet", request: "claude-3-7-sonnet-thinking", want: "claude-3-7-sonnet-thinking", catalog: "claude-3-7-sonnet"},
+		{name: "unlisted remains unavailable", models: "Case-Policy-Model", request: "other-model", global: true, want: "other-model"},
+		{name: "non ASCII is not folded", models: "Ä-model", request: "ä-model", global: true, want: "ä-model"},
+		{name: "own bound scope", models: "Case-Policy-Model", request: "case-policy-model", global: true, userID: 7, want: "Case-Policy-Model", catalog: "Case-Policy-Model", info: model.ChannelInfo{IsMultiKey: true, MultiKeyUsers: map[int]int{0: 7}, MultiKeyScopeModes: map[int]string{0: "allowlist"}, MultiKeyModels: map[int][]string{0: {"Case-Policy-Model"}}}},
+		{name: "other bound scope is not a grant", models: "Case-Policy-Model", request: "case-policy-model", global: true, userID: 8, want: "case-policy-model", info: model.ChannelInfo{IsMultiKey: true, MultiKeyUsers: map[int]int{0: 7}}},
+		{name: "empty allowlist is deny all", models: "Case-Policy-Model", request: "case-policy-model", global: true, want: "case-policy-model", info: model.ChannelInfo{IsMultiKey: true, MultiKeyScopeModes: map[int]string{0: "allowlist"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings.ModelIDCaseInsensitive = tc.global
+			if tc.priced {
+				previousPrices := ratio_setting.ModelPrice2JSONString()
+				require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"case-policy-model":0.01}`))
+				t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(previousPrices)) })
+			}
+			channel := model.Channel{Name: tc.name, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+				Key: "case-policy-test-key", Models: tc.models, Group: "default", OtherSettings: tc.other, ChannelInfo: tc.info}
+			if tc.override != "" {
+				channel.Setting = &tc.override
+			}
+			require.NoError(t, channel.Insert())
+			t.Cleanup(func() {
+				_, err := model.BatchDeleteChannels([]int{channel.Id})
+				require.NoError(t, err)
+			})
+			model.InitChannelCache()
+			for _, cache := range []bool{false, true} {
+				common.MemoryCacheEnabled = cache
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+				c.Set("id", tc.userID)
+				common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+				canonical, err := service.ResolveRequestModelIdentity(c, tc.request)
+				if tc.wantError != "" {
+					require.ErrorContains(t, err, tc.wantError)
+					continue
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, canonical)
+				assert.Equal(t, tc.request, common.GetContextKeyString(c, constant.ContextKeyRequestedModel))
+				assert.Equal(t, tc.catalog, common.GetContextKeyString(c, constant.ContextKeyCatalogModel))
+				if tc.catalog != "" {
+					assert.True(t, middleware.TokenModelLimitAllows(map[string]bool{canonical: true}, canonical, tc.catalog))
+					assert.False(t, middleware.TokenModelLimitAllows(map[string]bool{"unrelated": true}, canonical, tc.catalog))
+					request := &dto.OpenAIResponsesRequest{Model: tc.request}
+					info := relaycommon.GenRelayInfoResponses(c, request)
+					assert.Equal(t, canonical, request.Model, "request pricing and routing use the same identity")
+					assert.Equal(t, tc.request, info.RequestedModelName)
+				}
+				allowed, _ := model.ChannelSatisfiesFilters(&channel, canonical, service.GetChannelConstraints(c).Filters, tc.userID)
+				assert.Equal(t, tc.catalog != "", allowed)
+			}
+			common.MemoryCacheEnabled = true
+		})
+	}
+}
+
+func TestChannelModelIDCatalogFenceAndPassthroughAdmission(t *testing.T) {
+	setupChannelCreateTest(t)
+	common.MemoryCacheEnabled = true
+	settings := model_setting.GetGlobalSettings()
+	previous := *settings
+	t.Cleanup(func() { *settings = previous })
+	settings.ModelIDCaseInsensitive = true
+	settings.PassThroughRequestEnabled = true
+	channels := []model.Channel{
+		{Name: "exact", Models: "claude-3-7-sonnet-thinking"},
+		{Name: "legacy fallback", Models: "claude-3-7-sonnet"},
+		{Name: "case folded", Models: "Case-Policy-Model"},
+	}
+	for index := range channels {
+		channel := &channels[index]
+		channel.Type, channel.Status, channel.Group, channel.Key = constant.ChannelTypeOpenAI, common.ChannelStatusEnabled, "default", "case-policy-test-key"
+		require.NoError(t, channel.Insert())
+		t.Cleanup(func() {
+			_, err := model.BatchDeleteChannels([]int{channel.Id})
+			require.NoError(t, err)
+		})
+	}
+	model.InitChannelCache()
+	for _, cache := range []bool{false, true} {
+		common.MemoryCacheEnabled = cache
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+		canonical, err := service.ResolveRequestModelIdentity(c, "claude-3-7-sonnet-thinking")
+		require.NoError(t, err)
+		filters := service.GetChannelConstraints(c).Filters
+		assert.False(t, middleware.TokenModelLimitAllows(map[string]bool{"claude-3-7-sonnet": true}, canonical, common.GetContextKeyString(c, constant.ContextKeyCatalogModel)), "a concrete exact model does not inherit a base model's token grant")
+		allowed, _ := model.ChannelSatisfiesFilters(&channels[1], canonical, filters)
+		assert.False(t, allowed, "an exact catalog identity cannot use another channel's legacy fallback")
+		selected, err := model.GetUntriedSatisfiedChannel("default", canonical, []int{channels[0].Id}, filters)
+		require.NoError(t, err)
+		assert.Nil(t, selected, "retry cannot discard the catalog fence")
+		service.GetChannelConstraints(c).AddPin(appdto.ChannelPin{ChannelId: channels[1].Id, Source: appdto.PinSourceToken})
+		_, _, selectErr := service.SelectChannelForRequest(c, canonical, &service.RetryParam{Ctx: c, ModelName: canonical, TokenGroup: "default"})
+		require.NotNil(t, selectErr, "a pin is not a different model grant")
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	const raw = `{"model":"case-policy-model","input":"hello","vendor_extension":{"seed":0}}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(raw))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+	canonical, err := service.ResolveRequestModelIdentity(c, "case-policy-model")
+	require.NoError(t, err)
+	require.Equal(t, "Case-Policy-Model", canonical)
+	require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channels[2], canonical))
+	request := &dto.OpenAIResponsesRequest{Model: "case-policy-model", Input: []byte(`"hello"`)}
+	info := relaycommon.GenRelayInfoResponses(c, request)
+	info.InitChannelMeta(c)
+	require.Nil(t, service.ReserveAttemptChannelBudget(c, info), "passthrough admits canonical models with the ledger off")
+	_, body, closer, apiErr := relay.PrepareResponsesRequest(c, info, request)
+	require.Nil(t, apiErr)
+	defer closer.Close()
+	wire, err := io.ReadAll(body)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"model":"Case-Policy-Model","input":"hello","vendor_extension":{"seed":0}}`, string(wire))
+	storedBody, err := common.GetBodyStorage(c)
+	require.NoError(t, err)
+	original, err := storedBody.Bytes()
+	require.NoError(t, err)
+	assert.Equal(t, raw, string(original), "retry retains the immutable client body")
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channels[2].Id).Update("setting", `{"model_id_case_insensitive":false}`).Error)
+	require.NotNil(t, service.ReserveAttemptChannelBudget(c, info), "live policy revocation rejects before dispatch")
+}
+
+func TestChannelUpdateCasePolicyPersistsAndKeepsReplacementSemantics(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	common.MemoryCacheEnabled = true
+	settings := model_setting.GetGlobalSettings()
+	previous := settings.ModelIDCaseInsensitive
+	previousOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	settings.ModelIDCaseInsensitive = false
+	t.Cleanup(func() {
+		settings.ModelIDCaseInsensitive = previous
+		common.OptionMap = previousOptions
+	})
+	require.NoError(t, model.UpdateOption("global.model_id_case_insensitive", "true"))
+	settings.ModelIDCaseInsensitive = false
+	require.NoError(t, model.LoadOptionsFromDatabase())
+	require.True(t, settings.ModelIDCaseInsensitive, "the saved global override survives reload")
+	require.Error(t, model.UpdateOption("global.model_id_case_insensitive", "not-a-bool"))
+	require.True(t, settings.ModelIDCaseInsensitive, "invalid saves cannot change the live policy")
+	channel := model.Channel{Name: t.Name(), Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+		Key: "case-policy-test-key", Models: "Case-Policy-Model", Group: "default", Setting: common.GetPointer(`{"model_id_case_insensitive":false,"old_marker":true}`)}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() {
+		_, err := model.BatchDeleteChannels([]int{channel.Id})
+		require.NoError(t, err)
+	})
+	model.InitChannelCache()
+	for _, tc := range []struct {
+		name, setting, expected string
+		omit, wantEnabled      bool
+	}{
+		{name: "omitted setting", omit: true, expected: `{"model_id_case_insensitive":false,"old_marker":true}`},
+		{name: "enabled", setting: `{"model_id_case_insensitive":true,"marker":true}`, expected: `{"model_id_case_insensitive":true,"marker":true}`, wantEnabled: true},
+		{name: "older client retains only case override", setting: `{"proxy":""}`, expected: `{"proxy":"","model_id_case_insensitive":true}`, wantEnabled: true},
+		{name: "explicit false", setting: `{"model_id_case_insensitive":false}`, expected: `{"model_id_case_insensitive":false}`},
+		{name: "explicit null inherits", setting: `{"model_id_case_insensitive":null}`, expected: `{"model_id_case_insensitive":null}`, wantEnabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			patch := map[string]any{"id": channel.Id, "name": tc.name}
+			if !tc.omit {
+				patch["setting"] = tc.setting
+			}
+			payload, err := common.Marshal(patch)
+			require.NoError(t, err)
+			response := putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
+			require.Equal(t, http.StatusOK, response.Code)
+			var result struct{ Success bool }
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.True(t, result.Success, response.Body.String())
+			stored, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			require.NotNil(t, stored.Setting)
+			assert.JSONEq(t, tc.expected, *stored.Setting)
+			assert.Equal(t, tc.wantEnabled, stored.ModelIDCaseInsensitive())
+			cached, err := model.CacheGetChannel(channel.Id)
+			require.NoError(t, err)
+			assert.Equal(t, stored.Setting, cached.Setting)
+		})
+	}
 }
 
 func TestChannelUpdatePersistsModelMappingAndPublishesCache(t *testing.T) {

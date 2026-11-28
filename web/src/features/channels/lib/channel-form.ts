@@ -315,6 +315,9 @@ export const channelFormSchema = z
     tls_insecure_skip_verify: z.boolean().optional(),
     pass_through_body_enabled: z.boolean().optional(),
     responses_websocket_enabled: z.boolean().optional(),
+    model_id_case_insensitive: z
+      .enum(['inherit', 'enabled', 'disabled'])
+      .optional(),
     deny_goal: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
@@ -574,6 +577,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   tls_insecure_skip_verify: false,
   pass_through_body_enabled: false,
   responses_websocket_enabled: false,
+  model_id_case_insensitive: 'inherit',
   deny_goal: false,
   system_prompt: '',
   system_prompt_override: false,
@@ -632,6 +636,7 @@ export function transformChannelToFormDefaults(
     tls_insecure_skip_verify: false,
     pass_through_body_enabled: false,
     responses_websocket_enabled: false,
+    model_id_case_insensitive: 'inherit' as 'inherit' | 'enabled' | 'disabled',
     deny_goal: false,
     system_prompt: '',
     system_prompt_override: false,
@@ -669,9 +674,15 @@ export function transformChannelToFormDefaults(
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         responses_websocket_enabled:
           parsed.responses_websocket_enabled === true,
+        model_id_case_insensitive: 'inherit',
         deny_goal: parsed.deny_goal === true,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
+      }
+      if (parsed.model_id_case_insensitive === true) {
+        extraSettings.model_id_case_insensitive = 'enabled'
+      } else if (parsed.model_id_case_insensitive === false) {
+        extraSettings.model_id_case_insensitive = 'disabled'
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -803,7 +814,24 @@ export function transformChannelToFormDefaults(
  * Build the setting JSON string from form extra settings
  */
 export function buildSettingJSON(formData: ChannelFormValues): string {
+  let modelCasePolicy: boolean | null | undefined
+  if (formData.setting?.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(formData.setting)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const value = (parsed as Record<string, unknown>)
+          .model_id_case_insensitive
+        if (value === null || typeof value === 'boolean') {
+          modelCasePolicy = value
+        }
+      }
+    } catch {
+      // Other settings retain their existing replacement semantics. A malformed
+      // legacy document must not block editing these structured fields.
+    }
+  }
   const settingObj: Record<string, unknown> = {
+    model_id_case_insensitive: modelCasePolicy,
     max_concurrent_requests: formData.max_concurrent_requests || undefined,
     upstream_first_byte_timeout_seconds:
       formData.upstream_first_byte_timeout_mode === 'custom'
@@ -836,6 +864,13 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
       formData.responses_websocket_enabled === true,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
+  }
+
+  if (formData.model_id_case_insensitive === 'inherit') {
+    settingObj.model_id_case_insensitive = null
+  } else if (formData.model_id_case_insensitive !== undefined) {
+    settingObj.model_id_case_insensitive =
+      formData.model_id_case_insensitive === 'enabled'
   }
 
   const protocol = normalizeHttpProtocol(formData.http_protocol)

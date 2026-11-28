@@ -67,12 +67,12 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	validateQuantity := false
 
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		storage, owned, apiErr := requestplugin.PreparePassthroughBody(c, info)
+		if apiErr != nil {
+			return apiErr
 		}
-		if newAPIError = requestplugin.PassThrough(c, info, storage); newAPIError != nil {
-			return newAPIError
+		if owned != nil {
+			defer owned.Close()
 		}
 		if !strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
 			counter, countsOwnMember := adaptor.(outboundImageCounter)

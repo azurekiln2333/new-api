@@ -11,6 +11,7 @@ import (
 )
 
 var filterEvalOrder = []dto.ChannelFilterKind{
+	dto.FilterModelIdentity,
 	dto.FilterRequestPath,
 	dto.FilterTaskPluginEndpoint,
 	dto.FilterTaskPluginIdentity,
@@ -182,6 +183,35 @@ func candidatePassesKindFilters(ch *Channel, exists bool, modelName string, kind
 
 func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilter) bool {
 	switch filter.Kind {
+	case dto.FilterModelIdentity:
+		if modelName != filter.CanonicalModel || !ch.AdmitsModelIdentity(filter.RequestedModel, filter.CanonicalModel, filter.CatalogModel) {
+			return false
+		}
+		scopeModel := modelName
+		if filter.CatalogModel != "" {
+			scopeModel = filter.CatalogModel
+		}
+		// A pin/affinity hit cannot turn a private or another group's model
+		// into a public grant. Compare scopes exactly after resolution.
+		if filter.ModelUserID > 0 && ch.ChannelInfo.IsMultiKey {
+			for index := range ch.GetKeys() {
+				if ch.ChannelInfo.MultiKeyUsers[index] == filter.ModelUserID && ch.KeyServesModel(index, scopeModel) {
+					return true
+				}
+			}
+		}
+		public := ch.PublicModels()
+		groupModels := ch.GetOtherSettings().GroupModels
+		for _, group := range ch.GetGroups() {
+			if !slices.Contains(filter.ModelGroups, group) {
+				continue
+			}
+			models := filterGroupModels(public, groupModels[group])
+			if slices.Contains(models, scopeModel) || filter.CatalogModel == "" && slices.Contains(models, ratio_setting.RoutingMatchModelName(modelName)) {
+				return true
+			}
+		}
+		return false
 	case dto.FilterRequestPath:
 		if filter.RequestPath == "" {
 			return true
