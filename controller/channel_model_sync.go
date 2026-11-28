@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,7 +124,7 @@ func handleChannelModelSync(c *gin.Context, channel *model.Channel, request Mult
 	common.ApiSuccess(c, gin.H{
 		"results": results, "added_models": []string{}, "applied": false,
 		"channel_models": normalizeModelNames(channel.GetModels()),
-		"revision": channel.ChannelInfo.KeyEntryRevision, "preview_token": token,
+		"revision":       channel.ChannelInfo.KeyEntryRevision, "preview_token": token,
 	})
 }
 
@@ -162,10 +163,15 @@ func applyChannelModelSync(c *gin.Context, channel *model.Channel, request Multi
 	}
 	actor := snapshotAuditActor(c)
 	var added []string
-	updated, err := model.MutateChannelKeyEntries(c.Request.Context(), channel.Id, *request.ExpectedRevision, func(tx *gorm.DB, current *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
-		if !sameChannelModelUpdateSource(preview.source, current) {
+	updated, err := model.MutateChannelKeyEntries(c.Request.Context(), channel.Id, 0, func(tx *gorm.DB, current *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+		if !sameChannelModelUpdateSource(preview.source, current) ||
+			!reflect.DeepEqual(preview.source.ChannelInfo.MultiKeyModelMappings, current.ChannelInfo.MultiKeyModelMappings) ||
+			!reflect.DeepEqual(preview.source.ChannelInfo.MultiKeyUpstreamProtocols, current.ChannelInfo.MultiKeyUpstreamProtocols) {
 			return nil, nil, model.ErrChannelKeyEntryRevisionStale
 		}
+		// The client revision is bound to the saved preview above. A sibling
+		// scheduled status-detail write may advance the list revision; each
+		// selected allocation is still fenced by its own ID, revision and status.
 		matched := 0
 		for i := range entries {
 			selection, exists := selected[strconv.FormatInt(entries[i].Id, 10)]

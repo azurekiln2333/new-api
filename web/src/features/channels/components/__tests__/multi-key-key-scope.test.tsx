@@ -620,6 +620,20 @@ test('appending the original key to a single static channel preserves both alloc
       key_preview: 'tes…key',
     }),
   ])
+  post.mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: {
+        keys: [keyStatus({ id: '9007199254740993', rev: 1, key_preview: 'tes…key' })],
+        revision: 6,
+        total: 1,
+        page: 1,
+        page_size: 10,
+        total_pages: 1,
+        enabled_count: 1,
+      },
+    },
+  })
   render(
     <I18nextProvider i18n={i18n}>
       <DialogHarness channel={single} />
@@ -628,7 +642,11 @@ test('appending the original key to a single static channel preserves both alloc
   const user = userEvent.setup()
   const input = await screen.findByLabelText('Upstream Key')
   expect(input).toHaveAttribute('type', 'password')
-  expect(post).not.toHaveBeenCalled()
+  expect(post).toHaveBeenCalledExactlyOnceWith(
+    '/api/channel/multi_key/manage',
+    expect.objectContaining({ channel_id: 7, action: 'get_key_status' }),
+    expect.anything()
+  )
   await user.type(input, 'test-static-key')
   await user.click(screen.getByRole('button', { name: 'Add' }))
   const manager = await screen.findByRole('dialog', {
@@ -683,6 +701,21 @@ test('a single static channel converts to multiple allocations without requestin
     ],
     7
   )
+  post.mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: {
+        keys: [keyStatus({ id: '1001', rev: 1, quota: { ledger_enabled: false } as ChannelBudgetView })],
+        revision: 6,
+        quota_supported: false,
+        total: 1,
+        page: 1,
+        page_size: 10,
+        total_pages: 1,
+        enabled_count: 1,
+      },
+    },
+  })
   render(
     <I18nextProvider i18n={i18n}>
       <DialogHarness channel={single} />
@@ -692,7 +725,11 @@ test('a single static channel converts to multiple allocations without requestin
   const input = await screen.findByLabelText('Upstream Key')
   expect(input).toHaveAttribute('type', 'password')
   expect(input).toBeEnabled()
-  expect(post).not.toHaveBeenCalled()
+  expect(post).toHaveBeenCalledExactlyOnceWith(
+    '/api/channel/multi_key/manage',
+    expect.objectContaining({ channel_id: 7, action: 'get_key_status' }),
+    expect.anything()
+  )
   await user.type(input, 'distinct-static-key')
   await user.click(screen.getByRole('button', { name: 'Add' }))
 
@@ -713,7 +750,8 @@ test('a single static channel converts to multiple allocations without requestin
     },
     expect.objectContaining({ singleUseAuthorization: true })
   )
-  expect(post).toHaveBeenCalledTimes(1)
+  expect(post).toHaveBeenCalledTimes(2)
+  expect(post.mock.calls.every(([, payload]) => payload.action === 'get_key_status')).toBe(true)
   expect(get).not.toHaveBeenCalled()
 })
 
@@ -1296,7 +1334,7 @@ test('upstream preview offers separate empty Key selectors and confirms only cho
   expect(within(second).getByRole('checkbox', { name: 'model-b' })).not.toBeChecked()
   expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
   expect(screen.getByText('#3: Bad key')).toBeVisible()
-  expect(screen.getByText(/Disabled keys are skipped/)).toBeVisible()
+  expect(within(screen.getByRole('group', { name: 'Models for Key 104' })).getByText('Disabled keys are skipped')).toBeVisible()
   expect(post).toHaveBeenCalledWith(
     '/api/channel/multi_key/manage',
     expect.objectContaining({ channel_id: 7, action: 'sync_key_models' }),

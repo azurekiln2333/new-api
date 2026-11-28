@@ -464,10 +464,10 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 }
 
 type channelModelDiscoveryOptions struct {
-	Preview        *fetchModelsRequest
-	SourceType     int
-	KeyIndex       *int
-	RequireEnabled bool
+	Preview         *fetchModelsRequest
+	SourceType      int
+	KeyIndex        *int
+	RequireEnabled  bool
 	IncludeDisabled bool // explicit channel-edit discovery visits every allocation
 }
 

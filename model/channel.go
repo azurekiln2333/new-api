@@ -96,9 +96,9 @@ type ChannelInfo struct {
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
 	// 每个key可用的模型，key index -> models；缺失或空表示该key可用渠道全部模型
-	MultiKeyModels            map[int][]string `json:"multi_key_models,omitempty"`
-	MultiKeyModelMappings     map[int]string   `json:"multi_key_model_mappings,omitempty"`
-	MultiKeyScopeModes        map[int]string   `json:"multi_key_scope_modes,omitempty"`
+	MultiKeyModels        map[int][]string `json:"multi_key_models,omitempty"`
+	MultiKeyModelMappings map[int]string   `json:"multi_key_model_mappings,omitempty"`
+	MultiKeyScopeModes    map[int]string   `json:"multi_key_scope_modes,omitempty"`
 	// Derived from stable allocation rows; omitted entries inherit channel policy.
 	MultiKeyUpstreamProtocols map[int]string `json:"multi_key_upstream_protocols,omitempty"`
 	// 独占某个key的用户，key index -> user id；缺失或0表示公共key

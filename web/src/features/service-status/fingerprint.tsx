@@ -590,9 +590,7 @@ function FingerprintConsole({ identity }: { identity: string }) {
       .map((name) => ({ label: name, value: name }))
   }, [
     channel,
-    chosenChannel,
     isMultiKey,
-    selectedChannel,
     selectedChannelUnavailable,
     keyUnavailable,
     selectedKey,

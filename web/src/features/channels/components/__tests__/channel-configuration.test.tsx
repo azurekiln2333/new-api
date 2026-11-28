@@ -1234,7 +1234,7 @@ test.each(['create', 'edit'])(
       fireEvent.change(screen.getByLabelText('API Key *'), {
         target: { value: 'channel-key' },
       })
-      fireEvent.change(screen.getByLabelText(/Base URL/), {
+      fireEvent.change(screen.getByLabelText(/^Base URL$/), {
         target: { value: 'https://channel.example' },
       })
     } else {
@@ -1435,7 +1435,7 @@ test('retrying extension metadata preserves the editable built-in draft and sele
     await screen.findByRole('group', { name: 'Plugin extensions' })
   ).toBeVisible()
   expect(screen.getByLabelText('Name *')).toHaveValue('Keep this draft')
-  expect(screen.getByLabelText(/Base URL/)).toHaveValue('https://saved.example')
+  expect(screen.getByLabelText(/^Base URL$/)).toHaveValue('https://saved.example')
   expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
   expect(
     screen.queryByRole('button', { name: 'sora-2' })
@@ -1463,7 +1463,7 @@ test('loading a replacement plugin preserves an already selected legacy creation
   fireEvent.change(screen.getByLabelText('API Key *'), {
     target: { value: 'draft-key' },
   })
-  fireEvent.change(screen.getByLabelText(/Base URL/), {
+  fireEvent.change(screen.getByLabelText(/^Base URL$/), {
     target: { value: 'https://draft.example' },
   })
   await user.type(
@@ -1484,7 +1484,7 @@ test('loading a replacement plugin preserves an already selected legacy creation
   await user.click(legacy)
   expect(screen.getByLabelText('Name *')).toHaveValue('Legacy draft')
   expect(screen.getByLabelText('API Key *')).toHaveValue('draft-key')
-  expect(screen.getByLabelText(/Base URL/)).toHaveValue('https://draft.example')
+  expect(screen.getByLabelText(/^Base URL$/)).toHaveValue('https://draft.example')
   expect(screen.getByRole('button', { name: 'draft-model' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Create Channel' }))
   await waitFor(() =>

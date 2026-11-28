@@ -326,7 +326,9 @@ func TestChannelUpstreamURLsPersistAndPreserveLegacySaves(t *testing.T) {
 			response := postAddChannel(t, rootID, common.RoleRootUser, string(payload))
 			var result struct {
 				Success bool `json:"success"`
-				Data struct { ID int `json:"id"` } `json:"data"`
+				Data    struct {
+					ID int `json:"id"`
+				} `json:"data"`
 			}
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 			require.True(t, result.Success, response.Body.String())
@@ -343,7 +345,9 @@ func TestChannelUpstreamURLsPersistAndPreserveLegacySaves(t *testing.T) {
 			assert.Equal(t, "https://first.example.test/api/v1", created.GetBaseURLs()[0])
 			model.InitChannelCache()
 			response = putUpdateChannel(t, rootID, common.RoleRootUser, fmt.Sprintf(`{"id":%d,"type":%d}`, created.Id, constant.ChannelTypeAzure))
-			var rejected struct { Success bool `json:"success"` }
+			var rejected struct {
+				Success bool `json:"success"`
+			}
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &rejected))
 			assert.False(t, rejected.Success, "an omitted setting must not bypass the pool provider guard")
 			unchanged, err := model.GetChannelById(created.Id, true)
@@ -371,8 +375,8 @@ func TestChannelUpstreamURLsPersistAndPreserveLegacySaves(t *testing.T) {
 			require.NoError(t, err)
 
 			for _, tc := range []struct {
-				name string
-				setting *string
+				name     string
+				setting  *string
 				wantPool []string
 				wantHome string
 			}{
@@ -385,11 +389,15 @@ func TestChannelUpstreamURLsPersistAndPreserveLegacySaves(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					patch := map[string]any{"id": created.Id, "name": tc.name}
-					if tc.setting != nil { patch["setting"] = *tc.setting }
+					if tc.setting != nil {
+						patch["setting"] = *tc.setting
+					}
 					payload, err := common.Marshal(patch)
 					require.NoError(t, err)
 					response := putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
-					var saved struct { Success bool `json:"success"` }
+					var saved struct {
+						Success bool `json:"success"`
+					}
 					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &saved))
 					require.True(t, saved.Success, response.Body.String())
 					stored, err := model.GetChannelById(created.Id, true)
@@ -426,11 +434,13 @@ func TestChannelUpstreamURLsPersistAndPreserveLegacySaves(t *testing.T) {
 func TestChannelUpstreamURLsRejectUnsafeConfiguration(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
 	tooMany := make([]string, 17)
-	for i := range tooMany { tooMany[i] = fmt.Sprintf("https://pool-%d.example.test/path", i) }
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("https://pool-%d.example.test/path", i)
+	}
 	for _, tc := range []struct {
-		name string
+		name        string
 		channelType int
-		settings map[string]any
+		settings    map[string]any
 	}{
 		{name: "too many", settings: map[string]any{"base_urls": tooMany}},
 		{name: "duplicate trimmed", settings: map[string]any{"base_urls": []string{"https://a.example.test", " https://a.example.test "}}},
@@ -453,13 +463,17 @@ func TestChannelUpstreamURLsRejectUnsafeConfiguration(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			channelType := tc.channelType
-			if channelType == 0 { channelType = constant.ChannelTypeOpenAI }
+			if channelType == 0 {
+				channelType = constant.ChannelTypeOpenAI
+			}
 			encoded, err := common.Marshal(tc.settings)
 			require.NoError(t, err)
 			payload, err := common.Marshal(AddChannelRequest{Mode: "single", Channel: &model.Channel{Name: t.Name(), Type: channelType, Key: "unsafe-url-fixture-secret", Models: "m", Group: "default", Setting: common.GetPointer(string(encoded))}})
 			require.NoError(t, err)
 			response := postAddChannel(t, rootID, common.RoleRootUser, string(payload))
-			var result struct { Success bool `json:"success"` }
+			var result struct {
+				Success bool `json:"success"`
+			}
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 			assert.False(t, result.Success, response.Body.String())
 			assert.NotContains(t, response.Body.String(), "password")

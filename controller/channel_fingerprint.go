@@ -112,8 +112,8 @@ func GetChannelFingerprintOptions(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"id": selected.Id, "type": selected.Type, "models": models, "auto_models": autoModels,
 		"is_multi_key": selected.ChannelInfo.IsMultiKey,
-		"revision": selected.ChannelInfo.KeyEntryRevision,
-		"keys": items, "page": page, "total_pages": totalPages,
+		"revision":     selected.ChannelInfo.KeyEntryRevision,
+		"keys":         items, "page": page, "total_pages": totalPages,
 	})
 }
 

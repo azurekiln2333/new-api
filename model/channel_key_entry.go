@@ -81,24 +81,24 @@ func ProjectChannelKeyEntries(tx *gorm.DB, ctx context.Context, channels []*Chan
 // A credential is not an allocation identity; duplicate static credentials have
 // distinct rows, permissions, revisions and retained budget history.
 type ChannelKeyEntry struct {
-	Id             int64  `json:"id,string" gorm:"primaryKey;autoIncrement"`
-	ChannelId      int    `json:"channel_id" gorm:"not null;index:idx_channel_key_entries_order,priority:1"`
-	Position       int    `json:"position" gorm:"not null;index:idx_channel_key_entries_order,priority:2"`
-	Key            string `json:"-" gorm:"type:text;not null"`
-	CredentialRef  string `json:"-" gorm:"type:varchar(255);not null;default:''"`
-	BoundUserId    int    `json:"bound_user_id" gorm:"not null;default:0"`
-	ScopeMode      string `json:"scope_mode" gorm:"type:varchar(16);not null;default:'all'"`
+	Id               int64  `json:"id,string" gorm:"primaryKey;autoIncrement"`
+	ChannelId        int    `json:"channel_id" gorm:"not null;index:idx_channel_key_entries_order,priority:1"`
+	Position         int    `json:"position" gorm:"not null;index:idx_channel_key_entries_order,priority:2"`
+	Key              string `json:"-" gorm:"type:text;not null"`
+	CredentialRef    string `json:"-" gorm:"type:varchar(255);not null;default:''"`
+	BoundUserId      int    `json:"bound_user_id" gorm:"not null;default:0"`
+	ScopeMode        string `json:"scope_mode" gorm:"type:varchar(16);not null;default:'all'"`
 	UpstreamProtocol string `json:"upstream_protocol" gorm:"type:varchar(16);not null;default:'inherit'"`
-	Models         string `json:"-" gorm:"type:text;not null"`
-	ModelMapping   string `json:"-" gorm:"type:text"`
-	Status         int    `json:"status" gorm:"not null;default:1"`
-	DisabledReason string `json:"disabled_reason,omitempty" gorm:"type:text"`
-	DisabledTime   int64  `json:"disabled_time,omitempty" gorm:"not null;default:0"`
-	ConfigRevision int64  `json:"config_revision" gorm:"not null;default:1"`
-	RetiredAt      int64  `json:"retired_at" gorm:"not null;default:0"`
-	MergedIntoId   int64  `json:"merged_into_id,string" gorm:"not null;default:0"`
-	CreatedTime    int64  `json:"created_time" gorm:"not null;default:0"`
-	UpdatedTime    int64  `json:"updated_time" gorm:"not null;default:0"`
+	Models           string `json:"-" gorm:"type:text;not null"`
+	ModelMapping     string `json:"-" gorm:"type:text"`
+	Status           int    `json:"status" gorm:"not null;default:1"`
+	DisabledReason   string `json:"disabled_reason,omitempty" gorm:"type:text"`
+	DisabledTime     int64  `json:"disabled_time,omitempty" gorm:"not null;default:0"`
+	ConfigRevision   int64  `json:"config_revision" gorm:"not null;default:1"`
+	RetiredAt        int64  `json:"retired_at" gorm:"not null;default:0"`
+	MergedIntoId     int64  `json:"merged_into_id,string" gorm:"not null;default:0"`
+	CreatedTime      int64  `json:"created_time" gorm:"not null;default:0"`
+	UpdatedTime      int64  `json:"updated_time" gorm:"not null;default:0"`
 }
 
 func (ChannelKeyEntry) TableName() string { return "channel_key_entries" }
@@ -625,7 +625,7 @@ func ReadChannelKeyEntriesSnapshot(ctx context.Context, channelID int) (*Channel
 		if err := lockForUpdate(scope).Where("id = ?", channelID).First(&channel).Error; err != nil {
 			return err
 		}
-		if !channel.ChannelInfo.IsMultiKey || channel.ChannelInfo.KeyEntryRevision == 0 {
+		if channel.ChannelInfo.KeyEntryRevision == 0 {
 			return nil
 		}
 		return ProjectChannelKeyEntries(scope, projectionContext, []*Channel{&channel}, false)
@@ -698,13 +698,13 @@ func (channel *Channel) ChannelKeyEntryIDsByPosition() []int64 {
 }
 
 type ChannelAllocation struct {
-	ChannelID     int
-	EntryID       int64
-	Position      int
-	Key           string
-	CredentialRef string
-	UserID        int
-	Revision      int64
+	ChannelID        int
+	EntryID          int64
+	Position         int
+	Key              string
+	CredentialRef    string
+	UserID           int
+	Revision         int64
 	UpstreamProtocol string
 }
 

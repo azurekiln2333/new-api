@@ -1562,7 +1562,7 @@ func TestChannelKeyProtocolRejectsInvalidAndRollsBack(t *testing.T) {
 			var result struct { Success bool `json:"success"` }
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 			assert.False(t, result.Success, response.Body.String())
-			assert.Equal(t, tc.table != "", injected)
+			require.Equal(t, tc.table != "", injected)
 			loaded, err := model.GetChannelById(channel.Id, true)
 			require.NoError(t, err)
 			assert.Equal(t, channel.ChannelInfo, loaded.ChannelInfo)

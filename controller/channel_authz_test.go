@@ -88,7 +88,9 @@ func TestScopedAccessTokenRequiresSensitiveChannelPermission(t *testing.T) {
 	assert.Equal(t, allocation.Revision, unchanged.KeyEntryRevisions[0])
 	granted := accessTokenRequest(router, http.MethodPost, managePath, allowed, "", protocol)
 	require.Equal(t, http.StatusOK, granted.Code, granted.Body.String())
-	var result struct { Success bool `json:"success"` }
+	var result struct {
+		Success bool `json:"success"`
+	}
 	require.NoError(t, common.Unmarshal(granted.Body.Bytes(), &result))
 	require.True(t, result.Success, granted.Body.String())
 	updated, err = model.GetChannelById(channel.Id, true)
@@ -115,7 +117,9 @@ func TestChannelKeyProtocolRequiresSensitivePermission(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/multi_key/manage", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	ManageMultiKeys(c)
-	var result struct { Success bool `json:"success"` }
+	var result struct {
+		Success bool `json:"success"`
+	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
 	assert.False(t, result.Success, recorder.Body.String())
 	stored, err := model.GetChannelById(channel.Id, true)

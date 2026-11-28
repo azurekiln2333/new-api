@@ -168,22 +168,20 @@ export function MultiKeySyncDialog(props: MultiKeySyncDialogProps) {
                 </p>
               )}
             </div>
-            {results.map((result) => (
-              <fieldset
-                key={result.key_entry_id ?? result.key_index}
-                aria-label={t('Models for Key {{key}}', { key: result.key_entry_id ?? result.key_index + 1 })}
-                className='min-w-0 rounded-md border p-3'
-                disabled={props.isApplying || props.isFetching || props.preview?.applied || !!result.error || result.skipped || !result.key_entry_id || !result.rev}
-              >
-                <legend className='px-1 text-sm font-medium'>
-                  {t('Models for Key {{key}}', { key: result.key_entry_id ?? result.key_index + 1 })}
-                  {result.key_preview && <span className='ml-2 font-mono text-xs'>{result.key_preview}</span>}
-                </legend>
-                {result.error || result.skipped ? (
+            {results.map((result) => {
+              let content: ReactNode = (
+                <p className='text-muted-foreground text-xs'>
+                  {t('No models returned by the upstream')}
+                </p>
+              )
+              if (result.error || result.skipped) {
+                content = (
                   <p className='text-muted-foreground text-xs'>
                     {result.error ? t(result.error) : t('Disabled keys are skipped')}
                   </p>
-                ) : result.models?.length ? (
+                )
+              } else if (result.models?.length) {
+                content = (
                   <UpstreamModelSelection
                     models={result.models}
                     selected={selectionState.models[result.key_entry_id ?? ''] ?? []}
@@ -197,11 +195,23 @@ export function MultiKeySyncDialog(props: MultiKeySyncDialogProps) {
                     existingModels={[]}
                     showChanges={false}
                   />
-                ) : (
-                  <p className='text-muted-foreground text-xs'>{t('No models returned by the upstream')}</p>
-                )}
+                )
+              }
+              return (
+              <fieldset
+                key={result.key_entry_id ?? result.key_index}
+                aria-label={t('Models for Key {{key}}', { key: result.key_entry_id ?? result.key_index + 1 })}
+                className='min-w-0 rounded-md border p-3'
+                disabled={props.isApplying || props.isFetching || props.preview?.applied || !!result.error || result.skipped || !result.key_entry_id || !result.rev}
+              >
+                <legend className='px-1 text-sm font-medium'>
+                  {t('Models for Key {{key}}', { key: result.key_entry_id ?? result.key_index + 1 })}
+                  {result.key_preview && <span className='ml-2 font-mono text-xs'>{result.key_preview}</span>}
+                </legend>
+                {content}
               </fieldset>
-            ))}
+              )
+            })}
             {results.length === 0 && (
               <EmptyState
                 className='min-h-0 p-3'

@@ -40,15 +40,15 @@ type FingerprintPreviewProbe struct {
 }
 
 type FingerprintPreview struct {
-	PreviewID   string                   `json:"preview_id"`
-	ExpiresAt   int64                    `json:"expires_at"`
-	ChannelID   int                      `json:"channel_id"`
-	Model       string                   `json:"model"`
-	Endpoint    string                   `json:"endpoint_type"`
-	Count       int                      `json:"count"`
-	KeyEntryID  *string                  `json:"key_entry_id,omitempty"`
-	ExpectedRev *int64                   `json:"expected_rev,omitempty"`
-	KeyIndex    *int                     `json:"key_index,omitempty"`
+	PreviewID   string                    `json:"preview_id"`
+	ExpiresAt   int64                     `json:"expires_at"`
+	ChannelID   int                       `json:"channel_id"`
+	Model       string                    `json:"model"`
+	Endpoint    string                    `json:"endpoint_type"`
+	Count       int                       `json:"count"`
+	KeyEntryID  *string                   `json:"key_entry_id,omitempty"`
+	ExpectedRev *int64                    `json:"expected_rev,omitempty"`
+	KeyIndex    *int                      `json:"key_index,omitempty"`
 	Probes      []FingerprintPreviewProbe `json:"probes"`
 }
 

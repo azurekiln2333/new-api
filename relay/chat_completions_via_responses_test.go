@@ -177,14 +177,16 @@ func TestKeyProtocolPinsActualDispatchAndAddressPerAttempt(t *testing.T) {
 			for _, client := range []string{"chat", "messages", "responses"} {
 				t.Run(strconv.Itoa(channelType)+"/"+protocol+"/"+client, func(t *testing.T) {
 					type outbound struct {
-						path string
-						body []byte
+						path   string
+						body   []byte
 						header http.Header
 					}
 					captured := make(chan outbound, 1)
 					upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						body, err := io.ReadAll(r.Body)
-						if !assert.NoError(t, err) { return }
+						if !assert.NoError(t, err) {
+							return
+						}
 						captured <- outbound{path: r.URL.Path, body: body, header: r.Header.Clone()}
 						w.Header().Set("Content-Type", "application/json")
 						w.Header().Set("Retry-After", "7")
@@ -194,9 +196,9 @@ func TestKeyProtocolPinsActualDispatchAndAddressPerAttempt(t *testing.T) {
 					defer upstream.Close()
 					channel := &model.Channel{
 						Id: 73, Type: channelType, Key: "pool-key", Models: "model-alias", Group: "default",
-						BaseURL: common.GetPointer("http://legacy.invalid"),
+						BaseURL:      common.GetPointer("http://legacy.invalid"),
 						ModelMapping: common.GetPointer(`{"model-alias":"DeepSeek-R1"}`),
-						KeyEntryIDs: []int64{9007199254740995}, KeyEntryRevisions: []int64{4},
+						KeyEntryIDs:  []int64{9007199254740995}, KeyEntryRevisions: []int64{4},
 						ChannelInfo: model.ChannelInfo{MultiKeyUpstreamProtocols: map[int]string{0: protocol}},
 					}
 					// Both pool choices keep a prefix, while neither follows Key
@@ -208,7 +210,9 @@ func TestKeyProtocolPinsActualDispatchAndAddressPerAttempt(t *testing.T) {
 					}
 					channel.SetSetting(channelSettings)
 					path, body := "/v1/chat/completions", `{"model":"model-alias","messages":[{"role":"user","content":"hi"}],"max_tokens":32,"temperature":0}`
-					if client == "messages" { path = "/v1/messages" }
+					if client == "messages" {
+						path = "/v1/messages"
+					}
 					if client == "responses" {
 						path, body = "/v1/responses", `{"model":"model-alias","input":"hi","max_output_tokens":32,"temperature":0}`
 					}
@@ -248,7 +252,9 @@ func TestKeyProtocolPinsActualDispatchAndAddressPerAttempt(t *testing.T) {
 					require.Len(t, captured, 1)
 					sent := <-captured
 					endpoint := "/v1/" + protocol
-					if protocol == "chat" { endpoint = "/v1/chat/completions" }
+					if protocol == "chat" {
+						endpoint = "/v1/chat/completions"
+					}
 					assert.Equal(t, strings.TrimPrefix(selectedURL, upstream.URL)+endpoint, sent.path)
 					var payload map[string]any
 					require.NoError(t, common.Unmarshal(sent.body, &payload))
@@ -316,6 +322,9 @@ func TestKeyProtocolConvertsDiagnosticRepliesAndStreams(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	service.InitHttpClient()
 	testutil.UseInactiveChannelBudget(t)
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
 	settings := model_setting.GetGlobalSettings()
 	previous := *settings
 	settings.PassThroughRequestEnabled = false

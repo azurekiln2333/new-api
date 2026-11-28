@@ -1759,8 +1759,6 @@ func TestFingerprintPreviewPromptMutationRejectedBeforeDispatch(t *testing.T) {
 		{name: "Chat adds system text", endpoint: "openai", setting: `{"system_prompt":"unpreviewed instruction"}`},
 		{name: "Chat to Responses replaces user text before conversion", endpoint: "openai", setting: `{"supported_endpoints":["responses"]}`, override: `{"messages":[{"role":"user","content":"replacement prompt"}]}`},
 		{name: "Chat to Responses adds system instructions", endpoint: "openai", setting: `{"supported_endpoints":["responses"],"system_prompt":"unpreviewed instruction"}`},
-		{name: "Responses replaces input", endpoint: "openai-response", setting: `{"supported_endpoints":["responses"]}`, override: `{"input":"replacement prompt"}`},
-		{name: "Responses adds hidden history", endpoint: "openai-response", setting: `{"supported_endpoints":["responses"]}`, override: `{"previous_response_id":"unpreviewed-history"}`},
 		{name: "Responses to Messages replaces converted text", endpoint: "openai-response", setting: `{"supported_endpoints":["messages"]}`, override: `{"messages":[{"role":"user","content":[{"type":"text","text":"replacement prompt"}]}]}`},
 		{name: "Chat to Messages adds hidden system", endpoint: "openai", setting: `{"supported_endpoints":["messages"],"system_prompt":"unpreviewed instruction"}`},
 	} {
@@ -1840,6 +1838,129 @@ func TestFingerprintPreviewPromptMutationRejectedBeforeDispatch(t *testing.T) {
 			var logs int64
 			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Count(&logs).Error)
 			assert.Zero(t, logs, "preflight rejection never records productive usage")
+		})
+	}
+}
+
+func TestFingerprintChatOriginResponsesOverridesKeepPreviewPrompt(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	for _, tc := range []struct {
+		name, override string
+	}{
+		{name: "Responses input is ignored before Chat conversion", override: `{"input":"replacement prompt"}`},
+		{name: "Responses history is ignored before Chat conversion", override: `{"previous_response_id":"unpreviewed-history"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			requests := make(chan channelDiagnosticWire, 2)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- captureChannelDiagnostic(r)
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, channelDiagnosticResponsesReply)
+			}))
+			t.Cleanup(upstream.Close)
+			selected := &model.Channel{
+				Type: constant.ChannelTypeOpenAI, Name: "fingerprint-chat-origin-responses", Key: "test-chat-origin-responses-key",
+				Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+				Setting: lo.ToPtr(`{"supported_endpoints":["responses"]}`), ParamOverride: &tc.override,
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			payload := fingerprintProbeRequest{Model: "gpt-4.1", EndpointType: "openai-response", Count: 1}
+			invoke := func(handler gin.HandlerFunc, jobID string) *httptest.ResponseRecorder {
+				encoded, err := common.Marshal(payload)
+				require.NoError(t, err)
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", strings.NewReader(string(encoded)))
+				c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(selected.Id)}}
+				if jobID != "" {
+					c.Params = append(c.Params, gin.Param{Key: "job_id", Value: jobID})
+				}
+				c.Set("id", userID)
+				handler(c)
+				return w
+			}
+			preview := invoke(PreviewChannelFingerprint, "")
+			require.True(t, gjson.Get(preview.Body.String(), "success").Bool(), preview.Body.String())
+			prompt := gjson.Get(preview.Body.String(), "data.probes.0.prompt").String()
+			require.NotEmpty(t, prompt)
+			payload.PreviewID = gjson.Get(preview.Body.String(), "data.preview_id").String()
+			started := invoke(StartChannelFingerprint, "")
+			require.True(t, gjson.Get(started.Body.String(), "success").Bool(), started.Body.String())
+			jobID := gjson.Get(started.Body.String(), "data.id").String()
+			require.NotEmpty(t, jobID)
+			t.Cleanup(func() {
+				_, _ = service.CancelChannelFingerprint(jobID)
+				require.Eventually(t, func() bool {
+					job, err := service.GetChannelFingerprint(jobID)
+					return err != nil || job.FinishedAt != 0
+				}, 5*time.Second, 10*time.Millisecond)
+			})
+			require.Eventually(t, func() bool {
+				job, err := service.GetChannelFingerprint(jobID)
+				return err == nil && job.FinishedAt != 0
+			}, 5*time.Second, 10*time.Millisecond)
+			job, err := service.GetChannelFingerprint(jobID)
+			require.NoError(t, err)
+			require.Len(t, job.Probes, 1)
+			require.Equal(t, "complete", job.Probes[0].State)
+			assert.Empty(t, job.Probes[0].Error)
+			wire := takeChannelDiagnostic(t, requests)
+			assert.Equal(t, "/v1/responses", wire.path)
+			assert.Equal(t, prompt, gjson.GetBytes(wire.body, "input.0.content").String())
+			assert.False(t, gjson.GetBytes(wire.body, "previous_response_id").Exists())
+			assert.EqualValues(t, 1, calls.Load())
+			assert.Equal(t, prompt, job.Probes[0].Prompt)
+
+			repeated := invoke(StartChannelFingerprint, "")
+			require.True(t, gjson.Get(repeated.Body.String(), "success").Bool(), repeated.Body.String())
+			assert.Equal(t, jobID, gjson.Get(repeated.Body.String(), "data.id").String())
+			assert.EqualValues(t, 1, calls.Load(), "replaying a successful job must not dispatch again")
+			assert.Empty(t, requests)
+			var logs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Count(&logs).Error)
+			assert.EqualValues(t, 1, logs)
+		})
+	}
+}
+
+func TestFingerprintNativeResponsesPromptMutationRejectedBeforeDispatch(t *testing.T) {
+	userID := setupChannelDiagnosticRequests(t)
+	for _, tc := range []struct {
+		name, override string
+	}{
+		{name: "native Responses input replacement", override: `{"input":"replacement prompt"}`},
+		{name: "native Responses hidden history", override: `{"previous_response_id":"unpreviewed-history"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, channelDiagnosticResponsesReply)
+			}))
+			t.Cleanup(upstream.Close)
+			selected := &model.Channel{
+				Type: constant.ChannelTypeOpenAI, Name: "fingerprint-native-responses", Key: "native-first\nnative-selected",
+				Models: "gpt-4.1", Group: "default", Status: common.ChannelStatusEnabled, BaseURL: &upstream.URL,
+				Setting: lo.ToPtr(`{"supported_endpoints":["responses"]}`), ParamOverride: &tc.override,
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2},
+			}
+			require.NoError(t, selected.Insert())
+			t.Cleanup(func() { require.NoError(t, selected.Delete()) })
+			selected, err := model.GetChannelById(selected.Id, true)
+			require.NoError(t, err)
+			allocation, ok := selected.ChannelAllocationByPosition(1)
+			require.True(t, ok)
+			selection := service.FingerprintKeySelection{EntryID: allocation.EntryID, Revision: allocation.Revision, Index: 1, HasIndex: true}
+			_, err = runFingerprintProbe(t.Context(), selected, userID, "gpt-4.1", "openai-response", lmfp.Challenge{Prompt: "native responses challenge", ExpectedCount: 3}, 300, selection)
+			require.ErrorIs(t, err, errFingerprintWirePromptChanged)
+			assert.Zero(t, calls.Load(), "native Responses prompt mutations are rejected before dispatch")
+			var logs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("channel_id = ? AND type = ?", selected.Id, model.LogTypeConsume).Count(&logs).Error)
+			assert.Zero(t, logs, "native Responses preflight rejection never settles usage")
 		})
 	}
 }

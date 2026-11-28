@@ -204,10 +204,10 @@ func pinChannelTestKey(channel *model.Channel, keyIndex int, entryID, expectedRe
 		return nil, err
 	}
 	return &pinnedChannelTestKey{
-		index:    position,
-		value:    channel.GetKeys()[position],
-		entryID:  entryID,
-		revision: expectedRevision,
+		index:           position,
+		value:           channel.GetKeys()[position],
+		entryID:         entryID,
+		revision:        expectedRevision,
 		allowOutOfScope: outsideScope,
 	}, nil
 }
@@ -241,10 +241,10 @@ type channelTestSpec struct {
 }
 
 type pinnedChannelTestKey struct {
-	index    int // -1 for a single-key channel
-	value    string
-	entryID  int64
-	revision int64
+	index           int // -1 for a single-key channel
+	value           string
+	entryID         int64
+	revision        int64
 	allowOutOfScope bool
 }
 

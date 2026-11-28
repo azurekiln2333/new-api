@@ -242,7 +242,7 @@ it('shows elapsed request time and timeout while queued samples wait without cla
   getChannelOptions.mockResolvedValue(channels)
   const timestamp = Date.now()
   const initial = retryableJob()
-  startChannelFingerprint.mockResolvedValue({
+  vi.mocked(startChannelFingerprint).mockResolvedValue({
     ...initial,
     state: 'running',
     finished_at: undefined,
@@ -325,7 +325,7 @@ it('retries only the failed sample with its saved preview after response loss an
     ],
   })
   const initial = retryableJob({ endpoint: 'openai-response' })
-  startChannelFingerprint.mockResolvedValue(initial)
+  vi.mocked(startChannelFingerprint).mockResolvedValue(initial)
   const retried = retryableJob({
     endpoint: 'openai-response',
     revision: 2,
@@ -451,7 +451,7 @@ it('ignores an older job revision polled after retry and cancels only the visibl
         : probe
     ),
   })
-  startChannelFingerprint.mockResolvedValue(initial)
+  vi.mocked(startChannelFingerprint).mockResolvedValue(initial)
   retryChannelFingerprintProbe.mockResolvedValue(retried)
   let resolveStale!: (job: FingerprintJob) => void
   getChannelFingerprint
@@ -518,7 +518,7 @@ it.each(['cancelled', 'exhausted', 'already retried'] as const)(
   async (condition) => {
     getChannelOptions.mockResolvedValue(channels)
     const initial = retryableJob()
-    startChannelFingerprint.mockResolvedValue({
+    vi.mocked(startChannelFingerprint).mockResolvedValue({
       ...initial,
       state: condition === 'cancelled' ? 'cancelled' : 'failed',
       tokens_used: condition === 'exhausted' ? 24000 : initial.tokens_used,
@@ -560,7 +560,7 @@ it('states that a match is not proof of identity', async () => {
 
 it('submits three server-derived challenges with only channel and model controls', async () => {
   getChannelOptions.mockResolvedValue(channels)
-  startChannelFingerprint.mockResolvedValue(runningJob({ state: 'completed' }))
+  vi.mocked(startChannelFingerprint).mockResolvedValue(runningJob({ state: 'completed' }))
   renderPage()
   const user = userEvent.setup()
   expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
@@ -630,8 +630,8 @@ it('shows a failed poll and replays only the same accepted preview instead of st
   const previewCalls = previewChannelFingerprint.mock.calls.length
   await user.click(screen.getByRole('button', { name: /start check/i }))
   await waitFor(() => expect(startChannelFingerprint).toHaveBeenCalledTimes(2))
-  expect(startChannelFingerprint.mock.calls[1].slice(0, 2)).toEqual(
-    startChannelFingerprint.mock.calls[0].slice(0, 2)
+  expect(vi.mocked(startChannelFingerprint).mock.calls[1].slice(0, 2)).toEqual(
+    vi.mocked(startChannelFingerprint).mock.calls[0].slice(0, 2)
   )
   expect(previewChannelFingerprint).toHaveBeenCalledTimes(previewCalls)
 }, 10000)
@@ -680,7 +680,7 @@ it('polls a new run after the previous one stopped', async () => {
   await user.click(screen.getByRole('button', { name: /start check/i }))
 
   expect(await screen.findByText('detector-digest-2')).toBeTruthy()
-  expect(startChannelFingerprint.mock.calls[1][1]).toHaveProperty(
+  expect(vi.mocked(startChannelFingerprint).mock.calls[1][1]).toHaveProperty(
     'preview_id',
     'preview-2'
   )
@@ -715,7 +715,7 @@ it.each(['cancelled', 'running'] as const)(
         })
       )
       .mockResolvedValueOnce(cancelled)
-    startChannelFingerprint.mockResolvedValue(running)
+    vi.mocked(startChannelFingerprint).mockResolvedValue(running)
     cancelChannelFingerprint.mockResolvedValue(
       acknowledgedState === 'cancelled' ? cancelled : running
     )
@@ -774,7 +774,7 @@ it.each(['cancelled', 'running'] as const)(
       ),
       finished_at: Date.now(),
     })
-    startChannelFingerprint.mockResolvedValue(running)
+    vi.mocked(startChannelFingerprint).mockResolvedValue(running)
     getChannelFingerprint
       .mockRejectedValueOnce(new Error('fingerprint status read failed'))
       .mockResolvedValueOnce(cancelled)
@@ -868,7 +868,7 @@ it('keeps a new run when cancelling the previous run completes late', async () =
   )
   await user.click(screen.getByRole('button', { name: /start check/i }))
   await screen.findByText('detector-digest-2')
-  expect(startChannelFingerprint.mock.calls[1][1]).toHaveProperty(
+  expect(vi.mocked(startChannelFingerprint).mock.calls[1][1]).toHaveProperty(
     'preview_id',
     'preview-2'
   )
@@ -1048,6 +1048,8 @@ it('appends bounded channel pages inside the selector and retains the selected I
   await waitFor(() =>
     expect(screen.getByRole('button', { name: /start check/i })).toBeEnabled()
   )
+  const modelSelector = screen.getByRole('combobox', { name: /^model$/i })
+  const startButton = screen.getByRole('button', { name: /start check/i })
   await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
   let completeOptions!: (result: typeof channels) => void
   getChannelOptions.mockReturnValueOnce(
@@ -1062,8 +1064,8 @@ it('appends bounded channel pages inside the selector and retains the selected I
       expect.any(AbortSignal)
     )
   )
-  expect(screen.getByRole('combobox', { name: /^model$/i })).toHaveTextContent('gpt-4.1')
-  expect(screen.getByRole('button', { name: /start check/i })).toBeEnabled()
+  expect(modelSelector).toHaveTextContent('gpt-4.1')
+  expect(startButton).toBeEnabled()
   await act(async () => {
     completeOptions({
       ...channels,
@@ -1301,7 +1303,7 @@ it.each(['account', 'session'] as const)(
     await user.click(screen.getByRole('button', { name: /start check/i }))
     await waitFor(() => expect(startChannelFingerprint).toHaveBeenCalledTimes(1))
 
-    const startSignal = startChannelFingerprint.mock.calls[0][2] as AbortSignal
+    const startSignal = vi.mocked(startChannelFingerprint).mock.calls[0][2] as AbortSignal
     expect(startSignal).toBeInstanceOf(AbortSignal)
     expect(startSignal.aborted).toBe(false)
 
@@ -1525,7 +1527,7 @@ it('shows the actual prompt and reply of every probe in its own card', async () 
 
 it('updates live probe states and preserves terminal scoring, failure evidence and cancellation controls', async () => {
   getChannelOptions.mockResolvedValue(channels)
-  startChannelFingerprint.mockResolvedValue(runningJob())
+  vi.mocked(startChannelFingerprint).mockResolvedValue(runningJob())
   let completePoll!: (value: FingerprintJob) => void
   getChannelFingerprint.mockReturnValueOnce(
     new Promise<FingerprintJob>((resolve) => {
@@ -1610,7 +1612,7 @@ it.each([
   async ({ remainingState, processed, progress }) => {
     getChannelOptions.mockResolvedValue(channels)
     const base = runningJob()
-    startChannelFingerprint.mockResolvedValue({
+    vi.mocked(startChannelFingerprint).mockResolvedValue({
       ...base,
       state: remainingState === 'queued' ? 'running' : 'inconclusive',
       request_budget: 3,
@@ -1792,8 +1794,8 @@ it('reuses the immutable submitted preview and full Key context after an ambiguo
   const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000)
   await user.click(screen.getByRole('button', { name: /start check/i }))
   expect(await screen.findByText('detector-digest')).toBeVisible()
-  expect(startChannelFingerprint.mock.calls[1].slice(0, 2)).toEqual(
-    startChannelFingerprint.mock.calls[0].slice(0, 2)
+  expect(vi.mocked(startChannelFingerprint).mock.calls[1].slice(0, 2)).toEqual(
+    vi.mocked(startChannelFingerprint).mock.calls[0].slice(0, 2)
   )
   expect(startChannelFingerprint).toHaveBeenLastCalledWith(
     7,
@@ -1817,7 +1819,7 @@ it('reuses the immutable submitted preview and full Key context after an ambiguo
   expect(await screen.findByText('new actual prompt one')).toBeVisible()
   expect(screen.queryByText('detector-digest')).not.toBeInTheDocument()
   expect(startChannelFingerprint).toHaveBeenCalledTimes(2)
-  startChannelFingerprint.mockResolvedValueOnce(
+  vi.mocked(startChannelFingerprint).mockResolvedValueOnce(
     runningJob({ id: 'job-2', state: 'completed' })
   )
   await user.click(screen.getByRole('button', { name: /start check/i }))
@@ -1902,7 +1904,7 @@ it('discards a late preview when the model changes and starts only the current c
       completePreview = resolve
     })
   )
-  startChannelFingerprint.mockResolvedValue(runningJob({ state: 'completed' }))
+  vi.mocked(startChannelFingerprint).mockResolvedValue(runningJob({ state: 'completed' }))
   const user = userEvent.setup()
   renderPage()
   await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
@@ -1999,7 +2001,7 @@ it('pins an explicit masked Key by string ID, row revision and index while filte
       },
     ],
   })
-  startChannelFingerprint.mockResolvedValue(runningJob({ state: 'completed' }))
+  vi.mocked(startChannelFingerprint).mockResolvedValue(runningJob({ state: 'completed' }))
   const user = userEvent.setup()
   renderPage()
   await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
@@ -2121,7 +2123,7 @@ it.each([
     expect(screen.getByRole('button', { name: /start check/i })).toBeEnabled()
   )
   const previewCalls = previewChannelFingerprint.mock.calls.length
-  startChannelFingerprint.mockResolvedValue(runningJob())
+  vi.mocked(startChannelFingerprint).mockResolvedValue(runningJob())
   let completePoll!: (job: FingerprintJob) => void
   getChannelFingerprint.mockReturnValueOnce(
     new Promise<FingerprintJob>((resolve) => {
@@ -2222,7 +2224,7 @@ it('rejects mixed-revision Key pages and reloads a coherent masked snapshot', as
 it('uses server-selected protocols without an endpoint chooser or endpoint override payload', async () => {
   getChannelOptions.mockResolvedValue(channels)
   getFingerprintChannel.mockResolvedValue({ ...fingerprintChannel, type: 14 })
-  startChannelFingerprint.mockResolvedValue(runningJob({ state: 'completed' }))
+  vi.mocked(startChannelFingerprint).mockResolvedValue(runningJob({ state: 'completed' }))
   const user = userEvent.setup()
   renderPage()
   await user.click(screen.getByRole('combobox', { name: /^channel$/i }))
@@ -2313,12 +2315,7 @@ it('keeps long channel names readable and prevents obsolete search pages appendi
       ],
     },
   })
-  vi.useFakeTimers()
-  fireEvent.change(channel, { target: { value: 'fresh' } })
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(300)
-  })
-  vi.useRealTimers()
+  await user.type(channel, 'fresh')
   await waitFor(() =>
     expect(getChannelOptions).toHaveBeenLastCalledWith(
       expect.objectContaining({ p: 1, keyword: 'fresh', ids: '7' }),
@@ -2596,7 +2593,7 @@ it('uses the opaque preview envelope for Start without client prompts or a sched
 
 it('hides a running result and aborts its read when channel metadata removes the selected model', async () => {
   getChannelOptions.mockResolvedValue(channels)
-  startChannelFingerprint.mockResolvedValue(runningJob())
+  vi.mocked(startChannelFingerprint).mockResolvedValue(runningJob())
   let completePoll!: (job: FingerprintJob) => void
   getChannelFingerprint.mockReturnValue(
     new Promise<FingerprintJob>((resolve) => {
@@ -2683,7 +2680,7 @@ it.each([
       fallbackLng: 'en',
       resources: { en: { translation: { [key]: translation } } },
     })
-    startChannelFingerprint.mockResolvedValue(
+    vi.mocked(startChannelFingerprint).mockResolvedValue(
       runningJob({
         state: 'failed',
         error: message,
@@ -2727,13 +2724,13 @@ it.each([
   'translates a safe $phase failure at its presentation boundary',
   async ({ phase, message }) => {
     getChannelOptions.mockResolvedValue(channels)
-    startChannelFingerprint.mockResolvedValue(
+    vi.mocked(startChannelFingerprint).mockResolvedValue(
       phase === 'retry' ? retryableJob() : runningJob()
     )
     getChannelFingerprint.mockReturnValue(new Promise(() => {}))
     const error = new Error(message)
     if (phase === 'preview') previewChannelFingerprint.mockRejectedValue(error)
-    if (phase === 'start') startChannelFingerprint.mockRejectedValue(error)
+    if (phase === 'start') vi.mocked(startChannelFingerprint).mockRejectedValue(error)
     if (phase === 'retry') retryChannelFingerprintProbe.mockRejectedValue(error)
     if (phase === 'poll') getChannelFingerprint.mockRejectedValue(error)
     if (phase === 'cancel') cancelChannelFingerprint.mockRejectedValue(error)
