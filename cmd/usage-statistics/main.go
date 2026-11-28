@@ -1,7 +1,7 @@
-// Command usage-statistics provides bounded operator actions for the durable
-// usage transition. It never creates a source fence or installs lineage from
-// an unverified moving source; the operator must supply the immutable plan and
-// an external old-writer/buffer/TTL fence digest.
+// Command usage-statistics connects to existing schemas for bounded operator
+// actions on the durable usage transition. It does not run schema migrations or
+// change ClickHouse TTL settings; the operator must supply the immutable plan
+// and an external old-writer/buffer/TTL fence digest.
 package main
 
 import (
@@ -45,6 +45,11 @@ func run(args []string) error {
 	// Parse and reject invalid invocations before initializing database
 	// connections, which may perform startup work.
 	common.InitEnv()
+	// This standalone utility skips the master-only schema migrations and
+	// ClickHouse TTL synchronization. InitDB still runs non-master checks and
+	// durable prerequisite helpers, which may write to the primary database; this
+	// is not a read-only connection mode.
+	common.IsMasterNode = false
 	if err := model.InitDB(); err != nil {
 		return err
 	}

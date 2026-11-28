@@ -18,9 +18,9 @@ func GetRankings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    result,
-		"coverage": result.Coverage,
+		"success":           true,
+		"data":              result,
+		"coverage":          result.Coverage,
 		"previous_coverage": result.PreviousCoverage,
 	})
 }

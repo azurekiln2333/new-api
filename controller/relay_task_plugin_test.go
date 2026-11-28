@@ -815,7 +815,10 @@ func newLedgerSubmissionFixture(t *testing.T, withReservation bool, extraModels 
 	t.Helper()
 	tables := []any{&model.User{}, &model.Token{}, &model.Channel{}, &model.Task{}, &model.Log{},
 		&model.ChannelKeyEntry{}, &model.ChannelBudgetAccount{}, &model.ChannelBudgetReservation{},
-		&model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{}}
+		&model.ChannelBudgetReservationItem{}, &model.ChannelBudgetOperation{},
+		&model.UsageEvent{}, &model.UsageHour{}, &model.UsageChannel{}, &model.UsageChannelModel{},
+		&model.UsageStatisticsLineage{}, &model.UsageStatisticsCoverage{}, &model.UsageEventBackfill{},
+		&model.UsageEventBackfillTuple{}, &model.UsageStatisticsTransition{}, &model.UsageLegacyAcknowledgement{}, &model.UsageLegacyHour{}}
 	db, dialect := openTaskDialectDatabase(t, append(tables, extraModels...)...)
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()

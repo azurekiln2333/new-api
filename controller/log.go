@@ -286,9 +286,9 @@ func GetLogsStat(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    logStatResponse(stat),
+		"success":  true,
+		"message":  "",
+		"data":     logStatResponse(stat),
 		"coverage": coverage,
 	})
 	return
@@ -318,9 +318,9 @@ func GetLogsSelfStat(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{
-		"success": true,
-		"message": "",
-		"data":    logStatResponse(stat),
+		"success":  true,
+		"message":  "",
+		"data":     logStatResponse(stat),
 		"coverage": coverage,
 	})
 	return

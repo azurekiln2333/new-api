@@ -1724,7 +1724,7 @@ func runDurableUsageReportCases(t *testing.T, db, logDB *gorm.DB) {
 					c.Set(common.UpstreamRequestIdKey, "upstream-report-request")
 					info := &relaycommon.RelayInfo{
 						UserId: user.Id, TokenId: token.Id, TokenKey: token.Key,
-						ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id},
+						ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channel.Id},
 						OriginModelName: "usage-report-test", UsingGroup: "default", StartTime: time.Now(),
 						RelayFormat: types.RelayFormatOpenAI,
 						PriceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, CacheRatio: 1,
@@ -1732,7 +1732,7 @@ func runDurableUsageReportCases(t *testing.T, db, logDB *gorm.DB) {
 							GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}},
 					}
 					usage := &dto.Usage{PromptTokens: 17, CompletionTokens: 3, TotalTokens: 20,
-						PromptTokensDetails: dto.InputTokenDetails{TextTokens: 17},
+						PromptTokensDetails:    dto.InputTokenDetails{TextTokens: 17},
 						CompletionTokenDetails: dto.OutputTokenDetails{TextTokens: 3}}
 					wantQuota, wantPrompt, wantCompletion, wantCount := 20, 17, 3, int64(1)
 					wantRead, wantWrite, wantRanking, wantInput := int64(0), int64(0), int64(20), int64(17)
@@ -2096,9 +2096,10 @@ func TestTaskUsageReportsDatabaseMatrix(t *testing.T) {
 			c.Set("token_name", "submission-token")
 			c.Set(common.RequestIdKey, "same-task-request")
 			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, OriginModelName: "task-model", UsingGroup: "default",
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: constant.TaskActionTextToVideo},
 				ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, PriceData: hosttypes.PriceData{Quota: 300}}
 			task := &model.Task{TaskID: "stats-" + token.Key, UserId: user.Id, ChannelId: channel.Id, Quota: 300,
-				Status: model.TaskStatusInProgress, Group: "default", Properties: model.Properties{OriginModelName: "task-model"},
+				Action: constant.TaskActionTextToVideo, Status: model.TaskStatusInProgress, Group: "default", Properties: model.Properties{OriginModelName: "task-model"},
 				PrivateData: model.TaskPrivateData{TokenId: token.Id, BillingSource: BillingSourceWallet}}
 			t.Cleanup(func() { require.NoError(t, db.Delete(task).Error) })
 			PrepareTaskSubmissionUsageReport(c, info, task)

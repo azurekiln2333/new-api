@@ -157,7 +157,7 @@ func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 							semantic = model.UsageSemanticAnthropic
 						}
 						report, err := model.NewUsageSourceReport(ctx.Request.Context(), model.UsageEventSourceRelay, model.UsageEventKindConsume, model.UsageEventInput{
-							KnownMask: model.UsageEventKnownUserID | model.UsageEventKnownUsername | model.UsageEventKnownModelName | model.UsageEventKnownPromptTokens | model.UsageEventKnownCompletionTokens | model.UsageEventKnownQuota | model.UsageEventKnownCacheReadTokens | model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownUsageSemantic,
+							KnownMask:  model.UsageEventKnownUserID | model.UsageEventKnownUsername | model.UsageEventKnownModelName | model.UsageEventKnownPromptTokens | model.UsageEventKnownCompletionTokens | model.UsageEventKnownQuota | model.UsageEventKnownCacheReadTokens | model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownUsageSemantic,
 							OccurredAt: coverageEnd - 3600, Username: "ranking-cache-test", ModelName: modelName, PromptTokens: int64(tc.input), CompletionTokens: int64(tc.output),
 							CacheReadTokens: int64(tc.read), CacheWriteTokens: int64(tc.write), UsageSemantic: semantic,
 						})
@@ -216,7 +216,7 @@ func TestRankingCacheTokensDatabaseMatrix(t *testing.T) {
 					name := fmt.Sprintf("ranking-limit-%02d", index)
 					names = append(names, name)
 					report, err := model.NewUsageSourceReport(ctx, model.UsageEventSourceRelay, model.UsageEventKindConsume, model.UsageEventInput{
-						KnownMask: model.UsageEventKnownModelName | model.UsageEventKnownPromptTokens | model.UsageEventKnownCompletionTokens | model.UsageEventKnownQuota | model.UsageEventKnownCacheReadTokens | model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownUsageSemantic,
+						KnownMask:  model.UsageEventKnownModelName | model.UsageEventKnownPromptTokens | model.UsageEventKnownCompletionTokens | model.UsageEventKnownQuota | model.UsageEventKnownCacheReadTokens | model.UsageEventKnownCacheWriteTokens | model.UsageEventKnownUsageSemantic,
 						OccurredAt: now.Unix() - 3600, ModelName: name, PromptTokens: int64(100 + index), CacheReadTokens: 20, CacheWriteTokens: 10, UsageSemantic: model.UsageSemanticOpenAI,
 					})
 					require.NoError(t, err)

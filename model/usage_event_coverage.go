@@ -56,14 +56,14 @@ type UsageReadLineage struct {
 	FenceDigest            string
 	// Legacy source identity names the fenced retained log collection; it is
 	// independent of the live event codec identity below.
-	LegacySourceNamespace  string
-	LegacyCollectionEpoch  string
-	LiveSourceNamespace    string
-	LiveCollectionEpoch    string
-	DashboardEligibility   UsageEventProjectionEligibility
-	HistoricalCoverage     UsageCoverageStatus
-	WholeHistoryCoverage   UsageCoverageStatus
-	LineageDigest          string
+	LegacySourceNamespace string
+	LegacyCollectionEpoch string
+	LiveSourceNamespace   string
+	LiveCollectionEpoch   string
+	DashboardEligibility  UsageEventProjectionEligibility
+	HistoricalCoverage    UsageCoverageStatus
+	WholeHistoryCoverage  UsageCoverageStatus
+	LineageDigest         string
 }
 
 // UsageStatisticsLineage is immutable once installed. Changing a deployment's
@@ -659,4 +659,3 @@ func RequireUsageStatisticsCoverage(ctx context.Context, family UsageStatisticsF
 	}
 	return nil
 }
-

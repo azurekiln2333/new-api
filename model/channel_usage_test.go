@@ -119,7 +119,7 @@ func runChannelUsageLogMatrix(t *testing.T, fn func(t *testing.T, kind string, d
 				if log.Type != LogTypeConsume {
 					continue
 				}
-				input := usageEventTestInput(int64(i+1))
+				input := usageEventTestInput(int64(i + 1))
 				input.OccurredAt, input.ChannelID, input.ModelName = log.CreatedAt, int64(log.ChannelId), log.ModelName
 				input.PromptTokens, input.CompletionTokens, input.QuotaMagnitude = int64(log.PromptTokens), int64(log.CompletionTokens), int64(log.Quota)
 				receipt, err := PrepareUsageEvent(context.Background(), input, UsageEventSourceReady)
@@ -384,7 +384,7 @@ func TestChannelUsageDurableReadBoundaries(t *testing.T) {
 			t.Run("pending sentinel returns no partial total", func(t *testing.T) {
 				clearUsageEventTestRows(t, db)
 				require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-					for i := range usageReadPendingLimit+1 {
+					for i := range usageReadPendingLimit + 1 {
 						if _, err := PrepareUsageEventTx(tx, usageEventTestInput(int64(i+1)), UsageEventSourceReady); err != nil {
 							return err
 						}

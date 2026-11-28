@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -263,6 +264,12 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			common.SQLitePath, common.IsMasterNode, common.RedisEnabled = filepath.Join(t.TempDir(), "perf.db"), false, false
 			hotBuckets.Clear()
 			t.Cleanup(func() {
+				if model.DB != nil && model.DB != oldDB {
+					pool, err := model.DB.DB()
+					if assert.NoError(t, err) {
+						assert.NoError(t, pool.Close())
+					}
+				}
 				model.DB, common.SQLitePath, common.IsMasterNode, common.RedisEnabled = oldDB, oldPath, oldMaster, oldRedis
 				common.SetDatabaseTypes(oldType, oldLogType)
 				hotBuckets.Clear()
@@ -281,14 +288,13 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			seedSQL, err := seed.DB()
 			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, seedSQL.Close()) })
 			seedErr := seed.AutoMigrate(&model.Option{})
-			require.NoError(t, seedSQL.Close())
 			require.NoError(t, seedErr)
+			testutil.MigrateUsageStatisticsForTestDatabase(t, seed)
+			require.NoError(t, seedSQL.Close())
 			require.NoError(t, model.InitDB())
 			db := model.DB
-			sqlDB, err := db.DB()
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 			require.NoError(t, db.Migrator().DropTable(&model.PerfMetric{}))
 			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}))
 			versionQuery := "SELECT version()"

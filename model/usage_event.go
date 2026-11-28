@@ -233,9 +233,9 @@ func (UsageEvent) TableName() string { return "usage_events" }
 
 // UsageHour is one dashboard-compatible hourly dimension bucket.
 type UsageHour struct {
-	ID                   int64  `gorm:"primaryKey;autoIncrement;index:ix_usage_hour_time,priority:3;index:ix_usage_hour_self,priority:4;index:ix_usage_hour_lineage,priority:5;index:ix_usage_hour_lineage_self,priority:6"`
-	ProjectionVersion    int64  `gorm:"type:bigint;not null;uniqueIndex:ux_usage_hour_key,priority:1;index:ix_usage_hour_time,priority:1;index:ix_usage_hour_self,priority:2;index:ix_usage_hour_lineage,priority:3;index:ix_usage_hour_lineage_self,priority:4"`
-	DimensionKey         string `gorm:"type:char(64);not null;uniqueIndex:ux_usage_hour_key,priority:2"`
+	ID                int64  `gorm:"primaryKey;autoIncrement;index:ix_usage_hour_time,priority:3;index:ix_usage_hour_self,priority:4;index:ix_usage_hour_lineage,priority:5;index:ix_usage_hour_lineage_self,priority:6"`
+	ProjectionVersion int64  `gorm:"type:bigint;not null;uniqueIndex:ux_usage_hour_key,priority:1;index:ix_usage_hour_time,priority:1;index:ix_usage_hour_self,priority:2;index:ix_usage_hour_lineage,priority:3;index:ix_usage_hour_lineage_self,priority:4"`
+	DimensionKey      string `gorm:"type:char(64);not null;uniqueIndex:ux_usage_hour_key,priority:2"`
 	// Empty identifies an older, unattributed projection. Migration must not
 	// invent a namespace for already aggregated contributions or replay facts.
 	SourceNamespace      string `gorm:"type:char(32);not null;default:'';index:ix_usage_hour_lineage,priority:1;index:ix_usage_hour_lineage_self,priority:1"`
@@ -599,9 +599,9 @@ func usageEventRow(input UsageEventInput, state UsageEventSourceState, payloadDi
 		OccurredAt: input.OccurredAt, PreparedAt: now, UpdatedAt: now, UserID: input.UserID, TokenID: input.TokenID, ChannelID: input.ChannelID,
 		Username: input.Username, TokenName: input.TokenName, ModelName: input.ModelName, GroupName: input.GroupName,
 		RequestID: input.RequestID, UpstreamRequestID: input.UpstreamRequestID, WriterNode: input.WriterNode, ExportNode: input.ExportNode,
-		RequestDigest: digestKnownUsageText(input.RequestID, usageKnown(input.KnownMask, UsageEventKnownRequestID)),
+		RequestDigest:         digestKnownUsageText(input.RequestID, usageKnown(input.KnownMask, UsageEventKnownRequestID)),
 		UpstreamRequestDigest: digestKnownUsageText(input.UpstreamRequestID, usageKnown(input.KnownMask, UsageEventKnownUpstreamRequestID)),
-		PromptTokens: input.PromptTokens, CompletionTokens: input.CompletionTokens, CacheReadTokens: input.CacheReadTokens,
+		PromptTokens:          input.PromptTokens, CompletionTokens: input.CompletionTokens, CacheReadTokens: input.CacheReadTokens,
 		CacheWriteTokens: input.CacheWriteTokens, ReportedInputTokens: input.ReportedInputTokens,
 		QuotaMagnitude: input.QuotaMagnitude, UsageSemantic: input.UsageSemantic,
 	}
@@ -756,10 +756,10 @@ func ConfirmUsageEventTx(tx *gorm.DB, receipt UsageEventReceipt, outcome UsageEv
 		return ErrUsageEventStateConflict
 	}
 	return tx.Model(&UsageEvent{}).Where("id = ?", stored.ID).Updates(map[string]any{
-		"source_state":             outcome.State,
-		"outcome_evidence_digest":  evidenceDigest,
-		"updated_at":               common.GetTimestamp(),
-		"error_code":               "",
+		"source_state":            outcome.State,
+		"outcome_evidence_digest": evidenceDigest,
+		"updated_at":              common.GetTimestamp(),
+		"error_code":              "",
 	}).Error
 }
 

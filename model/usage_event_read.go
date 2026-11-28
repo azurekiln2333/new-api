@@ -78,7 +78,7 @@ func usageFactQuery(ctx context.Context, filter LogFilter) (*gorm.DB, UsageEvent
 			if err != nil {
 				return nil, 0, err
 			}
-			condition = field.column+" LIKE ? ESCAPE '!'"
+			condition = field.column + " LIKE ? ESCAPE '!'"
 		}
 		query = query.Where("("+condition+" OR (known_mask & ?) = 0)", value, field.known)
 	}
@@ -198,7 +198,7 @@ func readUsageChannels(ctx context.Context, ids []int, models bool) ([]usageChan
 		return nil, err
 	}
 	base := DB.WithContext(ctx).Model(&UsageChannel{}).
-		Select("channel_id, '' AS model_name, ? AS model_known, consume_count, gross_quota, prompt_tokens, completion_tokens, last_used_at, 0 AS pending", true).
+		Select("channel_id, '' AS model_name, " + commonTrueVal + " AS model_known, consume_count, gross_quota, prompt_tokens, completion_tokens, last_used_at, 0 AS pending").
 		Where("projection_version = ? AND channel_id IN ?", UsageEventProjectionVersion, ids)
 	if models {
 		base = DB.WithContext(ctx).Model(&UsageChannelModel{}).

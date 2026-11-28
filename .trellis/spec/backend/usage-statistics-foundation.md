@@ -160,9 +160,14 @@ cleanup. Channel detail excludes empty-model entries on both paths.
 
 `cmd/usage-statistics` exposes bounded inspect/import/resume and explicit activate
 operations. The operator supplies stable source identity, manifest and baseline
-proof. Invoking the command may initialize/migrate databases; it is not a dry run
-or permission to perform production cutover. Native TTL and external SQL deletion
-remain separate operational controls.
+proof. After loading the environment, the standalone command sets
+`common.IsMasterNode = false` before database initialization. This skips
+master-only migrations and ClickHouse TTL synchronization, so opening the source
+does not modify or remove the operator-held native TTL configuration. Existing
+schemas are a prerequisite. Non-master primary startup checks and durable
+prerequisite helpers still run and may write; this is not a read-only connection
+mode or permission to perform production cutover. Native TTL and external SQL
+deletion remain separate operational controls.
 
 ### Validation and error matrix
 

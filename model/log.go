@@ -408,18 +408,18 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 
 type RecordConsumeLogParams struct {
 	UsageReport      *UsageSourceReport `json:"-"`
-	ChannelId        int               `json:"channel_id"`
-	PromptTokens     int               `json:"prompt_tokens"`
-	CompletionTokens int               `json:"completion_tokens"`
-	ModelName        string            `json:"model_name"`
-	TokenName        string            `json:"token_name"`
-	Quota            int               `json:"quota"`
-	Content          []*common.Message `json:"content"`
-	TokenId          int               `json:"token_id"`
-	UseTimeSeconds   int               `json:"use_time_seconds"`
-	IsStream         bool              `json:"is_stream"`
-	Group            string            `json:"group"`
-	Other            *LogOther         `json:"other"`
+	ChannelId        int                `json:"channel_id"`
+	PromptTokens     int                `json:"prompt_tokens"`
+	CompletionTokens int                `json:"completion_tokens"`
+	ModelName        string             `json:"model_name"`
+	TokenName        string             `json:"token_name"`
+	Quota            int                `json:"quota"`
+	Content          []*common.Message  `json:"content"`
+	TokenId          int                `json:"token_id"`
+	UseTimeSeconds   int                `json:"use_time_seconds"`
+	IsStream         bool               `json:"is_stream"`
+	Group            string             `json:"group"`
+	Other            *LogOther          `json:"other"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {

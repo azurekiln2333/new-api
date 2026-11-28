@@ -404,6 +404,8 @@ func TestLogRequestDetailConfiguredSQLiteAlias(t *testing.T) {
 	require.NoError(t, seed.AutoMigrate(&Option{}))
 	seedSQL, err := seed.DB()
 	require.NoError(t, err)
+	require.NoError(t, MigrateUsageStatistics(seed))
+	require.NoError(t, MigrateUsageEventBackfill(seed))
 	require.NoError(t, seedSQL.Close())
 	previousMain, previousLogs := DB, LOG_DB
 	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()

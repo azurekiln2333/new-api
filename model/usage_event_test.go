@@ -83,8 +83,8 @@ func usageEventTestInput(sequence int64) UsageEventInput {
 		},
 		CollectionEpoch: strings.Repeat("b", 32), Kind: UsageEventKindConsume,
 		Eligibility: UsageEventProjectHours | UsageEventProjectChannel,
-		KnownMask: usageEventKnownAll,
-		OccurredAt: 1700000123, UserID: 91230, TokenID: 91231, ChannelID: 91232,
+		KnownMask:   usageEventKnownAll,
+		OccurredAt:  1700000123, UserID: 91230, TokenID: 91231, ChannelID: 91232,
 		Username: "usage-owner", TokenName: "historical-token", ModelName: "model-α", GroupName: "group-甲",
 		RequestID: "shared-request", UpstreamRequestID: "shared-upstream", WriterNode: "writer", ExportNode: "ingress",
 		PromptTokens: 100, CompletionTokens: 20, CacheReadTokens: 30, CacheWriteTokens: 5,
@@ -640,7 +640,7 @@ func TestDeleteOldLogBatchRejectsLegacyNodeMutation(t *testing.T) {
 	epoch := strings.Repeat("b", usageEventUIDLength)
 	manifest := strings.Repeat("c", usageEventDigestLength)
 	fence := strings.Repeat("d", usageEventDigestLength)
-		require.NoError(t, installUsageReadLineageTestOnly(t.Context(), UsageReadLineage{
+	require.NoError(t, installUsageReadLineageTestOnly(t.Context(), UsageReadLineage{
 		IncludeLegacyQuotaData: true, LegacyQuotaDataMaxID: 0, LegacyBaselineDigest: manifest, FenceDigest: fence,
 		LegacySourceNamespace: namespace, LegacyCollectionEpoch: epoch, LiveSourceNamespace: UsageLiveSourceNamespace(),
 		LiveCollectionEpoch: UsageLiveCollectionEpoch(), DashboardEligibility: UsageEventProjectHours,

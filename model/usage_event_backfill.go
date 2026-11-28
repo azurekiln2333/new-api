@@ -270,7 +270,7 @@ func InspectUsageEventBackfillBatch(ctx context.Context, source *gorm.DB, plan U
 			selectColumns = append(selectColumns, "other")
 		}
 		if err := query.Select(strings.Join(selectColumns, ", ")).Where("id > ? AND id <= ?", cursor.LastRowID, plan.HighWatermark).
-			Order("id").Limit(limit+1).Scan(&relational).Error; err != nil {
+			Order("id").Limit(limit + 1).Scan(&relational).Error; err != nil {
 			return page, err
 		}
 		page.Exhausted = len(relational) <= limit
@@ -319,8 +319,8 @@ func InspectUsageEventBackfillBatch(ctx context.Context, source *gorm.DB, plan U
 			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")
 			grouped = grouped.Where("tuple("+strings.Join(aliases, ",")+") "+operator+" tuple("+placeholders+")", values...)
 		}
-		if err := grouped.Select(strings.Join(aliases, ",")+", count() AS multiplicity").Group(strings.Join(aliases, ",")).
-			Order("tuple("+strings.Join(aliases, ",")+")").Limit(limit+1).Scan(&rows).Error; err != nil {
+		if err := grouped.Select(strings.Join(aliases, ",") + ", count() AS multiplicity").Group(strings.Join(aliases, ",")).
+			Order("tuple(" + strings.Join(aliases, ",") + ")").Limit(limit + 1).Scan(&rows).Error; err != nil {
 			return page, err
 		}
 		page.Exhausted = len(rows) <= limit
@@ -435,7 +435,7 @@ func usageBackfillDecodeLinkedFacts(raw string) (usageBackfillLinkedFacts, error
 
 func usageBackfillInput(plan UsageEventBackfillPlan, row usageBackfillRow, tupleDigest string, ordinal int64) (UsageEventInput, error) {
 	input := UsageEventInput{
-		Identity: UsageEventIdentity{SourceNamespace: plan.SourceNamespace, SourceKind: plan.SourceKind},
+		Identity:        UsageEventIdentity{SourceNamespace: plan.SourceNamespace, SourceKind: plan.SourceKind},
 		CollectionEpoch: plan.CollectionEpoch, Kind: UsageEventKindConsume, OccurredAt: row.OccurredAt,
 		KnownMask: UsageEventKnownUserID | UsageEventKnownTokenID | UsageEventKnownChannelID | UsageEventKnownUsername |
 			UsageEventKnownTokenName | UsageEventKnownModelName | UsageEventKnownGroupName | UsageEventKnownRequestID |
@@ -725,7 +725,7 @@ func usageBackfillProgress(row UsageEventBackfill, batchRows int) UsageEventBack
 		status = UsageCoverageRetainedVerified
 	}
 	return UsageEventBackfillProgress{
-		Cursor: UsageEventBackfillCursor{LastRowID: row.LastRowID, Tuple: row.CursorTuple, Ordinal: row.CursorOrdinal, Rows: row.ImportedRows, Digest: normalizeFixedText(row.RollingDigest)},
+		Cursor:    UsageEventBackfillCursor{LastRowID: row.LastRowID, Tuple: row.CursorTuple, Ordinal: row.CursorOrdinal, Rows: row.ImportedRows, Digest: normalizeFixedText(row.RollingDigest)},
 		BatchRows: batchRows, RetainedVerified: row.VerifiedAt > 0, UnknownFieldRows: row.UnknownFieldRows,
 		HistoricalCoverage: status, WholeHistoryCoverage: UsageCoverageUnknown,
 	}

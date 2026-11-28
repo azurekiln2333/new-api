@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	appI18n "github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/internal/testutil"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	builtinplugins "github.com/QuantumNous/new-api/plugins"
@@ -2161,9 +2162,11 @@ func TestRouteTaskPluginEndpointUsesSelectedChannel(t *testing.T) {
 			require.NoError(t, err)
 			seedSQL, err := seed.DB()
 			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, seedSQL.Close()) })
 			seedErr := seed.AutoMigrate(&model.Option{})
-			require.NoError(t, seedSQL.Close())
 			require.NoError(t, seedErr)
+			testutil.MigrateUsageStatisticsForTestDatabase(t, seed)
+			require.NoError(t, seedSQL.Close())
 			previousDB, previousType, previousLogType := model.DB, common.MainDatabaseType(), common.LogDatabaseType()
 			previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 			previousPath, previousMaster := common.SQLitePath, common.IsMasterNode

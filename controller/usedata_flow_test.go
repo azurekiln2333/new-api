@@ -15,9 +15,9 @@ import (
 )
 
 type flowQuotaResponse struct {
-	Success  bool                               `json:"success"`
-	Message  string                             `json:"message"`
-	Data     []model.FlowQuotaData              `json:"data"`
+	Success  bool                              `json:"success"`
+	Message  string                            `json:"message"`
+	Data     []model.FlowQuotaData             `json:"data"`
 	Coverage model.UsageStatisticsCoverageView `json:"coverage"`
 }
 
@@ -206,7 +206,7 @@ func TestQuotaDateHandlersReturnDashboardCoverageForEmptyTotals(t *testing.T) {
 			tc.handler(ctx)
 
 			var payload struct {
-				Success  bool                               `json:"success"`
+				Success  bool                              `json:"success"`
 				Coverage model.UsageStatisticsCoverageView `json:"coverage"`
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
@@ -235,7 +235,7 @@ func TestChannelUsageEndpointsReturnLifetimeCoverageForEmptyTotals(t *testing.T)
 			}
 			tc.handler(ctx)
 			var payload struct {
-				Success  bool                               `json:"success"`
+				Success  bool                              `json:"success"`
 				Coverage model.UsageStatisticsCoverageView `json:"coverage"`
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
@@ -253,9 +253,9 @@ func TestRankingsReturnsCoverageBesideNumericData(t *testing.T) {
 	GetRankings(ctx)
 
 	var payload struct {
-		Success          bool                               `json:"success"`
-		Data             service.RankingsResponse           `json:"data"`
-		Coverage          model.UsageStatisticsCoverageView `json:"coverage"`
+		Success          bool                              `json:"success"`
+		Data             service.RankingsResponse          `json:"data"`
+		Coverage         model.UsageStatisticsCoverageView `json:"coverage"`
 		PreviousCoverage model.UsageStatisticsCoverageView `json:"previous_coverage"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))

@@ -218,7 +218,7 @@ func NewTaskUsageTransition(task *Task, total int, refund bool, input UsageEvent
 	}
 	input.Identity = UsageEventIdentity{SourceKind: UsageEventSourceTaskAdjustment,
 		SourceNamespace: UsageLiveSourceNamespace(),
-		OccurrenceUID: uid, TaskPrimaryID: task.ID}
+		OccurrenceUID:   uid, TaskPrimaryID: task.ID}
 	input.OccurredAt = common.GetTimestamp()
 	input.SourceOperationRef = "task-quota/v1/" + strconv.Itoa(task.Quota) + "/" + strconv.Itoa(total)
 	input.Kind = UsageEventKindConsume

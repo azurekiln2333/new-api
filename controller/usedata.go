@@ -51,9 +51,9 @@ func GetAllQuotaDates(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
 		"coverage": coverage,
 	})
 	return
@@ -72,9 +72,9 @@ func GetQuotaDatesByUser(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
 		"coverage": coverage,
 	})
 }
@@ -98,9 +98,9 @@ func GetUserQuotaDates(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
 		"coverage": coverage,
 	})
 	return
@@ -122,9 +122,9 @@ func GetAllFlowQuotaDates(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
 		"coverage": coverage,
 	})
 	return
@@ -150,9 +150,9 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    dates,
+		"success":  true,
+		"message":  "",
+		"data":     dates,
 		"coverage": coverage,
 	})
 	return

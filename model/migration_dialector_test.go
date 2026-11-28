@@ -128,7 +128,9 @@ func TestMigrationSchemaStability(t *testing.T) {
 				require.NoError(t, db.Table(logTable).Create(&oldLog).Error)
 				t.Cleanup(func() { require.NoError(t, db.Table(logTable).Where("id = ?", oldLog.Id).Delete(&Log{}).Error) })
 				require.NoError(t, db.Table(quotaTable).Create(&oldQuota).Error)
-				t.Cleanup(func() { require.NoError(t, db.Table(quotaTable).Where("id = ?", oldQuota.Id).Delete(&QuotaData{}).Error) })
+				t.Cleanup(func() {
+					require.NoError(t, db.Table(quotaTable).Where("id = ?", oldQuota.Id).Delete(&QuotaData{}).Error)
+				})
 				require.NoError(t, db.Table("usage_hours").AutoMigrate(&migrationUsageHourWithoutNamespace{}))
 				oldHour := migrationUsageHourWithoutNamespace{
 					ProjectionVersion: UsageEventProjectionVersion, DimensionKey: strings.Repeat("e", 64), CollectionEpoch: strings.Repeat("b", 32),

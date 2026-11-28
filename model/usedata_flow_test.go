@@ -154,7 +154,9 @@ func TestUsageStatisticsReadersDatabaseMatrix(t *testing.T) {
 			logDB := withOpenTestLogDatabase(t, "sqlite", "")
 			require.NoError(t, db.AutoMigrate(&QuotaData{}, &Ability{}, &Channel{}, &Token{}))
 			require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&QuotaData{}).Error)
-			t.Cleanup(func() { require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&QuotaData{}).Error) })
+			t.Cleanup(func() {
+				require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&QuotaData{}).Error)
+			})
 			ctx := context.Background()
 			const hour int64 = 1699999200
 			baseline := QuotaData{UserID: 91230, Username: "old-name", ModelName: "reader-model", CreatedAt: hour,
@@ -168,7 +170,7 @@ func TestUsageStatisticsReadersDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.Create(&lateLegacy).Error)
 			var receipts []UsageEventReceipt
 			for i := range 2 {
-				input := usageEventTestInput(int64(i+1))
+				input := usageEventTestInput(int64(i + 1))
 				input.OccurredAt, input.ChannelID, input.ModelName = hour+100+int64(i), 9420, "reader-model"
 				input.RequestID, input.UpstreamRequestID = "read-50%_request", "upstream-read"
 				if i == 0 {
@@ -244,7 +246,7 @@ func TestUsageStatisticsReadersDatabaseMatrix(t *testing.T) {
 			assert.Empty(t, selfFlow[0].NodeName)
 			assert.Zero(t, selfFlow[0].ChannelID)
 
-			filter := LogFilter{StartTimestamp: hour+100, EndTimestamp: hour+101, RequestId: "50%_", MatchMode: LogMatchFuzzy}
+			filter := LogFilter{StartTimestamp: hour + 100, EndTimestamp: hour + 101, RequestId: "50%_", MatchMode: LogMatchFuzzy}
 			stat, err := SumUsageEventQuota(ctx, filter)
 			require.NoError(t, err)
 			assert.Equal(t, Stat{Quota: 14, CacheReadTokens: 60, InputTokens: 235}, stat)
@@ -266,7 +268,7 @@ func TestUsageStatisticsReadersDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, tc.input, result.InputTokens)
 			}
 			boundary := filter
-			boundary.EndTimestamp = hour+100
+			boundary.EndTimestamp = hour + 100
 			boundary.MatchMode, boundary.RequestId = LogMatchExact, "read-50%_request"
 			result, err := SumUsageEventQuota(ctx, boundary)
 			require.NoError(t, err)
@@ -332,7 +334,7 @@ func TestUsageStatisticsReadersDatabaseMatrix(t *testing.T) {
 				_, err = GetAllQuotaDates(hour, hour+3599, "")
 				assert.ErrorIs(t, err, ErrUsageStatisticsNotReady, "unknown token semantics are not reported as zero")
 			}
-			unknownFilter := LogFilter{StartTimestamp: hour+102, EndTimestamp: hour+102}
+			unknownFilter := LogFilter{StartTimestamp: hour + 102, EndTimestamp: hour + 102}
 			_, err = SumUsageEventQuota(ctx, unknownFilter)
 			assert.ErrorIs(t, err, ErrUsageStatisticsNotReady)
 			raw, err := SumUsageEventTokens(ctx, unknownFilter)
@@ -342,21 +344,21 @@ func TestUsageStatisticsReadersDatabaseMatrix(t *testing.T) {
 			lineage, err := GetUsageReadLineage(ctx)
 			require.NoError(t, err)
 			require.NoError(t, AttestUsageStatisticsCoverage(ctx, UsageStatisticsCoverage{
-				Family: UsageStatisticsFacts, StartAt: now-120, EndAt: now, LineageDigest: lineage.LineageDigest,
+				Family: UsageStatisticsFacts, StartAt: now - 120, EndAt: now, LineageDigest: lineage.LineageDigest,
 				ManifestDigest: strings.Repeat("e", 64), SourceSeal: strings.Repeat("f", 64),
 			}))
-			for i, timestamp := range []int64{now-90, now-10} {
-				input := usageEventTestInput(int64(i+20))
+			for i, timestamp := range []int64{now - 90, now - 10} {
+				input := usageEventTestInput(int64(i + 20))
 				input.OccurredAt, input.RequestID = timestamp, "recent-window"
 				_, err := PrepareUsageEvent(ctx, input, UsageEventSourceReady)
 				require.NoError(t, err)
 			}
-			recent, err := SumUsageEventQuota(ctx, LogFilter{StartTimestamp: now-120, EndTimestamp: now, RequestId: "recent-window", MatchMode: LogMatchExact})
+			recent, err := SumUsageEventQuota(ctx, LogFilter{StartTimestamp: now - 120, EndTimestamp: now, RequestId: "recent-window", MatchMode: LogMatchExact})
 			require.NoError(t, err)
 			assert.Equal(t, 14, recent.Quota)
 			assert.Equal(t, 1, recent.Rpm)
 			assert.Equal(t, 120, recent.Tpm)
-			past, err := SumUsageEventQuota(ctx, LogFilter{StartTimestamp: now-120, EndTimestamp: now-70, RequestId: "recent-window", MatchMode: LogMatchExact})
+			past, err := SumUsageEventQuota(ctx, LogFilter{StartTimestamp: now - 120, EndTimestamp: now - 70, RequestId: "recent-window", MatchMode: LogMatchExact})
 			require.NoError(t, err)
 			assert.Equal(t, 7, past.Quota)
 			assert.Zero(t, past.Rpm)

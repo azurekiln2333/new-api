@@ -194,6 +194,12 @@ func TestLogFilterTextMatchModes(t *testing.T) {
 
 func TestLogUserScopesShareListStatAndStream(t *testing.T) {
 	runLogDatabaseMatrix(t, func(t *testing.T, db *gorm.DB) {
+		primaryKind := db.Dialector.Name()
+		if primaryKind == "clickhouse" {
+			primaryKind = "sqlite"
+		}
+		primary := openUsageEventTestDatabase(t, primaryKind)
+		prepareUsageBackfillFixture(t, primary)
 		const modelName = "r33-scope-fixture"
 		now := time.Now().Unix()
 		rows := []Log{

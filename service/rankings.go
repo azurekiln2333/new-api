@@ -23,13 +23,13 @@ const (
 )
 
 type RankingsResponse struct {
-	Totals             RankingTokenTotals `json:"totals"`
-	Models             []RankedModel      `json:"models"`
-	Vendors            []RankedVendor     `json:"vendors"`
-	TopMovers          []RankingMover     `json:"top_movers"`
-	TopDroppers        []RankingMover     `json:"top_droppers"`
-	ModelsHistory      ModelHistorySeries `json:"models_history"`
-	VendorShareHistory VendorShareSeries  `json:"vendor_share_history"`
+	Totals             RankingTokenTotals                `json:"totals"`
+	Models             []RankedModel                     `json:"models"`
+	Vendors            []RankedVendor                    `json:"vendors"`
+	TopMovers          []RankingMover                    `json:"top_movers"`
+	TopDroppers        []RankingMover                    `json:"top_droppers"`
+	ModelsHistory      ModelHistorySeries                `json:"models_history"`
+	VendorShareHistory VendorShareSeries                 `json:"vendor_share_history"`
 	Coverage           model.UsageStatisticsCoverageView `json:"-"`
 	PreviousCoverage   model.UsageStatisticsCoverageView `json:"-"`
 }
