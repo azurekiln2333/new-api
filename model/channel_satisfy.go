@@ -5,8 +5,147 @@ import (
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
+
+// ChannelModelOption exposes routing choices without credentials or settings.
+type ChannelModelOption struct {
+	ID     int      `json:"id"`
+	Name   string   `json:"name"`
+	Models []string `json:"models"`
+}
+
+// ListAvailableChannelModels reads current allocations and budgets in bounded
+// batches. Unlike request admission's conservative bool predicates, a listing
+// must return storage failures rather than report a successful empty catalog.
+// The relay still revalidates every choice before forwarding.
+func ListAvailableChannelModels(ctx context.Context, groups []string, userID int, filters []dto.ChannelFilter) ([]ChannelModelOption, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	options := make([]ChannelModelOption, 0)
+	if userID <= 0 {
+		return options, nil
+	}
+	active, err := channelBudgetActivation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scope := DB.Session(&gorm.Session{Logger: logger.Discard})
+	projectionContext := WithBatchedChannelKeyEntries(ctx)
+	beforeID := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		query := scope.WithContext(projectionContext).Where("status = ?", common.ChannelStatusEnabled)
+		if beforeID > 0 {
+			query = query.Where("id < ?", beforeID)
+		}
+		var channels []*Channel
+		if err := query.Order("id DESC").Limit(channelKeyEntryProjectionChunk).Find(&channels).Error; err != nil {
+			return nil, err
+		}
+		if len(channels) == 0 {
+			return options, ctx.Err()
+		}
+		if err := ProjectChannelKeyEntries(scope, projectionContext, channels, false); err != nil {
+			return nil, err
+		}
+		channelIDs := make([]int64, 0, len(channels))
+		allocationIDs := make([]int64, 0)
+		for _, channel := range channels {
+			channelIDs = append(channelIDs, int64(channel.Id))
+			allocationIDs = append(allocationIDs, channel.KeyEntryIDs...)
+		}
+		channelExhausted := make(map[int64]bool)
+		keyExhausted := make(map[int64]bool)
+		if active {
+			for _, budget := range []struct {
+				scope     ChannelBudgetScopeType
+				ids       []int64
+				exhausted map[int64]bool
+			}{
+				{BudgetScopeChannel, channelIDs, channelExhausted},
+				{BudgetScopeKey, allocationIDs, keyExhausted},
+			} {
+				for chunk := range slices.Chunk(budget.ids, channelKeyEntryProjectionChunk) {
+					var accounts []ChannelBudgetAccount
+					if err := scope.WithContext(ctx).Where("scope_type = ? AND scope_id IN ?", budget.scope, chunk).Find(&accounts).Error; err != nil {
+						return nil, err
+					}
+					for i := range accounts {
+						_, exhausted := budgetCapacity(&accounts[i])
+						budget.exhausted[accounts[i].ScopeId] = exhausted
+					}
+				}
+			}
+		}
+		for _, channel := range channels {
+			if channelExhausted[int64(channel.Id)] {
+				continue
+			}
+			publicModels := make(map[string]bool)
+			models := channel.GetModels()
+			channelGroups := channel.GetGroups()
+			groupModels := channel.GetOtherSettings().GroupModels
+			keys := allocationKeyList(channel)
+			for _, group := range groups {
+				if !slices.Contains(channelGroups, group) {
+					continue
+				}
+				for _, name := range filterGroupModels(models, groupModels[group]) {
+					publicModels[name] = true
+				}
+			}
+			available := make([]string, 0, len(models))
+			for _, name := range models {
+				if slices.Contains(available, name) {
+					continue
+				}
+				matches := true
+				for _, filter := range filters {
+					if !channelMatchesFilter(channel, name, filter) {
+						matches = false
+						break
+					}
+				}
+				if !matches {
+					continue
+				}
+				upstream, _ := channel.RoutingUpstreamModelName(name)
+				for i := range keys {
+					id := channel.ChannelKeyEntryID(i)
+					if active && (id <= 0 || keyExhausted[id]) {
+						continue
+					}
+					if !channel.keyEnabled(i) || !channel.KeyServesModel(i, name) || channel.keyModelUnavailable(i, upstream) {
+						continue
+					}
+					owner := channel.ChannelInfo.MultiKeyUsers[i]
+					if owner == userID && userID > 0 || owner == 0 && publicModels[name] {
+						available = append(available, name)
+						break
+					}
+				}
+			}
+			if len(available) > 0 {
+				slices.Sort(available)
+				options = append(options, ChannelModelOption{ID: channel.Id, Name: channel.Name, Models: available})
+			}
+		}
+		beforeID = channels[len(channels)-1].Id
+		if len(channels) < channelKeyEntryProjectionChunk {
+			return options, ctx.Err()
+		}
+	}
+}
 
 // EligibleModelsForUserGroup includes enabled public keys within the group's
 // model scope and keys bound to this user, which also work outside the group.

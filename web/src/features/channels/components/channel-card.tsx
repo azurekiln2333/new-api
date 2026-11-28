@@ -23,20 +23,22 @@ import { useTranslation } from 'react-i18next'
 import { StatusBadgeTypeContext } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 
-import { CHANNEL_STATUS } from '../constants'
-import { isTagAggregateRow } from '../lib'
+import { CHANNEL_STATUS, CHANNEL_TYPE_TASK_PLUGIN } from '../constants'
+import { useTaskPluginOption } from '../hooks/use-task-plugin-option'
+import { isTagAggregateRow, parseChannelSettings } from '../lib'
 import type { Channel } from '../types'
 import { ChannelQuotaCell } from './channel-budget-cell'
 import { ChannelConcurrencyCell } from './channel-concurrency-context'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
+import { ChannelTypeLogo } from './channel-type-badge'
 import { useChannels } from './channels-provider'
 
 const SENSITIVE_MASK = '••••'
 
 /**
  * Bespoke channel card for the card view. Reuses the existing cell renderers
- * via `flexRender`, omitting the table-only type cell while preserving row
- * selection, id, name/remark + warning icons, status (with tooltips), inline
+ * via `flexRender`, showing only the type icon before the name while preserving
+ * row selection, id, name/remark + warning icons, status (with tooltips), inline
  * priority/weight spinners, balance refresh, response/test times, tag
  * expand-collapse, and the per-row (or per-tag) actions menu. Channel groups
  * and the models each group reaches live in the details drawer.
@@ -60,6 +62,12 @@ function ChannelCardComponent({
   const { t } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const isTagRow = isTagAggregateRow(row.original)
+  const pluginKey =
+    row.original.type === CHANNEL_TYPE_TASK_PLUGIN
+      ? parseChannelSettings(row.original.setting).task_plugin_key
+      : undefined
+  const plugin = useTaskPluginOption(pluginKey)
+  const pluginIcon = plugin ?? (pluginKey ? { key: pluginKey } : undefined)
   const cells = row.getAllCells()
 
   const renderCell = (id: string) => {
@@ -113,8 +121,8 @@ function ChannelCardComponent({
         data-activates-channel-details={interactive ? true : undefined}
         className='focus-visible:ring-ring flex min-w-0 flex-col gap-2 rounded-sm focus-visible:ring-2 focus-visible:outline-none'
       >
-        {/* Row 1: selection, channel name and id, then concurrency and the
-          status/action icons. The type cell belongs only to table view. */}
+        {/* Row 1: selection, type icon, channel name and id, then concurrency
+          and the status/action icons. Type text belongs only to table view. */}
         <div className='flex items-start justify-between gap-2'>
           <div className='flex min-w-0 flex-1 items-center gap-2'>
             {reorderCell}
@@ -122,7 +130,20 @@ function ChannelCardComponent({
               <span className='shrink-0'>{selectCell}</span>
             )}
             <div className='min-w-0 flex-1 overflow-hidden text-sm'>
-              {nameCell}
+              {isTagRow ? (
+                nameCell
+              ) : (
+                <div className='flex min-w-0 items-start gap-1.5'>
+                  <span aria-hidden='true' className='shrink-0'>
+                    <ChannelTypeLogo
+                      type={row.original.type}
+                      plugin={pluginIcon}
+                      size={18}
+                    />
+                  </span>
+                  {nameCell}
+                </div>
+              )}
               {!isTagRow && (
                 <div className={labelClass}>
                   #{sensitiveVisible ? row.original.id : SENSITIVE_MASK}

@@ -427,7 +427,12 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 	case "all", "":
 	case "allowlist":
 		var models []string
-		if common.UnmarshalJsonStr(allocation.Models, &models) != nil || !budgetScopeServesModel(models, selection.ModelName) {
+		if common.UnmarshalJsonStr(allocation.Models, &models) != nil {
+			return nil, ErrBudgetAllocationInvalid
+		}
+		// Only allocation capability accepts the mapped upstream name. Channel
+		// and group authorization above/below stay in the request namespace.
+		if !budgetScopeServesModel(models, selection.ModelName) && !channel.keyScopeServesModel(models, selection.ModelName) {
 			return nil, ErrBudgetAllocationInvalid
 		}
 	default:

@@ -17,7 +17,7 @@ func useFrontendOptionMigrationDB(t *testing.T) *gorm.DB {
 	previousType := common.MainDatabaseType()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&Option{}))
+	require.NoError(t, db.AutoMigrate(&Option{}, &SystemTask{}, &SystemTaskLock{}))
 	DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	t.Cleanup(func() {

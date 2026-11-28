@@ -31,6 +31,14 @@ const (
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")
+var ErrSystemTaskLockAnchor = errors.New("internal options sync anchor is not a task lease")
+
+// The options sync anchor is permanent coordination state, not a task lease.
+const (
+	optionsSyncAnchorType     = "internal_options_sync_anchor"
+	optionsSyncAnchorTaskID   = "options_sync_anchor"
+	optionsSyncAnchorLockedBy = "options_sync_anchor"
+)
 
 // SystemTask is one run of a background job, or one sync task (see
 // SyncTaskType). The (type, id) index answers "newest row of a type" without
@@ -406,6 +414,11 @@ func ClaimSystemTask(id int64, taskType string, runnerID string, lockUntil int64
 }
 
 func acquireSystemTaskLock(taskType string, taskID string, lockedBy string, now int64, lockUntil int64) (bool, string, error) {
+	if strings.EqualFold(strings.TrimSpace(taskType), optionsSyncAnchorType) ||
+		strings.EqualFold(strings.TrimSpace(taskID), optionsSyncAnchorTaskID) ||
+		strings.EqualFold(strings.TrimSpace(lockedBy), optionsSyncAnchorLockedBy) {
+		return false, "", ErrSystemTaskLockAnchor
+	}
 	lock := &SystemTaskLock{
 		Type:        taskType,
 		TaskID:      taskID,
@@ -425,12 +438,15 @@ func acquireSystemTaskLock(taskType string, taskID string, lockedBy string, now 
 		}
 		return false, "", err
 	}
+	if existing.Type == optionsSyncAnchorType {
+		return false, "", ErrSystemTaskLockAnchor
+	}
 	if existing.LockedUntil >= now {
 		return false, "", nil
 	}
 
 	result := DB.Model(&SystemTaskLock{}).
-		Where("type = ? AND locked_until < ?", taskType, now).
+		Where("type = ? AND type <> ? AND locked_until < ?", taskType, optionsSyncAnchorType, now).
 		Updates(map[string]any{
 			"task_id":      taskID,
 			"locked_by":    lockedBy,
@@ -485,9 +501,12 @@ func UpdateSystemTaskState(taskID string, lockedBy string, state any) error {
 }
 
 func RenewSystemTaskLock(taskID string, lockedBy string, lockUntil int64) error {
+	if strings.EqualFold(strings.TrimSpace(taskID), optionsSyncAnchorTaskID) || strings.EqualFold(strings.TrimSpace(lockedBy), optionsSyncAnchorLockedBy) {
+		return ErrSystemTaskLockAnchor
+	}
 	now := common.GetTimestamp()
 	result := DB.Model(&SystemTaskLock{}).
-		Where("task_id = ? AND locked_by = ? AND locked_until >= ?", taskID, lockedBy, now).
+		Where("type <> ? AND task_id = ? AND locked_by = ? AND locked_until >= ?", optionsSyncAnchorType, taskID, lockedBy, now).
 		Updates(map[string]any{
 			"locked_until": lockUntil,
 			"updated_at":   now,
@@ -515,7 +534,7 @@ func MarkSystemTaskLeaseExpired(taskID string) error {
 
 func ExpireStaleSystemTaskLocks(now int64) error {
 	var locks []*SystemTaskLock
-	if err := DB.Where("locked_until < ?", now).Find(&locks).Error; err != nil {
+	if err := DB.Where("type <> ? AND locked_until < ?", optionsSyncAnchorType, now).Find(&locks).Error; err != nil {
 		return err
 	}
 	for _, lock := range locks {
@@ -532,7 +551,10 @@ func ExpireStaleSystemTaskLocks(now int64) error {
 }
 
 func ReleaseSystemTaskLock(taskID string, lockedBy string) error {
-	result := DB.Where("task_id = ? AND locked_by = ?", taskID, lockedBy).Delete(&SystemTaskLock{})
+	if strings.EqualFold(strings.TrimSpace(taskID), optionsSyncAnchorTaskID) || strings.EqualFold(strings.TrimSpace(lockedBy), optionsSyncAnchorLockedBy) {
+		return nil
+	}
+	result := DB.Where("type <> ? AND task_id = ? AND locked_by = ?", optionsSyncAnchorType, taskID, lockedBy).Delete(&SystemTaskLock{})
 	return result.Error
 }
 

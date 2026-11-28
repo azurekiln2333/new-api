@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Loader2,
   RefreshCw,
@@ -67,7 +67,6 @@ import { useAuthStore } from '@/stores/auth-store'
 import {
   getChannel,
   getMultiKeyStatus,
-  getChannelBudget,
   enableMultiKey,
   disableMultiKey,
   deleteMultiKey,
@@ -160,14 +159,6 @@ export function MultiKeyManageDialog({
       ADMIN_PERMISSION_RESOURCES.CHANNEL,
       ADMIN_PERMISSION_ACTIONS.WRITE
     )
-  const singleBudget = useQuery({
-    queryKey: channelsQueryKeys.budget(currentRow?.id),
-    queryFn: ({ signal }) => getChannelBudget(currentRow?.id ?? 0, signal),
-    enabled: open && singleKey && canAppend,
-    staleTime: 0,
-    retry: false,
-    meta: { errorToast: false },
-  })
 
   // Data state
   const [isLoading, setIsLoading] = useState(false)
@@ -252,14 +243,9 @@ export function MultiKeyManageDialog({
   const [appendOpen, setAppendOpen] = useState(false)
   const [appendKey, setAppendKey] = useState('')
   const [isAppending, setIsAppending] = useState(false)
-  const ledgerEnabled = singleKey
-    ? singleBudget.data?.ledger_enabled === true &&
-      !singleBudget.isFetching &&
-      !singleBudget.isError
-    : quotaSupported
+  const ledgerEnabled = quotaSupported
   const canSubmitAppend =
     canAppend &&
-    ledgerEnabled &&
     (singleKey || revision != null) &&
     !!appendKey.trim() &&
     !isAppending
@@ -890,7 +876,7 @@ export function MultiKeyManageDialog({
         autoComplete='off'
         value={appendKey}
         onChange={(event) => setAppendKey(event.target.value)}
-        disabled={!canAppend || !ledgerEnabled || isAppending}
+        disabled={!canAppend || isAppending}
       />
     </div>
   )
@@ -899,24 +885,6 @@ export function MultiKeyManageDialog({
     let body = appendInput
     if (!canAppend) {
       body = <p role='status'>{t('No permission to perform this action')}</p>
-    } else if (singleBudget.isError) {
-      body = (
-        <ErrorState
-          className='min-h-0 py-3'
-          title={t('Failed to load the local budget')}
-          onRetry={() => void singleBudget.refetch()}
-        />
-      )
-    } else if (singleBudget.isPending || singleBudget.isFetching) {
-      body = <LoadingState inline size='sm' message={t('Loading...')} />
-    } else if (!ledgerEnabled) {
-      body = (
-        <p role='status'>
-          {singleBudget.data
-            ? t('Channel budget accounting is not enabled')
-            : t('Local budget is not available for this channel yet.')}
-        </p>
-      )
     }
     return (
       <ConfirmDialog
@@ -1032,7 +1000,6 @@ export function MultiKeyManageDialog({
                   size='sm'
                   onClick={() => setAppendOpen(true)}
                   disabled={
-                    !ledgerEnabled ||
                     isLoading ||
                     !!statusError ||
                     revision == null ||
@@ -1169,6 +1136,14 @@ export function MultiKeyManageDialog({
               {t('No permission to perform this action')}
             </p>
           )}
+          {!isLoading &&
+            !statusError &&
+            !ledgerEnabled &&
+            keys.some((key) => key.quota?.ledger_enabled === false) && (
+              <p role='status' className='text-muted-foreground text-sm'>
+                {t('Channel budget accounting is not enabled')}
+              </p>
+            )}
 
           {/* Per-key model scope, edited in place to keep the key list visible */}
           {modelsEditor && currentRow && (

@@ -272,6 +272,11 @@ export type InstanceResourceSummary = {
   status: InstanceResourceStatus
   /** Configured public API URLs bound to this instance. */
   domains: string[]
+  /**
+   * Public binding membership; never join by URL. Older servers omit this
+   * field, so their resource readings remain unassociated.
+   */
+  entry_ids?: number[]
   resources: InstanceResourceUsage
   /** null when the instance has no usable sample. */
   observed_at: number | null

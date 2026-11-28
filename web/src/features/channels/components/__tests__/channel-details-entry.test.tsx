@@ -320,7 +320,7 @@ it('shows a dash instead of tokens when the channel has no usage record', async 
   ).not.toBeInTheDocument()
 })
 
-it('starts the card with the long channel name and ID without a type slot', async () => {
+it('places only the type icon immediately before the long channel name and keeps ID below', async () => {
   const longName = 'production-primary-channel-with-a-long-descriptive-name'
   const card = await renderCardView(undefined, [
     {
@@ -339,12 +339,20 @@ it('starts the card with the long channel name and ID without a type slot', asyn
 
   expect(name).toBeVisible()
   expect(heading).toHaveClass('min-w-0', 'flex-1')
-  expect(heading.firstElementChild).toContainElement(name)
+  const title = heading.firstElementChild as HTMLElement
+  const icon = title.firstElementChild as HTMLElement
+  expect(title).toContainElement(name)
+  expect(icon).toHaveAttribute('aria-hidden', 'true')
+  expect(icon).toHaveClass('shrink-0')
+  await waitFor(() => expect(icon.querySelector('svg')).not.toBeNull())
+  expect(icon.nextElementSibling).toContainElement(name)
   expect(heading.lastElementChild).toBe(id)
   expect(heading.parentElement?.firstElementChild).toBe(heading)
   expect(name.querySelector('.truncate')).not.toBeNull()
   expect(card.querySelector('[data-slot="provider-badge"]')).toBeNull()
-  expect(within(card).queryByText('OpenAI')).not.toBeInTheDocument()
+  expect(
+    within(card).queryByText('OpenAI', { selector: 'span' })
+  ).not.toBeInTheDocument()
   expect(within(card).queryByText('IO.NET')).not.toBeInTheDocument()
   expect(
     within(card).queryByText('Multi-key: Random rotation')
@@ -366,6 +374,12 @@ it('masks the channel name and ID when card details are hidden', async () => {
   expect(within(card).queryByText('prod')).not.toBeInTheDocument()
   expect(within(card).queryByText('#3')).not.toBeInTheDocument()
   expect(card.querySelector('[data-slot="provider-badge"]')).toBeNull()
+  const id = within(card).getByText('#••••')
+  const title = id.previousElementSibling as HTMLElement
+  expect(title.firstElementChild).toHaveAttribute('aria-hidden', 'true')
+  expect(title.lastElementChild).toContainElement(
+    within(card).getByRole('button', { name: '••••' })
+  )
 })
 
 it('keeps the channel type and provider visible in table view', async () => {

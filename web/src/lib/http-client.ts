@@ -93,22 +93,26 @@ api.interceptors.response.use(
 
     return response
   },
-  async (error) => {
-    const config = error?.config as ApiRequestConfig | undefined
+  async (error: unknown) => {
+    const axiosError = axios.isAxiosError(error) ? error : undefined
+    const config = axiosError?.config
     const skipErrorHandler = config?.skipErrorHandler
-    const status = error?.response?.status
+    const status = axiosError?.response?.status
 
     if (status === 401) {
       if (config && !config.skipAuthRefresh && !config.authRetry) {
         config.authRetry = true
-        const outcome = await refreshAuthentication()
+        const outcome = await refreshAuthentication(config.signal)
+        if (config.signal?.aborted) {
+          throw new axios.CanceledError(undefined, config)
+        }
+        if (outcome.kind === 'transient_error') {
+          throw axios.AxiosError.from(outcome.error, undefined, config)
+        }
         if (outcome.kind === 'authenticated') {
           const token = useAuthStore.getState().auth.accessToken
           if (token) {
-            config.headers = {
-              ...config.headers,
-              Authorization: `Bearer ${token}`,
-            }
+            config.headers.set('Authorization', `Bearer ${token}`)
           }
           return api.request(config)
         }
@@ -141,7 +145,7 @@ api.interceptors.response.use(
         })
       }
     }
-    if (axios.isAxiosError(error)) error.message = getServerErrorMessage(error)
+    if (axiosError) axiosError.message = getServerErrorMessage(axiosError)
     throw error
   }
 )
@@ -151,11 +155,15 @@ api.interceptors.request.use(async (config) => {
     // Refresh before spending a proof/flow, never by replaying its request.
     config.skipAuthRefresh = true
     try {
-      const headers = await getFreshAuthHeaders()
+      const headers = await getFreshAuthHeaders(config.signal)
+      if (config.signal?.aborted) {
+        throw new axios.CanceledError(undefined, config)
+      }
       for (const [name, value] of Object.entries(headers)) {
         config.headers.set(name, value)
       }
     } catch (error) {
+      if (axios.isCancel(error)) throw error
       throw axios.AxiosError.from(error, undefined, config)
     }
     return config

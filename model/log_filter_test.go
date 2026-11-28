@@ -1,10 +1,12 @@
 package model
 
 import (
+	"context"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
@@ -187,6 +189,82 @@ func TestLogFilterTextMatchModes(t *testing.T) {
 			assert.Zero(t, total)
 			assert.Empty(t, logs)
 		})
+	})
+}
+
+func TestLogUserScopesShareListStatAndStream(t *testing.T) {
+	runLogDatabaseMatrix(t, func(t *testing.T, db *gorm.DB) {
+		const modelName = "r33-scope-fixture"
+		now := time.Now().Unix()
+		rows := []Log{
+			{UserId: logFilterTestUser, CreatedAt: now - 3, Type: LogTypeConsume, ModelName: modelName, RequestId: "r33-self-a", Quota: 10, PromptTokens: 100, CompletionTokens: 10, Other: `{"cache_tokens":20}`},
+			{UserId: logFilterTestUser + 1, CreatedAt: now - 2, Type: LogTypeConsume, ModelName: modelName, RequestId: "r33-other", Quota: 20, PromptTokens: 200, CompletionTokens: 20, Other: `{"cache_tokens":30}`},
+			{UserId: logFilterTestUser, CreatedAt: now - 1, Type: LogTypeConsume, ModelName: modelName, RequestId: "r33-self-b", Quota: 30, PromptTokens: 300, CompletionTokens: 30, Other: `{"cache_tokens":40}`},
+		}
+		t.Cleanup(func() {
+			if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+				require.NoError(t, db.Exec("ALTER TABLE logs DELETE WHERE user_id = ? AND model_name = ? SETTINGS mutations_sync = 1", logFilterTestUser+1, modelName).Error)
+			} else {
+				require.NoError(t, db.Where("user_id = ? AND model_name = ?", logFilterTestUser+1, modelName).Delete(&Log{}).Error)
+			}
+		})
+		require.NoError(t, db.Create(&rows).Error)
+		for _, tc := range []struct {
+			scope LogUserScope
+			ids   []string
+			quota int
+			input int64
+			cache int64
+			tpm   int
+		}{
+			{LogUserScopeAll, []string{"r33-self-b", "r33-other", "r33-self-a"}, 60, 600, 90, 660},
+			{LogUserScopeSelf, []string{"r33-self-b", "r33-self-a"}, 40, 400, 60, 440},
+			{LogUserScopeOthers, []string{"r33-other"}, 20, 200, 30, 220},
+		} {
+			t.Run(string(tc.scope), func(t *testing.T) {
+				filter := LogFilter{UserScope: tc.scope, ScopeUserId: logFilterTestUser, ModelName: modelName, MatchMode: LogMatchExact}
+				listed, total, err := GetAllLogs(filter, 0, 50)
+				require.NoError(t, err)
+				assert.EqualValues(t, len(tc.ids), total)
+				ids := make([]string, 0, len(listed))
+				for _, row := range listed {
+					ids = append(ids, row.RequestId)
+				}
+				assert.Equal(t, tc.ids, ids)
+				_, pageTotal, err := GetAllLogs(filter, 0, 1)
+				require.NoError(t, err)
+				assert.Equal(t, total, pageTotal, "count uses the same scope independently of page size")
+				stat, err := SumUsedQuota(filter)
+				require.NoError(t, err)
+				assert.EqualValues(t, tc.quota, stat.Quota)
+				assert.Equal(t, tc.input, stat.InputTokens)
+				assert.Equal(t, tc.cache, stat.CacheReadTokens)
+				assert.Equal(t, len(tc.ids), stat.Rpm)
+				assert.Equal(t, tc.tpm, stat.Tpm)
+				streamed := make([]string, 0, len(tc.ids))
+				require.NoError(t, StreamAllLogs(context.Background(), filter, common.RoleAdminUser, func(row *Log) error {
+					streamed = append(streamed, row.RequestId)
+					return nil
+				}))
+				assert.Equal(t, tc.ids, streamed)
+			})
+		}
+
+		for _, filter := range []LogFilter{
+			{UserScope: "invalid", ScopeUserId: logFilterTestUser},
+			{UserScope: LogUserScopeSelf},
+			{UserScope: LogUserScopeOthers, ScopeUserId: -1},
+			{ScopeUserId: logFilterTestUser},
+		} {
+			_, _, err := GetAllLogs(filter, 0, 50)
+			assert.ErrorIs(t, err, errInvalidLogUserScope)
+			_, err = SumUsedQuota(filter)
+			assert.ErrorIs(t, err, errInvalidLogUserScope)
+			assert.ErrorIs(t, StreamAllLogs(context.Background(), filter, common.RoleAdminUser, func(*Log) error {
+				t.Fatal("invalid scope must not stream a row")
+				return nil
+			}), errInvalidLogUserScope)
+		}
 	})
 }
 

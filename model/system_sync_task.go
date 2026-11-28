@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Topics of the data each node keeps a copy of in memory. A write to that
@@ -45,20 +46,43 @@ type SyncTaskPayload struct {
 // reloads still carry the change to the other nodes. Data that no periodic
 // reload covers bumps with bumpSyncTopic inside its write transaction.
 func BumpSyncTopic(topic string) {
-	if err := addSyncTask(DB, topic); err != nil {
+	var err error
+	if topic == SyncTopicOptions {
+		err = DB.Transaction(func(tx *gorm.DB) error {
+			return bumpSyncTopic(tx, topic)
+		})
+	} else {
+		err = addSyncTask(DB, topic)
+	}
+	if err != nil {
 		common.SysError(common.LogText("failed to bump sync topic %s: %v", topic, err))
 	}
 }
 
 // bumpSyncTopic adds the sync task on tx, inside the transaction of a write:
-// the write and its task commit or fail together. It first locks the newest
-// task of the topic, so concurrent writers add their tasks in commit order. A
-// node that loaded the topic after seeing a task then also has every write
-// whose task is older.
+// the write and its task commit or fail together. Options writers update the
+// same permanent SystemTaskLock anchor before allocating an ID and hold its
+// database write lock until commit. An upsert also serializes concurrent first
+// inserts on all three databases; locking the newest task alone cannot cover an
+// empty topic. The anchor never expires and cannot be edited as a setting.
+// Other topics retain their existing latest-task locking behavior.
 func bumpSyncTopic(tx *gorm.DB, topic string) error {
-	var newest SystemTask
-	if err := lockForUpdate(tx).Select("id").Where("type = ?", SyncTaskType(topic)).Order("id desc").Limit(1).Find(&newest).Error; err != nil {
-		return err
+	if topic == SyncTopicOptions {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "type"}},
+			DoUpdates: clause.AssignmentColumns([]string{"task_id"}),
+		}).Create(&SystemTaskLock{
+			Type:     optionsSyncAnchorType,
+			TaskID:   optionsSyncAnchorTaskID,
+			LockedBy: optionsSyncAnchorLockedBy,
+		}).Error; err != nil {
+			return err
+		}
+	} else {
+		var newest SystemTask
+		if err := lockForUpdate(tx).Select("id").Where("type = ?", SyncTaskType(topic)).Order("id desc").Limit(1).Find(&newest).Error; err != nil {
+			return err
+		}
 	}
 	return addSyncTask(tx, topic)
 }

@@ -56,7 +56,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			initCol()
 			t.Cleanup(func() {
 				require.NoError(t, setting.UpdateGroupLevelsByJSONString(previousLevels))
-				require.NoError(t, db.Migrator().DropTable(&Option{}))
+				require.NoError(t, db.Migrator().DropTable(&Option{}, &SystemTask{}, &SystemTaskLock{}))
 				for k, v := range previousSnapshot.Options {
 					require.NoError(t, updateOptionMap(k, v))
 				}
@@ -69,7 +69,7 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 				initCol()
 				require.NoError(t, sqlDB.Close())
 			})
-			require.NoError(t, db.AutoMigrate(&Option{}))
+			require.NoError(t, db.AutoMigrate(&Option{}, &SystemTask{}, &SystemTaskLock{}))
 			var version string
 			query := "SELECT version()"
 			if dialect == "sqlite" {

@@ -480,7 +480,14 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestPlaygroundChannelNavigationAuthorizationAndRouting|TestFingerprintResponsesOnlyChannelProbe'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestFingerprintResponsesOnlyChannelProbe'
+          done
+
+      - name: Verify Playground channel authorization and projection on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^TestPlaygroundChannelNavigation(AuthorizationAndRouting|Projection)$'
           done
 
       - name: Verify console management credentials and policy reloads on MySQL and PostgreSQL
@@ -498,8 +505,36 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSearch|TestGetChannelOptions|TestChannelCreate|TestChannelUpdate|TestChannelCacheReload|TestChannelBoundIndex'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSearch|TestGetChannelOptions|TestChannelCreate|TestChannelUpdate|TestChannelCacheReload|TestChannelBoundIndex|TestMultiKeyStatusRead'
           done
+
+      - name: Verify mapped Key ability upgrades on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for DIALECT in sqlite mysql postgres; do
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestRepairChannelMappedKeyAbilitiesUpgrade$'
+          done
+
+      - name: Verify channel sync acknowledgement on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for DIALECT in sqlite mysql postgres; do
+            TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -json ./service -run '^TestNodeSyncChannelReloadFailureKeepsRevisionUntilPublication$' | tee "node-sync-$DIALECT.jsonl"
+          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          target = "TestNodeSyncChannelReloadFailureKeepsRevisionUntilPublication"
+          for dialect in ("sqlite", "mysql", "postgres"):
+              events = [json.loads(line) for line in Path(f"node-sync-{dialect}.jsonl").read_text().splitlines() if line.strip()]
+              assert any(event.get("Test") == target and event.get("Action") == "pass" for event in events), f"missing passed {dialect} node-sync regression"
+              assert not any(event.get("Action") == "skip" for event in events), f"skipped {dialect} node-sync regression"
+          PY
+
+      - name: Verify Redis admission and waiting after lost replies
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: go test -p 1 -count=1 -v ./service -run 'TestChannelCapacityRedis|TestChannelCapacityCoordinationDiagnostics|TestChannelWaitRedis'
 
       - name: Verify management operation migrations and durable audit delivery
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
@@ -708,7 +743,7 @@ jobs:
         run: |
           go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch'
           for DIALECT in sqlite mysql postgres; do
-            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestUpdateOptionRejectsNegativeClaudeDefaultMaxTokens|TestUpdateOptionRejectsInvalidGeminiSafetyThreshold|TestUpdateOptionsBatch'
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestUpdateOptionRejectsNegativeClaudeDefaultMaxTokens|TestUpdateOptionRejectsInvalidGeminiSafetyThreshold|TestUpdateOptionsBatch|TestUpdateOptionAnnouncement'
           done
 
       - name: Verify recorded subscription balance spending on SQLite, MySQL and PostgreSQL
@@ -775,6 +810,13 @@ jobs:
         env:
           CGO_ENABLED: '1'
         run: go test -race -p 1 -count=1 ./common ./model ./service ./controller -run 'TestInitUserSessionSettings|TestUserSessionGrowthCounts|TestListActiveUserSessions|TestCreateLoginSession|TestLoginSessionCreateRefreshAndRevoke|TestIndependentRedis.*Session|TestIndependentRedisAuthVersion|TestUserAuthVersionInvalidatesExistingSession|TestSecurityLoginSession|TestSecurityLoginPasskeyConcurrentCompletion|TestRefreshAuth'
+
+      - name: Verify sensitive-action proof and durable audit on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for DIALECT in sqlite mysql postgres; do
+            TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestAdminUser|TestSecurityEnrollment'
+          done
 
       - name: Verify API key rotation and custom keys on MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}

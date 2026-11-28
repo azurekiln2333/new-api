@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"slices"
@@ -35,10 +36,27 @@ const (
 	channelCapacityRedisErrorLogInterval   = time.Minute
 )
 
+type channelCapacityPhase string
+
+const (
+	channelCapacityAdmissionPhase     channelCapacityPhase = "admission"
+	channelCapacityRenewalPhase       channelCapacityPhase = "renewal"
+	channelCapacityProbeRenewalPhase  channelCapacityPhase = "probe_renewal"
+	channelCapacityQueueRegisterPhase channelCapacityPhase = "queue_register"
+	channelCapacityQueueAcquirePhase  channelCapacityPhase = "queue_acquire"
+	channelCapacityBusyReportPhase    channelCapacityPhase = "busy_report"
+)
+
+type channelCapacityRedisFailure struct {
+	channelID  int
+	phase      channelCapacityPhase
+	errorClass string
+}
+
 var channelCapacityRedisErrorLog = struct {
 	sync.Mutex
-	lastByChannel map[int]time.Time
-}{lastByChannel: make(map[int]time.Time)}
+	lastByFailure map[channelCapacityRedisFailure]time.Time
+}{lastByFailure: make(map[channelCapacityRedisFailure]time.Time)}
 
 func channelCapacityAdmissionTimeout() time.Duration {
 	milliseconds := common.GetEnvOrDefault(channelCapacityAdmissionTimeoutEnv, channelCapacityAdmissionTimeoutDefault)
@@ -57,7 +75,13 @@ func channelCapacityRedisErrorClass(err error) string {
 		return "pool_timeout"
 	}
 	var networkError net.Error
-	if errors.As(err, &networkError) || errors.Is(err, net.ErrClosed) || errors.Is(err, redis.ErrClosed) {
+	if errors.As(err, &networkError) {
+		if networkError.Timeout() {
+			return "timeout"
+		}
+		return "network"
+	}
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, redis.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return "network"
 	}
 	var redisError redis.Error
@@ -67,29 +91,53 @@ func channelCapacityRedisErrorClass(err error) string {
 	return "redis_command"
 }
 
-func logChannelCapacityRedisError(channelID int, err error) {
-	if err == nil || errors.Is(err, context.Canceled) {
+// Keep only the server request correlation, never a Gin context, credentials,
+// request payload, caller deadline or cancellation, for asynchronous diagnostics.
+func channelCapacityDiagnosticContext(ctx context.Context) context.Context {
+	background := context.Background()
+	if ctx == nil {
+		return background
+	}
+	requestID, _ := ctx.Value(common.RequestIdKey).(string)
+	if requestID == "" || len(requestID) > 128 {
+		return background
+	}
+	for _, char := range requestID {
+		if char != '-' && char != '_' && (char < '0' || char > '9') &&
+			(char < 'A' || char > 'Z') && (char < 'a' || char > 'z') {
+			return background
+		}
+	}
+	return context.WithValue(background, common.RequestIdKey, requestID)
+}
+
+// phase and errorClass are fixed internal categories, never Redis error text.
+// Different failure phases remain distinguishable without an unbounded map or
+// per-request log flood. Suppression affects diagnostics only, not admission.
+func logChannelCapacityRedisError(ctx context.Context, channelID int, phase channelCapacityPhase, errorClass string) {
+	if errorClass == "canceled" || (ctx != nil && ctx.Err() != nil) {
 		return
 	}
 	now := time.Now()
+	failure := channelCapacityRedisFailure{channelID: channelID, phase: phase, errorClass: errorClass}
 	channelCapacityRedisErrorLog.Lock()
-	last := channelCapacityRedisErrorLog.lastByChannel[channelID]
+	last := channelCapacityRedisErrorLog.lastByFailure[failure]
 	if now.Sub(last) < channelCapacityRedisErrorLogInterval {
 		channelCapacityRedisErrorLog.Unlock()
 		return
 	}
-	for id, loggedAt := range channelCapacityRedisErrorLog.lastByChannel {
+	for key, loggedAt := range channelCapacityRedisErrorLog.lastByFailure {
 		if now.Sub(loggedAt) >= channelCapacityRedisErrorLogInterval {
-			delete(channelCapacityRedisErrorLog.lastByChannel, id)
+			delete(channelCapacityRedisErrorLog.lastByFailure, key)
 		}
 	}
-	if len(channelCapacityRedisErrorLog.lastByChannel) >= 4096 {
+	if len(channelCapacityRedisErrorLog.lastByFailure) >= 4096 {
 		channelCapacityRedisErrorLog.Unlock()
 		return
 	}
-	channelCapacityRedisErrorLog.lastByChannel[channelID] = now
+	channelCapacityRedisErrorLog.lastByFailure[failure] = now
 	channelCapacityRedisErrorLog.Unlock()
-	logger.LogWarn(context.Background(), common.LogText("channel capacity Redis coordination failed: channel_id=%d error_class=%s", channelID, channelCapacityRedisErrorClass(err)))
+	logger.LogWarn(channelCapacityDiagnosticContext(ctx), common.LogText("channel capacity Redis coordination failed: channel_id=%d phase=%s error_class=%s node=%q", channelID, phase, errorClass, common.NodeName))
 }
 
 func channelCapacityRenewalTimeout(deadline time.Time, timeout time.Duration) time.Duration {
@@ -136,6 +184,10 @@ func channelCapacityMarkerKey(channelID int) string {
 var channelCapacityAcquireScript = redis.NewScript(`
 local clock = redis.call('TIME')
 local now = clock[1] * 1000 + math.floor(clock[2] / 1000)
+-- A lost reply can replay this same admission after another request queued.
+-- Confirm only an existing live owner, without renewing its score or key TTL.
+local expiry = redis.call('ZSCORE', KEYS[1], ARGV[2])
+if expiry and tonumber(expiry)>now then return 1 end
 if #KEYS >= 3 then
   local head = redis.call('ZRANGE',KEYS[2],0,0)[1]
   while head do
@@ -284,7 +336,7 @@ type channelCapacityContextKey struct{}
 type channelCapacityUnlimitedKey struct{}
 
 func newChannelCapacityLease(parent context.Context, channelID int) *ChannelCapacityLease {
-	control, cancelControl := context.WithCancelCause(context.Background())
+	control, cancelControl := context.WithCancelCause(channelCapacityDiagnosticContext(parent))
 	ctx, cancelRequest := context.WithCancelCause(parent)
 	lease := &ChannelCapacityLease{control: control, channelID: channelID, cancel: func(cause error) {
 		cancelControl(cause)
@@ -442,6 +494,7 @@ func AcquireChannelCapacity(ctx context.Context, channelID int, settings dto.Cha
 	// A configured shared coordinator must never degrade into independent
 	// per-process admission, including during startup/reconnection failures.
 	if common.RDB == nil {
+		logChannelCapacityRedisError(ctx, channelID, channelCapacityAdmissionPhase, "coordinator_missing")
 		return nil, channelCapacityError(types.ErrorCodeChannelCapacityUnavailable)
 	}
 	return acquireRedisChannelCapacity(ctx, common.RDB, channelID, limit)
@@ -678,7 +731,7 @@ func acquireRedisChannelCapacity(ctx context.Context, client *redis.Client, chan
 	cancel()
 	if err != nil {
 		if ctx.Err() == nil {
-			logChannelCapacityRedisError(channelID, err)
+			logChannelCapacityRedisError(ctx, channelID, channelCapacityAdmissionPhase, channelCapacityRedisErrorClass(err))
 		}
 		// The result of a timed-out write is ambiguous. Remove this token
 		// only; expiration also bounds cleanup if Redis is still unavailable.
@@ -705,16 +758,31 @@ func (l *ChannelCapacityLease) renewalDeadline() time.Time {
 	return time.Unix(0, deadline)
 }
 
-// An ambiguous renewal does not extend the confirmed ownership deadline. A
-// transient coordinator failure can be retried only inside that deadline.
-func (l *ChannelCapacityLease) retryRenewal(err error) bool {
+// Cancel upstream ownership before logging: observability must not delay the
+// fail-closed signal when an owner expires or the coordinator is unavailable.
+func (l *ChannelCapacityLease) failCoordination(phase channelCapacityPhase, errorClass string) bool {
 	if l.control.Err() != nil {
 		return false
 	}
-	logChannelCapacityRedisError(l.channelID, err)
-	if errors.Is(err, redis.ErrClosed) || channelCapacityRenewalTimeout(l.renewalDeadline(), channelCapacityAdmissionTimeout()) <= 0 {
-		l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
+	diagnosticCtx := channelCapacityDiagnosticContext(l.control)
+	l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
+	logChannelCapacityRedisError(diagnosticCtx, l.channelID, phase, errorClass)
+	return false
+}
+
+// An ambiguous renewal does not extend the confirmed ownership deadline. A
+// transient coordinator failure can be retried only inside that deadline.
+func (l *ChannelCapacityLease) retryRenewal(phase channelCapacityPhase, err error) bool {
+	if l.control.Err() != nil {
 		return false
+	}
+	errorClass := channelCapacityRedisErrorClass(err)
+	if errors.Is(err, redis.ErrClosed) || channelCapacityRenewalTimeout(l.renewalDeadline(), channelCapacityAdmissionTimeout()) <= 0 {
+		return l.failCoordination(phase, errorClass)
+	}
+	logChannelCapacityRedisError(l.control, l.channelID, phase, errorClass)
+	if channelCapacityRenewalTimeout(l.renewalDeadline(), channelCapacityAdmissionTimeout()) <= 0 {
+		return l.failCoordination(phase, "ownership_deadline")
 	}
 	l.renewalRetry.Store(true)
 	return true
@@ -724,38 +792,44 @@ func (l *ChannelCapacityLease) renew() bool {
 	timeout := channelCapacityAdmissionTimeout()
 	commandTimeout := channelCapacityRenewalTimeout(l.renewalDeadline(), timeout)
 	if commandTimeout <= 0 {
-		l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
-		return false
+		phase := channelCapacityRenewalPhase
+		if l.waitProbeOwner != "" && !l.waitProbeAvailable.Load() && l.probeExpiry.Load() <= l.leaseExpiry.Load() {
+			phase = channelCapacityProbeRenewalPhase
+		}
+		return l.failCoordination(phase, "ownership_deadline")
 	}
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(l.control, commandTimeout)
 	renewed, err := channelCapacityRenewScript.Run(ctx, l.client, []string{l.key}, l.owner, channelCapacityLeaseTTL.Milliseconds()).Int()
 	cancel()
 	if err != nil {
-		return l.retryRenewal(err)
+		return l.retryRenewal(channelCapacityRenewalPhase, err)
 	}
-	if renewed != 1 || channelCapacityRenewalTimeout(l.renewalDeadline(), timeout) <= 0 {
-		l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
-		return false
+	if renewed != 1 {
+		return l.failCoordination(channelCapacityRenewalPhase, "owner_missing_or_expired")
+	}
+	if channelCapacityRenewalTimeout(l.renewalDeadline(), timeout) <= 0 {
+		return l.failCoordination(channelCapacityRenewalPhase, "ownership_deadline")
 	}
 	l.leaseExpiry.Store(started.Add(channelCapacityLeaseTTL).UnixNano())
 	if l.waitProbeOwner != "" && !l.waitProbeAvailable.Load() {
 		probeTimeout := channelCapacityRenewalTimeout(l.renewalDeadline(), timeout)
 		if probeTimeout <= 0 {
-			l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
-			return false
+			return l.failCoordination(channelCapacityProbeRenewalPhase, "ownership_deadline")
 		}
 		probeStarted := time.Now()
 		probeCtx, probeCancel := context.WithTimeout(l.control, probeTimeout)
 		probeRenewed, probeErr := channelWaitProbeRenewScript.Run(probeCtx, l.client, []string{channelWaitBusyKey(l.channelID)}, l.waitProbeOwner, channelCapacityLeaseTTL.Milliseconds()).Int()
 		probeCancel()
 		if probeErr != nil && !l.waitProbeAvailable.Load() {
-			return l.retryRenewal(probeErr)
+			return l.retryRenewal(channelCapacityProbeRenewalPhase, probeErr)
 		}
 		if !l.waitProbeAvailable.Load() {
-			if probeRenewed != 1 || channelCapacityRenewalTimeout(l.renewalDeadline(), timeout) <= 0 {
-				l.cancel(channelCapacityError(types.ErrorCodeChannelCapacityUnavailable))
-				return false
+			if probeRenewed != 1 {
+				return l.failCoordination(channelCapacityProbeRenewalPhase, "owner_missing_or_expired")
+			}
+			if channelCapacityRenewalTimeout(l.renewalDeadline(), timeout) <= 0 {
+				return l.failCoordination(channelCapacityProbeRenewalPhase, "ownership_deadline")
 			}
 			l.probeExpiry.Store(probeStarted.Add(channelCapacityLeaseTTL).UnixNano())
 		}

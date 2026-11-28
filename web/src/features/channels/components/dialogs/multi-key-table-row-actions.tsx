@@ -20,6 +20,11 @@ import { RotateCcw, Wallet } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 import type { KeyStatus, MultiKeyConfirmAction } from '../../types'
 
@@ -27,7 +32,7 @@ type MultiKeyTableRowActionsProps = {
   keyStatus: KeyStatus
   canOperate: boolean
   canManage: boolean
-  /** The budget ledger is unavailable; never offer a limit that cannot apply. */
+  /** Only an active ledger and current allocation identity allow mutations. */
   quotaAvailable: boolean
   onAction: (action: MultiKeyConfirmAction) => void
   onEditModels: (keyStatus: KeyStatus) => void
@@ -45,9 +50,17 @@ export function MultiKeyTableRowActions(props: MultiKeyTableRowActionsProps) {
     ? undefined
     : t('No permission to perform this action')
   const usedQuota = keyStatus.quota?.period_used_quota ?? 0
+  const canInspectQuota =
+    props.quotaAvailable ||
+    (!!keyStatus.id &&
+      keyStatus.rev != null &&
+      keyStatus.quota?.ledger_enabled === false)
+  const canResetQuota = props.canManage && props.quotaAvailable && usedQuota > 0
   let resetTitle = t('Reset used amount')
   if (!props.canManage) resetTitle = t('No permission to perform this action')
-  else if (!props.quotaAvailable) {
+  else if (keyStatus.quota?.ledger_enabled === false) {
+    resetTitle = t('Channel budget accounting is not enabled')
+  } else if (!props.quotaAvailable) {
     resetTitle = t('Per-key budget is not available yet')
   } else if (usedQuota <= 0) resetTitle = t('No used amount to reset')
   let unbindLabel = t('Bind User')
@@ -119,10 +132,10 @@ export function MultiKeyTableRowActions(props: MultiKeyTableRowActionsProps) {
         variant='ghost'
         size='icon-sm'
         onClick={() => {
-          if (!props.canManage) return
+          if (!props.canManage || !canInspectQuota) return
           props.onEditQuota(keyStatus)
         }}
-        disabled={!props.canManage || !props.quotaAvailable}
+        disabled={!props.canManage || !canInspectQuota}
         title={
           noPermissionTitle ??
           (props.quotaAvailable
@@ -133,19 +146,29 @@ export function MultiKeyTableRowActions(props: MultiKeyTableRowActionsProps) {
       >
         <Wallet className='size-4' aria-hidden />
       </Button>
-      <Button
-        variant='ghost'
-        size='icon-sm'
-        onClick={() => {
-          if (!props.canManage) return
-          props.onResetQuota(keyStatus)
-        }}
-        disabled={!props.canManage || !props.quotaAvailable || usedQuota <= 0}
-        title={resetTitle}
-        aria-label={t('Reset used amount')}
-      >
-        <RotateCcw className='size-4' aria-hidden />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant='ghost'
+              size='icon-sm'
+              className='aria-disabled:opacity-50'
+              focusableWhenDisabled
+              onClick={() => {
+                if (!canResetQuota) return
+                props.onResetQuota(keyStatus)
+              }}
+              disabled={!canResetQuota}
+              aria-description={canResetQuota ? undefined : resetTitle}
+              title={resetTitle}
+              aria-label={t('Reset used amount')}
+            />
+          }
+        >
+          <RotateCcw className='size-4' aria-hidden />
+        </TooltipTrigger>
+        <TooltipContent role='tooltip'>{resetTitle}</TooltipContent>
+      </Tooltip>
       <Button
         variant='destructive'
         size='sm'

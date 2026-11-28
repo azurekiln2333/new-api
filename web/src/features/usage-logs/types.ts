@@ -658,6 +658,7 @@ export interface FetchLogsConfig {
   logCategory: LogCategory
   isAdmin: boolean
   userScope?: AdminLogUserScope
+  signal?: AbortSignal
   page: number
   pageSize: number
   searchParams: Record<string, unknown>

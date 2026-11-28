@@ -101,6 +101,7 @@ export const getAllLogs = (
   signal?: AbortSignal
 ) => fetchLogs('/api/log', params, true, signal)
 
+
 export const getUserLogs = (
   params: Omit<GetLogsParams, 'username' | 'channel' | 'user_scope'> = {},
   signal?: AbortSignal
@@ -118,6 +119,7 @@ export const getUserLogStats = (
   > = {},
   signal?: AbortSignal
 ) => fetchLogStats('/api/log', selfLogParams(params), false, signal)
+
 
 /**
  * Stream the logs matching params, newest first. The server sends one JSON

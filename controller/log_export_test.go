@@ -148,6 +148,62 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 			assert.Contains(t, all[2]["other"], "admin_info")
 			assert.Equal(t, true, all[3]["success"])
 
+			for _, scopeCase := range []struct {
+				name  string
+				query string
+				ids   []any
+				quota int
+			}{
+				{"omitted", "", []any{"a-2", "b-1", "a-1"}, 30},
+				{"all", "&user_scope=all", []any{"a-2", "b-1", "a-1"}, 30},
+				{"self", "&user_scope=self", []any{"a-2", "a-1"}, 10},
+				{"others", "&user_scope=others", []any{"b-1"}, 20},
+			} {
+				t.Run("admin scope "+scopeCase.name, func(t *testing.T) {
+					// Forged identity parameters must not replace the authenticated id.
+					scopedQuery := query + scopeCase.query + "&user_id=2&scope_user_id=2"
+					listed := callLogHandler(t, GetAllLogs, 1, common.RoleAdminUser, scopedQuery+"&page_size=1")[0]
+					require.Equal(t, true, listed["success"])
+					assert.EqualValues(t, len(scopeCase.ids), listed["data"].(map[string]any)["total"])
+					page := callLogHandler(t, GetAllLogs, 1, common.RoleAdminUser, scopedQuery)[0]
+					items := page["data"].(map[string]any)["items"].([]any)
+					ids := make([]any, 0, len(items))
+					for _, item := range items {
+						row := item.(map[string]any)
+						ids = append(ids, row["request_id"])
+						if row["request_id"] == "a-1" {
+							assert.Equal(t, "primary", row["channel_name"])
+							assert.Contains(t, row["other"], "admin_info")
+						}
+					}
+					assert.Equal(t, scopeCase.ids, ids)
+					stat := callLogHandler(t, GetLogsStat, 1, common.RoleAdminUser, scopedQuery)[0]
+					require.Equal(t, true, stat["success"])
+					assert.EqualValues(t, scopeCase.quota, stat["data"].(map[string]any)["quota"])
+					exported := callLogHandler(t, ExportAllLogs, 1, common.RoleAdminUser, scopedQuery)
+					assert.Equal(t, scopeCase.ids, exportedRequestIds(exported))
+					assert.EqualValues(t, len(scopeCase.ids), exported[len(exported)-1]["data"].(map[string]any)["count"])
+					for _, row := range exported[:len(exported)-1] {
+						if row["request_id"] == "a-1" {
+							assert.Equal(t, "primary", row["channel_name"])
+							assert.Contains(t, row["other"], "admin_info")
+						}
+					}
+				})
+			}
+			for _, injected := range []string{"all", "others", "", "invalid"} {
+				selfQuery := query + "&user_scope=" + injected + "&user_id=2&scope_user_id=2&username=bob"
+				self := callLogHandler(t, GetUserLogs, 1, common.RoleCommonUser, selfQuery)[0]
+				require.Equal(t, true, self["success"])
+				assert.EqualValues(t, 2, self["data"].(map[string]any)["total"])
+				stat := callLogHandler(t, GetLogsSelfStat, 1, common.RoleCommonUser, selfQuery)[0]
+				require.Equal(t, true, stat["success"])
+				assert.EqualValues(t, 10, stat["data"].(map[string]any)["quota"])
+				own := callLogHandler(t, ExportUserLogs, 1, common.RoleCommonUser, selfQuery)
+				assert.Equal(t, []any{"a-2", "a-1"}, exportedRequestIds(own))
+				assert.NotContains(t, own[1]["other"], "admin_info")
+			}
+
 			// The default match mode keeps rows containing the value, and LIKE
 			// wildcards typed into the value stay literal text.
 			fuzzy := callLogHandler(t, ExportAllLogs, 3, common.RoleAdminUser, query+"&model_name=b")
@@ -158,6 +214,38 @@ func TestLogExportDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, true, literal[0]["success"])
 			assert.EqualValues(t, 0, literal[0]["data"].(map[string]any)["count"])
 		})
+	}
+}
+
+func TestAdminLogScopeRejectsExplicitInvalidValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, route := range []struct {
+		path    string
+		handler gin.HandlerFunc
+	}{
+		{"/api/log", GetAllLogs},
+		{"/api/log/stat", GetLogsStat},
+		{"/api/log/export", ExportAllLogs},
+	} {
+		for _, query := range []string{
+			"user_scope=", "user_scope", "user_scope=invalid", "user_scope=ALL",
+			"user_scope=%20self", "user_scope=all&user_scope=self",
+			"user_scope=%zz", "user_scope=all;ignored=true",
+		} {
+			t.Run(route.path+"?"+query, func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(recorder)
+				ctx.Request = httptest.NewRequest(http.MethodGet, route.path+"?"+query, nil)
+				ctx.Set("id", 1)
+				ctx.Set("role", common.RoleAdminUser)
+				route.handler(ctx)
+				assert.Equal(t, http.StatusBadRequest, recorder.Code)
+				var body map[string]any
+				require.NoError(t, common.UnmarshalJsonStr(recorder.Body.String(), &body))
+				assert.Equal(t, false, body["success"])
+				assert.Equal(t, "Invalid parameters", body["message_key"])
+			})
+		}
 	}
 }
 

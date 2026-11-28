@@ -12,9 +12,13 @@ Keep explicit name/detail buttons usable. Regression coverage in
 opening details, focused card Enter/Space opens details, and explicit name
 activation still works.
 
-The card header starts with the existing channel name renderer after optional
-selection/reorder controls, with ID on the second line. Do not render the type
-badge, provider logo or an empty type spacer in cards; table type cells remain.
+The card header starts with the existing channel-type icon immediately before
+the channel name renderer, after optional selection/reorder controls, with ID
+on the second line. The user's 2026-11-27 clarification removes only type text;
+retain the existing provider/type icon and every other current card element.
+Table/list row actions also expose the existing channel-address jump action,
+using the same URL resolver and new-tab/security behavior as cards. Invalid
+addresses and aggregate rows keep their established unavailable behavior.
 Place the shared concurrency `current / limit` display and status/action icons next, then used
 Tokens, billed used/total quota, response time and last test. Priority and weight
 share the final row. The last-test value uses the existing relative-time
@@ -85,3 +89,18 @@ inside `act` for the existing closed interval: Base UI completes close after an
 animation frame and a Promise continuation, even when `getAnimations` returns an
 empty array. Do not increase the interval, disable animations or replace DOM
 absence with a weaker closed-state assertion. Reopening must reset the demo.
+
+Multi-Key management displays the server's `key_preview`; clients must not load
+raw credentials to identify a row. Long scalar `sk-` keys show `sk-abcd…wxyz`,
+with at least eight characters hidden; other long scalar keys show four at
+each end. Very short, pipe-delimited and multiline credentials stay masked.
+Structured credentials expose only the established approved identifiers.
+Keep stable allocation ID/revision as mutation identity, never the preview.
+
+Adding credentials is independent of quota-ledger activation. Preserve write
+permission, sensitive-action verification and revision conflicts. Inactive
+quota accounting permits opening the existing explanation, not saving limits
+or resetting usage. Reset requires active accounting, permission and positive
+period usage; its disabled reason must be available to keyboard users.
+The existing multi-key dialog/scope suites cover these boundaries, and
+`TestMultiKeyStatusKeyPreview` covers scalar and structured redaction.

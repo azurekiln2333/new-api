@@ -28,6 +28,10 @@ import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import {
+  AUTH_REQUEST_TIMEOUT_MS,
+  refreshAuthentication,
+} from '@/lib/auth-session'
 import { AuthOperationError, authResult } from '@/lib/secure-verification'
 import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 
@@ -38,7 +42,7 @@ import {
   encryptPassword,
 } from '../../lib/password-encryption'
 import { checkVerificationMethods, verify } from '../api'
-import type { SecurityProof } from '../types'
+import type { SecurityProof, VerificationInput } from '../types'
 
 const originalAdapter = api.defaults.adapter
 const originalLocation = window.location.href
@@ -203,6 +207,7 @@ function mockRefreshResponse(bundle: AuthBundle, onRequest?: () => void) {
 afterEach(() => {
   clearPasswordEncryptionCache()
   vi.restoreAllMocks()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   api.defaults.adapter = originalAdapter
   useAuthStore.getState().auth.reset('idle')
@@ -337,6 +342,250 @@ it('refreshes an expiring login token before submitting a one-time proof', async
   expect(adapter.mock.calls[0]?.[0].headers.Authorization).toBe(
     'Bearer fresh-access'
   )
+})
+
+it.each(['password', '2fa', 'session'] as const)(
+  'does not refresh or replay a %s verification submission after a 401',
+  async (method) => {
+    useAuthStore.getState().auth.setBundle(sessionBundle)
+    const refresh = mockRefreshResponse(sessionBundle)
+    const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError(
+        'Unauthorized',
+        'ERR_BAD_REQUEST',
+        config,
+        undefined,
+        {
+          status: 401,
+          statusText: 'Unauthorized',
+          config,
+          headers: {},
+          data: { code: 'AUTH_SESSION_REVOKED' },
+        }
+      )
+    })
+    api.defaults.adapter = adapter
+    let input: VerificationInput = { method: 'session' }
+    if (method === 'password') {
+      input = { method, password: 'one-time-password' }
+    } else if (method === '2fa') {
+      input = { method, code: '123456' }
+    }
+    await expect(
+      verify(
+        input,
+        {
+          scope: 'admin.user.manage',
+          context: { user_id: 2, action: 'disable' },
+        },
+        false,
+        new AbortController().signal
+      )
+    ).rejects.toBeInstanceOf(Error)
+    expect(adapter).toHaveBeenCalledTimes(1)
+    expect(adapter.mock.calls[0][0].singleUseAuthorization).toBe(true)
+    expect(refresh).not.toHaveBeenCalled()
+  }
+)
+
+it('cancels one pre-submit refresh waiter without cancelling another or sending the cancelled proof', async () => {
+  useAuthStore.getState().auth.setBundle({
+    ...sessionBundle,
+    access_expires_at: Math.floor(Date.now() / 1000) + 10,
+  })
+  let finishRefresh: (() => void) | undefined
+  const send = vi
+    .spyOn(XMLHttpRequest.prototype, 'send')
+    .mockImplementation(function (this: XMLHttpRequest) {
+      finishRefresh = () => {
+        Object.defineProperties(this, {
+          status: { value: 200, configurable: true },
+          statusText: { value: 'OK', configurable: true },
+          responseText: {
+            value: JSON.stringify({
+              success: true,
+              data: { ...sessionBundle, access_token: 'fresh-access' },
+            }),
+            configurable: true,
+          },
+          readyState: { value: 4, configurable: true },
+        })
+        this.onloadend?.(new ProgressEvent('loadend'))
+      }
+    })
+  const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => ({
+    data: { success: true },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
+  }))
+  api.defaults.adapter = adapter
+  const controller = new AbortController()
+  const cancelled = api.post(
+    '/cancelled-proof',
+    {},
+    {
+      headers: { 'X-Security-Proof': 'cancelled-proof' },
+      signal: controller.signal,
+    }
+  )
+  const cancelledResult = expect(cancelled).rejects.toBeInstanceOf(Error)
+  const other = api.post(
+    '/remaining-proof',
+    {},
+    { headers: { 'X-Security-Proof': 'remaining-proof' } }
+  )
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+  expect(adapter).not.toHaveBeenCalled()
+  controller.abort()
+  await cancelledResult
+  expect(adapter).not.toHaveBeenCalled()
+  expect(finishRefresh).toBeDefined()
+  finishRefresh?.()
+  await other
+  expect(adapter).toHaveBeenCalledTimes(1)
+  expect(adapter.mock.calls[0][0].url).toBe('/remaining-proof')
+  expect(adapter.mock.calls[0][0].headers.Authorization).toBe(
+    'Bearer fresh-access'
+  )
+})
+
+it('bounds a blocked browser refresh lock and permits a later fresh refresh', async () => {
+  const nativeLocks = Object.getOwnPropertyDescriptor(navigator, 'locks')
+  let lockSignal: AbortSignal | undefined
+  let grantLock: (() => Promise<unknown>) | undefined
+  const request = vi.fn(
+    (_name: string, options: LockOptions, callback: () => Promise<unknown>) => {
+      lockSignal = options.signal
+      grantLock = callback
+      return new Promise(() => {})
+    }
+  )
+  Object.defineProperty(navigator, 'locks', {
+    value: { request },
+    configurable: true,
+  })
+  try {
+    vi.useFakeTimers()
+    useAuthStore.getState().auth.setBundle(sessionBundle)
+    const refresh = refreshAuthentication()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(request).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(AUTH_REQUEST_TIMEOUT_MS)
+    expect(await refresh).toMatchObject({ kind: 'transient_error' })
+    expect(lockSignal?.aborted).toBe(true)
+    expect(useAuthStore.getState().auth.accessToken).toBe(
+      sessionBundle.access_token
+    )
+    // Even a late grant must not start a request on the expired owner.
+    await expect(grantLock?.()).resolves.toMatchObject({
+      kind: 'transient_error',
+    })
+    Object.defineProperty(navigator, 'locks', {
+      value: undefined,
+      configurable: true,
+    })
+    mockRefreshResponse({ ...sessionBundle, access_token: 'after-timeout' })
+    const recovered = refreshAuthentication()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await recovered).toMatchObject({ kind: 'authenticated' })
+    expect(useAuthStore.getState().auth.accessToken).toBe('after-timeout')
+  } finally {
+    if (nativeLocks) Object.defineProperty(navigator, 'locks', nativeLocks)
+    else Reflect.deleteProperty(navigator, 'locks')
+  }
+})
+
+it('bounds a stalled refresh HTTP request without clearing the session or sending a one-shot action', async () => {
+  useAuthStore.getState().auth.setBundle({
+    ...sessionBundle,
+    access_expires_at: Math.floor(Date.now() / 1000) + 10,
+  })
+  const send = vi
+    .spyOn(XMLHttpRequest.prototype, 'send')
+    .mockImplementation(() => {})
+  const abort = vi
+    .spyOn(XMLHttpRequest.prototype, 'abort')
+    .mockImplementation(() => {})
+  const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => ({
+    data: { success: true },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
+  }))
+  api.defaults.adapter = adapter
+  vi.useFakeTimers()
+  const result = api.post(
+    '/proof-after-refresh',
+    {},
+    { singleUseAuthorization: true }
+  )
+  const rejected = expect(result).rejects.toBeInstanceOf(Error)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(send).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(AUTH_REQUEST_TIMEOUT_MS)
+  await rejected
+  expect(abort).toHaveBeenCalledTimes(1)
+  expect(adapter).not.toHaveBeenCalled()
+  expect(useAuthStore.getState().auth.accessToken).toBe(
+    sessionBundle.access_token
+  )
+  expect(useAuthStore.getState().auth.bootstrapState).toBe('idle')
+})
+
+it('cancels a method-query 401 refresh wait without dispatching its replay', async () => {
+  useAuthStore.getState().auth.setBundle(sessionBundle)
+  const send = vi
+    .spyOn(XMLHttpRequest.prototype, 'send')
+    .mockImplementation(() => {})
+  vi.spyOn(XMLHttpRequest.prototype, 'abort').mockImplementation(() => {})
+  const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+    throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, undefined, {
+      status: 401,
+      statusText: 'Unauthorized',
+      config,
+      headers: {},
+      data: {},
+    })
+  })
+  api.defaults.adapter = adapter
+  vi.useFakeTimers()
+  const controller = new AbortController()
+  const methods = checkVerificationMethods(
+    'admin.user.manage',
+    controller.signal
+  )
+  const rejected = expect(methods).rejects.toBeInstanceOf(Error)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(send).toHaveBeenCalledTimes(1)
+  controller.abort()
+  await rejected
+  await vi.advanceTimersByTimeAsync(AUTH_REQUEST_TIMEOUT_MS)
+  expect(adapter).toHaveBeenCalledTimes(1)
+})
+
+it('cancels encryption-key retrieval before a verification POST can be sent', async () => {
+  let keySignal: AbortSignal | undefined
+  vi.spyOn(api, 'get').mockImplementation((_url, options) => {
+    keySignal = options?.signal as AbortSignal
+    return new Promise(() => {})
+  })
+  const post = vi.spyOn(api, 'post')
+  const controller = new AbortController()
+  const result = verify(
+    { method: 'password', password: 'not-transmitted' },
+    { scope: 'admin.user.manage', context: { user_id: 2, action: 'disable' } },
+    true,
+    controller.signal
+  )
+  const rejected = expect(result).rejects.toBeInstanceOf(Error)
+  await waitFor(() => expect(keySignal).toBeDefined())
+  controller.abort()
+  await rejected
+  expect(keySignal?.aborted).toBe(true)
+  expect(post).not.toHaveBeenCalled()
 })
 
 it('binds a channel verification to the requested channel context', async () => {

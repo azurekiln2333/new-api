@@ -79,7 +79,7 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 	var version string
 	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 	t.Logf("database: %s %s", dialect, version)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.UserOAuthBinding{}, &model.Option{}, &model.UserAccessToken{}, &model.AuditEventOutbox{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{}, &model.AuthFlow{}, &model.UserOAuthBinding{}, &model.Option{}, &model.UserAccessToken{}, &model.AuditEventOutbox{}, &model.SystemTask{}, &model.SystemTaskLock{}))
 	require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
 	model.DB, model.LOG_DB = db, logDB
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
@@ -462,6 +462,7 @@ func TestSecurityEnrollmentAccessTokenStepUpDisablesTwoFA(t *testing.T) {
 	assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
 	assert.Equal(t, http.StatusOK, accessTokenRequest(router, http.MethodGet, "/api/user/self", raw, "", "").Code)
 
+	drainControllerAuditOutbox(t)
 	var audits []model.AuditLog
 	require.NoError(t, model.LOG_DB.Where("action IN ?", []string{"user.security_verify", "user.2fa_disable_self"}).Order("id").Find(&audits).Error)
 	require.Len(t, audits, 2)

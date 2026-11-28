@@ -158,6 +158,8 @@ export function useSecureVerification() {
   useEffect(() => cancel, [cancel])
 
   const loadRequirements = useCallback(async (current: PendingVerification) => {
+    if (pending.current !== current || current.submitting) return
+    current.submitting = true
     dispatch({ type: 'loading', request: current.request })
     try {
       const requirements =
@@ -227,6 +229,8 @@ export function useSecureVerification() {
           error: AuthOperationError.from(error).message,
         })
       }
+    } finally {
+      current.submitting = false
     }
   }, [])
 

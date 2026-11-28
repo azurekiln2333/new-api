@@ -882,6 +882,7 @@ func setOAuthAllowedOrigins(t *testing.T, value string) {
 
 func TestOAuthDomainPanelSettings(t *testing.T) {
 	_, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
 	setOAuthAllowedOrigins(t, "")
 	previousAddress := system_setting.ServerAddress
 	system_setting.ServerAddress = "https://main.example.com"

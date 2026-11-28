@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api, isAuthBundle } from '@/lib/api'
+import { withAuthRequestDeadline } from '@/lib/auth-session'
 import { buildOAuthAuthorizationUrl } from '@/lib/oauth'
 import { isPasskeySupported } from '@/lib/passkey'
 import {
@@ -53,17 +54,21 @@ export async function checkVerificationMethods(
   scope: SecurityProofScope,
   signal?: AbortSignal
 ): Promise<VerificationRequirements> {
-  const [requirements, passkeySupported] = await Promise.all([
-    authResult<VerificationRequirements>(
-      api.get('/api/verify/methods', {
-        ...authRequestOptions,
-        params: { scope },
-        signal,
-        disableDuplicate: true,
-      })
-    ),
-    isPasskeySupported(),
-  ])
+  const [requirements, passkeySupported] = await withAuthRequestDeadline(
+    (requestSignal) =>
+      Promise.all([
+        authResult<VerificationRequirements>(
+          api.get('/api/verify/methods', {
+            ...authRequestOptions,
+            params: { scope },
+            signal: requestSignal,
+            disableDuplicate: true,
+          })
+        ),
+        isPasskeySupported(),
+      ]),
+    signal
+  )
   return withDeviceAvailability(requirements, passkeySupported)
 }
 
@@ -214,44 +219,37 @@ export async function verify(
     let proof: SecurityProof
     switch (input.method) {
       case 'session':
-        proof = await authResult<SecurityProof>(
-          api.post(
-            '/api/verify',
-            { method: 'session', ...operationFields },
-            {
-              ...authRequestOptions,
-              signal,
-            }
-          )
-        )
-        break
       case '2fa':
-        proof = await authResult<SecurityProof>(
-          api.post(
-            '/api/verify',
-            {
-              method: input.method,
-              ...operationFields,
-              code: input.code.trim(),
-            },
-            { ...authRequestOptions, signal }
+      case 'password':
+        proof = await withAuthRequestDeadline(async (requestSignal) => {
+          let credentials: Record<string, string> = {}
+          if (input.method === 'password') {
+            if (passwordEncryptionEnabled) {
+              const encrypted = await encryptPassword(
+                input.password,
+                requestSignal
+              )
+              credentials = { ...encrypted }
+            } else {
+              credentials = { password: input.password }
+            }
+          } else if (input.method === '2fa') {
+            credentials = { code: input.code.trim() }
+          }
+          requestSignal.throwIfAborted()
+          return authResult<SecurityProof>(
+            api.post(
+              '/api/verify',
+              { method: input.method, ...operationFields, ...credentials },
+              {
+                ...authRequestOptions,
+                singleUseAuthorization: true,
+                signal: requestSignal,
+              }
+            )
           )
-        )
+        }, signal)
         break
-      case 'password': {
-        const passwordFields = passwordEncryptionEnabled
-          ? await encryptPassword(input.password)
-          : { password: input.password }
-        signal.throwIfAborted()
-        proof = await authResult<SecurityProof>(
-          api.post(
-            '/api/verify',
-            { method: input.method, ...operationFields, ...passwordFields },
-            { ...authRequestOptions, signal }
-          )
-        )
-        break
-      }
       case 'passkey':
         proof = await verifyPasskey(operation, signal, input.rpID, onDomains)
         break
@@ -281,13 +279,22 @@ async function verifyPasskey(
   onDomains?: (domains: PasskeyDomains) => void
 ): Promise<SecurityProof> {
   const passkey = await requestPasskeyAssertion(
-    (selected) => beginPasskeyVerification(operation, signal, selected),
+    (selected) =>
+      withAuthRequestDeadline(
+        (requestSignal) =>
+          beginPasskeyVerification(operation, requestSignal, selected),
+        signal
+      ),
     signal,
     { rpID, onDomains }
   )
-  const proof = await finishPasskeyVerification(
-    passkey.flowToken,
-    passkey.assertion,
+  const proof = await withAuthRequestDeadline(
+    (requestSignal) =>
+      finishPasskeyVerification(
+        passkey.flowToken,
+        passkey.assertion,
+        requestSignal
+      ),
     signal
   )
   signal.throwIfAborted()
@@ -312,16 +319,25 @@ async function verifyOAuth(
     intent: 'verify',
     signal,
     prepare: async (popupSignal) => {
-      const [authorization, status] = await Promise.all([
-        createOAuthAuthorization(provider, 'verify', operation, popupSignal),
-        authResult<SystemStatus>(
-          api.get('/api/status', {
-            ...authRequestOptions,
-            signal: popupSignal,
-            disableDuplicate: true,
-          })
-        ),
-      ])
+      const [authorization, status] = await withAuthRequestDeadline(
+        (requestSignal) =>
+          Promise.all([
+            createOAuthAuthorization(
+              provider,
+              'verify',
+              operation,
+              requestSignal
+            ),
+            authResult<SystemStatus>(
+              api.get('/api/status', {
+                ...authRequestOptions,
+                signal: requestSignal,
+                disableDuplicate: true,
+              })
+            ),
+          ]),
+        popupSignal
+      )
       return {
         state: authorization.state,
         url:
@@ -332,19 +348,23 @@ async function verifyOAuth(
   })
   try {
     const callback = exchange.callback
-    const proof = await authResult<SecurityProof>(
-      api.get(`/api/oauth/${provider}`, {
-        ...authRequestOptions,
-        singleUseAuthorization: true,
-        disableDuplicate: true,
-        signal: exchange.signal,
-        params: {
-          state: callback.state,
-          code: callback.code,
-          error: callback.error,
-          error_description: callback.errorDescription,
-        },
-      })
+    const proof = await withAuthRequestDeadline(
+      (requestSignal) =>
+        authResult<SecurityProof>(
+          api.get(`/api/oauth/${provider}`, {
+            ...authRequestOptions,
+            singleUseAuthorization: true,
+            disableDuplicate: true,
+            signal: requestSignal,
+            params: {
+              state: callback.state,
+              code: callback.code,
+              error: callback.error,
+              error_description: callback.errorDescription,
+            },
+          })
+        ),
+      exchange.signal
     )
     exchange.signal.throwIfAborted()
     exchange.finish({ success: true })

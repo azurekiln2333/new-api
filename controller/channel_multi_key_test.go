@@ -18,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -239,6 +241,56 @@ func TestMultiKeyKeyScopeSelection(t *testing.T) {
 			assert.Equal(t, channel.GetKeys()[wantIndex], key, modelName)
 		}
 		assert.ElementsMatch(t, []string{"model-a", "model-b"}, channel.PublicModels())
+	})
+
+	t.Run("key capability accepts the exact mapped target while visibility keeps the request alias", func(t *testing.T) {
+		const alias = "deepseek-r1"
+		const target = "DeepSeek-R1"
+		for _, tc := range []struct {
+			name    string
+			mapping string
+			scope   []string
+			allowed bool
+		}{
+			{name: "direct alias", mapping: `{"deepseek-r1":"DeepSeek-R1"}`, scope: []string{alias}, allowed: true},
+			{name: "mapped target", mapping: `{"deepseek-r1":"DeepSeek-R1"}`, scope: []string{target}, allowed: true},
+			{name: "chained target", mapping: `{"deepseek-r1":"intermediate","intermediate":"DeepSeek-R1"}`, scope: []string{target}, allowed: true},
+			{name: "intermediate is not the dispatched target", mapping: `{"deepseek-r1":"intermediate","intermediate":"DeepSeek-R1"}`, scope: []string{"intermediate"}},
+			{name: "unrelated scope", mapping: `{"deepseek-r1":"DeepSeek-R1"}`, scope: []string{"other-model"}},
+			{name: "explicit empty scope", mapping: `{"deepseek-r1":"DeepSeek-R1"}`},
+			{name: "case alone does not authorize", scope: []string{target}},
+			{name: "malformed mapping", mapping: `{`, scope: []string{target}},
+			{name: "cyclic mapping", mapping: `{"deepseek-r1":"DeepSeek-R1","DeepSeek-R1":"deepseek-r1"}`, scope: []string{target}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				channel := &model.Channel{Id: 1, Key: "mapped-key", Models: alias, ModelMapping: &tc.mapping,
+					ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1, MultiKeyMode: constant.MultiKeyModeRandom,
+						MultiKeyScopeModes: map[int]string{0: "allowlist"}, MultiKeyModels: map[int][]string{0: tc.scope}}}
+				assert.Equal(t, tc.allowed, channel.KeyServesModel(0, alias))
+				key, index, apiErr := channel.GetNextEnabledKeyFor(alias, 7)
+				if tc.allowed {
+					require.Nil(t, apiErr)
+					assert.Equal(t, "mapped-key", key)
+					assert.Zero(t, index)
+					assert.Equal(t, []string{alias}, channel.PublicModels())
+				} else {
+					require.NotNil(t, apiErr)
+					assert.Equal(t, types.ErrorCodeChannelKeyScopeUnsatisfied, apiErr.GetErrorCode())
+					assert.Empty(t, channel.PublicModels())
+				}
+				assert.NotContains(t, channel.PublicModels(), target, "mapping does not add upstream names to the client catalog")
+				channel.ChannelInfo.MultiKeyUsers = map[int]int{0: 7}
+				assert.Empty(t, channel.PublicModels())
+				if tc.allowed {
+					assert.Equal(t, []string{alias}, channel.UserBoundModels(7))
+				} else {
+					assert.Empty(t, channel.UserBoundModels(7))
+				}
+				assert.Empty(t, channel.UserBoundModels(8))
+				_, _, apiErr = channel.GetNextEnabledKeyFor(alias, 8)
+				require.NotNil(t, apiErr, "mapping must not bypass the allocation owner")
+			})
+		}
 	})
 
 	t.Run("a bound key is exclusive to its user and preferred for it", func(t *testing.T) {
@@ -777,6 +829,94 @@ func TestChannelAllocationsRoutingAliasScope(t *testing.T) {
 	}
 }
 
+func TestChannelAllocationsMappedModelScope(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	previousBatch := common.BatchUpdateEnabled
+	common.BatchUpdateEnabled = false
+	t.Cleanup(func() { common.BatchUpdateEnabled = previousBatch })
+	t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+	t.Setenv("BATCH_UPDATE_ENABLED", "false")
+	require.NoError(t, model.InitializeChannelBudgets())
+	const alias = "deepseek-r1"
+	const target = "DeepSeek-R1"
+	const unrelated = "other-channel-model"
+	for _, cacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cache=%t", cacheEnabled), func(t *testing.T) {
+			common.MemoryCacheEnabled = cacheEnabled
+			group := fmt.Sprintf("mapped-scope-%t", cacheEnabled)
+			upstreamGroup := group + "-upstream"
+			settings, err := common.Marshal(&dto.ChannelOtherSettings{GroupModels: map[string][]string{group: {alias, unrelated}, upstreamGroup: {target}}})
+			require.NoError(t, err)
+			channel := &model.Channel{Name: t.Name(), Type: constant.ChannelTypeOpenAI, Key: "denied-key\nmapped-key", Models: alias + "," + unrelated, Group: group + "," + upstreamGroup,
+				Status: common.ChannelStatusEnabled, ModelMapping: common.GetPointer(`{"deepseek-r1":"DeepSeek-R1"}`), OtherSettings: string(settings),
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModeRandom,
+					MultiKeyScopeModes: map[int]string{0: "allowlist", 1: "allowlist"}, MultiKeyModels: map[int][]string{1: {target}}}}
+			require.NoError(t, channel.Insert())
+			t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+			model.InitChannelCache()
+			routed, err := model.GetRandomSatisfiedChannel(group, alias, 0, nil)
+			require.NoError(t, err)
+			require.NotNil(t, routed, "the mapped request alias must retain its public route")
+			assert.Equal(t, channel.Id, routed.Id)
+			visible, err := model.ModelsAvailableToUserGroups(t.Context(), []string{group}, rootID)
+			require.NoError(t, err)
+			assert.True(t, visible[alias])
+			assert.False(t, visible[target], "the upstream target is not a client-facing channel model")
+			assert.False(t, visible[unrelated], "the mapped Key still cannot serve an unrelated channel model")
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			c.Set("id", rootID)
+			require.Nil(t, middleware.SetupContextForSelectedChannel(c, routed, alias))
+			assert.Equal(t, "mapped-key", common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+			assert.Equal(t, alias, common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+			allocation, ok := routed.ChannelAllocationByPosition(1)
+			require.True(t, ok)
+			selection := model.BudgetSelection{ChannelID: routed.Id, AllocationID: allocation.EntryID, AllocationRevision: allocation.Revision,
+				UserID: rootID, Group: group, ModelName: alias}
+			hold, err := model.ReserveChannelBudgets(t.Context(), model.BudgetReserveRequest{
+				AttemptKey: fmt.Sprintf("mapped-scope-%d", routed.Id), Selection: selection, ReserveQuota: 1,
+			})
+			require.NoError(t, err, "authoritative budget admission must accept the same mapped Key capability")
+			require.NotNil(t, hold)
+			request := &dto.GeneralOpenAIRequest{Model: alias}
+			info := &relaycommon.RelayInfo{OriginModelName: alias, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: alias}}
+			require.NoError(t, helper.ModelMappedHelper(c, info, request))
+			encoded, err := common.Marshal(request)
+			require.NoError(t, err)
+			var outgoing struct {
+				Model string `json:"model"`
+			}
+			require.NoError(t, common.Unmarshal(encoded, &outgoing))
+			assert.Equal(t, target, outgoing.Model)
+			assert.Equal(t, alias, info.OriginModelName, "authorization and billing retain the requested identity")
+			require.NoError(t, model.SettleChannelBudgets(t.Context(), model.BudgetSettleRequest{ReservationID: hold.Id, Revision: 1, Final: true}))
+
+			for _, denied := range []string{"empty allowlist", "upstream-only model", "unrelated model", "different group", "group allows only upstream name"} {
+				t.Run(denied, func(t *testing.T) {
+					invalid := selection
+					switch denied {
+					case "empty allowlist":
+						invalid.AllocationID = routed.KeyEntryIDs[0]
+						invalid.AllocationRevision = routed.KeyEntryRevisions[0]
+					case "upstream-only model":
+						invalid.ModelName = target
+					case "unrelated model":
+						invalid.ModelName = unrelated
+					case "different group":
+						invalid.Group = "not-authorized"
+					case "group allows only upstream name":
+						invalid.Group = upstreamGroup
+					}
+					_, err := model.ReserveChannelBudgets(t.Context(), model.BudgetReserveRequest{
+						AttemptKey: fmt.Sprintf("mapped-denied-%d-%s", routed.Id, denied), Selection: invalid, ReserveQuota: 1,
+					})
+					require.ErrorIs(t, err, model.ErrBudgetAllocationInvalid)
+				})
+			}
+		})
+	}
+}
+
 func TestMultiKeyThreeRowModelScopeEditUsesFreshRevisions(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
 	previousCache := common.MemoryCacheEnabled
@@ -1237,20 +1377,43 @@ func TestDistributeRoutesBoundKeyAndFallsBackWhenNoKeyServes(t *testing.T) {
 }
 
 // TestMultiKeyStatusKeyPreview pins the masked preview of every key: a short key
-// keeps only its tail, a plain key keeps three and four characters, a JSON key
-// shows a non-secret identifier, and the response never carries a full key.
+// keeps at most its tail, long keys show an identifying prefix and suffix, and
+// structured credentials expose only approved identifiers, never secret fields.
 func TestMultiKeyStatusKeyPreview(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
-	const (
-		shortKey   = "sk1234567" // 9 characters, below the 12 character threshold
-		plainKey   = "sk-abcdefghijklmnop"
-		jsonKey    = `{"type":"service_account","client_email":"svc@example.iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----secret"}`
-		projectKey = `{"type":"service_account","project_id":"vertex-project","private_key":"secret"}`
-	)
+	cases := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{name: "short", key: "sk1234567", want: "…67"},
+		{name: "short auth in compound", key: "abc|integration-app-id", want: "…"},
+		{name: "baidu client credentials", key: "client-id|client-secret", want: "…"},
+		{name: "one character", key: "x", want: "…"},
+		{name: "two characters", key: "yz", want: "…"},
+		{name: "three characters", key: "qrs", want: "…rs"},
+		{name: "sk threshold", key: "sk-abcdefghijklmnop", want: "sk-abcd…mnop"},
+		{name: "sk below threshold", key: "sk-abcdefghijklmno", want: "…no"},
+		{name: "plain threshold", key: "abcd12345678wxyz", want: "abcd…wxyz"},
+		{name: "plain below threshold", key: "abcd1234567wxyz", want: "…yz"},
+		{name: "unicode threshold", key: "甲乙丙丁一二三四五六七八天地玄黄", want: "甲乙丙丁…天地玄黄"},
+		{name: "email", key: `{"type":"service_account","client_email":"svc@example.iam.gserviceaccount.com","private_key":"private-key-secret"}`, want: "svc@example.iam.gserviceaccount.com"},
+		{name: "project", key: `{"type":"service_account","project_id":"vertex-project","private_key":"private-key-secret"}`, want: "vertex-project"},
+		{name: "unknown object", key: `{"access_token":"unknown-object-secret"}`, want: "…"},
+		{name: "malformed object", key: `{"access_token":"malformed-secret"`, want: "…"},
+		{name: "array", key: `["array-secret"]`, want: "…"},
+		{name: "quoted string", key: `"quoted-secret"`, want: "…"},
+		{name: "plugin label", key: `{"type":"plugin_credential","plugin":"preview-fixture","label":"demo account","account_id":"account-1","data":{"token":"plugin-data-secret"},"headers":{"Authorization":"Bearer plugin-header-secret"},"query":{"token":"plugin-query-secret"}}`, want: "demo account"},
+		{name: "plugin account", key: `{"type":"plugin_credential","plugin":"preview-fixture","account_id":"account-2","data":{"token":"plugin-data-secret"}}`, want: "account-2"},
+	}
+	keys := make([]string, len(cases))
+	for i, tc := range cases {
+		keys[i] = tc.key
+	}
 	channel := &model.Channel{Name: "multi-key-preview", Type: constant.ChannelTypeVertexAi, Other: `{"default":"us-central1"}`,
 		Models: "model-a", Group: "default",
-		Key:         strings.Join([]string{shortKey, plainKey, jsonKey, projectKey}, "\n"),
-		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 4, MultiKeyMode: constant.MultiKeyModeRandom},
+		Key:         strings.Join(keys, "\n"),
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: len(keys), MultiKeyMode: constant.MultiKeyModeRandom},
 	}
 	require.NoError(t, channel.Insert())
 	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
@@ -1264,15 +1427,19 @@ func TestMultiKeyStatusKeyPreview(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
 	require.True(t, result.Success, recorder.Body.String())
-	require.Len(t, result.Data.Keys, 4)
-	for i, want := range []string{"…67", "sk-…mnop", "svc@example.iam.gserviceaccount.com", "vertex-project"} {
-		assert.Equal(t, want, result.Data.Keys[i].KeyPreview, "key #%d", i+1)
-		assert.LessOrEqual(t, len([]rune(want)), 40)
+	require.Len(t, result.Data.Keys, len(cases))
+	for i, tc := range cases {
+		preview := result.Data.Keys[i].KeyPreview
+		assert.Equal(t, tc.want, preview, tc.name)
+		assert.NotContains(t, preview, tc.key, "the preview must never expose a complete credential: %s", tc.name)
+		assert.LessOrEqual(t, len([]rune(preview)), 40)
 	}
 	body := recorder.Body.String()
-	for _, fullKey := range []string{shortKey, plainKey, jsonKey, projectKey, "private_key"} {
-		assert.NotContains(t, body, fullKey, "the response must not carry the full key")
+	for _, secret := range []string{"sk1234567", "sk-abcdefghijklmnop", "abc|integration-app-id", "client-id|client-secret", "private_key", "private-key-secret", "unknown-object-secret", "malformed-secret", "array-secret", "quoted-secret", "plugin-data-secret", "plugin-header-secret", "plugin-query-secret"} {
+		assert.NotContains(t, body, secret, "the response must not carry credentials or structured secret fields")
 	}
+	assert.NotContains(t, result.Data.Keys[1].KeyPreview, "abc", "the complete short authentication component must remain hidden")
+	assert.Equal(t, "…", maskKeyPreview("-----BEGIN PRIVATE KEY-----\nprivate-key-secret\n-----END PRIVATE KEY-----"), "a multiline credential must not expose raw fragments")
 }
 
 // TestChannelTestKeySelection pins how a channel test chooses its key: an
@@ -1710,6 +1877,228 @@ func TestMultiKeyModelSyncPreviewAndApply(t *testing.T) {
 			require.NotNil(t, stored.HeaderOverride)
 			assert.Equal(t, replacement, *stored.HeaderOverride)
 			assert.Empty(t, stored.ChannelInfo.MultiKeyModels)
+		})
+	}
+}
+
+// Status reads must not reconcile migrated allocations or enrich keys outside
+// the requested page while holding up other channel management operations.
+func TestMultiKeyStatusReadIsPageBounded(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ledger=%t", active), func(t *testing.T) {
+			rootID := setupChannelCreateTest(t)
+			if active {
+				t.Setenv("CHANNEL_BUDGET_ENABLED", "true")
+				t.Setenv("BATCH_UPDATE_ENABLED", "false")
+				previousBatch := common.BatchUpdateEnabled
+				common.BatchUpdateEnabled = false
+				t.Cleanup(func() { common.BatchUpdateEnabled = previousBatch })
+				require.NoError(t, model.InitializeChannelBudgets())
+			}
+			owner := &model.User{Username: "status-page-owner", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: "statuspage"}
+			require.NoError(t, model.DB.Create(owner).Error)
+			selected := &model.Channel{Name: t.Name(), Type: 1, Key: "sk-first\nsk-second\nsk-third\nsk-fourth\nsk-fifth\nsk-sixth", Models: "model-a,model-b", Group: "default", Status: common.ChannelStatusEnabled,
+				ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 6}}
+			require.NoError(t, selected.Insert())
+			current, err := model.MutateChannelKeyEntries(t.Context(), selected.Id, 0, func(_ *gorm.DB, _ *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
+				for i := range entries {
+					entries[i].BoundUserId = owner.Id
+					entries[i].ConfigRevision++
+				}
+				entries[1].Status = common.ChannelStatusManuallyDisabled
+				entries[1].DisabledTime = 123
+				entries[1].DisabledReason = "manual review"
+				entries[2].Status = common.ChannelStatusAutoDisabled
+				entries[3].ScopeMode, entries[3].Models = "allowlist", "[]"
+				return entries, nil, nil
+			})
+			require.NoError(t, err)
+			// Stored compatibility JSON can lag the allocation rows. The read
+			// must derive identity, binding, scope and status from those rows.
+			staleInfo := selected.ChannelInfo
+			staleInfo.KeyEntryRevision = current.ChannelInfo.KeyEntryRevision
+			require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", selected.Id).UpdateColumn("channel_info", staleInfo).Error)
+			accounts := make([]model.ChannelBudgetAccount, len(current.KeyEntryIDs))
+			for i, id := range current.KeyEntryIDs {
+				accounts[i] = model.ChannelBudgetAccount{ScopeType: model.BudgetScopeKey, ScopeId: id, ChannelId: selected.Id, Enabled: true, LimitQuota: 100, PeriodUsedQuota: int64(i + 1), ConfigVersion: 2}
+			}
+			require.NoError(t, model.DB.Create(&accounts).Error)
+			var counts map[string]int
+			budgetRows := int64(0)
+			writes := 0
+			enrichmentUnlocked := true
+			const callback = "test:multi-key-status-page-read"
+			database := model.DB
+			require.NoError(t, database.Callback().Query().After("gorm:query").Register(callback, func(tx *gorm.DB) {
+				counts[tx.Statement.Table]++
+				if tx.Statement.Table == "channel_budget_accounts" {
+					budgetRows += tx.RowsAffected
+				}
+				if tx.Statement.Table == "channel_budget_accounts" || tx.Statement.Table == "users" {
+					lock := model.GetChannelPollingLock(selected.Id)
+					if lock.TryLock() {
+						lock.Unlock()
+					} else {
+						enrichmentUnlocked = false
+					}
+				}
+			}))
+			require.NoError(t, database.Callback().Update().Before("gorm:update").Register(callback, func(_ *gorm.DB) { writes++ }))
+			t.Cleanup(func() {
+				require.NoError(t, database.Callback().Query().Remove(callback))
+				require.NoError(t, database.Callback().Update().Remove(callback))
+			})
+			for _, tc := range []struct {
+				name     string
+				page     int
+				pageSize int
+				status   *int
+				indices  []int
+				total    int
+			}{
+				{name: "one key", page: 2, pageSize: 1, indices: []int{1}, total: 6},
+				{name: "several keys with the same owner", page: 1, pageSize: 6, indices: []int{0, 1, 2, 3, 4, 5}, total: 6},
+				{name: "filter before enrichment and clamp page", page: 1000, pageSize: 2, status: common.GetPointer(1), indices: []int{4, 5}, total: 4},
+				{name: "cap oversized page size", page: 1, pageSize: int(^uint(0) >> 1), indices: []int{0, 1, 2, 3, 4, 5}, total: 6},
+				{name: "empty filtered page", page: 1, pageSize: 2, status: common.GetPointer(99), total: 0},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					counts = make(map[string]int)
+					budgetRows, writes, enrichmentUnlocked = 0, 0, true
+					response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status", Page: tc.page, PageSize: tc.pageSize, Status: tc.status})
+					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+					var body struct {
+						Success bool                   `json:"success"`
+						Data    MultiKeyStatusResponse `json:"data"`
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+					require.True(t, body.Success, response.Body.String())
+					assert.Equal(t, current.ChannelInfo.KeyEntryRevision, body.Data.Revision)
+					assert.Equal(t, active, body.Data.QuotaSupported)
+					assert.Equal(t, tc.total, body.Data.Total)
+					assert.Equal(t, 4, body.Data.EnabledCount)
+					assert.Equal(t, 1, body.Data.ManualDisabledCount)
+					assert.Equal(t, 1, body.Data.AutoDisabledCount)
+					assert.LessOrEqual(t, body.Data.PageSize, 100)
+					require.Len(t, body.Data.Keys, len(tc.indices))
+					for i, index := range tc.indices {
+						key := body.Data.Keys[i]
+						assert.Equal(t, index, key.Index)
+						assert.Equal(t, strconv.FormatInt(current.KeyEntryIDs[index], 10), key.Id)
+						assert.Equal(t, current.KeyEntryRevisions[index], key.Rev)
+						assert.Equal(t, owner.Id, key.UserId)
+						assert.Equal(t, owner.Username, key.Username)
+						require.NotNil(t, key.Quota)
+						assert.Equal(t, active, key.Quota.LedgerEnabled)
+						assert.EqualValues(t, index+1, key.Quota.PeriodUsedQuota)
+						if index == 1 {
+							assert.Equal(t, "manual review", key.Reason)
+							assert.EqualValues(t, 123, key.DisabledTime)
+						}
+						if index == 3 {
+							assert.Equal(t, "allowlist", key.ScopeMode)
+							assert.Empty(t, key.Models)
+						}
+					}
+					assert.Equal(t, 1, counts["channels"], "a migrated status read must load one fresh channel snapshot")
+					assert.Equal(t, 1, counts["channel_key_entries"], "allocation hydration must not be repeated by reconciliation")
+					assert.LessOrEqual(t, counts["options"], 1, "activation must be read at most once")
+					assert.EqualValues(t, len(tc.indices), budgetRows, "only the selected page's budgets may be read")
+					if len(tc.indices) > 0 {
+						assert.Equal(t, 1, counts["channel_budget_accounts"])
+						assert.Equal(t, 1, counts["users"], "bound usernames must use one batch, not one lookup per key")
+					} else {
+						assert.Zero(t, counts["channel_budget_accounts"])
+						assert.Zero(t, counts["users"])
+					}
+					assert.Zero(t, writes, "migrated status reads must not take the migration write path")
+					assert.True(t, enrichmentUnlocked, "budget/name reads must not hold the channel polling mutex")
+				})
+			}
+		})
+	}
+}
+
+func TestMultiKeyStatusReadLegacyMigrationAndCancellation(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	legacy := &model.Channel{Name: t.Name(), Type: 1, Key: "sk-legacy-first\nsk-legacy-second", Models: "model-a", Group: "default", Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyUsers: map[int]int{1: rootID}, MultiKeyScopeModes: map[int]string{1: "allowlist"}}}
+	require.NoError(t, model.DB.Create(legacy).Error)
+	response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: legacy.Id, Action: "get_key_status"})
+	var body struct {
+		Success bool                   `json:"success"`
+		Data    MultiKeyStatusResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+	require.True(t, body.Success, response.Body.String())
+	require.Len(t, body.Data.Keys, 2)
+	assert.Positive(t, body.Data.Revision)
+	assert.NotEqual(t, "0", body.Data.Keys[0].Id)
+	assert.NotEqual(t, body.Data.Keys[0].Id, body.Data.Keys[1].Id)
+	assert.Equal(t, rootID, body.Data.Keys[1].UserId)
+	assert.Equal(t, "allowlist", body.Data.Keys[1].ScopeMode)
+	assert.Empty(t, body.Data.Keys[1].Models)
+	fresh, err := model.ReadChannelKeyEntriesSnapshot(t.Context(), legacy.Id)
+	require.NoError(t, err)
+	assert.Equal(t, body.Data.Revision, fresh.ChannelInfo.KeyEntryRevision)
+	assert.Equal(t, body.Data.Keys[0].Id, strconv.FormatInt(fresh.KeyEntryIDs[0], 10))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = model.ReadChannelKeyEntriesSnapshot(ctx, legacy.Id)
+	require.ErrorIs(t, err, context.Canceled)
+
+	const callback = "test:multi-key-status-cancel-allocation-read"
+	database := model.DB
+	ctx, cancel = context.WithCancel(t.Context())
+	defer cancel()
+	require.NoError(t, database.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Table == "channel_key_entries" {
+			cancel()
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, database.Callback().Query().Remove(callback)) })
+	_, err = model.ReadChannelKeyEntriesSnapshot(ctx, legacy.Id)
+	require.ErrorIs(t, err, context.Canceled, "the authoritative allocation read must retain request cancellation")
+}
+
+func TestMultiKeyStatusReadStorageFailures(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	selected := &model.Channel{Name: t.Name(), Type: 1, Key: "sk-status-storage", Models: "model-a", Group: "default", Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1, MultiKeyUsers: map[int]int{0: rootID}}}
+	require.NoError(t, selected.Insert())
+	for _, tc := range []struct {
+		table   string
+		success bool
+	}{
+		{table: "options"},
+		{table: "channel_budget_accounts"},
+		{table: "users", success: true},
+	} {
+		t.Run(tc.table, func(t *testing.T) {
+			const callback = "test:multi-key-status-storage-failure"
+			database := model.DB
+			require.NoError(t, database.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Table == tc.table {
+					tx.AddError(fmt.Errorf("status read storage unavailable"))
+				}
+			}))
+			t.Cleanup(func() { require.NoError(t, database.Callback().Query().Remove(callback)) })
+			response := postMultiKeyManage(t, rootID, MultiKeyManageRequest{ChannelId: selected.Id, Action: "get_key_status"})
+			var body struct {
+				Success bool                   `json:"success"`
+				Data    MultiKeyStatusResponse `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal(t, tc.success, body.Success, response.Body.String())
+			if !tc.success {
+				assert.Empty(t, body.Data.Keys, "activation/account failure must not return successful unlimited quota")
+				return
+			}
+			require.Len(t, body.Data.Keys, 1)
+			assert.Equal(t, rootID, body.Data.Keys[0].UserId)
+			assert.Empty(t, body.Data.Keys[0].Username, "display-name failure retains the existing best-effort fallback")
+			require.NotNil(t, body.Data.Keys[0].Quota)
 		})
 	}
 }

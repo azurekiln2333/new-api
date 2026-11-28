@@ -33,7 +33,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import type { Channel } from '../../types'
-import { ChannelsProvider } from '../channels-provider'
+import { ChannelsProvider, useChannels } from '../channels-provider'
 import { ChannelsTable } from '../channels-table'
 
 const i18n = createInstance()
@@ -43,6 +43,16 @@ await i18n.init({
   initAsync: false,
 })
 const clients: QueryClient[] = []
+const VIEW_MODES = ['card', 'table'] as const
+
+function DialogProbe() {
+  const { open, currentRow } = useChannels()
+  return (
+    <div role='status' aria-label='Dialog state'>
+      {`${open ?? 'none'}:${currentRow?.id ?? '-'}`}
+    </div>
+  )
+}
 
 function channel(baseUrl: string | null): Channel {
   return {
@@ -51,6 +61,7 @@ function channel(baseUrl: string | null): Channel {
     key: '',
     status: 1,
     name: 'prod',
+    tag: 'production',
     created_time: 0,
     test_time: 0,
     response_time: 0,
@@ -88,8 +99,10 @@ afterEach(() => {
 async function renderChannelsPage(params: {
   baseUrl: string | null
   viewMode: 'table' | 'card'
+  tagMode?: boolean
 }) {
   localStorage.setItem('channels:view-mode', params.viewMode)
+  localStorage.setItem('enable-tag-mode', String(params.tagMode ?? false))
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/channel/search' || url === '/api/channel') {
       return {
@@ -113,6 +126,7 @@ async function renderChannelsPage(params: {
     component: () => (
       <ChannelsProvider>
         <ChannelsTable />
+        <DialogProbe />
       </ChannelsProvider>
     ),
   })
@@ -128,46 +142,68 @@ async function renderChannelsPage(params: {
       </QueryClientProvider>
     </I18nextProvider>
   )
-  expect((await screen.findAllByText('prod')).length).toBeGreaterThan(0)
+  expect(
+    (await screen.findAllByText(params.tagMode ? 'Tag：production' : 'prod'))
+      .length
+  ).toBeGreaterThan(0)
 }
 
-test('card view opens the channel address in a new tab without a window opener', async () => {
-  const open = vi.spyOn(window, 'open').mockReturnValue(null)
-  const user = userEvent.setup()
-  await renderChannelsPage({
-    baseUrl: 'https://upstream.example/v1',
-    viewMode: 'card',
-  })
+test.each(VIEW_MODES)(
+  '%s view opens the channel address safely without opening row details',
+  async (viewMode) => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const user = userEvent.setup()
+    await renderChannelsPage({
+      baseUrl: 'https://upstream.example/v1',
+      viewMode,
+    })
 
-  await user.click(screen.getByRole('button', { name: 'Open Channel Address' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Open Channel Address' })
+    )
 
-  expect(open).toHaveBeenCalledWith(
-    'https://upstream.example/v1',
-    '_blank',
-    'noopener,noreferrer'
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      'https://upstream.example/v1',
+      '_blank',
+      'noopener,noreferrer'
+    )
+    expect(
+      screen.getByRole('status', { name: 'Dialog state' })
+    ).toHaveTextContent('none:-')
+  }
+)
+
+test.each(
+  [
+    { baseUrl: null, why: 'no address' },
+    { baseUrl: '   ', why: 'blank address' },
+    { baseUrl: 'doubao-coding-plan', why: 'placeholder instead of a URL' },
+    { baseUrl: 'ftp://upstream.example', why: 'unsupported scheme' },
+  ].flatMap((address) =>
+    VIEW_MODES.map((viewMode) => ({ ...address, viewMode }))
   )
-})
+)(
+  '$viewMode view hides the address button for $why',
+  async ({ baseUrl, viewMode }) => {
+    await renderChannelsPage({ baseUrl, viewMode })
 
-test.each([
-  { baseUrl: null, why: 'no address' },
-  { baseUrl: '   ', why: 'blank address' },
-  { baseUrl: 'doubao-coding-plan', why: 'placeholder instead of a URL' },
-  { baseUrl: 'ftp://upstream.example', why: 'unsupported scheme' },
-])('card view hides the address button for $why', async ({ baseUrl }) => {
-  await renderChannelsPage({ baseUrl, viewMode: 'card' })
+    expect(
+      screen.queryByRole('button', { name: 'Open Channel Address' })
+    ).toBeNull()
+  }
+)
 
-  expect(
-    screen.queryByRole('button', { name: 'Open Channel Address' })
-  ).toBeNull()
-})
+test.each(VIEW_MODES)(
+  '%s view keeps the address action unavailable on collapsed aggregate rows',
+  async (viewMode) => {
+    await renderChannelsPage({
+      baseUrl: 'https://upstream.example',
+      viewMode,
+      tagMode: true,
+    })
 
-test('table view keeps the plain row without the address button', async () => {
-  await renderChannelsPage({
-    baseUrl: 'https://upstream.example',
-    viewMode: 'table',
-  })
-
-  expect(
-    screen.queryByRole('button', { name: 'Open Channel Address' })
-  ).toBeNull()
-})
+    expect(
+      screen.queryByRole('button', { name: 'Open Channel Address' })
+    ).toBeNull()
+  }
+)

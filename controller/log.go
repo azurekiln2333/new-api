@@ -134,7 +134,7 @@ func GetUserLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	filter, err := logFilterFromQuery(c, false)
 	if err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		common.ApiError(c, err)
 		return
 	}
 	if c.GetInt("role") < common.RoleAdminUser {
@@ -177,7 +177,11 @@ func ExportUserLogs(c *gin.Context) {
 func exportLogs(c *gin.Context, all bool) {
 	filter, err := logFilterFromQuery(c, all)
 	if err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		if all {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		} else {
+			common.ApiError(c, err)
+		}
 		return
 	}
 	startTimestamp, err := limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp)
@@ -293,7 +297,7 @@ func GetLogsStat(c *gin.Context) {
 func GetLogsSelfStat(c *gin.Context) {
 	filter, err := logFilterFromQuery(c, false)
 	if err != nil {
-		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		common.ApiError(c, err)
 		return
 	}
 	filter.UserId = c.GetInt("id")

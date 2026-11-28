@@ -33,6 +33,8 @@ import { ROLE } from '@/lib/roles'
 import type { StatisticsCoverage } from '@/lib/statistics-coverage'
 import { useAuthStore } from '@/stores/auth-store'
 
+import type { AdminLogUserScope } from '../../types'
+
 import { CommonLogsStats } from '../common-logs-stats'
 import { UsageLogsProvider } from '../usage-logs-provider'
 
@@ -44,6 +46,8 @@ async function renderStats(
     coverage?: StatisticsCoverage
     initialEntry?: string
     role?: number
+    scope?: AdminLogUserScope
+    failOnce?: boolean
   } = {}
 ) {
   useAuthStore.getState().auth.setUser(
@@ -58,8 +62,11 @@ async function renderStats(
       matches: query === '(max-width: 640px)' || matchMedia(query).matches,
     }))
   }
+  let attempts = 0
   const get = vi.spyOn(api, 'get').mockImplementation(async () => {
+    attempts++
     if (options.pending) return new Promise<never>(() => {})
+    if (options.failOnce && attempts === 1) throw new Error('temporary failure')
     return {
       data: {
         success: true,
@@ -80,11 +87,14 @@ async function renderStats(
     ),
     validateSearch: (search: Record<string, unknown>) => search,
   })
+  const initialEntry =
+    options.initialEntry ??
+    (options.scope
+      ? `/usage-logs/common?user_scope=${options.scope}&channel=42&username=alice&group=premium&model=gpt&requestId=req-1`
+      : '/usage-logs/common')
   const router = createRouter({
     routeTree: root.addChildren([auth.addChildren([logs])]),
-    history: createMemoryHistory({
-      initialEntries: [options.initialEntry ?? '/usage-logs/common'],
-    }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   })
   render(
     <QueryClientProvider
@@ -97,6 +107,8 @@ async function renderStats(
   )
   if (options.pending) {
     await screen.findByRole('group', { name: 'Usage', busy: true })
+  } else if (options.failOnce) {
+    await screen.findByText('Failed to load logs')
   } else if (options.mobile) {
     await screen.findByRole('button', { name: /^Cache Hit Rate / })
   } else {
@@ -108,6 +120,54 @@ async function renderStats(
 afterEach(() => {
   useAuthStore.getState().auth.setUser(null)
   vi.restoreAllMocks()
+})
+
+it.each(['all', 'self', 'others'] as const)(
+  'uses administrator statistics and the same %s row predicate without losing filters',
+  async (scope) => {
+    const get = await renderStats(
+      { quota: 40, rpm: 2, tpm: 400 },
+      { role: ROLE.ADMIN, scope }
+    )
+    await waitFor(() => expect(get).toHaveBeenCalled())
+    const url = String(get.mock.calls[0][0])
+    const requestUrl = new URL(url, 'http://localhost')
+    expect(requestUrl.pathname).toBe('/api/log/stat')
+    const params = requestUrl.searchParams
+    expect(Object.fromEntries(params)).toMatchObject({
+      user_scope: scope,
+      channel: '42',
+      username: 'alice',
+      group: 'premium',
+      model_name: 'gpt',
+      request_id: 'req-1',
+    })
+    expect(params.has('p')).toBe(false)
+    expect(params.has('page_size')).toBe(false)
+  }
+)
+
+it('ignores a forged others URL scope for ordinary-user statistics', async () => {
+  const get = await renderStats({ quota: 10 }, { scope: 'others' })
+  const url = String(get.mock.calls[0][0])
+  const requestUrl = new URL(url, 'http://localhost')
+  expect(requestUrl.pathname).toBe('/api/log/self/stat')
+  const params = requestUrl.searchParams
+  expect(params.has('user_scope')).toBe(false)
+  expect(params.has('channel')).toBe(false)
+  expect(params.has('username')).toBe(false)
+})
+
+it('shows a retryable error when durable statistics fail to load', async () => {
+  const get = await renderStats(
+    { quota: 35, rpm: 1, tpm: 120 },
+    { failOnce: true }
+  )
+
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }))
+
+  expect(await screen.findByText('120')).toBeVisible()
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
 })
 
 it('shows the cache-read share of the input tokens next to TPM', async () => {

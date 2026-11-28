@@ -4,10 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 
 	"github.com/QuantumNous/new-api/common"
-	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -18,12 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-type playgroundChannelOption struct {
-	ID     int      `json:"id"`
-	Name   string   `json:"name"`
-	Models []string `json:"models"`
-}
 
 // PlaygroundChannels exposes only routing choices, never channel credentials,
 // upstream addresses, headers, or per-key user bindings.
@@ -42,24 +34,10 @@ func PlaygroundChannels(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusForbidden, common.NewMessage("Unauthorized, insufficient privileges"))
 		return
 	}
-	channels, err := model.GetAllChannels(0, 0, true, true)
+	options, err := service.ListPlaygroundChannels(c.Request.Context(), c.GetInt("id"), userGroup, group)
 	if err != nil {
 		common.ApiError(c, err)
 		return
-	}
-	options := make([]playgroundChannelOption, 0)
-	for _, channel := range channels {
-		models := make([]string, 0)
-		for name := range service.PlaygroundChannelModels(channel, c.GetInt("id"), userGroup, group) {
-			if ok, _ := model.ChannelSatisfiesFilters(channel, name, []taskdto.ChannelFilter{{Kind: taskdto.FilterRequestPath, RequestPath: "/pg/chat/completions"}}); ok {
-				models = append(models, name)
-			}
-		}
-		if len(models) == 0 {
-			continue
-		}
-		slices.Sort(models)
-		options = append(options, playgroundChannelOption{ID: channel.Id, Name: channel.Name, Models: models})
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": options})

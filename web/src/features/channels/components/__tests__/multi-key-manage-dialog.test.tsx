@@ -376,6 +376,81 @@ test.each([
   }
 )
 
+test('resetting usage from a key row inside a Sheet requires confirmation and preserves allocation identity', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  const keys = [
+    { ...editableAllocation, id: '9007199254740993', index: 0, rev: 2 },
+    editableAllocation,
+  ]
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    if ((body as { action: string }).action === 'get_key_status') {
+      return keyStatusResponse(keys)
+    }
+    return { data: { success: true } }
+  })
+  const onSubmit = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <ManageKeysInsideSheet
+          channel={channelSchema.parse(multiKeyChannel)}
+          onSubmit={onSubmit}
+        />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Manage Keys' }))
+  const manager = await screen.findByRole('dialog', {
+    name: /Multi-Key Management/,
+  })
+  const row = await within(manager).findByRole('row', { name: /^2\./ })
+  const reset = within(row).getByRole('button', { name: 'Reset used amount' })
+  expect(reset).toBeEnabled()
+  await user.click(reset)
+  let confirmation = await screen.findByRole('alertdialog', {
+    name: 'Reset used amount',
+  })
+  expect(
+    within(confirmation).getByText(
+      'Reset current-period usage without changing live holds, lifetime usage or user charges.'
+    )
+  ).toBeVisible()
+  await user.click(within(confirmation).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(post).toHaveBeenCalledTimes(1)
+
+  await user.click(reset)
+  confirmation = await screen.findByRole('alertdialog', {
+    name: 'Reset used amount',
+  })
+  await user.click(within(confirmation).getByRole('button', { name: 'Reset' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(post).toHaveBeenNthCalledWith(
+    2,
+    '/api/channel/multi_key/manage',
+    {
+      action: 'reset_key_quota',
+      channel_id: 7,
+      key_entry_id: '9007199254740995',
+      expected_rev: 4,
+      expected_config_version: 8,
+      operation_id: expect.stringMatching(/\S/),
+    },
+    expect.objectContaining({ singleUseAuthorization: true })
+  )
+  expect(post).toHaveBeenCalledTimes(3)
+  expect(manager).toBeVisible()
+  expect(onSubmit).not.toHaveBeenCalled()
+})
+
 test('changing channels discards an open binding draft and ignores its late save result', async () => {
   useAuthStore
     .getState()
@@ -460,14 +535,6 @@ test.each([
     permitted: false,
   },
   {
-    gate: 'inactive ledger',
-    key: {
-      ...editableAllocation,
-      quota: { ...allocationQuota, ledger_enabled: false },
-    },
-    permitted: true,
-  },
-  {
     gate: 'missing allocation ID',
     key: { ...editableAllocation, id: undefined },
     permitted: true,
@@ -507,6 +574,114 @@ test.each([
   expect(
     screen.queryByRole('dialog', { name: 'Set Quota' })
   ).not.toBeInTheDocument()
+  expect(post).toHaveBeenCalledTimes(1)
+})
+
+test('an inactive ledger explains both quota icons without allowing a budget mutation', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  const post = vi.spyOn(api, 'post').mockResolvedValue(
+    keyStatusResponse([
+      {
+        ...editableAllocation,
+        quota: { ...allocationQuota, ledger_enabled: false },
+      },
+    ])
+  )
+  const onSubmit = vi.fn()
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <ManageKeysInsideSheet
+          channel={channelSchema.parse(multiKeyChannel)}
+          onSubmit={onSubmit}
+        />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+
+  await user.click(screen.getByRole('button', { name: 'Manage Keys' }))
+  const manager = await screen.findByRole('dialog', {
+    name: /Multi-Key Management/,
+  })
+  expect(
+    await within(manager).findByText('Channel budget accounting is not enabled')
+  ).toBeVisible()
+  const quota = within(manager).getByRole('button', { name: 'Set Quota' })
+  expect(quota).toBeEnabled()
+  await user.click(quota)
+  const editor = await screen.findByRole('dialog', { name: 'Set Quota' })
+  expect(
+    within(editor).getByText('Per-key budget is not available yet')
+  ).toBeVisible()
+  expect(
+    within(editor).getByText('Channel budget accounting is not enabled')
+  ).toBeVisible()
+  expect(within(editor).queryByRole('button', { name: 'Save' })).toBeNull()
+  expect(within(editor).queryByRole('textbox')).toBeNull()
+  await user.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Set Quota' })
+    ).not.toBeInTheDocument()
+  )
+
+  await waitFor(() =>
+    expect(manager.contains(document.activeElement)).toBe(true)
+  )
+  const reset = within(manager).getByRole('button', {
+    name: 'Reset used amount',
+  })
+  expect(reset).toHaveAttribute('aria-disabled', 'true')
+  expect(reset).toHaveAttribute(
+    'title',
+    'Channel budget accounting is not enabled'
+  )
+  act(() => quota.focus())
+  await user.tab()
+  expect(reset).toHaveFocus()
+  const tooltip = await screen.findByRole('tooltip')
+  expect(tooltip).toHaveTextContent('Channel budget accounting is not enabled')
+  await user.keyboard('{Enter}')
+  await user.click(reset)
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(post).toHaveBeenCalledTimes(1)
+  expect(onSubmit).not.toHaveBeenCalled()
+})
+
+test('an active budget with no current-period usage explains why reset is unavailable', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  const post = vi.spyOn(api, 'post').mockResolvedValue(
+    keyStatusResponse([
+      {
+        ...editableAllocation,
+        quota: { ...allocationQuota, period_used_quota: 0 },
+      },
+    ])
+  )
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channelSchema.parse(multiKeyChannel)} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  const quota = await screen.findByRole('button', { name: 'Set Quota' })
+  const reset = screen.getByRole('button', { name: 'Reset used amount' })
+  act(() => quota.focus())
+  await user.tab()
+  expect(reset).toHaveFocus()
+  expect(reset).toHaveAttribute('aria-disabled', 'true')
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(
+    'No used amount to reset'
+  )
+  await user.keyboard('{Enter}')
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   expect(post).toHaveBeenCalledTimes(1)
 })
 

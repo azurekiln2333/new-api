@@ -515,12 +515,53 @@ func CreateChannelKeyEntries(tx *gorm.DB, channel *Channel) error {
 	}
 	return persistKeyEntries(tx, channel, entries, nil)
 }
+
+// ReadChannelKeyEntriesSnapshot reads current channel configuration and its
+// authoritative allocations together. The owning row lock fences allocation
+// writers on MySQL/PostgreSQL; SQLite keeps one read snapshot in the transaction.
+// Migrated reads never run reconciliation or publish routing/cache state.
+func ReadChannelKeyEntriesSnapshot(ctx context.Context, channelID int) (*Channel, error) {
+	if channelID <= 0 {
+		return nil, ErrChannelKeyEntryNotFound
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var channel Channel
+	err := dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		projectionContext := WithBatchedChannelKeyEntries(ctx)
+		scope := tx.Session(&gorm.Session{Context: projectionContext, Logger: logger.Discard})
+		if err := lockForUpdate(scope).Where("id = ?", channelID).First(&channel).Error; err != nil {
+			return err
+		}
+		if !channel.ChannelInfo.IsMultiKey || channel.ChannelInfo.KeyEntryRevision == 0 {
+			return nil
+		}
+		return ProjectChannelKeyEntries(scope, projectionContext, []*Channel{&channel}, false)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Only a legacy row needs the existing migration transaction, which reloads
+	// under its own lock before creating entries. Never migrate a stale snapshot.
+	if channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.KeyEntryRevision == 0 {
+		if err := ensureChannelKeyEntries(ctx, &channel); err != nil {
+			return nil, err
+		}
+	}
+	return &channel, nil
+}
+
 func EnsureChannelKeyEntries(channel *Channel) error {
+	return ensureChannelKeyEntries(context.Background(), channel)
+}
+
+func ensureChannelKeyEntries(ctx context.Context, channel *Channel) error {
 	if channel == nil || channel.Id <= 0 {
 		return ErrChannelKeyEntryNotFound
 	}
 	var updated Channel
-	err := ChannelBudgetTransaction(context.Background(), channel.Id, func(tx *gorm.DB) error {
+	err := ChannelBudgetTransaction(ctx, channel.Id, func(tx *gorm.DB) error {
 		if err := tx.First(&updated, channel.Id).Error; err != nil {
 			return err
 		}
@@ -547,7 +588,7 @@ func MigrateChannelKeyEntries() error {
 			return fmt.Errorf("migrate allocations for channel %d: %w", channel.Id, err)
 		}
 	}
-	return nil
+	return RepairChannelMappedKeyAbilities(context.Background())
 }
 func RetireChannelKeyEntries(tx *gorm.DB, channelID int) error {
 	if !tx.Migrator().HasTable(&ChannelKeyEntry{}) {
