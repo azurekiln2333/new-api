@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  createServerError,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
 import { API_ENDPOINTS } from './constants'
 import type {
@@ -37,9 +40,17 @@ export async function getPlaygroundChannels(
   group: string,
   signal?: AbortSignal
 ): Promise<PlaygroundChannelOption[]> {
-  const { data } = await api.get('/pg/channels', { params: { group }, signal })
+  const { data } = await api.get<{
+    success?: boolean
+    data?: PlaygroundChannelOption[]
+  }>('/pg/channels', { params: { group }, signal })
   requireServerSuccess(data)
-  return Array.isArray(data.data) ? data.data : []
+  if (data?.success !== true || !Array.isArray(data.data)) {
+    throw createServerError({
+      message_key: 'Failed to load playground channels',
+    })
+  }
+  return data.data
 }
 
 /**
@@ -59,9 +70,13 @@ export async function sendChatCompletion(
 /**
  * Get user available models
  */
-export async function getUserModels(group: string): Promise<ModelOption[]> {
+export async function getUserModels(
+  group: string,
+  signal?: AbortSignal
+): Promise<ModelOption[]> {
   const res = await api.get(API_ENDPOINTS.USER_MODELS, {
     params: { group },
+    signal,
   })
   const { data } = res
   requireServerSuccess(data)
@@ -79,8 +94,10 @@ export async function getUserModels(group: string): Promise<ModelOption[]> {
 /**
  * Get user groups
  */
-export async function getUserGroups(): Promise<GroupOption[]> {
-  const res = await api.get(API_ENDPOINTS.USER_GROUPS)
+export async function getUserGroups(
+  signal?: AbortSignal
+): Promise<GroupOption[]> {
+  const res = await api.get(API_ENDPOINTS.USER_GROUPS, { signal })
   const { data } = res
   requireServerSuccess(data)
 

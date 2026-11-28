@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -542,6 +544,431 @@ func TestOrdinaryOptionsSyncAnchorIsInternal(t *testing.T) {
 			var syncCount int64
 			require.NoError(t, db.Model(&SystemTask{}).Count(&syncCount).Error)
 			assert.Equal(t, int64(1), syncCount)
+		})
+	}
+}
+
+// optionPublicationCommitPool delays one acknowledgement only after SQL Commit
+// really succeeds, leaving the connection free for a later committed save.
+type optionPublicationCommitPool struct {
+	*sql.DB
+	hold      atomic.Bool
+	committed chan struct{}
+	release   chan struct{}
+	ctx       context.Context
+	onCommit  func()
+}
+
+type optionPublicationCommitTx struct {
+	*sql.Tx
+	pool *optionPublicationCommitPool
+}
+
+func (pool *optionPublicationCommitPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
+	tx, err := pool.DB.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &optionPublicationCommitTx{Tx: tx, pool: pool}, nil
+}
+
+func (tx *optionPublicationCommitTx) Commit() error {
+	if err := tx.Tx.Commit(); err != nil {
+		return err
+	}
+	if tx.pool.onCommit != nil {
+		tx.pool.onCommit()
+	}
+	if tx.pool.hold.CompareAndSwap(true, false) {
+		close(tx.pool.committed)
+		select {
+		case <-tx.pool.release:
+		case <-tx.pool.ctx.Done():
+			return tx.pool.ctx.Err()
+		}
+	}
+	return nil
+}
+
+func configureAnnouncementPasskeyDomain(t *testing.T, db *gorm.DB) (system_setting.PasskeySettings, string, map[string]string) {
+	t.Helper()
+	settings := system_setting.GetPasskeySettings()
+	previousSettings := *settings
+	common.OptionMapRWMutex.RLock()
+	previousServerAddress := system_setting.ServerAddress
+	common.OptionMapRWMutex.RUnlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		*settings = previousSettings
+		system_setting.ServerAddress = previousServerAddress
+		common.OptionMapRWMutex.Unlock()
+	})
+
+	const serverAddress = "https://passkey.example.com"
+	configured := previousSettings
+	configured.RPID = "passkey.example.com"
+	configured.LegacyRPIDs = ""
+	configured.Origins = serverAddress
+	values := map[string]string{
+		"ServerAddress":         serverAddress,
+		"passkey.rp_id":         configured.RPID,
+		"passkey.legacy_rp_ids": configured.LegacyRPIDs,
+		"passkey.origins":       configured.Origins,
+	}
+	// The fixture has its own fresh option database. Install the matching runtime
+	// baseline so the real specialized transaction sees an unchanged domain and
+	// can prove that announcement publication does not disturb that trust state.
+	common.OptionMapRWMutex.Lock()
+	*settings = configured
+	system_setting.ServerAddress = serverAddress
+	for key, value := range values {
+		common.OptionMap[key] = value
+	}
+	common.OptionMapRWMutex.Unlock()
+	require.NoError(t, UpdateOptionsBulk(values))
+	var stored []Option
+	require.NoError(t, db.Where(map[string]any{"key": []string{
+		"ServerAddress", "passkey.rp_id", "passkey.legacy_rp_ids", "passkey.origins",
+	}}).Find(&stored).Error)
+	assert.Len(t, stored, len(values))
+	for _, option := range stored {
+		assert.Equal(t, values[option.Key], option.Value)
+	}
+	return configured, serverAddress, values
+}
+
+func TestAnnouncementPublicationOrderingDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		for _, writer := range []string{"single", "bulk", "batch", "passkey mixed"} {
+			t.Run(dialect+"/"+writer, func(t *testing.T) {
+				db := optionTestDB(t, dialect)
+				console := console_setting.GetConsoleSetting()
+				previous := *console
+				t.Cleanup(func() {
+					common.OptionMapRWMutex.Lock()
+					*console = previous
+					common.OptionMapRWMutex.Unlock()
+				})
+				const key = "console_setting.announcements"
+				const enabledKey = "console_setting.announcements_enabled"
+				require.NoError(t, UpdateOption(key, "[]"))
+				require.NoError(t, UpdateOption(enabledKey, "true"))
+				var passkeyBefore system_setting.PasskeySettings
+				var serverAddressBefore string
+				var passkeyOptionsBefore map[string]string
+				if writer == "passkey mixed" {
+					passkeyBefore, serverAddressBefore, passkeyOptionsBefore = configureAnnouncementPasskeyDomain(t, db)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+				defer cancel()
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(4)
+				pool := &optionPublicationCommitPool{DB: sqlDB, committed: make(chan struct{}), release: make(chan struct{}), ctx: ctx}
+				pool.hold.Store(true)
+				wrapped := db.Session(&gorm.Session{NewDB: true, Initialized: true})
+				wrapped.ConnPool, wrapped.Statement.ConnPool = pool, pool
+				DB = wrapped.Session(&gorm.Session{NewDB: true, Context: ctx})
+				var workers sync.WaitGroup
+				var releaseOnce sync.Once
+				t.Cleanup(func() {
+					releaseOnce.Do(func() { close(pool.release) })
+					cancel()
+					workers.Wait()
+					DB = db
+				})
+				const first = `[{"id":1,"content":"earlier"}]`
+				const latest = `[{"id":1,"content":"latest"}]`
+				firstResult := make(chan error, 1)
+				workers.Go(func() {
+					switch writer {
+					case "single":
+						firstResult <- UpdateOption(key, first)
+					case "bulk":
+						firstResult <- UpdateOptionsBulk(map[string]string{key: first})
+					case "batch":
+						firstResult <- UpdateOrdinaryOptionsBatch(ctx, []Option{{Key: key, Value: first}}, AuditEventDraft{
+							EventId: common.NewRequestId(), Action: "option.batch.test",
+						})
+					case "passkey mixed":
+						// An unchanged Passkey domain value exercises the specialized path.
+						firstResult <- UpdateOptionsBulk(map[string]string{
+							"ServerAddress":                         serverAddressBefore,
+							key:                                     first,
+							"console_setting.announcements_enabled": "false",
+						})
+					}
+				})
+				select {
+				case <-pool.committed:
+				case <-ctx.Done():
+					t.Fatal("first save did not reach its post-commit barrier")
+				}
+				var stored Option
+				require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+				assert.Equal(t, first, stored.Value, "the held writer already committed")
+				require.NoError(t, UpdateOrdinaryOptionsBatch(ctx, []Option{
+					{Key: key, Value: latest},
+					{Key: enabledKey, Value: "true"},
+				}, AuditEventDraft{
+					EventId: common.NewRequestId(), Action: "option.batch.test",
+				}))
+				common.OptionMapRWMutex.RLock()
+				assert.Equal(t, latest, common.OptionMap[key])
+				assert.Equal(t, "true", common.OptionMap[enabledKey])
+				assert.Equal(t, latest, console.Announcements)
+				assert.True(t, console.AnnouncementsEnabled)
+				common.OptionMapRWMutex.RUnlock()
+				if writer != "passkey mixed" {
+					// This full reload is part of the independent reload/A-B case.
+					// The passkey transaction deliberately retains its specialized
+					// serialization lock through its post-commit publication.
+					require.NoError(t, LoadOptionsFromDatabase())
+				}
+				releaseOnce.Do(func() { close(pool.release) })
+				select {
+				case err := <-firstResult:
+					require.NoError(t, err)
+				case <-ctx.Done():
+					t.Fatal("first save did not finish after acknowledgement release")
+				}
+				workers.Wait()
+				require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+				assert.Equal(t, latest, stored.Value)
+				var storedEnabled Option
+				require.NoError(t, db.Where(&Option{Key: enabledKey}).First(&storedEnabled).Error)
+				assert.Equal(t, "true", storedEnabled.Value)
+				common.OptionMapRWMutex.RLock()
+				assert.Equal(t, latest, common.OptionMap[key], "a delayed publisher cannot replay an obsolete request")
+				assert.Equal(t, "true", common.OptionMap[enabledKey])
+				assert.Equal(t, latest, console.Announcements, "public status reads the latest runtime config")
+				assert.True(t, console.AnnouncementsEnabled)
+				if writer == "passkey mixed" {
+					assert.Equal(t, passkeyBefore, *system_setting.GetPasskeySettings(), "the committed announcement publication preserves Passkey trust state")
+					assert.Equal(t, serverAddressBefore, system_setting.ServerAddress)
+				}
+				common.OptionMapRWMutex.RUnlock()
+				if writer == "passkey mixed" {
+					var storedPasskeyOptions []Option
+					require.NoError(t, db.Where(map[string]any{"key": []string{
+						"ServerAddress", "passkey.rp_id", "passkey.legacy_rp_ids", "passkey.origins",
+					}}).Find(&storedPasskeyOptions).Error)
+					assert.Len(t, storedPasskeyOptions, len(passkeyOptionsBefore))
+					for _, option := range storedPasskeyOptions {
+						assert.Equal(t, passkeyOptionsBefore[option.Key], option.Value, "the announcement write preserves stored Passkey trust settings")
+					}
+					assert.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+						return validatePasskeyRPIDWithTx(tx, passkeyBefore.EffectiveRPID())
+					}), "the existing Passkey RP remains valid")
+				}
+			})
+		}
+	}
+}
+
+func TestAnnouncementPublicationReadFailureRetainsCommittedSave(t *testing.T) {
+	db := optionTestDB(t, "sqlite")
+	settings := system_setting.GetPasskeySettings()
+	previousPasskeySettings := *settings
+	common.OptionMapRWMutex.RLock()
+	previousServerAddress := system_setting.ServerAddress
+	common.OptionMapRWMutex.RUnlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		*settings = previousPasskeySettings
+		system_setting.ServerAddress = previousServerAddress
+		common.OptionMapRWMutex.Unlock()
+	})
+	const key = "console_setting.announcements"
+	const enabledKey = "console_setting.announcements_enabled"
+	console := console_setting.GetConsoleSetting()
+	previous := *console
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		*console = previous
+		common.OptionMapRWMutex.Unlock()
+	})
+	require.NoError(t, UpdateOption(key, "before"))
+	require.NoError(t, UpdateOption(enabledKey, "true"))
+	const callback = "test:reject_saved_option_readback"
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "Option" {
+			tx.AddError(fmt.Errorf("read unavailable"))
+		}
+	}))
+	t.Cleanup(func() { assert.NoError(t, db.Callback().Query().Remove(callback)) })
+	require.NoError(t, UpdateOrdinaryOptionsBatch(t.Context(), []Option{{Key: key, Value: "committed"}}, AuditEventDraft{
+		EventId: common.NewRequestId(), Action: "option.batch.test",
+	}), "post-commit read failure must not prompt replay of a persisted save")
+	assert.Equal(t, "before", common.OptionMap[key])
+	assert.Equal(t, "true", common.OptionMap[enabledKey])
+	assert.Equal(t, "before", console.Announcements)
+	assert.True(t, console.AnnouncementsEnabled)
+	// Unrelated settings retain immediate local publication even while the
+	// announcement readback is unavailable; no generic flag gains this failure.
+	require.NoError(t, UpdateOption("TestUnrelatedPublication", "published"))
+	assert.Equal(t, "published", common.OptionMap["TestUnrelatedPublication"])
+	require.NoError(t, db.Callback().Query().Remove(callback))
+	var stored Option
+	require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+	assert.Equal(t, "committed", stored.Value)
+	require.NoError(t, LoadOptionsFromDatabase())
+	assert.Equal(t, "committed", common.OptionMap[key], "durable reload repairs the retained local view")
+
+	// The specialized Passkey bulk path may include unrelated options in its
+	// transaction. A failure in the later announcement readback must still
+	// preserve its committed result, sync obligation and Passkey settings.
+	passkeyBefore, serverAddressBefore, passkeyValues := configureAnnouncementPasskeyDomain(t, db)
+	const specializedAnnouncement = `[{"id":1,"content":"specialized committed"}]`
+	var beforeSyncCount int64
+	require.NoError(t, db.Model(&SystemTask{}).Where("type = ?", SyncTaskType(SyncTopicOptions)).Count(&beforeSyncCount).Error)
+	const passkeyReadFailureCallback = "test:reject_specialized_announcement_readback"
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register(passkeyReadFailureCallback, func(tx *gorm.DB) {
+		if tx.Statement.Schema == nil || tx.Statement.Schema.Name != "Option" {
+			return
+		}
+		if _, announcementReadback := tx.Statement.Dest.(*[]Option); announcementReadback {
+			tx.AddError(fmt.Errorf("specialized announcement read unavailable"))
+		}
+	}))
+	t.Cleanup(func() { assert.NoError(t, db.Callback().Query().Remove(passkeyReadFailureCallback)) })
+	values := make(map[string]string, len(passkeyValues)+3)
+	for optionKey, value := range passkeyValues {
+		values[optionKey] = value
+	}
+	values[key] = specializedAnnouncement
+	values[enabledKey] = "false"
+	values["TestSpecializedUnrelated"] = "published"
+	require.NoError(t, UpdateOptionsBulk(values), "announcement readback failure must not undo or misreport the confirmed Passkey-domain write")
+	var committedAnnouncement Option
+	require.NoError(t, db.Where(&Option{Key: key}).First(&committedAnnouncement).Error)
+	assert.Equal(t, specializedAnnouncement, committedAnnouncement.Value)
+	var committedEnabled Option
+	require.NoError(t, db.Where(&Option{Key: enabledKey}).First(&committedEnabled).Error)
+	assert.Equal(t, "false", committedEnabled.Value)
+	common.OptionMapRWMutex.RLock()
+	assert.Equal(t, "committed", common.OptionMap[key], "failed readback keeps the last good local announcement")
+	assert.Equal(t, "true", common.OptionMap[enabledKey])
+	assert.Equal(t, "committed", console.Announcements)
+	assert.True(t, console.AnnouncementsEnabled, "failed readback retains the last published enabled state")
+	assert.Equal(t, passkeyBefore, *settings, "the same-value Passkey domain save preserves its trust state")
+	assert.Equal(t, serverAddressBefore, system_setting.ServerAddress)
+	assert.Equal(t, "published", common.OptionMap["TestSpecializedUnrelated"], "unrelated options still publish immediately")
+	common.OptionMapRWMutex.RUnlock()
+	var afterSyncCount int64
+	require.NoError(t, db.Model(&SystemTask{}).Where("type = ?", SyncTaskType(SyncTopicOptions)).Count(&afterSyncCount).Error)
+	assert.Equal(t, beforeSyncCount+1, afterSyncCount, "the committed specialized write retains its sync obligation")
+	require.NoError(t, db.Callback().Query().Remove(passkeyReadFailureCallback))
+	var storedPasskeyOptions []Option
+	require.NoError(t, db.Where(map[string]any{"key": []string{
+		"ServerAddress", "passkey.rp_id", "passkey.legacy_rp_ids", "passkey.origins",
+	}}).Find(&storedPasskeyOptions).Error)
+	assert.Len(t, storedPasskeyOptions, len(passkeyValues))
+	for _, option := range storedPasskeyOptions {
+		assert.Equal(t, passkeyValues[option.Key], option.Value)
+	}
+	var storedUnrelated Option
+	require.NoError(t, db.Where(&Option{Key: "TestSpecializedUnrelated"}).First(&storedUnrelated).Error)
+	assert.Equal(t, "published", storedUnrelated.Value)
+	require.NoError(t, LoadOptionsFromDatabase())
+	assert.Equal(t, specializedAnnouncement, common.OptionMap[key], "durable reload repairs the announcement after readback recovery")
+	assert.Equal(t, "false", common.OptionMap[enabledKey])
+	assert.Equal(t, specializedAnnouncement, console.Announcements)
+	assert.False(t, console.AnnouncementsEnabled)
+	assert.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return validatePasskeyRPIDWithTx(tx, passkeyBefore.EffectiveRPID())
+	}), "the existing Passkey RP remains valid after readback recovery")
+}
+
+func TestAnnouncementReloadPublicationOrderingDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := optionTestDB(t, dialect)
+			const key = "console_setting.announcements"
+			console := console_setting.GetConsoleSetting()
+			previous := *console
+			t.Cleanup(func() {
+				common.OptionMapRWMutex.Lock()
+				*console = previous
+				common.OptionMapRWMutex.Unlock()
+			})
+			require.NoError(t, UpdateOption(key, "before"))
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(4)
+			loaded := make(chan struct{})
+			release := make(chan struct{})
+			committed := make(chan struct{})
+			var releaseOnce sync.Once
+			var loadedOnce atomic.Bool
+			const callback = "test:hold_old_announcement_reload"
+			require.NoError(t, db.Callback().Query().After("gorm:after_query").Register(callback, func(tx *gorm.DB) {
+				if tx.Statement.Schema == nil || tx.Statement.Schema.Name != "Option" {
+					return
+				}
+				if _, fullReload := tx.Statement.Dest.(*[]*Option); !fullReload || !loadedOnce.CompareAndSwap(false, true) {
+					return
+				}
+				close(loaded)
+				select {
+				case <-release:
+				case <-ctx.Done():
+					tx.AddError(ctx.Err())
+				}
+			}))
+			t.Cleanup(func() { assert.NoError(t, db.Callback().Query().Remove(callback)) })
+			pool := &optionPublicationCommitPool{DB: sqlDB, ctx: ctx, onCommit: func() { close(committed) }}
+			wrapped := db.Session(&gorm.Session{NewDB: true, Initialized: true})
+			wrapped.ConnPool, wrapped.Statement.ConnPool = pool, pool
+			DB = wrapped.Session(&gorm.Session{NewDB: true, Context: ctx})
+			var workers sync.WaitGroup
+			t.Cleanup(func() {
+				releaseOnce.Do(func() { close(release) })
+				cancel()
+				workers.Wait()
+				DB = db
+			})
+			reloadResult := make(chan error, 1)
+			workers.Go(func() { reloadResult <- LoadOptionsFromDatabase() })
+			select {
+			case <-loaded:
+			case <-ctx.Done():
+				t.Fatal("reload did not capture the old database snapshot")
+			}
+			saveResult := make(chan error, 1)
+			workers.Go(func() {
+				saveResult <- UpdateOrdinaryOptionsBatch(ctx, []Option{{Key: key, Value: "latest"}}, AuditEventDraft{
+					EventId: common.NewRequestId(), Action: "option.batch.test",
+				})
+			})
+			select {
+			case <-committed:
+			case <-ctx.Done():
+				t.Fatal("announcement save did not commit while reload held its old snapshot")
+			}
+			var stored Option
+			require.NoError(t, db.Where(&Option{Key: key}).First(&stored).Error)
+			assert.Equal(t, "latest", stored.Value)
+			releaseOnce.Do(func() { close(release) })
+			select {
+			case err := <-reloadResult:
+				require.NoError(t, err)
+			case <-ctx.Done():
+				t.Fatal("reload did not finish")
+			}
+			select {
+			case err := <-saveResult:
+				require.NoError(t, err)
+			case <-ctx.Done():
+				t.Fatal("saved announcement publication did not finish")
+			}
+			workers.Wait()
+			common.OptionMapRWMutex.RLock()
+			assert.Equal(t, "latest", common.OptionMap[key], "a captured reload cannot overwrite the latest local save")
+			assert.Equal(t, "latest", console.Announcements)
+			common.OptionMapRWMutex.RUnlock()
 		})
 	}
 }

@@ -52,8 +52,6 @@ export function Playground() {
     messages,
     isLoadingMessages,
     storageFailure,
-    models,
-    groups,
     updateMessages,
     setModels,
     setGroups,
@@ -98,15 +96,22 @@ export function Playground() {
     clearMessages()
   }
 
-  const { isLoadingModels, channels, channelUnavailable, canSend } =
-    usePlaygroundOptions({
-      currentGroup: config.group,
-      currentModel: config.model,
-      currentChannel: config.channel_id,
-      setGroups,
-      setModels,
-      updateConfig,
-    })
+  const {
+    models,
+    groups,
+    isLoadingModels,
+    channels,
+    channelOptions,
+    channelUnavailable,
+    canSend,
+  } = usePlaygroundOptions({
+    currentGroup: config.group,
+    currentModel: config.model,
+    currentChannel: config.channel_id,
+    setGroups,
+    setModels,
+    updateConfig,
+  })
 
   // A reply streams into the conversation that is active when it starts, so a
   // conversation switch stops the generation instead of mixing the two chats.
@@ -219,6 +224,7 @@ export function Playground() {
         <div className='mx-auto w-full max-w-4xl'>
           <PlaygroundInput
             channels={channels}
+            channelOptions={channelOptions}
             channelValue={config.channel_id}
             onChannelChange={(value) => updateConfig('channel_id', value)}
             channelUnavailable={channelUnavailable}

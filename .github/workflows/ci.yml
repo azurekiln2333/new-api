@@ -424,7 +424,7 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestPlaygroundChannelNavigation|TestFingerprint|TestAppendDuplicateStaticCredentialWithoutLedgerKeepsAllocationIdentity|TestChannelEditDiscoveryKeepsAllKeyResultsAndExistingModels|TestKeyDiscoveryAdditionsPreserveMappingAndSiblingScope|TestManualAllModelModePinsKeyAndPreservesRoutingScope'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestFingerprint|TestAppendDuplicateStaticCredentialWithoutLedgerKeepsAllocationIdentity|TestChannelEditDiscoveryKeepsAllKeyResultsAndExistingModels|TestKeyDiscoveryAdditionsPreserveMappingAndSiblingScope|TestManualAllModelModePinsKeyAndPreservesRoutingScope'
           done
 
       - name: Verify upstream pool and Key protocol contracts
@@ -434,6 +434,13 @@ jobs:
           go test -p 1 -count=1 -v ./relay -run '^Test(KeyProtocol|ChannelSupportedEndpointsChooseOutboundRequest)'
           for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
             TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^Test(ChannelUpstreamURLs|ChannelKeyProtocol|ChannelSupportedEndpointsPersistThroughCreateAndUpdate|ScopedAccessTokenRequiresSensitiveChannelPermission|ChannelHasSensitiveChanges)'
+          done
+
+      - name: Verify Playground channel authorization and projection on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^TestPlaygroundChannelNavigation'
           done
 
       - name: Verify selected Key mapping on SQLite, MySQL and PostgreSQL
@@ -527,7 +534,7 @@ jobs:
       - name: Verify option batch writes and management settings on SQLite, MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
-          go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch'
+          go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch|TestAnnouncement'
           for DIALECT in sqlite mysql postgres; do
             TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestUpdateOptionRejectsNegativeClaudeDefaultMaxTokens|TestUpdateOptionRejectsInvalidGeminiSafetyThreshold|TestUpdateOptionsBatch|TestUpdateOptionAnnouncement'
           done
