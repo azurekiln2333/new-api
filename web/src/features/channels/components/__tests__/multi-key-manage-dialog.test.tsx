@@ -93,6 +93,150 @@ function OpenDialog(props: { channel: Channel }) {
   return <MultiKeyManageDialog open onOpenChange={() => {}} />
 }
 
+test.each([1, 14])('type %s saves a Key protocol without ledger activation and uses the returned revision', async (type) => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  const keys: KeyStatus[] = [
+    { id: '9007199254740993', rev: 2, index: 0, status: 1, key_preview: 'same…key' },
+    { id: '9007199254740995', rev: 4, index: 1, status: 1, key_preview: 'same…key' },
+  ]
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    const request = body as { action: string; upstream_protocol?: string }
+    if (request.action === 'get_key_status') return keyStatusResponse(keys)
+    return { data: { success: true, data: {
+      revision: 11, key_entry_id: '9007199254740995', key_revision: 9,
+      upstream_protocol: request.upstream_protocol,
+    } } }
+  })
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channelSchema.parse({ ...multiKeyChannel, type })} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  const first = await screen.findByRole('combobox', { name: 'Upstream protocol for Key 9007199254740993' })
+  const second = screen.getByRole('combobox', { name: 'Upstream protocol for Key 9007199254740995' })
+  expect(second).toBeEnabled()
+  second.focus()
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: 'Anthropic Messages (/v1/messages)' }))
+  await waitFor(() => expect(second).toHaveTextContent('Anthropic Messages (/v1/messages)'))
+  expect(first).toHaveTextContent('Inherit existing routing')
+  expect(post).toHaveBeenCalledWith('/api/channel/multi_key/manage', {
+    channel_id: 7, action: 'set_key_protocol', key_entry_id: '9007199254740995',
+    expected_rev: 4, upstream_protocol: 'messages',
+  }, expect.objectContaining({ singleUseAuthorization: true }))
+  await user.click(second)
+  await user.click(await screen.findByRole('option', { name: 'Inherit existing routing' }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/channel/multi_key/manage', {
+    channel_id: 7, action: 'set_key_protocol', key_entry_id: '9007199254740995',
+    expected_rev: 9, upstream_protocol: 'inherit',
+  }, expect.objectContaining({ singleUseAuthorization: true })))
+})
+
+test.each([1, 14])('a type %s single-Key protocol stays editable without an active ledger', async (type) => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: { ledger_enabled: false } },
+  })
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    const request = body as { action: string }
+    if (request.action === 'get_key_status') {
+      return keyStatusResponse([{ id: '9007199254740995', rev: 4, index: 0, status: 1 }])
+    }
+    return { data: { success: true, data: {
+      revision: 11, key_entry_id: '9007199254740995', rev: 5, upstream_protocol: 'responses',
+    } } }
+  })
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channelSchema.parse({ ...multiKeyChannel, type, channel_info: {
+          is_multi_key: false, multi_key_size: 1, multi_key_polling_index: 0, multi_key_mode: 'random',
+        } })} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  const user = userEvent.setup()
+  const protocol = await screen.findByRole('combobox', { name: 'Upstream protocol for Key 9007199254740995' })
+  expect(protocol).toBeEnabled()
+  await user.click(protocol)
+  await user.click(await screen.findByRole('option', { name: 'Responses only' }))
+  await waitFor(() => expect(protocol).toHaveTextContent('Responses only'))
+  expect(post).toHaveBeenCalledWith('/api/channel/multi_key/manage', {
+    channel_id: 7, action: 'set_key_protocol', key_entry_id: '9007199254740995',
+    expected_rev: 4, upstream_protocol: 'responses',
+  }, expect.objectContaining({ singleUseAuthorization: true }))
+})
+
+test('a failed single-Key protocol load exposes retry without fabricating an inherited row', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data: { ledger_enabled: false } } })
+  vi.spyOn(api, 'post')
+    .mockResolvedValueOnce({ data: { success: false, message: 'Failed to load key status' } })
+    .mockResolvedValue(keyStatusResponse([{ id: '31', rev: 2, index: 0, status: 1, upstream_protocol: 'chat' }]))
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channelSchema.parse({ ...multiKeyChannel, type: 1, channel_info: {
+          is_multi_key: false, multi_key_size: 1, multi_key_polling_index: 0, multi_key_mode: 'random',
+        } })} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  expect(await screen.findByText('Failed to load key status')).toBeVisible()
+  expect(screen.queryByRole('combobox', { name: /Upstream protocol for Key/ })).not.toBeInTheDocument()
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByRole('combobox', { name: 'Upstream protocol for Key 31' })).toHaveTextContent('Chat Completions only')
+})
+
+test('protocol conflict reloads the authoritative row instead of retaining the rejected selection', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  let conflicted = false
+  const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    if ((body as { action: string }).action === 'get_key_status') {
+      return keyStatusResponse([{ id: '31', rev: conflicted ? 6 : 2, index: 0, status: 1, upstream_protocol: conflicted ? 'chat' : 'inherit' }])
+    }
+    conflicted = true
+    return { data: { success: false, error_code: 'channel_key_revision_conflict', message: 'Channel key configuration changed, reload and retry' } }
+  })
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channelSchema.parse({ ...multiKeyChannel, type: 1 })} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  await user.click(await screen.findByRole('combobox', { name: 'Upstream protocol for Key 31' }))
+  await user.click(await screen.findByRole('option', { name: 'Responses only' }))
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Upstream protocol for Key 31' })).toHaveTextContent('Chat Completions only'))
+  expect(post.mock.calls.filter(([, body]) => (body as { action: string }).action === 'set_key_protocol')).toHaveLength(1)
+})
+
+test('protocol controls require sensitive permission and canonical stable identity, not ledger or model scope', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: ROLE.SUPER_ADMIN })
+  const post = vi.spyOn(api, 'post').mockResolvedValue(keyStatusResponse([
+    { id: '001', rev: 2, index: 0, status: 1 },
+    { id: '32', rev: 0, index: 1, status: 1 },
+    { id: '33', rev: 4, index: 2, status: 1, scope_mode: 'allowlist', models: [] },
+  ]))
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ChannelsProvider>
+        <OpenDialog channel={channelSchema.parse({ ...multiKeyChannel, type: 1 })} />
+      </ChannelsProvider>
+    </QueryClientProvider>
+  )
+  expect(await screen.findByRole('combobox', { name: 'Upstream protocol for Key 001' })).toBeDisabled()
+  expect(screen.getByRole('combobox', { name: 'Upstream protocol for Key 32' })).toBeDisabled()
+  expect(screen.getByRole('combobox', { name: 'Upstream protocol for Key 33' })).toBeEnabled()
+  await act(async () => { useAuthStore.getState().auth.setUser({ id: 2, username: 'viewer', role: ROLE.USER }) })
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Upstream protocol for Key 33' })).toBeDisabled())
+  expect(post.mock.calls.every(([, body]) => (body as { action: string }).action === 'get_key_status')).toBe(true)
+})
+
 test('translates the disabled reasons the server writes and shows upstream text as written', async () => {
   i18next.addResourceBundle('zhCN', 'translation', {
     'Plugin credential needs a new login': '插件凭证需要重新登录',

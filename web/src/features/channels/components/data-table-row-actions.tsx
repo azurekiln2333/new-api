@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Row } from '@tanstack/react-table'
 import {
   MoreHorizontal,
@@ -61,6 +61,7 @@ import {
 } from '@/lib/admin-permissions'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { getChannelDefaultBaseURLs } from '../api'
 import {
   useChannelBalanceQueryable,
   useChannelModelFetchable,
@@ -74,6 +75,7 @@ import {
   isChannelEnabled,
   isMultiKeyChannel,
   resolveChannelAddressUrl,
+  supportsChannelUpstreamPool,
 } from '../lib'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
@@ -98,7 +100,19 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
-  const addressUrl = resolveChannelAddressUrl(channel.base_url)
+  const configuredAddress = resolveChannelAddressUrl(channel)
+  const { data: defaultBaseURLs } = useQuery({
+    queryKey: channelsQueryKeys.defaultBaseURLs(),
+    queryFn: () => getChannelDefaultBaseURLs().catch(() => null),
+    enabled: layout === 'card' && !configuredAddress,
+    staleTime: Infinity,
+    retry: false,
+    meta: { errorToast: false },
+  })
+  const addressUrl = resolveChannelAddressUrl(
+    channel,
+    defaultBaseURLs?.[channel.type]
+  )
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -406,10 +420,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
           {/* Managed plugin accounts keep their login workflow. Static single
               channels may create another independent allocation. */}
-          {((isMultiKey && canOperate) ||
+          {((canOperate && (isMultiKey || supportsChannelUpstreamPool(channel.type))) ||
             (!isMultiKey && canAddAllocation)) && (
             <DropdownMenuItem onClick={handleManageKeys}>
-              {isMultiKey ? t('Manage Keys') : t('Add allocation')}
+              {isMultiKey || supportsChannelUpstreamPool(channel.type)
+                ? t('Manage Keys')
+                : t('Add allocation')}
               <DropdownMenuShortcut>
                 <Key size={16} />
               </DropdownMenuShortcut>

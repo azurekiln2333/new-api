@@ -68,11 +68,17 @@ type FingerprintProbe struct {
 	Output          string `json:"output,omitempty"`
 	OutputTruncated bool   `json:"output_truncated,omitempty"`
 	Error           string `json:"error,omitempty"`
+	Attempt         int    `json:"attempt"`
+	StartedAt       int64  `json:"started_at,omitempty"`
+	FinishedAt      int64  `json:"finished_at,omitempty"`
+	TimeoutSeconds  int64  `json:"timeout_seconds"`
+	RetryAllowed    bool   `json:"retry_allowed"`
 }
 
 // FingerprintJob is one run and its bounded budget accounting.
 type FingerprintJob struct {
 	ID             string             `json:"id"`
+	Revision       int                `json:"revision"`
 	ChannelID      int                `json:"channel_id"`
 	ChannelName    string             `json:"channel_name"`
 	Model          string             `json:"model"`
@@ -97,6 +103,11 @@ type FingerprintJob struct {
 	cancelled bool
 	cancel    context.CancelFunc
 	done      chan struct{}
+	// Replies stay server-side for rescoring without repeating successful work.
+	replies       []lmfp.Reply
+	probeTimeout  time.Duration
+	retryAccepted map[string]bool
+	detector      *lmfp.Detector
 }
 
 // FingerprintProbeResult is what one probe reports back. Usage is kept even
@@ -149,9 +160,9 @@ type fingerprintRegistry struct {
 
 var fingerprintJobs = fingerprintRegistry{jobs: map[string]*FingerprintJob{}, now: time.Now}
 
-// StartChannelFingerprint validates the run, records its budget and starts the
-// probes. It returns as soon as the run is admitted; the run continues on its
-// own bounded context, so the HTTP request finishing does not stop it.
+// StartChannelFingerprint is the internal direct-start primitive used by
+// bounded service tests and trusted in-process callers. Console HTTP starts
+// must use StartChannelFingerprintPreview so retries retain one accepted job.
 func StartChannelFingerprint(
 	parent context.Context,
 	request FingerprintRequest,
@@ -167,13 +178,39 @@ func StartChannelFingerprint(
 	if request.Count < 1 || request.Count > fingerprintMaxChallenges {
 		return nil, fmt.Errorf("the challenge count must be between 1 and %d", fingerprintMaxChallenges)
 	}
-	detector, err := loadFingerprintDetector(parent)
-	if err != nil {
-		return nil, err
-	}
 	challenges, err := lmfp.Challenges(request.Count)
 	if err != nil {
 		return nil, err
+	}
+	return startChannelFingerprintWithChallenges(parent, request, challenges, probe, nil)
+}
+
+func startChannelFingerprintWithChallenges(
+	parent context.Context,
+	request FingerprintRequest,
+	challenges []lmfp.Challenge,
+	probe FingerprintProber,
+	onAccepted func(*FingerprintJob),
+) (*FingerprintJob, error) {
+	model := strings.TrimSpace(request.Model)
+	if model == "" {
+		return nil, errors.New("a model is required")
+	}
+	if request.Count == 0 {
+		request.Count = len(challenges)
+	}
+	if request.Count < 1 || request.Count > fingerprintMaxChallenges || request.Count != len(challenges) {
+		return nil, fmt.Errorf("the challenge count must be between 1 and %d", fingerprintMaxChallenges)
+	}
+	detector, err := loadFingerprintDetector(parent)
+	if err != nil {
+		// Detector loading may include operator paths or checksum values in its
+		// cause. Keep cancellation observable to the worker, but expose only the
+		// stable public diagnostic error through the console API.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, ErrFingerprintDataNotConfigured
 	}
 	// 0 means "use the configured default"; a negative or oversized budget is
 	// rejected instead of silently clamped, so the operator sees what will run.
@@ -208,6 +245,12 @@ func StartChannelFingerprint(
 	if probeTimeout > fingerprintMaxProbeTimeout {
 		return nil, fmt.Errorf("the probe timeout cannot exceed %s", fingerprintMaxProbeTimeout)
 	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	if probe == nil {
+		return nil, ErrFingerprintPreviewUnavailable
+	}
 	// The run outlives the HTTP request that started it: WithoutCancel keeps its
 	// values while dropping the handler's cancellation, and the timeout bounds
 	// the whole run even when no relay timeout is configured.
@@ -217,6 +260,7 @@ func StartChannelFingerprint(
 	)
 	job := &FingerprintJob{
 		ID:             common.GetUUID(),
+		Revision:       1,
 		ChannelID:      request.ChannelID,
 		ChannelName:    request.ChannelName,
 		Model:          model,
@@ -233,6 +277,9 @@ func StartChannelFingerprint(
 		StartedAt:      fingerprintJobs.now().UnixMilli(),
 		cancel:         cancel,
 		done:           make(chan struct{}),
+		replies:        make([]lmfp.Reply, len(challenges)),
+		probeTimeout:   probeTimeout,
+		detector:       detector,
 	}
 	for i, challenge := range challenges {
 		prompt, promptTruncated := boundedProbeText(challenge.Prompt)
@@ -248,6 +295,11 @@ func StartChannelFingerprint(
 		cancel()
 		return nil, err
 	}
+	// Preview acceptance records this exact job ID while its registry lock is
+	// still held and before the worker goroutine can dispatch a paid probe.
+	if onAccepted != nil {
+		onAccepted(job)
+	}
 	go runFingerprintJob(runCtx, job, challenges, detector, probe, probeTimeout)
 	return job.snapshot(), nil
 }
@@ -261,19 +313,23 @@ func GetChannelFingerprint(id string) (*FingerprintJob, error) {
 	return job.snapshot(), nil
 }
 
-// CancelChannelFingerprint stops the remaining probes of a run.
-func CancelChannelFingerprint(id string) (*FingerprintJob, error) {
+// CancelChannelFingerprint stops the remaining probes of a run. HTTP callers
+// supply the revision they observed; a delayed cancel cannot stop a newer retry.
+// Trusted in-process cleanup callers may omit the fence.
+func CancelChannelFingerprint(id string, expectedRevision ...int) (*FingerprintJob, error) {
 	job := fingerprintJobs.get(id)
 	if job == nil {
 		return nil, ErrFingerprintJobNotFound
 	}
-	if job.isFinished() {
+	job.mu.Lock()
+	if job.FinishedAt != 0 || len(expectedRevision) > 0 && expectedRevision[0] != job.Revision {
+		job.mu.Unlock()
 		return job.snapshot(), ErrFingerprintJobFinished
 	}
-	job.mu.Lock()
 	job.cancelled = true
+	cancel := job.cancel
 	job.mu.Unlock()
-	job.cancel()
+	cancel()
 	return job.snapshot(), nil
 }
 
@@ -295,18 +351,34 @@ func runFingerprintJob(
 	probe FingerprintProber,
 	probeTimeout time.Duration,
 ) {
-	replies := make([]lmfp.Reply, 0, len(challenges))
+	indices := make([]int, len(challenges))
+	for i := range indices {
+		indices[i] = i
+	}
+	runFingerprintProbes(ctx, job, challenges, indices, detector, probe, probeTimeout)
+}
+
+func runFingerprintProbes(ctx context.Context, job *FingerprintJob, challenges []lmfp.Challenge, indices []int, detector *lmfp.Detector, probe FingerprintProber, probeTimeout time.Duration) {
+	job.mu.Lock()
+	cancelRun := job.cancel
+	job.mu.Unlock()
 	defer func() {
+		job.mu.Lock()
+		replies := make([]lmfp.Reply, 0, len(job.replies))
+		for _, reply := range job.replies {
+			if reply.Text != "" {
+				replies = append(replies, reply)
+			}
+		}
+		job.mu.Unlock()
 		job.finish(ctx, replies, detector)
 		// Releasing the run context frees its timer; the job is terminal here.
-		if job.cancel != nil {
-			job.cancel()
-		}
-		if job.done != nil {
-			close(job.done)
+		if cancelRun != nil {
+			cancelRun()
 		}
 	}()
-	for i, challenge := range challenges {
+	for _, i := range indices {
+		challenge := challenges[i]
 		if ctx.Err() != nil {
 			job.cancelQueuedProbes(i, "Cancelled before dispatch.")
 			return
@@ -323,11 +395,29 @@ func runFingerprintJob(
 		// Bound the requested output by the remaining scheduling budget. Input
 		// tokens remain an estimate, so this is not an absolute billing cap.
 		maxOutputTokens := uint(min(remaining-fingerprintProbeInputReserve, fingerprintProbeMaxTokens))
-		job.setProbeState(i, "running", "", maxOutputTokens)
-		job.addRequestsUsed(1)
 		probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+		started := time.Now()
+		effectiveTimeout := probeTimeout
+		if deadline, ok := probeCtx.Deadline(); ok {
+			effectiveTimeout = max(0, deadline.Sub(started))
+		}
+		job.mu.Lock()
+		if len(job.replies) != len(job.Probes) {
+			job.replies = make([]lmfp.Reply, len(job.Probes))
+		}
+		job.Probes[i].Attempt++
+		job.Probes[i].StartedAt = started.UnixMilli()
+		job.Probes[i].FinishedAt = 0
+		job.Probes[i].TimeoutSeconds = int64((effectiveTimeout + time.Second - 1) / time.Second)
+		job.Probes[i].State, job.Probes[i].Error, job.Probes[i].MaxTokens = "running", "", maxOutputTokens
+		job.RequestsUsed++
+		job.mu.Unlock()
 		result, err := probe(probeCtx, challenge, maxOutputTokens)
+		probeErr := probeCtx.Err()
 		cancel()
+		if probeErr != nil {
+			err = probeErr
+		}
 		// Usage is recorded before the error is examined: a failed request may
 		// already have been billed upstream. A request that reported nothing may
 		// have spent its whole output grant, so it is charged the input reserve
@@ -344,16 +434,25 @@ func runFingerprintJob(
 		result.OutputTokens = max(0, result.OutputTokens)
 		job.addTokens(spent)
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				job.failProbe(i, "Cancelled during the request.", result)
 				job.setProbeState(i, "cancelled", "Cancelled during the request.", maxOutputTokens)
 				job.cancelQueuedProbes(i+1, "Cancelled before dispatch.")
 				return
 			}
 			job.failProbe(i, err.Error(), result)
+			if ctx.Err() != nil {
+				job.cancelQueuedProbes(i+1, "Cancelled before dispatch.")
+				return
+			}
 			continue
 		}
 		job.completeProbe(i, result, maxOutputTokens)
-		replies = append(replies, lmfp.Reply{Text: result.Text, ExpectedCount: challenge.ExpectedCount})
+		job.mu.Lock()
+		// Keep rescoring evidence within the same retained-text bound as the
+		// visible reply; a provider ignoring its output cap cannot grow the job.
+		job.replies[i] = lmfp.Reply{Text: job.Probes[i].Output, ExpectedCount: challenge.ExpectedCount}
+		job.mu.Unlock()
 	}
 }
 
@@ -381,6 +480,14 @@ func (job *FingerprintJob) finish(ctx context.Context, replies []lmfp.Reply, det
 		job.setTerminal("failed", reason, nil)
 		return
 	}
+	if detector == nil {
+		reason := job.errorText()
+		if reason == "" {
+			reason = ErrFingerprintDataNotConfigured.Error()
+		}
+		job.setTerminal("failed", reason, nil)
+		return
+	}
 	analysis, err := detector.Analyze(replies)
 	if err != nil {
 		// A run that stopped early already recorded why; that reason is more
@@ -393,7 +500,10 @@ func (job *FingerprintJob) finish(ctx context.Context, replies []lmfp.Reply, det
 		return
 	}
 	if len(analysis.Results) == 0 {
-		reason := analysis.Reason
+		reason := job.errorText()
+		if reason == "" {
+			reason = analysis.Reason
+		}
 		if reason == "" {
 			reason = "The replies could not be scored."
 		}

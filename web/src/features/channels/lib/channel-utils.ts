@@ -28,7 +28,12 @@ import {
   RESPONSE_TIME_THRESHOLDS,
   TYPE_TO_KEY_PROMPT,
 } from '../constants'
-import type { Channel, ChannelSettings, ChannelOtherSettings } from '../types'
+import type {
+  Channel,
+  ChannelSettings,
+  ChannelOtherSettings,
+  ChannelUpstreamProtocol,
+} from '../types'
 
 // ============================================================================
 // Channel Type Utilities
@@ -183,21 +188,115 @@ export function canAppendStaticAllocation(channel: Channel): boolean {
   )
 }
 
+/** The address pool and per-Key protocol overrides are provider-specific. */
+export function supportsChannelUpstreamPool(type: number): boolean {
+  return type === 1 || type === 14
+}
+
 /**
- * Absolute http(s) address a channel card may open in a new tab. Only those two
- * schemes are safe to hand to `window.open`; empty values and placeholders
- * such as `doubao-coding-plan` resolve to null so no button is rendered.
+ * A selected Key pins the upstream, not the client entrypoint. Text clients can
+ * use the existing converters; passthrough cannot. Inherit keeps legacy choices.
+ * Fingerprint callers must use this same contract with their selected Key.
  */
-export function resolveChannelAddressUrl(
-  baseUrl: string | null | undefined
-): string | null {
-  const trimmed = typeof baseUrl === 'string' ? baseUrl.trim() : ''
-  if (!/^https?:\/\//i.test(trimmed)) return null
-  try {
-    return new URL(trimmed).hostname ? trimmed : null
-  } catch {
-    return null
+export function supportsChannelDiagnosticEndpoint(
+  type: number,
+  settings: ChannelSettings,
+  protocol: ChannelUpstreamProtocol,
+  endpoint: string
+): boolean {
+  const declared = settings.supported_endpoints
+  if (declared?.length) {
+    if (
+      ![1, 3, 6, 20, 47].includes(type) ||
+      new Set(declared).size !== declared.length ||
+      declared.some((value) => !['chat', 'messages', 'responses'].includes(value)) ||
+      (type !== 1 && declared.includes('messages')) ||
+      settings.pass_through_body_enabled
+    ) return false
   }
+  if (protocol === 'inherit') {
+    if (!declared?.length) return true
+    if (endpoint === 'openai-response') {
+      return declared.includes('responses') || declared.includes('messages')
+    }
+    if (endpoint === 'openai-response-compact') return declared.includes('responses')
+    if (endpoint === 'gemini') return declared.includes('chat')
+    return true
+  }
+  if (!supportsChannelUpstreamPool(type)) return false
+  if (declared?.length && !declared.includes(protocol)) return false
+  // Automatic endpoint detection is model-based and may choose a different
+  // client shape. With passthrough, require an explicit native entrypoint.
+  if (endpoint === 'auto') return !settings.pass_through_body_enabled
+  if (endpoint === 'openai-response-compact') return protocol === 'responses'
+  const clientProtocol: Record<string, ChannelUpstreamProtocol> = {
+    openai: 'chat',
+    anthropic: 'messages',
+    'openai-response': 'responses',
+  }
+  const client = clientProtocol[endpoint]
+  if (!client) return false
+  return !settings.pass_through_body_enabled || client === protocol
+}
+
+/** Validate syntax only; never probe an address or rewrite its path. */
+export function isValidChannelHttpUrl(
+  value: string,
+  navigation = false
+): boolean {
+  const trimmed = value.trim()
+  if (!/^https?:\/\//i.test(trimmed)) return false
+  if (new TextEncoder().encode(trimmed).length > 2048) return false
+  if (!navigation && /[?#]/.test(trimmed)) return false
+  try {
+    const decoded = decodeURIComponent(value)
+    for (const character of value + decoded) {
+      const code = character.charCodeAt(0)
+      if (character === '\\' || code <= 31 || (code >= 127 && code <= 159)) {
+        return false
+      }
+    }
+    const url = new URL(trimmed)
+    // URL normalizes an empty userinfo delimiter away, so inspect authority too.
+    const authority = trimmed.slice(trimmed.indexOf('://') + 3).split(/[/?#]/)[0]
+    return (
+      Boolean(authority) &&
+      Boolean(url.hostname) &&
+      !/\s/u.test(authority) &&
+      !url.username &&
+      !url.password &&
+      !authority.includes('@')
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Homepage -> first pool URL -> legacy URL -> provider default, HTTP(S) only. */
+export function resolveChannelAddressUrl(
+  channelOrUrl: Pick<Channel, 'type' | 'setting' | 'base_url'> | string | null | undefined,
+  providerDefault?: string
+): string | null {
+  if (typeof channelOrUrl === 'string') {
+    return isValidChannelHttpUrl(channelOrUrl, true) ? channelOrUrl.trim() : null
+  }
+  if (!channelOrUrl) return null
+  const settings = parseChannelSettings(channelOrUrl.setting)
+  const poolSupported = supportsChannelUpstreamPool(channelOrUrl.type)
+  const candidates = [
+    poolSupported ? settings.homepage_url : undefined,
+    poolSupported && Array.isArray(settings.base_urls)
+      ? settings.base_urls[0]
+      : undefined,
+    channelOrUrl.base_url,
+    providerDefault,
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && isValidChannelHttpUrl(candidate, true)) {
+      return candidate.trim()
+    }
+  }
+  return null
 }
 
 // ============================================================================
@@ -321,7 +420,10 @@ export function parseChannelSettings(
     return {}
   }
   try {
-    return JSON.parse(settingStr) as ChannelSettings
+    const parsed: unknown = JSON.parse(settingStr)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as ChannelSettings)
+      : {}
   } catch {
     return {}
   }

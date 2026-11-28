@@ -77,6 +77,7 @@ import {
   resetMultiKeyQuota,
   setMultiKeyModels,
   setMultiKeyModelMapping,
+  setMultiKeyProtocol,
   setMultiKeyQuota,
   setMultiKeyUser,
   syncMultiKeyModels,
@@ -94,13 +95,16 @@ import {
   getMultiKeyConfirmMessage,
   isDestructiveAction,
   parseModelsList,
+  supportsChannelUpstreamPool,
 } from '../../lib'
 import { formatChannelBalanceSummary } from '../../lib/channel-balance'
 import { isQuotaConflict, newQuotaOperationId } from '../../lib/quota-operation'
 import type {
+  ChannelUpstreamProtocol,
   KeyStatus,
   MultiKeyConfirmAction,
   MultiKeyDedupResult,
+  MultiKeyModelSelection,
   MultiKeyModelSyncResult,
 } from '../../types'
 import { ChannelBalanceDetails } from '../channel-balance-details'
@@ -188,6 +192,8 @@ export function MultiKeyManageDialog({
   const bodyRef = useRef<HTMLDivElement>(null)
   const statusRequest = useRef(0)
   const editorSession = useRef(0)
+  const protocolWrite = useRef(false)
+  const [isSavingProtocol, setIsSavingProtocol] = useState(false)
 
   const openConfirm = (action: MultiKeyConfirmAction) => {
     const opener = document.activeElement
@@ -265,7 +271,8 @@ export function MultiKeyManageDialog({
     isResettingQuota ||
     isApplyingSync ||
     isDedupApplying ||
-    isAppending
+    isAppending ||
+    isSavingProtocol
   const parsedUserId = Number(userEditor?.userId ?? '')
   const userIdValid =
     /^\d+$/.test(userEditor?.userId ?? '') &&
@@ -281,7 +288,17 @@ export function MultiKeyManageDialog({
     setQuotaEditor(null)
     setIsSavingAssignment(false)
     setIsSavingQuota(false)
-    if (open && currentRow && !singleKey) {
+    setIsSyncing(false)
+    setIsApplyingSync(false)
+    setSyncPreview(null)
+    setSyncError(null)
+    setIsSavingProtocol(false)
+    protocolWrite.current = false
+    if (
+      open &&
+      currentRow &&
+      (!singleKey || supportsChannelUpstreamPool(currentRow.type))
+    ) {
       setKeys([])
       setTotal(0)
       setTotalPages(0)
@@ -509,6 +526,92 @@ export function MultiKeyManageDialog({
     }
   }
 
+  const saveProtocol = async (
+    key: KeyStatus,
+    protocol: ChannelUpstreamProtocol
+  ) => {
+    if (
+      !open ||
+      !currentRow ||
+      !supportsChannelUpstreamPool(currentRow.type) ||
+      !canEditSensitive ||
+      mutationInProgress ||
+      protocolWrite.current ||
+      isLoading ||
+      statusError ||
+      !key.id ||
+      !/^[1-9]\d*$/.test(key.id) ||
+      key.rev == null ||
+      !Number.isSafeInteger(key.rev) ||
+      key.rev < 1 ||
+      protocol === (key.upstream_protocol || 'inherit')
+    ) {
+      return
+    }
+    const session = editorSession.current
+    protocolWrite.current = true
+    setIsSavingProtocol(true)
+    try {
+      const response = await setMultiKeyProtocol({
+        channelId: currentRow.id,
+        keyEntryId: key.id,
+        expectedRev: key.rev,
+        upstreamProtocol: protocol,
+      })
+      if (session !== editorSession.current) return
+      if (isQuotaConflict(response)) {
+        await reloadAfterConflict()
+        return
+      }
+      const data = requireServerSuccess(response).data
+      const keyRevision = data?.key_revision ?? data?.rev
+      if (
+        !data ||
+        data.key_entry_id !== key.id ||
+        !Number.isSafeInteger(data.revision) ||
+        data.revision < 1 ||
+        keyRevision == null ||
+        !Number.isSafeInteger(keyRevision) ||
+        keyRevision < 1 ||
+        !['inherit', 'messages', 'chat', 'responses'].includes(
+          data.upstream_protocol
+        )
+      ) {
+        await loadKeyStatus()
+        if (session === editorSession.current) toast.error(t('Operation failed'))
+        return
+      }
+      setRevision(data.revision)
+      setKeys((current) =>
+        current.map((entry) =>
+          entry.id === data.key_entry_id && entry.rev === key.rev
+            ? {
+                ...entry,
+                rev: keyRevision,
+                upstream_protocol: data.upstream_protocol,
+              }
+            : entry
+        )
+      )
+      void queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.lists(),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.multiKeyStatus(currentRow.id),
+      })
+      toast.success(t('Operation successful'))
+    } catch (error: unknown) {
+      if (session !== editorSession.current) return
+      if (isQuotaConflict(error)) await reloadAfterConflict()
+      else handleServerError(error, t('Operation failed'))
+    } finally {
+      if (session === editorSession.current) {
+        protocolWrite.current = false
+        setIsSavingProtocol(false)
+      }
+    }
+  }
+
   const saveModels = (models: string[], scopeMode: 'all' | 'allowlist') => {
     if (!modelsEditor || !currentRow) return
     const keyStatus = modelsEditor.keyStatus
@@ -606,12 +709,14 @@ export function MultiKeyManageDialog({
   // Preview which models every enabled key serves before writing anything.
   const openSync = async () => {
     if (!currentRow || !canEditSensitive || isSyncing) return
+    const session = editorSession.current
     setSyncOpen(true)
     setSyncPreview(null)
     setSyncError(null)
     setIsSyncing(true)
     try {
       const response = await syncMultiKeyModels(currentRow.id, false, revision)
+      if (session !== editorSession.current) return
       if (!response.success || !response.data) {
         setSyncError(
           getServerErrorMessage(response, t('Failed to fetch models'))
@@ -620,27 +725,31 @@ export function MultiKeyManageDialog({
       }
       setSyncPreview(response.data)
     } catch (error: unknown) {
-      setSyncError(getServerErrorMessage(error, t('Failed to fetch models')))
+      if (session === editorSession.current) setSyncError(getServerErrorMessage(error, t('Failed to fetch models')))
     } finally {
-      setIsSyncing(false)
+      if (session === editorSession.current) setIsSyncing(false)
     }
   }
 
-  const applySync = async () => {
+  const applySync = async (selections: MultiKeyModelSelection[]) => {
     if (
       !currentRow ||
       !canEditSensitive ||
       !syncPreview ||
       syncPreview.applied ||
+      !syncPreview.preview_token ||
+      selections.length === 0 ||
       isApplyingSync
     ) {
       return
     }
+    const session = editorSession.current
     setIsApplyingSync(true)
     try {
       const response = requireServerSuccess(
-        await syncMultiKeyModels(currentRow.id, true, syncPreview.revision)
+        await syncMultiKeyModels(currentRow.id, true, syncPreview.revision, syncPreview.preview_token, selections)
       )
+      if (session !== editorSession.current) return
       if (!response.data?.applied) {
         setSyncError(t('Operation failed'))
         return
@@ -663,6 +772,7 @@ export function MultiKeyManageDialog({
       queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all })
       await loadKeyStatus()
     } catch (error: unknown) {
+      if (session !== editorSession.current) return
       if (isQuotaConflict(error)) {
         setSyncOpen(false)
         setSyncPreview(null)
@@ -671,7 +781,7 @@ export function MultiKeyManageDialog({
         setSyncError(getServerErrorMessage(error, t('Operation failed')))
       }
     } finally {
-      setIsApplyingSync(false)
+      if (session === editorSession.current) setIsApplyingSync(false)
     }
   }
 
@@ -944,7 +1054,69 @@ export function MultiKeyManageDialog({
     </div>
   )
 
+  const protocolOptions = [
+    { value: 'inherit', label: t('Inherit existing routing') },
+    { value: 'messages', label: t('Anthropic Messages (/v1/messages)') },
+    { value: 'chat', label: t('Chat Completions only') },
+    { value: 'responses', label: t('Responses only') },
+  ]
+  const renderProtocolSelect = (key: KeyStatus) => (
+    <Select
+      items={protocolOptions}
+      value={key.upstream_protocol || 'inherit'}
+      disabled={
+        !canEditSensitive ||
+        mutationInProgress ||
+        isLoading ||
+        !!statusError ||
+        !key.id ||
+        !/^[1-9]\d*$/.test(key.id) ||
+        !Number.isSafeInteger(key.rev) ||
+        (key.rev ?? 0) < 1
+      }
+      onValueChange={(value) => {
+        if (
+          value === 'inherit' ||
+          value === 'messages' ||
+          value === 'chat' ||
+          value === 'responses'
+        ) {
+          void saveProtocol(key, value)
+        }
+      }}
+    >
+      <SelectTrigger
+        aria-label={t('Upstream protocol for Key {{id}}', { id: key.id ?? '-' })}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent alignItemWithTrigger={false}>
+        <SelectGroup>
+          {protocolOptions.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+
   if (singleKey) {
+    let protocolControl = <p role='status'>{t('Failed to load key status')}</p>
+    if (statusError) {
+      protocolControl = (
+        <ErrorState
+          className='min-h-0 py-3'
+          title={statusError}
+          onRetry={() => void loadKeyStatus()}
+        />
+      )
+    } else if (isLoading) {
+      protocolControl = <LoadingState inline size='sm' message={t('Loading...')} />
+    } else if (keys[0]) {
+      protocolControl = renderProtocolSelect(keys[0])
+    }
     let body = appendInput
     if (!canAppend) {
       body = <p role='status'>{t('No permission to perform this action')}</p>
@@ -953,12 +1125,12 @@ export function MultiKeyManageDialog({
       <ConfirmDialog
         open={open}
         onOpenChange={(next) => {
-          if (!isAppending) {
+          if (!mutationInProgress) {
             onOpenChange(next)
             if (!next) setAppendKey('')
           }
         }}
-        title={t('Add allocation')}
+        title={t('Multi-Key Management')}
         desc={t(
           'The same static key can have separate allocations. The new allocation starts in the public pool with all channel models.'
         )}
@@ -967,7 +1139,15 @@ export function MultiKeyManageDialog({
         disabled={!canSubmitAppend}
         isLoading={isAppending}
       >
-        {body}
+        <div className='grid gap-4'>
+          {supportsChannelUpstreamPool(currentRow.type) && (
+            <div className='grid gap-2'>
+              <Label>{t('Upstream protocol')}</Label>
+              {protocolControl}
+            </div>
+          )}
+          {body}
+        </div>
       </ConfirmDialog>
     )
   }
@@ -1040,6 +1220,7 @@ export function MultiKeyManageDialog({
                 label: t(option.label),
               }))}
               value={statusFilter === null ? 'all' : statusFilter.toString()}
+              disabled={mutationInProgress}
               onValueChange={(v) => v !== null && handleStatusFilterChange(v)}
             >
               <SelectTrigger className='w-40'>
@@ -1077,7 +1258,7 @@ export function MultiKeyManageDialog({
                 variant='outline'
                 size='sm'
                 onClick={() => loadKeyStatus()}
-                disabled={isLoading}
+                disabled={isLoading || mutationInProgress}
                 aria-label={t('Refresh')}
               >
                 <RefreshCw className='h-4 w-4' />
@@ -1406,6 +1587,16 @@ export function MultiKeyManageDialog({
                     className: `${stickyHeadClassName} w-32`,
                     cell: (key) => renderStatusBadge(key.status),
                   },
+                  ...(supportsChannelUpstreamPool(currentRow.type)
+                    ? [
+                        {
+                          id: 'upstream-protocol',
+                          header: t('Upstream protocol'),
+                          className: `${stickyHeadClassName} min-w-[180px]`,
+                          cell: renderProtocolSelect,
+                        },
+                      ]
+                    : []),
                   {
                     id: 'quota',
                     header: t('Quota'),
@@ -1567,7 +1758,9 @@ export function MultiKeyManageDialog({
                   variant='outline'
                   size='sm'
                   onClick={() => handlePageChange(currentPage - 1)}
-                  disabled={currentPage === 1 || isLoading}
+                  disabled={
+                    currentPage === 1 || isLoading || mutationInProgress
+                  }
                 >
                   {t('Previous')}
                 </Button>
@@ -1575,7 +1768,9 @@ export function MultiKeyManageDialog({
                   variant='outline'
                   size='sm'
                   onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage >= totalPages || isLoading}
+                  disabled={
+                    currentPage >= totalPages || isLoading || mutationInProgress
+                  }
                 >
                   {t('Next')}
                 </Button>
@@ -1623,13 +1818,17 @@ export function MultiKeyManageDialog({
         onOpenChange={(next) => {
           if (isApplyingSync) return
           setSyncOpen(next)
-          if (!next) setSyncPreview(null)
+          if (!next) {
+            editorSession.current += 1
+            setSyncPreview(null)
+            setIsSyncing(false)
+          }
         }}
         isFetching={isSyncing}
         isApplying={isApplyingSync}
         preview={syncPreview}
         error={syncError}
-        onApply={() => void applySync()}
+        onApply={(selections) => void applySync(selections)}
       />
 
       {/* Unbind confirmation */}

@@ -178,6 +178,7 @@ import {
   getAdvancedCustomStats,
   transformChannelToFormDefaults,
   supportsChannelEndpointSelection,
+  supportsChannelUpstreamPool,
   supportsMultipleChannelKeys,
   type ChannelFormValues,
   deduplicateKeys,
@@ -376,6 +377,8 @@ const CAPABILITY_OPTIONS: Array<{
 const SENSITIVE_FORM_FIELDS = [
   'type',
   'base_url',
+  'base_urls',
+  'homepage_url',
   'key',
   'openai_organization',
   'other',
@@ -1043,6 +1046,10 @@ export function ChannelMutateDrawer({
           shouldValidate: true,
         })
       }
+      if (target.kind === 'plugin' || !supportsChannelUpstreamPool(target.type)) {
+        form.setValue('base_urls', '', { shouldDirty: true, shouldValidate: true })
+        form.setValue('homepage_url', '', { shouldDirty: true, shouldValidate: true })
+      }
       setProviderTarget(target)
       setChoosingProvider(false)
     },
@@ -1398,7 +1405,7 @@ export function ChannelMutateDrawer({
   // key: the preview request carries the saved channel id and the draft key.
   // Advanced Custom keeps reusing the saved credential on the server.
   const editedKey =
-    isEditing && !isAdvancedCustom && currentKey?.trim()
+    isEditing && !isMultiKeyChannel && !isAdvancedCustom && currentKey?.trim()
       ? currentKey
       : undefined
   const editPreviewsDraftKey = Boolean(editedKey)
@@ -3805,6 +3812,18 @@ export function ChannelMutateDrawer({
                     </AlertDescription>
                   </Alert>
                 )}
+                {discovery.status === 'success' && discovery.partial && (
+                  <Alert>
+                    <AlertDescription>
+                      <p>{t('Some keys could not fetch models')}</p>
+                      {discovery.results?.filter((result) => result.error).map((result) => (
+                        <p key={result.key_entry_id ?? result.key_index}>
+                          #{result.key_index + 1}: {result.error}
+                        </p>
+                      ))}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {discovery.status === 'success' &&
                   discovery.models.length === 0 && (
                     <EmptyState
@@ -3836,8 +3855,14 @@ export function ChannelMutateDrawer({
                             ? initialModelsRef.current
                             : currentModelsArray
                         }
-                        onChange={handleModelsChange}
-                        showChanges={isEditing}
+                        onChange={(selected) =>
+                          handleModelsChange(
+                            discovery.partial
+                              ? [...new Set([...currentModelsArray, ...selected])]
+                              : selected
+                          )
+                        }
+                        showChanges={isEditing && !discovery.partial}
                         redirectModels={redirectModelList}
                         redirectSourceModels={redirectModelKeyList}
                         onRedirectModel={handleFetchedRedirect}
@@ -4826,6 +4851,43 @@ export function ChannelMutateDrawer({
                   </FormItem>
                 )}
               />
+            )}
+
+            {supportsChannelUpstreamPool(currentType) && (
+              <>
+                <FormField
+                  control={form.control}
+                  name='base_urls'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Base URL pool')}</FormLabel>
+                      <FormControl>
+                        <Textarea {...field} value={field.value ?? ''} rows={3} />
+                      </FormControl>
+                      <FormDescription>
+                        {t('One HTTP(S) URL per line, up to 16 unique addresses. Paths are preserved; credentials, query and fragment are not allowed. Empty uses Base URL or the provider default.')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='homepage_url'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Homepage URL')}</FormLabel>
+                      <FormControl>
+                        <Input {...field} value={field.value ?? ''} />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Optional HTTP(S) navigation address. Query and fragment are allowed. Empty opens the first effective Base URL.')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
             )}
 
             {currentType === CHANNEL_TYPE_ADVANCED_CUSTOM && (

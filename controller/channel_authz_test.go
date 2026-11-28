@@ -43,7 +43,8 @@ func TestScopedAccessTokenRequiresSensitiveChannelPermission(t *testing.T) {
 	allocation, ok := channel.ChannelAllocationByPosition(0)
 	require.True(t, ok)
 	baseURL := "https://example.com"
-	update := fmt.Sprintf(`{"id":%d,"base_url":%q}`, channel.Id, baseURL)
+	setting := `{"base_urls":["https://pool.example.com/v1"],"homepage_url":"https://home.example.com/docs?tab=api#start"}`
+	update := fmt.Sprintf(`{"id":%d,"base_url":%q,"setting":%q}`, channel.Id, baseURL, setting)
 	manage := fmt.Sprintf(`{"channel_id":%d,"action":"set_key_models","key_entry_id":"%d","expected_rev":%d,"models":["gpt-4o-mini"]}`, channel.Id, allocation.EntryID, allocation.Revision)
 	for _, tc := range []struct{ method, path, body string }{
 		{http.MethodPut, updatePath, update},
@@ -57,6 +58,8 @@ func TestScopedAccessTokenRequiresSensitiveChannelPermission(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, channel.GetBaseURL(), unchanged.GetBaseURL())
 	assert.Empty(t, unchanged.ChannelInfo.MultiKeyModels)
+	assert.Empty(t, unchanged.GetSetting().BaseURLs)
+	assert.Empty(t, unchanged.GetSetting().HomepageURL)
 	for _, tc := range []struct{ method, path, body string }{
 		{http.MethodPost, managePath, manage},
 		{http.MethodPut, updatePath, update},
@@ -71,6 +74,61 @@ func TestScopedAccessTokenRequiresSensitiveChannelPermission(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, baseURL, updated.GetBaseURL())
 	assert.Equal(t, []string{"gpt-4o-mini"}, updated.ChannelInfo.MultiKeyModels[0])
+	assert.Equal(t, []string{"https://pool.example.com/v1"}, updated.GetBaseURLs())
+	assert.Equal(t, "https://home.example.com/docs?tab=api#start", updated.GetHomepageURL())
+	allocation, ok = updated.ChannelAllocationByPosition(0)
+	require.True(t, ok)
+	protocol := fmt.Sprintf(`{"channel_id":%d,"action":"set_key_protocol","key_entry_id":"%d","expected_rev":%d,"upstream_protocol":"responses"}`, channel.Id, allocation.EntryID, allocation.Revision)
+	denied := accessTokenRequest(router, http.MethodPost, managePath, limited, "", protocol)
+	require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	assert.Contains(t, denied.Body.String(), "ACCESS_TOKEN_SCOPE_DENIED")
+	unchanged, err = model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "inherit", unchanged.KeyUpstreamProtocol(0))
+	assert.Equal(t, allocation.Revision, unchanged.KeyEntryRevisions[0])
+	granted := accessTokenRequest(router, http.MethodPost, managePath, allowed, "", protocol)
+	require.Equal(t, http.StatusOK, granted.Code, granted.Body.String())
+	var result struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(granted.Body.Bytes(), &result))
+	require.True(t, result.Success, granted.Body.String())
+	updated, err = model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "responses", updated.KeyUpstreamProtocol(0))
+	assert.Equal(t, allocation.Revision+1, updated.KeyEntryRevisions[0])
+	assert.NotContains(t, granted.Body.String(), "first")
+	assert.NotContains(t, granted.Body.String(), "second")
+}
+
+func TestChannelKeyProtocolRequiresSensitivePermission(t *testing.T) {
+	setupChannelCreateTest(t)
+	user := &model.User{Username: "protocol-denied", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AffCode: "protocol-denied"}
+	require.NoError(t, model.DB.Create(user).Error)
+	t.Cleanup(func() { require.NoError(t, model.DB.Unscoped().Delete(user).Error) })
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "protocol-protected", Key: "protocol-protected-secret", Group: "default", Models: "m"}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+	body := fmt.Sprintf(`{"channel_id":%d,"action":"set_key_protocol","key_entry_id":"%d","expected_rev":%d,"upstream_protocol":"chat"}`, channel.Id, channel.KeyEntryIDs[0], channel.KeyEntryRevisions[0])
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("id", user.Id)
+	c.Set("role", common.RoleCommonUser)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/multi_key/manage", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	ManageMultiKeys(c)
+	var result struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+	assert.False(t, result.Success, recorder.Body.String())
+	stored, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "inherit", stored.KeyUpstreamProtocol(0))
+	assert.Equal(t, channel.KeyEntryRevisions, stored.KeyEntryRevisions)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.AuditEventOutbox{}).Count(&count).Error)
+	assert.Zero(t, count)
 }
 
 func TestChannelHasSensitiveChanges(t *testing.T) {

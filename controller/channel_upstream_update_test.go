@@ -47,6 +47,7 @@ func TestSingleKeyDiscoveryKeepsSelectedMappingAndChannelInheritance(t *testing.
 	firstMapping := `{"alias":"first-upstream"}`
 	lastMapping := `{"alias":"Last-Upstream"}`
 	channel := &model.Channel{Key: "first\ninherit\nlast", Models: "alias,shared", ModelMapping: &channelMapping,
+		KeyEntryIDs: []int64{101, 102, 103}, KeyEntryRevisions: []int64{1, 1, 1},
 		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3,
 			MultiKeyModelMappings: map[int]string{0: firstMapping, 2: lastMapping}}}
 	for _, tc := range []struct {
@@ -62,6 +63,15 @@ func TestSingleKeyDiscoveryKeepsSelectedMappingAndChannelInheritance(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			discovery := newSingleKeyChannel(channel, tc.key, tc.index...)
 			assert.Equal(t, tc.key, discovery.Key)
+			if len(tc.index) == 0 {
+				assert.Empty(t, discovery.KeyEntryIDs)
+				assert.Empty(t, discovery.KeyEntryRevisions)
+				assert.Empty(t, discovery.ChannelInfo.MultiKeyModelMappings)
+			} else {
+				index := tc.index[0]
+				assert.Equal(t, []int64{channel.KeyEntryIDs[index]}, discovery.KeyEntryIDs)
+				assert.Equal(t, []int64{channel.KeyEntryRevisions[index]}, discovery.KeyEntryRevisions)
+			}
 			resolved, ok := discovery.RoutingUpstreamModelNameForKey(0, "alias")
 			require.True(t, ok)
 			assert.Equal(t, tc.mapped, resolved, "discovery must not inherit another allocation's position-zero override")

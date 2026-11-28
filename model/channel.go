@@ -99,6 +99,8 @@ type ChannelInfo struct {
 	MultiKeyModels        map[int][]string `json:"multi_key_models,omitempty"`
 	MultiKeyModelMappings map[int]string   `json:"multi_key_model_mappings,omitempty"`
 	MultiKeyScopeModes    map[int]string   `json:"multi_key_scope_modes,omitempty"`
+	// Derived from stable allocation rows; omitted entries inherit channel policy.
+	MultiKeyUpstreamProtocols map[int]string `json:"multi_key_upstream_protocols,omitempty"`
 	// 独占某个key的用户，key index -> user id；缺失或0表示公共key
 	MultiKeyUsers map[int]int `json:"multi_key_users,omitempty"`
 	// ModelUnavailable records upstream refusals that named a model as
@@ -1357,6 +1359,103 @@ func (channel *Channel) GetBaseURL() string {
 	return url
 }
 
+// GetBaseURLs returns a fresh ordered pool without selecting an attempt URL.
+func (channel *Channel) GetBaseURLs() []string {
+	settings := channel.GetSetting()
+	if len(settings.BaseURLs) > 0 {
+		return slices.Clone(settings.BaseURLs)
+	}
+	baseURL := channel.GetBaseURL()
+	if baseURL == "" {
+		baseURL = constant.GetChannelBaseURL(channel.Type)
+	}
+	if baseURL == "" {
+		return nil
+	}
+	return []string{baseURL}
+}
+
+// SelectUpstreamBaseURL chooses one address for a new attempt. Callers retain the
+// returned value through request preparation and transport retries; key selection
+// and homepage navigation never influence this draw.
+func (channel *Channel) SelectUpstreamBaseURL() (string, error) {
+	if channel == nil {
+		return "", errors.New("channel is required")
+	}
+	var settings dto.ChannelSettings
+	if channel.Setting != nil && *channel.Setting != "" {
+		if err := common.UnmarshalJsonStr(*channel.Setting, &settings); err != nil {
+			return "", errors.New("invalid channel upstream address settings")
+		}
+	}
+	if len(settings.BaseURLs) > 0 {
+		if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeAnthropic {
+			return "", errors.New("base_urls is only supported for OpenAI and Anthropic channels")
+		}
+		if err := settings.NormalizeUpstreamURLs(); err != nil {
+			return "", err
+		}
+		return strings.TrimRight(settings.BaseURLs[rand.Intn(len(settings.BaseURLs))], "/"), nil
+	}
+	baseURL := channel.GetBaseURL()
+	if baseURL == "" && (channel.Type == constant.ChannelTypeOpenAI || channel.Type == constant.ChannelTypeAnthropic) {
+		baseURL = constant.GetChannelBaseURL(channel.Type)
+	}
+	return baseURL, nil
+}
+
+func (channel *Channel) GetHomepageURL() string {
+	if homepage := channel.GetSetting().HomepageURL; homepage != "" {
+		return homepage
+	}
+	if urls := channel.GetBaseURLs(); len(urls) > 0 {
+		return urls[0]
+	}
+	return ""
+}
+
+// PreserveUpstreamSettings keeps additive fields an older editor cannot submit.
+// Explicit null/empty fields still clear them. Other setting replacement semantics
+// remain unchanged, and unknown JSON properties in the request are retained.
+func (channel *Channel) PreserveUpstreamSettings(previous *Channel) error {
+	if channel.Setting == nil || previous == nil || previous.Setting == nil {
+		return nil
+	}
+	var submitted, stored map[string]json.RawMessage
+	if strings.TrimSpace(*channel.Setting) != "" {
+		if err := common.UnmarshalJsonStr(*channel.Setting, &submitted); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(*previous.Setting) != "" {
+		if err := common.UnmarshalJsonStr(*previous.Setting, &stored); err != nil {
+			return err
+		}
+	}
+	changed := false
+	for _, field := range []string{"base_urls", "homepage_url"} {
+		if _, present := submitted[field]; present {
+			continue
+		}
+		if value, present := stored[field]; present {
+			if submitted == nil {
+				submitted = make(map[string]json.RawMessage)
+			}
+			submitted[field] = value
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	encoded, err := common.Marshal(submitted)
+	if err != nil {
+		return err
+	}
+	channel.Setting = common.GetPointer(string(encoded))
+	return nil
+}
+
 func (channel *Channel) GetModelMapping() string {
 	if channel.ModelMapping == nil {
 		return ""
@@ -1372,9 +1471,6 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
-	if ChannelHasDuplicateCredentials(channel) && !ChannelBudgetsEnabled() {
-		return ErrChannelAllocationsInactive
-	}
 	err := DB.Session(&gorm.Session{Logger: gormlogger.Discard}).Transaction(func(tx *gorm.DB) error {
 		channel.ChannelInfo.KeyEntryRevision = 0
 		if err := tx.Create(channel).Error; err != nil {
@@ -2153,7 +2249,57 @@ func searchTags(ctx context.Context, keyword string, group string, model string,
 	return tags, nil
 }
 
+// NormalizeUpstreamSettings validates and normalizes only additive upstream
+// properties, preserving absent/null fields and unrelated raw JSON members.
+func (channel *Channel) NormalizeUpstreamSettings() error {
+	channelParams := &dto.ChannelSettings{}
+	if channel.Setting != nil && *channel.Setting != "" {
+		if err := common.UnmarshalJsonStr(*channel.Setting, channelParams); err != nil {
+			return err
+		}
+	}
+	baseURLs := slices.Clone(channelParams.BaseURLs)
+	homepage := channelParams.HomepageURL
+	if err := channelParams.NormalizeUpstreamURLs(); err != nil {
+		return err
+	}
+	if (len(channelParams.BaseURLs) > 0 || channelParams.HomepageURL != "") &&
+		channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeAnthropic {
+		return fmt.Errorf("base_urls and homepage_url are only supported for OpenAI and Anthropic channels")
+	}
+	if slices.Equal(baseURLs, channelParams.BaseURLs) && homepage == channelParams.HomepageURL {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(*channel.Setting, &raw); err != nil {
+		return err
+	}
+	if !slices.Equal(baseURLs, channelParams.BaseURLs) {
+		encoded, err := common.Marshal(channelParams.BaseURLs)
+		if err != nil {
+			return err
+		}
+		raw["base_urls"] = encoded
+	}
+	if homepage != channelParams.HomepageURL {
+		encoded, err := common.Marshal(channelParams.HomepageURL)
+		if err != nil {
+			return err
+		}
+		raw["homepage_url"] = encoded
+	}
+	encoded, err := common.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	channel.Setting = common.GetPointer(string(encoded))
+	return nil
+}
+
 func (channel *Channel) ValidateSettings() error {
+	if err := channel.NormalizeUpstreamSettings(); err != nil {
+		return err
+	}
 	channelParams := &dto.ChannelSettings{}
 	if channel.Setting != nil && *channel.Setting != "" {
 		err := common.Unmarshal([]byte(*channel.Setting), channelParams)

@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -131,17 +133,22 @@ func channelKeyDedupPreview(tx *gorm.DB, ch *model.Channel, entries []model.Chan
 		account := accounts[entry.Id]
 		models := entry.KeyModels()
 		slices.Sort(models)
+		protocol, err := dto.NormalizeChannelUpstreamProtocol(entry.UpstreamProtocol)
+		if err != nil {
+			return plan, nil, err
+		}
 		policy := struct {
-			Key     string
-			Owner   int
-			Scope   string
-			Models  []string
-			Mapping string
-			Status  int
-			Reason  string
-			Enabled bool
-			Limit   int64
-		}{entry.Key, entry.BoundUserId, entry.ScopeMode, models, entry.ModelMapping, entry.Status, entry.DisabledReason, account.Enabled, account.LimitQuota}
+			Protocol string
+			Key      string
+			Owner    int
+			Scope    string
+			Models   []string
+			Mapping  string
+			Status   int
+			Reason   string
+			Enabled  bool
+			Limit    int64
+		}{protocol, entry.Key, entry.BoundUserId, entry.ScopeMode, models, entry.ModelMapping, entry.Status, entry.DisabledReason, account.Enabled, account.LimitQuota}
 		data, err := common.Marshal(policy)
 		if err != nil {
 			return plan, nil, err
@@ -220,10 +227,17 @@ func channelKeyDedupPreview(tx *gorm.DB, ch *model.Channel, entries []model.Chan
 	return plan, accounts, nil
 }
 
-func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, request MultiKeyManageRequest) bool {
-	switch request.Action {
-	case "disable_key", "enable_key", "enable_all_keys", "disable_all_keys", "delete_key", "delete_disabled_keys", "set_key_models", "set_key_model_mapping", "set_key_user", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
+func isChannelKeyAllocationAction(action string) bool {
+	switch action {
+	case "disable_key", "enable_key", "enable_all_keys", "disable_all_keys", "delete_key", "delete_disabled_keys", "set_key_models", "set_key_model_mapping", "set_key_protocol", "set_key_user", "set_key_quota", "reset_key_quota", "deduplicate_keys", "reorder_keys":
+		return true
 	default:
+		return false
+	}
+}
+
+func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, request MultiKeyManageRequest) bool {
+	if !isChannelKeyAllocationAction(request.Action) {
 		return false
 	}
 	if request.Action == "set_key_model_mapping" && (request.KeyEntryID == "" || request.ModelMapping == nil) {
@@ -251,9 +265,25 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			return true
 		}
 	}
+	protocol := ""
+	if request.Action == "set_key_protocol" {
+		// This action never falls back to positional legacy mutation.
+		if request.KeyEntryID == "" || request.ExpectedRev == nil || *request.ExpectedRev <= 0 || request.UpstreamProtocol == nil ||
+			(request.ExpectedRevision != nil && *request.ExpectedRevision <= 0) {
+			common.ApiErrorT(c, "Invalid parameters")
+			return true
+		}
+		var err error
+		protocol, err = dto.NormalizeChannelUpstreamProtocol(*request.UpstreamProtocol)
+		if err != nil {
+			common.ApiErrorT(c, "Invalid parameters")
+			return true
+		}
+	}
 	var budget *model.ChannelBudgetView
 	var preview channelKeyDedupPlan
 	var removedKeys []string
+	var protocolResult gin.H
 	auditActor := snapshotAuditActor(c)
 	updated, err := model.MutateChannelKeyEntries(c.Request.Context(), channel.Id, expected, func(tx *gorm.DB, current *model.Channel, entries []model.ChannelKeyEntry) ([]model.ChannelKeyEntry, []model.ChannelKeyEntry, error) {
 		if request.Action == "deduplicate_keys" {
@@ -350,6 +380,9 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 		if err != nil {
 			return nil, nil, err
 		}
+		if request.Action == "set_key_protocol" && request.KeyIndex != nil && *request.KeyIndex != index {
+			return nil, nil, model.ErrChannelKeyEntryRevisionStale
+		}
 		entry := &entries[index]
 		switch request.Action {
 		case "disable_key":
@@ -370,16 +403,27 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			if request.ScopeMode != nil && *request.ScopeMode != "all" && *request.ScopeMode != "allowlist" {
 				return nil, nil, common.NewMessage("invalid channel key model scope")
 			}
+			if request.AddModels && (request.KeyEntryID == "" || request.ExpectedRev == nil) {
+				return nil, nil, model.ErrChannelKeyEntryRevisionStale
+			}
+			previousScopeMode := entry.ScopeMode
 			models := normalizeModelNames(request.Models)
+			if request.AddModels {
+				models = mergeModelNames(entry.KeyModels(), models)
+			}
 			if err := entry.SetKeyModels(models); err != nil {
 				return nil, nil, err
 			}
-			if request.ScopeMode != nil {
+			if request.AddModels {
+				// Additions never replace an existing allowlist or narrow an all scope.
+				entry.ScopeMode = previousScopeMode
+			}
+			if request.ScopeMode != nil && !request.AddModels {
 				// SetKeyModels infers legacy empty selections as all. An explicit
 				// empty allowlist instead stays deny-all.
 				entry.ScopeMode = *request.ScopeMode
 			}
-			if entry.ScopeMode == "allowlist" && len(models) > 0 {
+			if (entry.ScopeMode == "allowlist" || request.AddModels) && len(models) > 0 {
 				// Preserve manual models and their order; only the selected Key's
 				// explicit allowlist adds names to the shared catalog.
 				current.Models = strings.Join(mergeModelNames(current.GetModels(), models), ",")
@@ -388,6 +432,11 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			if err := entry.SetModelMapping(*request.ModelMapping, current); err != nil {
 				return nil, nil, err
 			}
+		case "set_key_protocol":
+			if current.Type != constant.ChannelTypeOpenAI && current.Type != constant.ChannelTypeAnthropic {
+				return nil, nil, common.NewMessage("Invalid parameters")
+			}
+			entry.UpstreamProtocol = protocol
 		case "set_key_user":
 			if request.UserId == nil || *request.UserId < 0 {
 				return nil, nil, common.NewMessage("No user specified to bind")
@@ -423,16 +472,22 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 			return nil, nil, nil
 		}
 		entry.ConfigRevision++
-		if request.Action == "set_key_models" || request.Action == "set_key_model_mapping" {
+		if request.Action == "set_key_models" || request.Action == "set_key_model_mapping" || request.Action == "set_key_protocol" {
 			// persistKeyEntries advances the list revision once after this callback.
 			// The audit, catalog, scope and abilities share its transaction, so any
 			// later persistence failure also removes this audit obligation.
-			draft := buildAuditDraft(auditActor, "channel.multi_key_manage", map[string]any{
+			params := map[string]any{
 				"id":       current.Id,
 				"action":   request.Action,
 				"entry_id": strconv.FormatInt(entry.Id, 10),
 				"revision": current.ChannelInfo.KeyEntryRevision + 1,
-			})
+			}
+			if request.Action == "set_key_protocol" {
+				params["upstream_protocol"] = entry.UpstreamProtocol
+				params["rev"] = entry.ConfigRevision
+				protocolResult = gin.H{"revision": current.ChannelInfo.KeyEntryRevision + 1, "key_entry_id": request.KeyEntryID, "rev": entry.ConfigRevision, "upstream_protocol": entry.UpstreamProtocol}
+			}
+			draft := buildAuditDraft(auditActor, "channel.multi_key_manage", params)
 			if _, err := model.EnqueueAuditEventTx(tx, draft); err != nil {
 				return nil, nil, err
 			}
@@ -448,7 +503,7 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 		common.ApiSuccess(c, preview)
 		return true
 	}
-	if request.Action == "set_key_models" || request.Action == "set_key_model_mapping" {
+	if request.Action == "set_key_models" || request.Action == "set_key_model_mapping" || request.Action == "set_key_protocol" {
 		markAuditLogged(c)
 	} else {
 		recordManageAudit(c, "channel.multi_key_manage", map[string]any{"id": channel.Id, "action": request.Action, "entry_id": request.KeyEntryID, "revision": updated.ChannelInfo.KeyEntryRevision})
@@ -469,6 +524,8 @@ func handleChannelKeyAllocationAction(c *gin.Context, channel *model.Channel, re
 				return true
 			}
 		}
+	} else if request.Action == "set_key_protocol" {
+		common.ApiSuccess(c, protocolResult)
 	} else if request.Action == "set_key_models" {
 		common.ApiSuccess(c, gin.H{"revision": updated.ChannelInfo.KeyEntryRevision, "channel_models": normalizeModelNames(updated.GetModels())})
 	} else {

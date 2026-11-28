@@ -20,7 +20,19 @@ import (
 const (
 	firstLegacyKey  = "00000000000000000000000000000001"
 	secondLegacyKey = "00000000000000000000000000000002"
+
+	upstreamProtocolInherit   = "inherit"
+	upstreamProtocolMessages  = "messages"
+	upstreamProtocolChat      = "chat"
+	upstreamProtocolResponses = "responses"
 )
+
+var supportedUpstreamProtocols = [...]string{
+	upstreamProtocolInherit,
+	upstreamProtocolMessages,
+	upstreamProtocolChat,
+	upstreamProtocolResponses,
+}
 
 type redemptionIndex struct {
 	name    string
@@ -352,12 +364,7 @@ func seedReleasedAllocations() {
 				}
 			}
 		case "upstream_protocol":
-			for i, entry := range entries {
-				protocol := []string{"inherit", "messages", "chat"}[i]
-				if err := model.DB.Table("channel_key_entries").Where("id = ?", entry.Id).Updates(map[string]any{"upstream_protocol": protocol}).Error; err != nil {
-					fail("seed existing allocation protocol: %v", err)
-				}
-			}
+			assertSeededUpstreamProtocolValues(channel.Id)
 		}
 	}
 
@@ -640,7 +647,14 @@ func assertMigrationTable(expected, actual migrationTableSnapshot, mappingID int
 				mapping := allocationLongMapping()
 				want = &mapping
 			}
-			if !reflect.DeepEqual(want, actual.Rows[i][column]) {
+			actualValue := actual.Rows[i][column]
+			if expected.Table == "channel_key_entries" && column == "upstream_protocol" && (want == nil || *want == "") {
+				if actualValue == nil || !slices.Contains(supportedUpstreamProtocols[:], *actualValue) {
+					fail("channel_key_entries row %d has invalid normalized upstream_protocol", i)
+				}
+				continue
+			}
+			if !reflect.DeepEqual(want, actualValue) {
 				fail("%s row %d column %s changed across startup", expected.Table, i, column)
 			}
 		}
@@ -651,6 +665,188 @@ func allocationLongMapping() string {
 	// Both names stay within the production 256-byte limit. Their exact case
 	// and the complete object deliberately require more than VARCHAR(255).
 	return `{"alias":"Key-Upstream","` + strings.Repeat("s", 200) + `":"` + strings.Repeat("T", 200) + `"}`
+}
+
+func assertSeededUpstreamProtocolValues(channelID int) {
+	columns, err := model.DB.Migrator().ColumnTypes("channel_key_entries")
+	if err != nil {
+		fail("inspect seeded upstream protocol column: %v", err)
+	}
+	hasProtocolColumn := false
+	for _, column := range columns {
+		if column.Name() == "upstream_protocol" {
+			hasProtocolColumn = true
+			break
+		}
+	}
+	if !hasProtocolColumn {
+		return
+	}
+	var entries []struct {
+		ID               int64
+		UpstreamProtocol sql.NullString
+	}
+	if err := model.DB.Table("channel_key_entries").Select("id, upstream_protocol").Where("channel_id = ?", channelID).Find(&entries).Error; err != nil {
+		fail("read seeded upstream protocols: %v", err)
+	}
+	for _, entry := range entries {
+		if !entry.UpstreamProtocol.Valid || entry.UpstreamProtocol.String == "" {
+			continue
+		}
+		if !slices.Contains(supportedUpstreamProtocols[:], entry.UpstreamProtocol.String) {
+			fail("released allocation %d has unsupported upstream protocol %q", entry.ID, entry.UpstreamProtocol.String)
+		}
+	}
+}
+
+func assertUpstreamProtocolSchema() {
+	columns, err := model.DB.Migrator().ColumnTypes("channel_key_entries")
+	if err != nil {
+		fail("inspect current upstream protocol schema: %v", err)
+	}
+	for _, column := range columns {
+		if column.Name() != "upstream_protocol" {
+			continue
+		}
+		databaseType := strings.ToLower(strings.TrimSpace(column.DatabaseTypeName()))
+		isVarchar := databaseType == "varchar" || databaseType == "character varying" ||
+			strings.HasPrefix(databaseType, "varchar(") || strings.HasPrefix(databaseType, "character varying(")
+		if !isVarchar {
+			fail("upstream_protocol must be varchar(16); got %s", column.DatabaseTypeName())
+		}
+		length, lengthKnown := column.Length()
+		if lengthKnown && length != 16 {
+			fail("upstream_protocol must have length 16; got %d", length)
+		}
+		if !lengthKnown && !strings.HasSuffix(databaseType, "(16)") {
+			fail("upstream_protocol length is not inspectable as 16; type=%s", column.DatabaseTypeName())
+		}
+		nullable, nullableKnown := column.Nullable()
+		if !nullableKnown || nullable {
+			fail("upstream_protocol must be NOT NULL; nullable=%t known=%t", nullable, nullableKnown)
+		}
+		defaultValue, defaultKnown := column.DefaultValue()
+		if !defaultKnown || normalizeProtocolDefault(defaultValue) != upstreamProtocolInherit {
+			fail("upstream_protocol must default to inherit; default=%q known=%t", defaultValue, defaultKnown)
+		}
+		return
+	}
+	fail("current startup did not add channel_key_entries.upstream_protocol")
+}
+
+func normalizeProtocolDefault(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if uncast, _, ok := strings.Cut(value, "::"); ok {
+		value = uncast
+	}
+	return strings.TrimSpace(strings.Trim(value, " ()'\""))
+}
+
+type allocationProtocolRow struct {
+	ID               int64
+	Position         int
+	RetiredAt        int64
+	UpstreamProtocol sql.NullString
+}
+
+func releasedAllocationProtocol(table migrationTableSnapshot, id int64) (string, bool, bool) {
+	if !slices.Contains(table.Columns, "upstream_protocol") {
+		return "", false, false
+	}
+	for _, row := range table.Rows {
+		if row["id"] == nil || *row["id"] != strconv.FormatInt(id, 10) {
+			continue
+		}
+		value := row["upstream_protocol"]
+		if value == nil || *value == "" {
+			return "", true, false
+		}
+		if !slices.Contains(supportedUpstreamProtocols[:], *value) {
+			fail("released allocation %d has unsupported upstream protocol %q", id, *value)
+		}
+		return *value, true, true
+	}
+	fail("released allocation %d is missing from its migration snapshot", id)
+	return "", false, false
+}
+
+func assertAndExerciseUpstreamProtocols(manifest allocationMigrationManifest) {
+	var releasedTable migrationTableSnapshot
+	found := false
+	for _, table := range manifest.Released {
+		if table.Table == "channel_key_entries" {
+			releasedTable = table
+			found = true
+			break
+		}
+	}
+	if !found {
+		fail("released migration manifest has no channel_key_entries snapshot")
+	}
+	var entries []allocationProtocolRow
+	if err := model.DB.Table("channel_key_entries").Select("id, position, retired_at, upstream_protocol").
+		Where("channel_id = ?", manifest.ChannelID).Order("position, id").Find(&entries).Error; err != nil || len(entries) != 4 {
+		fail("read migrated upstream protocols: count=%d error=%v", len(entries), err)
+	}
+
+	legacy := make([]allocationProtocolRow, 0, len(entries))
+	preserved := make(map[int64]string, len(entries))
+	seen := make(map[string]bool, len(supportedUpstreamProtocols))
+	for _, entry := range entries {
+		previous, hadColumn, hadValue := releasedAllocationProtocol(releasedTable, entry.ID)
+		want := upstreamProtocolInherit
+		if hadColumn && hadValue {
+			want = previous
+			preserved[entry.ID] = previous
+			seen[previous] = true
+		} else {
+			legacy = append(legacy, entry)
+		}
+		if !entry.UpstreamProtocol.Valid || entry.UpstreamProtocol.String != want {
+			fail("allocation %d protocol normalization changed: got=%q valid=%t want=%q", entry.ID, entry.UpstreamProtocol.String, entry.UpstreamProtocol.Valid, want)
+		}
+	}
+
+	written := make(map[int64]string, len(legacy))
+	updates := 0
+	for _, entry := range legacy {
+		protocol := upstreamProtocolInherit
+		for _, candidate := range supportedUpstreamProtocols {
+			if !seen[candidate] {
+				protocol = candidate
+				break
+			}
+		}
+		written[entry.ID] = protocol
+		seen[protocol] = true
+		if entry.UpstreamProtocol.Valid && entry.UpstreamProtocol.String == protocol {
+			continue
+		}
+		result := model.DB.Table("channel_key_entries").Where("id = ? AND channel_id = ?", entry.ID, manifest.ChannelID).
+			Updates(map[string]any{"upstream_protocol": protocol})
+		if result.Error != nil || result.RowsAffected != 1 {
+			fail("write representative allocation protocol: rows=%d error=%v", result.RowsAffected, result.Error)
+		}
+		updates++
+	}
+
+	if err := model.DB.Table("channel_key_entries").Select("id, upstream_protocol").
+		Where("channel_id = ?", manifest.ChannelID).Find(&entries).Error; err != nil || len(entries) != 4 {
+		fail("verify representative upstream protocols: count=%d error=%v", len(entries), err)
+	}
+	for _, entry := range entries {
+		want, ok := written[entry.ID]
+		if !ok {
+			want = preserved[entry.ID]
+		}
+		if want == "" {
+			want = upstreamProtocolInherit
+		}
+		if !entry.UpstreamProtocol.Valid || entry.UpstreamProtocol.String != want {
+			fail("allocation %d protocol was not preserved after representative writes: got=%q valid=%t want=%q", entry.ID, entry.UpstreamProtocol.String, entry.UpstreamProtocol.Valid, want)
+		}
+	}
+	fmt.Printf("verified upstream_protocol normalization and preserved protocols; representative_updates=%d\n", updates)
 }
 
 func verifyAllocationMigration() {
@@ -668,6 +864,11 @@ func verifyAllocationMigration() {
 	if manifest.Stage != "seeded" && manifest.Stage != "first_verified" && manifest.Stage != "second_verified" {
 		fail("invalid allocation migration stage %q", manifest.Stage)
 	}
+	if manifest.Stage == "seeded" {
+		for _, released := range manifest.Released {
+			assertMigrationTable(released, readMigrationTable(released.Table), 0)
+		}
+	}
 	mappingID := int64(0)
 	if manifest.Stage != "seeded" {
 		mappingID = manifest.MappingEntryID
@@ -675,9 +876,7 @@ func verifyAllocationMigration() {
 			fail("first verification snapshot is incomplete")
 		}
 	}
-	for _, released := range manifest.Released {
-		assertMigrationTable(released, readMigrationTable(released.Table), mappingID)
-	}
+	assertUpstreamProtocolSchema()
 	columns, err := model.DB.Migrator().ColumnTypes("channel_key_entries")
 	if err != nil {
 		fail("inspect current allocation mapping: %v", err)
@@ -698,6 +897,10 @@ func verifyAllocationMigration() {
 	}
 	assertAllocationMappings(manifest, mappingID != 0)
 	if manifest.Stage == "seeded" {
+		// Only the seeded -> first-current transition may seed representative
+		// protocol values. The next startup must verify the saved first-current
+		// snapshot without modifying those values.
+		assertAndExerciseUpstreamProtocols(manifest)
 		beforeMapping := readMigrationTable("channel_key_entries")
 		// Table maps update exactly one column and cannot accidentally rewrite
 		// a current struct's default fields, protocol, revision or timestamps.
@@ -719,6 +922,12 @@ func verifyAllocationMigration() {
 	} else {
 		for _, first := range manifest.AfterFirst {
 			current := readMigrationTable(first.Table)
+			if first.Table == "channel_key_entries" {
+				// Compare the persisted protocol values exactly before the generic
+				// legacy-normalization comparison, which intentionally tolerates
+				// empty values in the released snapshot.
+				assertMigrationUpstreamProtocols(first, current)
+			}
 			if !slices.Equal(first.Columns, current.Columns) || !reflect.DeepEqual(first.Indexes, current.Indexes) {
 				fail("%s schema changed on the second current startup", first.Table)
 			}
@@ -730,6 +939,37 @@ func verifyAllocationMigration() {
 	}
 	writeAllocationManifest(manifest)
 	fmt.Printf("verified allocation migration stage=%s nullable_TEXT=true mapping_bytes=%d tables=%d\n", manifest.Stage, len(allocationLongMapping()), len(manifest.Released))
+}
+
+func assertMigrationUpstreamProtocols(expected, actual migrationTableSnapshot) {
+	if expected.Table != "channel_key_entries" || actual.Table != "channel_key_entries" ||
+		!slices.Contains(expected.Columns, "upstream_protocol") || !slices.Contains(actual.Columns, "upstream_protocol") {
+		fail("first-current channel_key_entries snapshot lacks upstream_protocol")
+	}
+	if len(expected.Rows) != len(actual.Rows) {
+		fail("channel_key_entries row count changed while checking upstream_protocol")
+	}
+	for i, expectedRow := range expected.Rows {
+		id := expectedRow["id"]
+		if id == nil {
+			fail("first-current channel_key_entries row %d has no ID", i)
+		}
+		var actualRow map[string]*string
+		for _, candidate := range actual.Rows {
+			if candidate["id"] != nil && *candidate["id"] == *id {
+				actualRow = candidate
+				break
+			}
+		}
+		if actualRow == nil || expectedRow["upstream_protocol"] == nil || actualRow["upstream_protocol"] == nil ||
+			*expectedRow["upstream_protocol"] == "" || *actualRow["upstream_protocol"] != *expectedRow["upstream_protocol"] {
+			var got *string
+			if actualRow != nil {
+				got = actualRow["upstream_protocol"]
+			}
+			fail("allocation %s upstream_protocol changed after first-current verification: got=%v want=%v", *id, got, expectedRow["upstream_protocol"])
+		}
+	}
 }
 
 func assertAllocationMappings(manifest allocationMigrationManifest, saved bool) {

@@ -118,9 +118,9 @@ func TestMigrationSchemaStability(t *testing.T) {
 						require.NoError(t, db.Migrator().DropTable(&ChannelKeyEntry{}))
 						t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&ChannelKeyEntry{})) })
 						rows := []ChannelKeyEntry{
-							{ChannelId: 17, Position: 0, Key: "same-key", ScopeMode: "all", Models: "[]", Status: common.ChannelStatusEnabled, ConfigRevision: 3, CreatedTime: 11, UpdatedTime: 12},
-							{ChannelId: 17, Position: 1, Key: "same-key", BoundUserId: 41, ScopeMode: "allowlist", Models: "[]", Status: common.ChannelStatusManuallyDisabled, DisabledReason: "manual", DisabledTime: 13, ConfigRevision: 7, CreatedTime: 10, UpdatedTime: 14},
-							{ChannelId: 17, Position: 2, Key: "retired-key", CredentialRef: "vendor:account", ScopeMode: "allowlist", Models: `["DeepSeek-R1"]`, Status: common.ChannelStatusAutoDisabled, ConfigRevision: 9, RetiredAt: 15, CreatedTime: 9, UpdatedTime: 15},
+							{ChannelId: 17, Position: 0, Key: "same-key", ScopeMode: "all", Models: "[]", Status: common.ChannelStatusEnabled, UpstreamProtocol: "inherit", ConfigRevision: 3, CreatedTime: 11, UpdatedTime: 12},
+							{ChannelId: 17, Position: 1, Key: "same-key", BoundUserId: 41, ScopeMode: "allowlist", Models: "[]", Status: common.ChannelStatusManuallyDisabled, DisabledReason: "manual", DisabledTime: 13, UpstreamProtocol: "inherit", ConfigRevision: 7, CreatedTime: 10, UpdatedTime: 14},
+							{ChannelId: 17, Position: 2, Key: "retired-key", CredentialRef: "vendor:account", ScopeMode: "allowlist", Models: `["DeepSeek-R1"]`, Status: common.ChannelStatusAutoDisabled, UpstreamProtocol: "inherit", ConfigRevision: 9, RetiredAt: 15, CreatedTime: 9, UpdatedTime: 15},
 						}
 						var legacyIndexes map[string]codeOperationIndex
 						if mode == "legacy_upgrade" {
@@ -129,7 +129,7 @@ func TestMigrationSchemaStability(t *testing.T) {
 							// separate requirement for full startup compatibility.
 							require.NoError(t, db.AutoMigrate(&migrationChannelKeyEntryV1{}))
 							require.False(t, db.Migrator().HasColumn(&ChannelKeyEntry{}, "model_mapping"))
-							require.NoError(t, db.Omit("ModelMapping").Create(&rows).Error)
+							require.NoError(t, db.Omit("ModelMapping", "UpstreamProtocol").Create(&rows).Error)
 							legacyIndexes = codeOperationIndexSnapshot(t, db, &migrationChannelKeyEntryV1{})
 						}
 						for pass := range 2 {

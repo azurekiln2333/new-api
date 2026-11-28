@@ -83,6 +83,19 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
         else handleServerError(response, t('Failed to fetch models'))
         return
       }
+      const responseKeyEntryId = response.data?.key_entry_id
+      const responseRevision = response.data?.rev
+      const discoveryIdentityChanged =
+        (props.keyEntryId !== undefined &&
+          responseKeyEntryId !== undefined &&
+          responseKeyEntryId !== props.keyEntryId) ||
+        (props.expectedRev !== undefined &&
+          responseRevision !== undefined &&
+          responseRevision !== props.expectedRev)
+      if (discoveryIdentityChanged) {
+        props.onConflict()
+        return
+      }
       setUpstreamModels([
         ...new Set(
           (response.data?.models ?? [])
@@ -100,7 +113,7 @@ export function MultiKeyModelsEditor(props: MultiKeyModelsEditorProps) {
   }
 
   const options = [
-    ...new Set([...props.channelModels, ...(upstreamModels ?? [])]),
+    ...new Set([...props.channelModels, ...models, ...(upstreamModels ?? [])]),
   ].map((model) => ({
     value: model,
     label: model,

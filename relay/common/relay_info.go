@@ -62,6 +62,9 @@ type ChannelMeta struct {
 	ChannelIsMultiKey    bool
 	ChannelMultiKeyIndex int
 	ChannelBaseUrl       string
+	ChannelKeyProtocol   string
+	ChannelKeyEntryID    int64
+	ChannelKeyRevision   int64
 	ApiType              int
 	ApiVersion           string
 	ApiKey               string
@@ -211,11 +214,9 @@ type RelayInfo struct {
 	// 最终请求到上游的格式。可由 adaptor 显式设置；
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
 	FinalRequestRelayFormat types.RelayFormat
-	// UpstreamTextEndpoint records that this attempt selected the declared
-	// Anthropic Messages upstream, and is empty otherwise. It is set only by
-	// endpoint resolution, cleared at the start of every attempt, and never
-	// inferred from the client's RelayFormat, so a channel that declares
-	// nothing keeps its historical routing.
+	// UpstreamTextEndpoint freezes an explicit upstream text protocol for this
+	// attempt. Legacy unrestricted routing leaves it empty. It never changes
+	// the client's RelayFormat or model/billing identity.
 	UpstreamTextEndpoint types.RelayFormat
 
 	StreamStatus *StreamStatus
@@ -320,6 +321,9 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		ChannelIsMultiKey:    common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey),
 		ChannelMultiKeyIndex: common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex),
 		ChannelBaseUrl:       common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl),
+		ChannelKeyProtocol:   common.GetContextKeyString(c, constant.ContextKeyChannelKeyProtocol),
+		ChannelKeyEntryID:    c.GetInt64("channel_key_entry_id"),
+		ChannelKeyRevision:   c.GetInt64("channel_key_entry_revision"),
 		ApiType:              apiType,
 		ApiVersion:           c.GetString("api_version"),
 		ApiKey:               common.GetContextKeyString(c, constant.ContextKeyChannelKey),
@@ -332,6 +336,13 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 		SupportStreamOptions: false,
 	}
 
+	// An explicit allocation protocol selects a verified transport, not a
+	// guessed fallback based on model spelling. Keep the channel identity.
+	if channelType == constant.ChannelTypeAnthropic &&
+		(channelMeta.ChannelKeyProtocol == dto.ChannelEndpointChat || channelMeta.ChannelKeyProtocol == dto.ChannelEndpointResponses) {
+		channelMeta.ApiType = constant.APITypeOpenAI
+		channelMeta.SupportStreamOptions = true
+	}
 	if channelType == constant.ChannelTypeAzure {
 		channelMeta.ApiVersion = GetAPIVersion(c)
 	}

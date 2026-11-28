@@ -302,6 +302,7 @@ export async function handleTestChannel(
     keyIndex?: number
     keyEntryId?: string
     expectedRev?: number
+    modelScope?: 'all'
     silent?: boolean
   },
   onTestComplete?: (
@@ -327,6 +328,7 @@ export async function handleTestChannel(
             : {}),
           ...(options.stream ? { stream: true } : {}),
           ...(hasKeyIndex ? { key_index: options.keyIndex } : {}),
+          ...(options.modelScope ? { model_scope: options.modelScope } : {}),
           ...(options.keyEntryId
             ? {
                 key_entry_id: options.keyEntryId,

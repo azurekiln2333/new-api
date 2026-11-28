@@ -39,6 +39,7 @@ const (
 	ContextKeyChannelIsMultiKey        ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
+	ContextKeyChannelKeyProtocol       ContextKey = "channel_key_upstream_protocol"
 	// ContextKeyChannelKeyEntryID is the stable allocation ID of the key that
 	// serves this attempt (see model.ChannelKeyEntry). It is never a key-list
 	// index or credential text; accounting and asynchronous write-back use it.

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   ColumnDef,
   RowSelectionState,
@@ -57,6 +57,8 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -85,8 +87,11 @@ import {
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { handleServerError } from '@/lib/handle-server-error'
+import { ADMIN_PERMISSION_ACTIONS, ADMIN_PERMISSION_RESOURCES, hasPermission } from '@/lib/admin-permissions'
+import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { updateChannel, getMultiKeyStatus } from '../../api'
+import { updateChannel, getMultiKeyStatus, setMultiKeyModels } from '../../api'
 import { CHANNEL_TYPE_TASK_PLUGIN } from '../../constants'
 import { useTaskPluginOption } from '../../hooks/use-task-plugin-option'
 import {
@@ -94,7 +99,8 @@ import {
   formatResponseTime,
   handleTestChannel,
   parseChannelSettings,
-  supportsChannelEndpointSelection,
+  supportsChannelDiagnosticEndpoint,
+  supportsChannelUpstreamPool,
 } from '../../lib'
 import type {
   Channel,
@@ -125,6 +131,9 @@ type TestResult = {
   completedAt?: number
   error?: string
   errorCode?: string
+  keyEntryId?: string
+  keyRevision?: number
+  outOfScope?: boolean
 }
 
 type BatchProgress = {
@@ -182,14 +191,12 @@ function getLatestChannelTestCachePatch(
   return latest?.patch
 }
 
-// A required upstream lists the declarations that can serve the request shape.
-// Streaming is not a separate requirement: an HTTP SSE Responses request is
-// converted for a Messages-only channel exactly like the non-streaming one.
+// Capabilities come from the shared channel/Key intersection helper.
+// Streaming is not a separate endpoint: supported HTTP conversions also use SSE.
 const endpointTypeOptions: Array<{
   value: string
   label: string
   path?: string
-  requiresAnyUpstream?: readonly ('chat' | 'responses' | 'messages')[]
 }> = [
   { value: 'auto', label: 'Auto detect (default)' },
   {
@@ -204,7 +211,6 @@ const endpointTypeOptions: Array<{
     value: 'openai-response',
     label: 'OpenAI Responses (/v1/responses)',
     path: '/v1/responses',
-    requiresAnyUpstream: ['responses', 'messages'],
   },
   {
     // Compaction has no Anthropic Messages equivalent and is refused before
@@ -212,7 +218,6 @@ const endpointTypeOptions: Array<{
     value: 'openai-response-compact',
     label: 'OpenAI Response Compaction (/v1/responses/compact)',
     path: '/v1/responses/compact',
-    requiresAnyUpstream: ['responses'],
   },
   {
     value: 'anthropic',
@@ -223,7 +228,6 @@ const endpointTypeOptions: Array<{
     value: 'gemini',
     label: 'Gemini (/v1beta/models/{model}:generateContent)',
     path: '/v1beta/models/{model}:generateContent',
-    requiresAnyUpstream: ['chat'],
   },
   {
     value: 'jina-rerank',
@@ -401,6 +405,10 @@ function ChannelTestDialogContent({
   const [endpointType, setEndpointType] = useState('auto')
   const [isStreamTest, setIsStreamTest] = useState(true)
   const [selectedTestKey, setSelectedTestKey] = useState<KeyStatus | null>(null)
+  const [testAllChannelModels, setTestAllChannelModels] = useState(false)
+  const currentUser = useAuthStore((state) => state.auth.user)
+  const canAddKeyModels = hasPermission(currentUser, ADMIN_PERMISSION_RESOURCES.CHANNEL, ADMIN_PERMISSION_ACTIONS.OPERATE) &&
+    hasPermission(currentUser, ADMIN_PERMISSION_RESOURCES.CHANNEL, ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE)
   const [searchTerm, setSearchTerm] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
@@ -432,58 +440,31 @@ function ChannelTestDialogContent({
       : undefined
   )
   const relayPaths = plugin?.relayPaths
-  const supportedEndpoints = supportsChannelEndpointSelection(currentRow.type)
-    ? settings?.supported_endpoints
-    : undefined
-  const declaredUpstreams = supportedEndpoints?.length
-    ? supportedEndpoints
-    : undefined
-  const endpointSelectItems = useMemo(
-    () =>
-      endpointTypeOptions
-        .filter((option) => {
-          if (relayPaths && option.path && !relayPaths.includes(option.path)) {
-            return false
-          }
-          // No declaration keeps the historical behavior: every request shape is
-          // offered and the channel decides.
-          if (!declaredUpstreams) return true
-          if (!option.requiresAnyUpstream) return true
-          return option.requiresAnyUpstream.some((upstream) =>
-            declaredUpstreams.includes(upstream)
-          )
-        })
-        .map((option) => ({
-          value: option.value,
-          label: t(option.label),
-        })),
-    [declaredUpstreams, relayPaths, t]
-  )
-  const effectiveEndpointType = endpointSelectItems.some(
-    (option) => option.value === endpointType
-  )
-    ? endpointType
-    : 'auto'
-
-  // Only a multi-key channel has keys to choose from; the key list is already
-  // served by the existing multi-key management endpoint.
+  // The existing management endpoint also exposes the stable single-Key
+  // allocation so diagnostics can honor its upstream restriction.
   const isMultiKeyChannel =
     currentRow.channel_info.is_multi_key &&
-    currentRow.channel_info.multi_key_size > 1
+    currentRow.channel_info.multi_key_size > 0
+  const requiresSingleKeyStatus =
+    !isMultiKeyChannel && supportsChannelUpstreamPool(currentRow.type)
   const keyStatusQuery = useQuery({
     queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId),
-    queryFn: () =>
-      getMultiKeyStatus(
-        currentChannelId,
-        1,
-        currentRow.channel_info.multi_key_size
+    queryFn: async () =>
+      requireServerSuccess(
+        await getMultiKeyStatus(
+          currentChannelId,
+          1,
+          Math.max(1, currentRow.channel_info.multi_key_size)
+        )
       ),
-    enabled: open && isMultiKeyChannel,
+    enabled:
+      open &&
+      (isMultiKeyChannel || supportsChannelUpstreamPool(currentRow.type)),
     staleTime: 30_000,
   })
   const channelKeys = useMemo(
-    () => (isMultiKeyChannel ? (keyStatusQuery.data?.data?.keys ?? []) : []),
-    [isMultiKeyChannel, keyStatusQuery.data]
+    () => keyStatusQuery.data?.data?.keys ?? [],
+    [keyStatusQuery.data]
   )
   // Keep the allocation snapshot, not its mutable position in the key list.
   // A reordered/revised/deleted allocation requires an explicit new selection.
@@ -499,6 +480,9 @@ function ChannelTestDialogContent({
     ? `${selectedTestKey.id}:${selectedTestKey.rev}:${selectedTestKey.index}`
     : AUTO_TEST_KEY
   const selectedKeyUnavailable = selectedTestKey !== null && !selectedKey
+  const singleKeyUnavailable =
+    requiresSingleKeyStatus &&
+    (!keyStatusQuery.isSuccess || channelKeys.length !== 1)
   const listedKeyCount = keyStatusQuery.data?.data?.total ?? channelKeys.length
   const keySelectItems = useMemo(
     () => [
@@ -521,6 +505,49 @@ function ChannelTestDialogContent({
     ],
     [channelKeys, selectedKeyUnavailable, selectedKeyValue, t]
   )
+
+  const addKeyModel = useMutation({
+    mutationFn: async (selection: { key: KeyStatus; model: string }) => {
+      if (!canAddKeyModels || !selection.key.id || !selection.key.rev) throw new Error(KEY_CONFIGURATION_CHANGED)
+      return requireServerSuccess(await setMultiKeyModels(
+        currentChannelId, selection.key.index, [selection.model], selection.key.id, selection.key.rev,
+        undefined, { addModels: true }
+      ))
+    },
+    onSuccess: () => {
+      toast.success(t('Key models saved'))
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId) })
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+    },
+    onError: (error) => {
+      handleServerError(error, t('Operation failed'))
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKeys.multiKeyStatus(currentChannelId) })
+    },
+  })
+  const diagnosticKey = isMultiKeyChannel ? selectedKey : channelKeys[0]
+  const selectedProtocol = diagnosticKey?.upstream_protocol || 'inherit'
+  const endpointSelectItems = useMemo(
+    () =>
+      endpointTypeOptions
+        .filter((option) => {
+          if (relayPaths && option.path && !relayPaths.includes(option.path)) {
+            return false
+          }
+          return supportsChannelDiagnosticEndpoint(
+            currentRow.type,
+            settings,
+            selectedProtocol,
+            option.value
+          )
+        })
+        .map((option) => ({ value: option.value, label: t(option.label) })),
+    [currentRow.type, settings, selectedProtocol, relayPaths, t]
+  )
+  const effectiveEndpointType = endpointSelectItems.some(
+    (option) => option.value === endpointType
+  )
+    ? endpointType
+    : endpointSelectItems[0]?.value ?? 'auto'
 
   const dismissBatchProgressToast = useCallback(() => {
     if (batchProgressToastIdRef.current === null) return
@@ -560,6 +587,7 @@ function ChannelTestDialogContent({
     setEndpointType('auto')
     setIsStreamTest(true)
     setSelectedTestKey(null)
+    setTestAllChannelModels(false)
     setSearchTerm('')
     setTestResults({})
     setRowSelection({})
@@ -639,10 +667,19 @@ function ChannelTestDialogContent({
   )
 
   const availableModels = useMemo(() => {
+    if (singleKeyUnavailable || endpointSelectItems.length === 0) return []
     if (selectedTestKey === null) return models
     if (!selectedKey) return []
+    if (testAllChannelModels) return models
     return models.filter((model) => keyServesModel(selectedKey, model))
-  }, [models, selectedKey, selectedTestKey])
+  }, [
+    models,
+    selectedKey,
+    selectedTestKey,
+    testAllChannelModels,
+    singleKeyUnavailable,
+    endpointSelectItems.length,
+  ])
 
   const successModels = useMemo(
     () =>
@@ -745,10 +782,14 @@ function ChannelTestDialogContent({
       silent = false,
       refreshList = true
     ): Promise<TestResult | undefined> => {
-      if (!currentRow) return
+      if (
+        !currentRow ||
+        singleKeyUnavailable ||
+        endpointSelectItems.length === 0
+      ) return
       if (
         selectedTestKey !== null &&
-        (!selectedKey || !keyServesModel(selectedKey, model))
+        (!selectedKey || (!testAllChannelModels && !keyServesModel(selectedKey, model)))
       ) {
         return
       }
@@ -771,6 +812,7 @@ function ChannelTestDialogContent({
             keyIndex: selectedTestKey?.index,
             keyEntryId: selectedTestKey?.id,
             expectedRev: selectedTestKey?.rev,
+            modelScope: selectedTestKey && testAllChannelModels ? 'all' : undefined,
             silent,
           },
           (success, responseTime, error, errorCode) => {
@@ -781,6 +823,9 @@ function ChannelTestDialogContent({
               completedAt,
               error,
               errorCode,
+              keyEntryId: selectedTestKey?.id,
+              keyRevision: selectedTestKey?.rev,
+              outOfScope: !!selectedKey && testAllChannelModels && !keyServesModel(selectedKey, model),
             }
             updateTestResult(model, finalResult)
           }
@@ -809,6 +854,9 @@ function ChannelTestDialogContent({
       currentRow,
       selectedKey,
       selectedTestKey,
+      testAllChannelModels,
+      singleKeyUnavailable,
+      endpointSelectItems.length,
       effectiveEndpointType,
       effectiveStreamTest,
       markModelTesting,
@@ -1040,7 +1088,7 @@ function ChannelTestDialogContent({
     [handleClose]
   )
 
-  const isAnyTesting = testingModels.size > 0 || isBatchTesting
+  const isAnyTesting = testingModels.size > 0 || isBatchTesting || addKeyModel.isPending
   const isFilteringModels = searchTerm.trim().length > 0
   const testAllButtonLabel = isFilteringModels
     ? t('Test {{count}} matching models', { count: filteredModels.length })
@@ -1133,6 +1181,17 @@ function ChannelTestDialogContent({
           const isTestingModel = testingModels.has(model)
 
           return (
+            <div className='flex items-center gap-1'>
+            {canAddKeyModels && selectedKey && testResults[model]?.status === 'success' && testResults[model]?.outOfScope && testResults[model]?.keyEntryId === selectedKey.id && testResults[model]?.keyRevision === selectedKey.rev && !keyServesModel(selectedKey, model) && (
+              <Button
+                variant='outline'
+                size='sm'
+                disabled={isAnyTesting}
+                onClick={() => addKeyModel.mutate({ key: { ...selectedKey }, model })}
+              >
+                {t('Add to key')}
+              </Button>
+            )}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1140,7 +1199,7 @@ function ChannelTestDialogContent({
                     variant='ghost'
                     size='icon-sm'
                     onClick={() => testSingleModel(model)}
-                    disabled={isTestingModel || isBatchTesting}
+                    disabled={isTestingModel || isBatchTesting || addKeyModel.isPending}
                     aria-label={t('Test Connection')}
                   />
                 }
@@ -1153,6 +1212,7 @@ function ChannelTestDialogContent({
               </TooltipTrigger>
               <TooltipContent>{t('Test Connection')}</TooltipContent>
             </Tooltip>
+            </div>
           )
         },
         enableSorting: false,
@@ -1161,6 +1221,10 @@ function ChannelTestDialogContent({
     [
       defaultTestModel,
       isBatchTesting,
+      isAnyTesting,
+      addKeyModel,
+      canAddKeyModels,
+      selectedKey,
       t,
       testResults,
       testingModels,
@@ -1203,6 +1267,43 @@ function ChannelTestDialogContent({
         }
       >
         <div className='flex min-h-0 flex-1 flex-col gap-2'>
+          {selectedTestKey && (
+            <div className='flex shrink-0 items-center gap-2'>
+              <Switch
+                id='test-all-channel-models'
+                checked={testAllChannelModels}
+                disabled={isAnyTesting || selectedKeyUnavailable}
+                onCheckedChange={(checked) => {
+                  setTestAllChannelModels(checked)
+                  setTestResults({})
+                  setRowSelection({})
+                  setFailureDetails(null)
+                  setIsDeleteFailedDialogOpen(false)
+                  setPagination((previous) => ({ ...previous, pageIndex: 0 }))
+                }}
+              />
+              <Label htmlFor='test-all-channel-models'>{t('All channel models')}</Label>
+            </div>
+          )}
+          {requiresSingleKeyStatus && keyStatusQuery.isPending && (
+            <LoadingState inline size='sm' message={t('Loading...')} />
+          )}
+          {requiresSingleKeyStatus &&
+            !keyStatusQuery.isPending &&
+            singleKeyUnavailable && (
+              <ErrorState
+                className='min-h-0 py-3'
+                title={t('Failed to load key status')}
+                onRetry={() => void keyStatusQuery.refetch()}
+              />
+            )}
+          {!singleKeyUnavailable && endpointSelectItems.length === 0 && (
+            <p role='status'>
+              {t(
+                'This channel does not support a compatible upstream endpoint for this request'
+              )}
+            </p>
+          )}
           <div className='flex shrink-0 items-center gap-2'>
             {isMultiKeyChannel && (
               <div className='min-w-0 flex-1'>

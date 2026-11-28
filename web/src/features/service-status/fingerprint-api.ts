@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { KeyStatus } from '@/features/channels/types'
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -36,6 +37,11 @@ export interface FingerprintProbe {
   /** True when the retained reply was cut at the memory cap. */
   output_truncated?: boolean
   error?: string
+  attempt?: number
+  started_at?: number
+  finished_at?: number
+  timeout_seconds?: number
+  retry_allowed?: boolean
 }
 
 export interface FingerprintCandidate {
@@ -62,6 +68,7 @@ export interface FingerprintAnalysis {
 
 export interface FingerprintJob {
   id: string
+  revision?: number
   channel_id: number
   channel_name: string
   model: string
@@ -83,22 +90,141 @@ export interface FingerprintJob {
   finished_at?: number
 }
 
-export interface StartFingerprintPayload {
+export interface FingerprintContext {
   model: string
-  endpoint_type: string
+  endpoint_type?: string
   count: number
-  token_budget: number
+  key_entry_id?: string
+  expected_rev?: number
+  key_index?: number
+}
+
+export interface FingerprintPreview extends FingerprintContext {
+  preview_id: string
+  expires_at: number
+  channel_id: number
+  probes: { id: string; prompt: string; expected_count: number }[]
+}
+
+export interface StartFingerprintPayload extends FingerprintContext {
+  preview_id: string
+}
+
+export interface RetryFingerprintPayload extends StartFingerprintPayload {
+  probe_id: string
+  expected_attempt: number
+}
+
+export interface FingerprintChannel {
+  id: number
+  type: number
+  models: string[]
+  auto_models?: string[]
+  is_multi_key: boolean
+}
+
+interface FingerprintOptions extends FingerprintChannel {
+  revision?: number
+  keys: KeyStatus[] | null
+  page: number
+  total_pages: number
+}
+
+/** Read authoritative model scope and masked identities, never credentials. */
+export async function getFingerprintChannel(
+  channelId: number,
+  signal?: AbortSignal
+): Promise<FingerprintChannel> {
+  const response = await api.get<{
+    success: boolean
+    data: FingerprintOptions
+  }>(`/api/channel/${channelId}/fingerprint/options`, { signal })
+  const channel = requireServerSuccess(response.data).data
+  if (!channel || channel.id !== channelId) {
+    throw new Error('Channel does not exist')
+  }
+  return {
+    id: channel.id,
+    type: channel.type,
+    models: channel.models,
+    auto_models: channel.auto_models,
+    is_multi_key: channel.is_multi_key,
+  }
+}
+
+/** Each page resolves aliases through the authoritative Key capability rule. */
+export async function getFingerprintKeys(
+  channelId: number,
+  page: number,
+  signal?: AbortSignal
+) {
+  const response = await api.get<{
+    success: boolean
+    data: FingerprintOptions
+  }>(`/api/channel/${channelId}/fingerprint/options`, {
+    params: { p: page, page_size: 50 },
+    signal,
+  })
+  const data = requireServerSuccess(response.data).data
+  if (!data || data.id !== channelId) {
+    throw new Error('Channel key configuration changed, reload and retry')
+  }
+  return {
+    page: data.page,
+    total_pages: data.total_pages,
+    revision: data.revision,
+    keys: (data.keys ?? []).map(
+      (key): KeyStatus => ({
+        id: key.id,
+        rev: key.rev,
+        index: key.index,
+        status: key.status,
+        key_preview: key.key_preview,
+        scope_mode: key.scope_mode,
+        models: key.models,
+      })
+    ),
+  }
+}
+
+/** Preview generates server-held prompts only; it does not dispatch a probe. */
+export async function previewChannelFingerprint(
+  channelId: number,
+  payload: FingerprintContext,
+  signal?: AbortSignal
+): Promise<FingerprintPreview> {
+  const response = await api.post<{
+    success: boolean
+    message?: string
+    data: FingerprintPreview
+  }>(`/api/channel/${channelId}/fingerprint/preview`, payload, { signal })
+  return requireServerSuccess(response.data).data
 }
 
 export async function startChannelFingerprint(
   channelId: number,
-  payload: StartFingerprintPayload
+  payload: StartFingerprintPayload,
+  signal?: AbortSignal
 ) {
   const response = await api.post<{
     success: boolean
     message?: string
     data: FingerprintJob
-  }>(`/api/channel/${channelId}/fingerprint`, payload)
+  }>(`/api/channel/${channelId}/fingerprint`, payload, { signal })
+  return requireServerSuccess(response.data).data
+}
+
+export async function retryChannelFingerprintProbe(
+  channelId: number,
+  jobId: string,
+  payload: RetryFingerprintPayload,
+  signal?: AbortSignal
+): Promise<FingerprintJob> {
+  const response = await api.post<{
+    success: boolean
+    message?: string
+    data: FingerprintJob
+  }>(`/api/channel/${channelId}/fingerprint/${jobId}/retry`, payload, { signal })
   return requireServerSuccess(response.data).data
 }
 
@@ -117,12 +243,18 @@ export async function getChannelFingerprint(
 
 export async function cancelChannelFingerprint(
   channelId: number,
-  jobId: string
+  jobId: string,
+  signal?: AbortSignal,
+  expectedRevision = 1
 ) {
   const response = await api.post<{
     success: boolean
     message?: string
     data: FingerprintJob
-  }>(`/api/channel/${channelId}/fingerprint/${jobId}/cancel`, {})
+  }>(
+    `/api/channel/${channelId}/fingerprint/${jobId}/cancel`,
+    { expected_revision: expectedRevision },
+    { signal }
+  )
   return requireServerSuccess(response.data).data
 }

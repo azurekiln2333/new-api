@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -754,39 +755,56 @@ func SetupContextForSelectedChannelExcluding(c *gin.Context, channel *model.Chan
 	return setSelectedChannelKey(c, channel, key, index)
 }
 
-// setSelectedChannelKey records the key that serves this request.
+// setSelectedChannelKey freezes the selected credential, allocation policy and
+// independently chosen address for one attempt. No transport redraws the pool.
 func setSelectedChannelKey(c *gin.Context, channel *model.Channel, key string, index int) *types.NewAPIError {
+	if channel == nil {
+		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	// Clear all attempt-scoped selection before any validation can fail, so a
+	// rejected retry cannot inherit credentials, mapping, allocation or URL.
+	service.ClearSelectedChannelAllocation(c)
+	common.SetContextKey(c, constant.ContextKeyChannelAllocation, model.ChannelAllocation{})
+	common.SetContextKey(c, constant.ContextKeyChannelKey, "")
+	common.SetContextKey(c, constant.ContextKeyChannelKeyProtocol, dto.ChannelUpstreamProtocolInherit)
+	common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, false)
+	common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, 0)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "")
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, "")
+
 	// A pinned single-Key diagnostic uses -1 as its retry sentinel, but its
 	// authoritative allocation and per-Key settings still live at position 0.
-	if index == -1 && !channel.ChannelInfo.IsMultiKey && key != "" && key == channel.Key {
+	if index == -1 && !channel.ChannelInfo.IsMultiKey && key != "" && strings.TrimSpace(key) == strings.TrimSpace(channel.Key) {
 		index = 0
 	}
 	if channel.ChannelInfo.IsMultiKey {
 		keys := channel.GetKeys()
-		if index < 0 || index >= len(keys) || keys[index] != key {
+		if index < 0 || index >= len(keys) || strings.TrimSpace(keys[index]) != strings.TrimSpace(key) {
 			return types.NewError(errors.New("channel key allocation changed, retry the request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithSkipRetry())
 		}
-	} else if index != 0 || key != channel.Key {
+	} else if index != 0 || strings.TrimSpace(key) != strings.TrimSpace(channel.Key) {
 		return types.NewError(errors.New("channel key allocation changed, retry the request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithSkipRetry())
 	}
 	mapping, err := channel.GetModelMappingForKey(index)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
+	baseURL, err := channel.SelectUpstreamBaseURL()
+	if err != nil {
+		return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointInvalid)), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, mapping)
 	common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
-	if channel.ChannelInfo.IsMultiKey {
-		common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
-	}
-	service.ClearSelectedChannelAllocation(c)
-	if allocation, ok := channel.ChannelAllocationByPosition(index); ok && allocation.Key == key {
+	common.SetContextKey(c, constant.ContextKeyChannelMultiKeyIndex, index)
+	protocol := channel.KeyUpstreamProtocol(index)
+	if allocation, ok := channel.ChannelAllocationByPosition(index); ok && strings.TrimSpace(allocation.Key) == strings.TrimSpace(key) {
 		service.SetSelectedChannelAllocation(c, allocation.EntryID, allocation.Revision)
 		common.SetContextKey(c, constant.ContextKeyChannelAllocation, allocation)
-	} else {
-		common.SetContextKey(c, constant.ContextKeyChannelAllocation, model.ChannelAllocation{})
+		protocol = allocation.UpstreamProtocol
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+	common.SetContextKey(c, constant.ContextKeyChannelKeyProtocol, protocol)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, baseURL)
 	return nil
 }
 

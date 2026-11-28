@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -25,7 +25,8 @@ import { EmptyState } from '@/components/empty-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 
-import type { MultiKeyModelSyncResult } from '../../types'
+import type { MultiKeyModelSelection, MultiKeyModelSyncResult } from '../../types'
+import { UpstreamModelSelection } from '../upstream-model-selection'
 
 type MultiKeySyncDialogProps = {
   open: boolean
@@ -34,7 +35,7 @@ type MultiKeySyncDialogProps = {
   isApplying: boolean
   preview: MultiKeyModelSyncResult | null
   error: string | null
-  onApply: () => void
+  onApply: (selections: MultiKeyModelSelection[]) => void
 }
 
 /** Reviews the models an upstream sync would add before writing them. */
@@ -45,9 +46,26 @@ export function MultiKeySyncDialog(props: MultiKeySyncDialogProps) {
   const failed = results.filter((result) => Boolean(result.error))
   const skipped = results.filter((result) => result.skipped)
   const fetched = results.filter((result) => !result.error && !result.skipped)
-  const addedModels = props.preview?.added_models ?? []
-  const canApply =
-    addedModels.length > 0 || fetched.some((result) => result.models?.length)
+  const [selectionState, setSelectionState] = useState<{
+    preview: MultiKeyModelSyncResult | null
+    models: Record<string, string[]>
+  }>({ preview: props.preview, models: {} })
+  if (selectionState.preview !== props.preview) {
+    setSelectionState({ preview: props.preview, models: {} })
+  }
+  const selections = fetched.flatMap((result): MultiKeyModelSelection[] => {
+    const models = selectionState.preview === props.preview
+      ? selectionState.models[result.key_entry_id ?? ''] ?? []
+      : []
+    if (!result.key_entry_id || !result.rev || !models.length) return []
+    return [{ key_entry_id: result.key_entry_id, rev: result.rev, models }]
+  })
+  const addedModels = props.preview?.applied
+    ? props.preview.added_models
+    : [...new Set(selections.flatMap((selection) => selection.models))].filter(
+        (model) => !props.preview?.channel_models?.includes(model)
+      )
+  const canApply = selections.length > 0 && !!props.preview?.preview_token
 
   let footer: ReactNode = (
     <>
@@ -61,7 +79,7 @@ export function MultiKeySyncDialog(props: MultiKeySyncDialogProps) {
       </Button>
       <Button
         type='button'
-        onClick={props.onApply}
+        onClick={() => props.onApply(selections)}
         disabled={
           !canApply ||
           props.preview == null ||
@@ -91,7 +109,7 @@ export function MultiKeySyncDialog(props: MultiKeySyncDialogProps) {
       onOpenChange={props.onOpenChange}
       title={t('Sync models from upstream')}
       description={t(
-        'Each enabled key reports the models it serves. Applying adds the missing models to the channel and limits every successful key to the models it serves.'
+        'Select models separately for each Key. Fetching does not save. Apply adds only your selections to that Key and the channel catalog, preserving existing models.'
       )}
       contentHeight='min(70dvh, 640px)'
       footer={footer}
@@ -146,29 +164,54 @@ export function MultiKeySyncDialog(props: MultiKeySyncDialogProps) {
                 </p>
               ) : (
                 <p className='text-muted-foreground'>
-                  {t('The channel already provides every discovered model.')}
+                  {t('No new models selected for the channel.')}
                 </p>
               )}
             </div>
-            {fetched.length > 0 && (
-              <div className='space-y-1 text-xs'>
-                <p className='text-muted-foreground'>
-                  {t('Models each key serves')}
+            {results.map((result) => {
+              let content: ReactNode = (
+                <p className='text-muted-foreground text-xs'>
+                  {t('No models returned by the upstream')}
                 </p>
-                <ul className='space-y-1'>
-                  {fetched.map((result) => (
-                    <li key={result.key_index} className='break-words'>
-                      <span className='font-medium'>
-                        #{result.key_index + 1}:
-                      </span>{' '}
-                      {result.models?.length
-                        ? result.models.join(', ')
-                        : t('No models returned by the upstream')}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              )
+              if (result.error || result.skipped) {
+                content = (
+                  <p className='text-muted-foreground text-xs'>
+                    {result.error ? t(result.error) : t('Disabled keys are skipped')}
+                  </p>
+                )
+              } else if (result.models?.length) {
+                content = (
+                  <UpstreamModelSelection
+                    models={result.models}
+                    selected={selectionState.models[result.key_entry_id ?? ''] ?? []}
+                    onChange={(models) => {
+                      if (props.isApplying || props.isFetching || props.preview?.applied || !result.key_entry_id || !result.rev) return
+                      setSelectionState((previous) => ({
+                        preview: props.preview,
+                        models: { ...previous.models, [result.key_entry_id ?? '']: models },
+                      }))
+                    }}
+                    existingModels={[]}
+                    showChanges={false}
+                  />
+                )
+              }
+              return (
+              <fieldset
+                key={result.key_entry_id ?? result.key_index}
+                aria-label={t('Models for Key {{key}}', { key: result.key_entry_id ?? result.key_index + 1 })}
+                className='min-w-0 rounded-md border p-3'
+                disabled={props.isApplying || props.isFetching || props.preview?.applied || !!result.error || result.skipped || !result.key_entry_id || !result.rev}
+              >
+                <legend className='px-1 text-sm font-medium'>
+                  {t('Models for Key {{key}}', { key: result.key_entry_id ?? result.key_index + 1 })}
+                  {result.key_preview && <span className='ml-2 font-mono text-xs'>{result.key_preview}</span>}
+                </legend>
+                {content}
+              </fieldset>
+              )
+            })}
             {results.length === 0 && (
               <EmptyState
                 className='min-h-0 p-3'

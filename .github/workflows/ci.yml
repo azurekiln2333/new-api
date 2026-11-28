@@ -62,8 +62,11 @@ jobs:
         run: |
           FILES=$(git diff --name-only --diff-filter=ACMR -z "$CI_DIFF_BASE" "$GITHUB_SHA" -- '*.go' | sort -zu | xargs -0 -r gofmt -l)
           if [ -n "$FILES" ]; then
+            mkdir -p "$RUNNER_TEMP/go-format"
+            git rev-parse HEAD > "$RUNNER_TEMP/go-format/source-sha.txt"
             while IFS= read -r FILE; do
               printf '::error file=%s::Go file requires gofmt\n' "$FILE"
+              gofmt -d "$FILE" >> "$RUNNER_TEMP/go-format/format.patch"
               # The check has already failed; collect any diff before exiting.
               FORMAT_DIFF=$(gofmt -d "$FILE") || true
               if [ "${#FORMAT_DIFF}" -gt 5000 ]; then
@@ -76,6 +79,14 @@ jobs:
             done <<< "$FILES"
             exit 1
           fi
+
+      - name: Upload complete Go formatter diff
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-format-${{ github.sha }}
+          path: ${{ runner.temp }}/go-format/
+          if-no-files-found: ignore
 
       - name: Vet root module
         if: ${{ !cancelled() && steps.backend_checkout.outcome == 'success' && steps.backend_setup_go.outcome == 'success' && steps.backend_embed.outcome == 'success' }}
@@ -420,11 +431,20 @@ jobs:
             TEST_TASK_DB_DIALECT=$DIALECT go test -p 1 -count=1 -v ./model -run '^TestChannelModelUnavailability$'
           done
 
-      - name: Verify channel configuration and key binding on MySQL and PostgreSQL
+      - name: Verify channel configuration, discovery and fingerprint on SQLite, MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
-          for CHANNEL_TEST_DSN in "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestFingerprintResponsesOnlyChannelProbe'
+          for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run 'TestChannelSupportedEndpointsPersistThroughCreateAndUpdate|TestMultiKeyEnableRestoresOnlyExhaustedChannels|TestUpdateChannelKeepsCurrentKeyState|TestUpdateChannelConvertsSingleKeyChannel|TestMultiKeyManageKeepsKeyScopesOnTheirKey|TestMultiKeyModelDiscoveryUsesOneKey|TestMultiKeyModelSyncPreviewAndApply|TestGetChannelConcurrency|TestFingerprint|TestAppendDuplicateStaticCredentialWithoutLedgerKeepsAllocationIdentity|TestChannelEditDiscoveryKeepsAllKeyResultsAndExistingModels|TestKeyDiscoveryAdditionsPreserveMappingAndSiblingScope|TestManualAllModelModePinsKeyAndPreservesRoutingScope'
+          done
+
+      - name: Verify upstream pool and Key protocol contracts
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          go test -p 1 -count=1 -v ./model -run '^TestSelectUpstreamBaseURL'
+          go test -p 1 -count=1 -v ./relay -run '^Test(KeyProtocol|ChannelSupportedEndpointsChooseOutboundRequest)'
+          for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^Test(ChannelUpstreamURLs|ChannelKeyProtocol|ChannelSupportedEndpointsPersistThroughCreateAndUpdate|ScopedAccessTokenRequiresSensitiveChannelPermission|ChannelHasSensitiveChanges)'
           done
 
       - name: Verify Playground channel authorization and projection on SQLite, MySQL and PostgreSQL
@@ -655,6 +675,7 @@ jobs:
         run: bun check -b
 
       - name: Check frontend formatting with protected headers
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           mapfile -d '' FILES < <(git -C .. diff --name-only --diff-filter=ACMR -z "$CI_DIFF_BASE" "$GITHUB_SHA" -- 'web/**' | sort -zu)
@@ -837,3 +858,26 @@ jobs:
       - name: Build production frontend
         if: ${{ !cancelled() }}
         run: bun run build
+
+      - name: Capture complete frontend formatter patch after validation
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mapfile -d '' FILES < <(git -C .. diff --name-only --diff-filter=ACMR -z "$CI_DIFF_BASE" "$GITHUB_SHA" -- 'web/**' | sort -zu)
+          for INDEX in "${!FILES[@]}"; do
+            FILES[$INDEX]="${FILES[$INDEX]#web/}"
+          done
+          if [ "${#FILES[@]}" -gt 0 ]; then
+            bun run format -- "${FILES[@]}"
+            mkdir -p "$RUNNER_TEMP/frontend-format"
+            git rev-parse HEAD > "$RUNNER_TEMP/frontend-format/source-sha.txt"
+            git -C .. diff --binary -- web > "$RUNNER_TEMP/frontend-format/format.patch"
+          fi
+
+      - name: Upload complete frontend formatter patch
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-format-${{ github.sha }}
+          path: ${{ runner.temp }}/frontend-format/
+          if-no-files-found: ignore

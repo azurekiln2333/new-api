@@ -309,6 +309,194 @@ func TestChannelSupportedEndpointsPersistThroughCreateAndUpdate(t *testing.T) {
 	}
 }
 
+func TestChannelUpstreamURLsPersistAndPreserveLegacySaves(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	for _, channelType := range []int{constant.ChannelTypeOpenAI, constant.ChannelTypeAnthropic} {
+		t.Run(fmt.Sprintf("type=%d", channelType), func(t *testing.T) {
+			previousCache := common.MemoryCacheEnabled
+			common.MemoryCacheEnabled = true
+			t.Cleanup(func() { common.MemoryCacheEnabled = previousCache })
+			const scalar = "https://legacy.example.test/prefix"
+			setting := `{"base_urls":[" https://first.example.test/api/v1 ","http://second.example.test/prefix"],"homepage_url":" https://home.example.test/docs?q=guide#start ","future_option":{"keep":true},"proxy":""}`
+			payload, err := common.Marshal(AddChannelRequest{Mode: "single", Channel: &model.Channel{
+				Name: t.Name(), Type: channelType, Key: "upstream-url-fixture-secret", Models: "test-model", Group: "default", BaseURL: common.GetPointer(scalar), Setting: &setting,
+				ChannelInfo: model.ChannelInfo{MultiKeyUpstreamProtocols: map[int]string{0: "responses"}},
+			}})
+			require.NoError(t, err)
+			response := postAddChannel(t, rootID, common.RoleRootUser, string(payload))
+			var result struct {
+				Success bool `json:"success"`
+				Data    struct {
+					ID int `json:"id"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.True(t, result.Success, response.Body.String())
+			created, err := model.GetChannelById(result.Data.ID, true)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, created.Delete()) })
+			assert.Equal(t, "inherit", created.KeyUpstreamProtocol(0), "creation cannot assign the read-only allocation projection")
+			assert.Equal(t, scalar, created.GetBaseURL(), "the runtime scalar getter is unchanged")
+			assert.Equal(t, []string{"https://first.example.test/api/v1", "http://second.example.test/prefix"}, created.GetBaseURLs())
+			assert.Equal(t, "https://home.example.test/docs?q=guide#start", created.GetHomepageURL())
+			assert.Contains(t, *created.Setting, `"future_option":{"keep":true}`)
+			poolCopy := created.GetBaseURLs()
+			poolCopy[0] = "https://caller.example.test"
+			assert.Equal(t, "https://first.example.test/api/v1", created.GetBaseURLs()[0])
+			model.InitChannelCache()
+			response = putUpdateChannel(t, rootID, common.RoleRootUser, fmt.Sprintf(`{"id":%d,"type":%d}`, created.Id, constant.ChannelTypeAzure))
+			var rejected struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &rejected))
+			assert.False(t, rejected.Success, "an omitted setting must not bypass the pool provider guard")
+			unchanged, err := model.GetChannelById(created.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, channelType, unchanged.Type)
+			assert.Equal(t, created.Setting, unchanged.Setting)
+			// The typed channel helper uses the freshly locked row, not the
+			// controller's pre-transaction read, for omitted additive properties.
+			newer, err := model.UpdateChannelConfigAtomic(created.Id, model.ChannelConfigEdit{Apply: func(_ *model.Channel, stored *model.Channel) error {
+				stored.Setting = common.GetPointer(`{"base_urls":["https://concurrent.example.test/v1"],"homepage_url":"https://concurrent.example.test/home","future_option":{"keep":true}}`)
+				return nil
+			}})
+			require.NoError(t, err)
+			legacy, err := model.UpdateChannelConfigAtomic(created.Id, model.ChannelConfigEdit{Apply: func(_ *model.Channel, stored *model.Channel) error {
+				stored.Setting = common.GetPointer(`{"proxy":"","future_option":{"keep":true}}`)
+				return nil
+			}})
+			require.NoError(t, err)
+			assert.Equal(t, newer.GetBaseURLs(), legacy.GetBaseURLs())
+			assert.Equal(t, newer.GetHomepageURL(), legacy.GetHomepageURL())
+			_, err = model.UpdateChannelConfigAtomic(created.Id, model.ChannelConfigEdit{Apply: func(_ *model.Channel, stored *model.Channel) error {
+				stored.Setting = created.Setting
+				return nil
+			}})
+			require.NoError(t, err)
+
+			for _, tc := range []struct {
+				name     string
+				setting  *string
+				wantPool []string
+				wantHome string
+			}{
+				{name: "omitted setting", wantPool: []string{"https://first.example.test/api/v1", "http://second.example.test/prefix"}, wantHome: "https://home.example.test/docs?q=guide#start"},
+				{name: "old editor", setting: common.GetPointer(`{"proxy":"","future_option":{"keep":true}}`), wantPool: []string{"https://first.example.test/api/v1", "http://second.example.test/prefix"}, wantHome: "https://home.example.test/docs?q=guide#start"},
+				{name: "null homepage", setting: common.GetPointer(`{"homepage_url":null,"future_option":{"keep":true}}`), wantPool: []string{"https://first.example.test/api/v1", "http://second.example.test/prefix"}, wantHome: "https://first.example.test/api/v1"},
+				{name: "empty pool", setting: common.GetPointer(`{"base_urls":[],"homepage_url":"","future_option":{"keep":true}}`), wantPool: []string{scalar}, wantHome: scalar},
+				{name: "replace pool", setting: common.GetPointer(`{"base_urls":[" https://new.example.test/path "],"future_option":{"keep":true}}`), wantPool: []string{"https://new.example.test/path"}, wantHome: "https://new.example.test/path"},
+				{name: "null pool", setting: common.GetPointer(`{"base_urls":null,"future_option":{"keep":true}}`), wantPool: []string{scalar}, wantHome: scalar},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					patch := map[string]any{"id": created.Id, "name": tc.name}
+					if tc.setting != nil {
+						patch["setting"] = *tc.setting
+					}
+					payload, err := common.Marshal(patch)
+					require.NoError(t, err)
+					response := putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
+					var saved struct {
+						Success bool `json:"success"`
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &saved))
+					require.True(t, saved.Success, response.Body.String())
+					stored, err := model.GetChannelById(created.Id, true)
+					require.NoError(t, err)
+					assert.Equal(t, tc.wantPool, stored.GetBaseURLs())
+					assert.Equal(t, tc.wantHome, stored.GetHomepageURL())
+					assert.Equal(t, scalar, stored.GetBaseURL())
+					assert.Contains(t, *stored.Setting, `"future_option":{"keep":true}`)
+					assert.Equal(t, created.Key, stored.Key)
+					cached, err := model.CacheGetChannel(created.Id)
+					require.NoError(t, err)
+					assert.Equal(t, stored.Setting, cached.Setting, "the committed settings publish immediately")
+					assert.NotContains(t, response.Body.String(), created.Key)
+				})
+			}
+		})
+	}
+	maxPool := make([]string, 16)
+	for i := range maxPool {
+		maxPool[i] = fmt.Sprintf("https://boundary-%d.example.test/v1", i)
+	}
+	prefix := "https://length.example.test/"
+	maxPool[0] = prefix + strings.Repeat("x", 2048-len(prefix))
+	encoded, err := common.Marshal(map[string]any{"base_urls": maxPool})
+	require.NoError(t, err)
+	boundary := &model.Channel{Type: constant.ChannelTypeOpenAI, Setting: common.GetPointer(string(encoded))}
+	require.NoError(t, boundary.NormalizeUpstreamSettings())
+	assert.Equal(t, maxPool, boundary.GetBaseURLs(), "both inclusive URL bounds are accepted")
+	fallback := &model.Channel{Type: constant.ChannelTypeOpenAI}
+	assert.Equal(t, []string{constant.GetChannelBaseURL(fallback.Type)}, fallback.GetBaseURLs())
+	assert.Equal(t, constant.GetChannelBaseURL(fallback.Type), fallback.GetHomepageURL())
+}
+
+func TestChannelUpstreamURLsRejectUnsafeConfiguration(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	tooMany := make([]string, 17)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("https://pool-%d.example.test/path", i)
+	}
+	for _, tc := range []struct {
+		name        string
+		channelType int
+		settings    map[string]any
+	}{
+		{name: "too many", settings: map[string]any{"base_urls": tooMany}},
+		{name: "duplicate trimmed", settings: map[string]any{"base_urls": []string{"https://a.example.test", " https://a.example.test "}}},
+		{name: "empty member", settings: map[string]any{"base_urls": []string{" "}}},
+		{name: "relative", settings: map[string]any{"base_urls": []string{"/v1"}}},
+		{name: "scheme", settings: map[string]any{"base_urls": []string{"file:///tmp/key"}}},
+		{name: "userinfo", settings: map[string]any{"base_urls": []string{"https://user:password@example.test"}}},
+		{name: "query", settings: map[string]any{"base_urls": []string{"https://example.test/v1?key=secret"}}},
+		{name: "fragment", settings: map[string]any{"base_urls": []string{"https://example.test/v1#section"}}},
+		{name: "backslash", settings: map[string]any{"base_urls": []string{`https://example.test\path`}}},
+		{name: "control", settings: map[string]any{"base_urls": []string{"https://example.test/path\n"}}},
+		{name: "escaped control", settings: map[string]any{"base_urls": []string{"https://example.test/%0a"}}},
+		{name: "escaped backslash", settings: map[string]any{"base_urls": []string{"https://example.test/%5cpath"}}},
+		{name: "oversized", settings: map[string]any{"base_urls": []string{"https://example.test/" + strings.Repeat("x", 2048)}}},
+		{name: "homepage credentials", settings: map[string]any{"homepage_url": "https://user:password@example.test/docs"}},
+		{name: "homepage scheme", settings: map[string]any{"homepage_url": "javascript:alert(1)"}},
+		{name: "homepage control", settings: map[string]any{"homepage_url": "https://example.test/docs?x=%0d"}},
+		{name: "unsupported pool", channelType: constant.ChannelTypeAzure, settings: map[string]any{"base_urls": []string{"https://example.test"}}},
+		{name: "unsupported homepage", channelType: constant.ChannelTypeAzure, settings: map[string]any{"homepage_url": "https://example.test/docs"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			channelType := tc.channelType
+			if channelType == 0 {
+				channelType = constant.ChannelTypeOpenAI
+			}
+			encoded, err := common.Marshal(tc.settings)
+			require.NoError(t, err)
+			payload, err := common.Marshal(AddChannelRequest{Mode: "single", Channel: &model.Channel{Name: t.Name(), Type: channelType, Key: "unsafe-url-fixture-secret", Models: "m", Group: "default", Setting: common.GetPointer(string(encoded))}})
+			require.NoError(t, err)
+			response := postAddChannel(t, rootID, common.RoleRootUser, string(payload))
+			var result struct {
+				Success bool `json:"success"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			assert.False(t, result.Success, response.Body.String())
+			assert.NotContains(t, response.Body.String(), "password")
+			assert.NotContains(t, response.Body.String(), "unsafe-url-fixture-secret")
+			var count int64
+			require.NoError(t, model.DB.Model(&model.Channel{}).Where("name = ?", t.Name()).Count(&count).Error)
+			assert.Zero(t, count)
+			channel := &model.Channel{Name: t.Name(), Type: channelType, Key: "unsafe-url-fixture-secret", Models: "m", Group: "default", Setting: common.GetPointer(`{"future_option":true}`)}
+			require.NoError(t, channel.Insert())
+			t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+			payload, err = common.Marshal(map[string]any{"id": channel.Id, "name": "must-not-save", "setting": string(encoded)})
+			require.NoError(t, err)
+			response = putUpdateChannel(t, rootID, common.RoleRootUser, string(payload))
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			assert.False(t, result.Success, response.Body.String())
+			stored, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, channel.Name, stored.Name)
+			assert.Equal(t, channel.Setting, stored.Setting)
+		})
+	}
+}
+
 func TestAddChannelReturnsCreatedIDs(t *testing.T) {
 	rootID := setupChannelCreateTest(t)
 	const firstKey, secondKey = "sk-create-id-first", "sk-create-id-second"

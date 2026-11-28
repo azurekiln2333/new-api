@@ -34,6 +34,17 @@ export type ChannelModelUnavailability = z.infer<
   typeof channelModelUnavailabilitySchema
 >
 
+export const channelUpstreamProtocolSchema = z.enum([
+  'inherit',
+  'messages',
+  'chat',
+  'responses',
+])
+
+export type ChannelUpstreamProtocol = z.infer<
+  typeof channelUpstreamProtocolSchema
+>
+
 export const channelInfoSchema = z.object({
   model_unavailable: z.array(channelModelUnavailabilitySchema).optional(),
   key_entry_revision: z.number().optional(),
@@ -44,6 +55,9 @@ export const channelInfoSchema = z.object({
   multi_key_disabled_time: z.record(z.string(), z.number()).optional(),
   // Key index -> models that key may serve. Absent or empty = every channel model.
   multi_key_models: z.record(z.string(), z.array(z.string())).optional(),
+  multi_key_upstream_protocols: z
+    .record(z.string(), channelUpstreamProtocolSchema)
+    .optional(),
   // Key index -> user ID that exclusively owns the key. Absent = public key.
   multi_key_users: z.record(z.string(), z.number()).optional(),
   multi_key_polling_index: z.number().default(0),
@@ -128,6 +142,8 @@ export type Channel = z.infer<typeof channelSchema>
 // ============================================================================
 
 export interface ChannelSettings {
+  base_urls?: string[]
+  homepage_url?: string
   max_concurrent_requests?: number
   upstream_first_byte_timeout_seconds?: number | null
   supported_endpoints?: ('chat' | 'responses' | 'messages')[]
@@ -283,6 +299,8 @@ export interface FetchModelsResponse {
   success: boolean
   message?: string
   data?: string[]
+  partial?: boolean
+  results?: MultiKeyModelFetchResult[]
 }
 
 export interface CopyChannelResponse {
@@ -351,6 +369,7 @@ export interface KeyStatus {
   scope_mode?: 'all' | 'allowlist'
   /** Only this allocation's overrides; empty inherits the channel mapping. */
   model_mapping?: string
+  upstream_protocol?: ChannelUpstreamProtocol
   // Absent when the budget ledger is not available; never faked as unlimited.
   quota?: KeyQuotaView
 }
@@ -388,6 +407,19 @@ export interface MultiKeyStatusResponse {
     auto_disabled_count: number
     /** Current ledger activation, independent of the filtered rows. */
     quota_supported?: boolean
+  }
+}
+
+export interface MultiKeyProtocolResponse {
+  success: boolean
+  message?: string
+  data?: {
+    revision: number
+    key_entry_id: string
+    key_revision?: number
+    /** Compatibility with the initial persistence response. */
+    rev?: number
+    upstream_protocol: ChannelUpstreamProtocol
   }
 }
 
@@ -508,6 +540,7 @@ export type MultiKeyManageAction =
   | 'delete_disabled_keys'
   | 'set_key_models'
   | 'set_key_model_mapping'
+  | 'set_key_protocol'
   | 'set_key_user'
   | 'set_key_quota'
   | 'reset_key_quota'
@@ -528,8 +561,11 @@ export interface MultiKeyManageParams {
   page?: number
   page_size?: number
   status?: number // 1=enabled, 2=manual_disabled, 3=auto_disabled
+  upstream_protocol?: ChannelUpstreamProtocol // set_key_protocol: explicitly present
   models?: string[] // set_key_models: empty array clears the restriction
   model_mapping?: string // set_key_model_mapping: empty restores inheritance
+  add_models?: boolean // merge additions without replacing the current scope
+  model_selections?: MultiKeyModelSelection[] // explicit per-Key discovery additions
   user_id?: number // set_key_user: 0 unbinds
   apply?: boolean // sync_key_models / deduplicate_keys: write the previewed result
   // set_key_quota / reset_key_quota
@@ -545,14 +581,22 @@ export interface MultiKeyModelFetchResult {
   key_index: number
   key_entry_id?: string
   rev?: number
+  key_preview?: string
   models?: string[]
   error?: string
   skipped?: boolean
 }
 
-/** `sync_key_models` preview: per-key results plus the models it would add. */
+export interface MultiKeyModelSelection {
+  key_entry_id: string
+  rev: number
+  models: string[]
+}
+
+/** `sync_key_models` preview: per-key candidates, never automatic additions. */
 export interface MultiKeyModelSyncResult {
   revision?: number
+  preview_token?: string
   results: MultiKeyModelFetchResult[]
   added_models: string[]
   channel_models?: string[]

@@ -479,6 +479,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				appconstant.ContextKeyChannelParamOverride, appconstant.ContextKeyChannelHeaderOverride, appconstant.ContextKeyChannelOrganization,
 				appconstant.ContextKeyChannelAutoBan, appconstant.ContextKeyChannelModelMapping, appconstant.ContextKeyChannelStatusCodeMapping,
 				appconstant.ContextKeyChannelIsMultiKey, appconstant.ContextKeyChannelMultiKeyIndex, appconstant.ContextKeyChannelKey, appconstant.ContextKeyChannelBaseUrl,
+				appconstant.ContextKeyChannelKeyProtocol,
 				appconstant.ContextKeyUpstreamRequestOrigin, appconstant.ContextKeyProviderPlugin,
 			} {
 				if value, ok := c.Get(string(key)); ok {
@@ -779,7 +780,20 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	}
 	// Changes that alter the physical upstream connection require a new
 	// handshake. Request-level settings can be refreshed without rotating keys.
-	if channel.GetBaseURL() != s.lockedContext[appconstant.ContextKeyChannelBaseUrl] ||
+	baseURLs := channel.GetSetting().BaseURLs
+	lockedBaseURL, _ := s.lockedContext[appconstant.ContextKeyChannelBaseUrl].(string)
+	baseURLMatches := channel.GetBaseURL() == lockedBaseURL
+	if channel.Type == appconstant.ChannelTypeOpenAI || channel.Type == appconstant.ChannelTypeAnthropic {
+		baseURLMatches = false
+		for _, candidate := range channel.GetBaseURLs() {
+			if strings.TrimRight(candidate, "/") == strings.TrimRight(lockedBaseURL, "/") {
+				baseURLMatches = true
+				break
+			}
+		}
+	}
+	previousSettings, _ := s.lockedContext[appconstant.ContextKeyChannelSetting].(dto.ChannelSettings)
+	if !baseURLMatches || !slices.Equal(baseURLs, previousSettings.BaseURLs) ||
 		!reflect.DeepEqual(channel.GetHeaderOverride(), s.lockedContext[appconstant.ContextKeyChannelHeaderOverride]) {
 		return types.NewErrorWithStatusCode(errors.New("upstream connection settings changed; reconnect required"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 	}
@@ -822,6 +836,7 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	}
 	common.SetContextKey(c, appconstant.ContextKeyChannelIsMultiKey, channel.ChannelInfo.IsMultiKey)
 	common.SetContextKey(c, appconstant.ContextKeyChannelMultiKeyIndex, keyIndex)
+	common.SetContextKey(c, appconstant.ContextKeyChannelKeyProtocol, channel.KeyUpstreamProtocol(keyIndex))
 	if allocation.EntryID > 0 {
 		service.SetSelectedChannelAllocation(c, allocation.EntryID, allocation.Revision)
 		common.SetContextKey(c, appconstant.ContextKeyChannelAllocation, allocation)
@@ -892,11 +907,10 @@ func buildResponsesWSCreatePayload(c *gin.Context, info *relaycommon.RelayInfo, 
 		return nil, apiErr
 	}
 	defer closer.Close()
-	// The OpenAI adaptor answers a selected Anthropic Messages upstream over an
-	// HTTP call, but this turn would be sent on a WebSocket dial with an
-	// Anthropic body. Refuse here, before the dial; a declaration that also
-	// includes responses keeps the ordinary Responses transport.
-	if info.UpstreamTextEndpoint == types.RelayFormatClaude {
+	// Chat and Messages conversions are HTTP-only. Refuse before either a
+	// dial or a send on a reused socket; never put their bodies in a Responses
+	// WebSocket event or silently switch the selected Key's protocol.
+	if info.UpstreamTextEndpoint == types.RelayFormatClaude || info.UpstreamTextEndpoint == types.RelayFormatOpenAI {
 		return nil, types.NewErrorWithStatusCode(
 			errors.New(i18n.T(c, i18n.MsgRelayChannelEndpointUnsupported)),
 			types.ErrorCodeInvalidRequest,

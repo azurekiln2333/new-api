@@ -21,10 +21,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createServerError } from '@/lib/server-error-message'
 
 import { fetchModels, fetchUpstreamModels } from '../api'
+import type { MultiKeyModelFetchResult } from '../types'
 
 type DiscoveryState = {
   status: 'idle' | 'loading' | 'success' | 'error' | 'stale'
   models: string[]
+  partial?: boolean
+  results?: MultiKeyModelFetchResult[]
   error?: unknown
 }
 
@@ -69,7 +72,12 @@ export function useChannelModelDiscovery(props: ChannelModelDiscoveryProps) {
       if (!response.success) {
         throw createServerError(response, 'Failed to fetch models')
       }
-      setState({ status: 'success', models: response.data ?? [] })
+      setState({
+        status: 'success',
+        models: [...new Set((response.data ?? []).map((model) => model.trim()).filter(Boolean))],
+        partial: response.partial,
+        results: response.results,
+      })
     } catch (error) {
       if (requestSequence !== sequence.current) return
       setState((previous) => ({
