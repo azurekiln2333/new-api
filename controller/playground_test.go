@@ -377,3 +377,65 @@ export const meta = {apiVersion: 1, key: "pg-navigation-provider", name: "Playgr
 	require.NoError(t, err)
 	assert.Equal(t, []model.ChannelModelOption{}, empty, "real denials remain a successful empty catalog")
 }
+
+func TestPlaygroundChannelNavigationProjectionUsesPerKeyMapping(t *testing.T) {
+	rootID := setupChannelCreateTest(t)
+	channel := &model.Channel{
+		Name:   "pg-per-key-mapping",
+		Type:   constant.ChannelTypeOpenAI,
+		Status: common.ChannelStatusEnabled,
+		Group:  "default",
+		Models: "alias",
+		Key:    "pg-mapping-a\npg-mapping-b\npg-mapping-other\npg-mapping-empty",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       4,
+			MultiKeyUsers:      map[int]int{2: rootID + 1},
+			MultiKeyScopeModes: map[int]string{3: "allowlist"},
+			MultiKeyModelMappings: map[int]string{
+				0: `{"alias":"upstream-a"}`,
+				1: `{"alias":"upstream-b"}`,
+				2: `{"alias":"upstream-other"}`,
+			},
+		},
+	}
+	require.NoError(t, channel.Insert())
+	t.Cleanup(func() { require.NoError(t, channel.Delete()) })
+
+	loaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	allocationA, ok := loaded.ChannelAllocationByPosition(0)
+	require.True(t, ok)
+	allocationB, ok := loaded.ChannelAllocationByPosition(1)
+	require.True(t, ok)
+	mappingA, err := loaded.GetModelMappingForKey(0)
+	require.NoError(t, err)
+	mappingB, err := loaded.GetModelMappingForKey(1)
+	require.NoError(t, err)
+
+	markUnavailable := func(allocation model.ChannelAllocation, mapping, upstream string) {
+		written, err := model.RecordChannelModelUnavailability(
+			loaded.Id,
+			"alias",
+			allocation.Key,
+			mapping,
+			upstream,
+			http.StatusBadGateway,
+			model.ChannelModelUnavailableEvidenceCode,
+			allocation,
+		)
+		require.NoError(t, err)
+		require.True(t, written)
+	}
+
+	markUnavailable(allocationA, mappingA, "upstream-a")
+	options, err := service.ListPlaygroundChannels(t.Context(), rootID, "default", "default")
+	require.NoError(t, err)
+	require.Len(t, options, 1)
+	assert.Equal(t, []string{"alias"}, options[0].Models, "Key B keeps the public alias after only Key A becomes unavailable")
+
+	markUnavailable(allocationB, mappingB, "upstream-b")
+	options, err = service.ListPlaygroundChannels(t.Context(), rootID, "default", "default")
+	require.NoError(t, err)
+	assert.Empty(t, options, "another user's Key and an explicit empty allowlist cannot rescue unavailable public Keys")
+}

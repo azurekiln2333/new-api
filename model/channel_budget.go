@@ -273,6 +273,7 @@ type BudgetMergeRequest struct {
 type budgetKeyAllocation struct {
 	Id             int64  `gorm:"column:id;primaryKey"`
 	ChannelId      int    `gorm:"column:channel_id"`
+	Position       int    `gorm:"column:position"`
 	BoundUserId    int    `gorm:"column:bound_user_id"`
 	Status         int    `gorm:"column:status"`
 	ConfigRevision int64  `gorm:"column:config_revision"`
@@ -432,7 +433,7 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 		}
 		// Only allocation capability accepts the mapped upstream name. Channel
 		// and group authorization above/below stay in the request namespace.
-		if !budgetScopeServesModel(models, selection.ModelName) && !channel.keyScopeServesModel(models, selection.ModelName) {
+		if !budgetScopeServesModel(models, selection.ModelName) && !channel.keyScopeServesModel(allocation.Position, models, selection.ModelName) {
 			return nil, ErrBudgetAllocationInvalid
 		}
 	default:
