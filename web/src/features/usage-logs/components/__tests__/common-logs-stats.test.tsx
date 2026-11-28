@@ -30,7 +30,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
-import type { StatisticsCoverage } from '@/lib/statistics-coverage'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
 import { useAuthStore } from '@/stores/auth-store'
 
 import type { AdminLogUserScope } from '../../types'
@@ -63,7 +63,10 @@ async function renderStats(
     }))
   }
   let attempts = 0
-  const get = vi.spyOn(api, 'get').mockImplementation(async () => {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url !== '/api/log/stat' && url !== '/api/log/self/stat') {
+      return { data: { success: true, data: [] } }
+    }
     attempts++
     if (options.pending) return new Promise<never>(() => {})
     if (options.failOnce && attempts === 1) throw new Error('temporary failure')
@@ -96,12 +99,12 @@ async function renderStats(
     routeTree: root.addChildren([auth.addChildren([logs])]),
     history: createMemoryHistory({ initialEntries: [initialEntry] }),
   })
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  queryClient.setQueryDefaults(['usage-logs-stats'], { retry: false })
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>
   )
@@ -190,8 +193,21 @@ it('shows the cache-read share of the input tokens next to TPM', async () => {
   )
 })
 
-it('shows a dash when the filtered logs report no input tokens', async () => {
-  await renderStats({ quota: 0, rpm: 0, tpm: 0 })
+it('shows a dash when complete filtered statistics report no input tokens', async () => {
+  await renderStats(
+    { quota: 0, rpm: 0, tpm: 0 },
+    {
+      coverage: {
+        complete: true,
+        coverage: 'complete',
+        historical_coverage: 'complete',
+        live_coverage: 'complete',
+        legacy_baseline_included: true,
+        start_timestamp: 1_700_000_000,
+        end_timestamp: 1_700_000_060,
+      },
+    }
+  )
 
   expect(screen.getByText('Cache Hit Rate')).toBeVisible()
   expect(screen.getByText('-')).toBeVisible()
@@ -242,11 +258,11 @@ it('does not present an empty incomplete log summary as verified zero', async ()
   )
 
   const row = screen.getByRole('group', { name: 'Usage' })
-  expect(within(row).getAllByText('—')).toHaveLength(3)
+  expect(within(row).getAllByText('—')).toHaveLength(4)
   expect(screen.getByText('No verified usage data available')).toBeVisible()
 
   await userEvent.setup().click(
-    screen.getByRole('button', { name: 'Cache Hit Rate -' })
+    screen.getByRole('button', { name: 'Cache Hit Rate —' })
   )
   const details = await screen.findByRole('dialog', { name: 'Cache Hit Rate' })
   expect(within(details).getByText('Cache Read')).toBeVisible()
@@ -335,7 +351,7 @@ it('keeps the mobile cache label icon-only and exposes its meaning and inputs on
 it('opens the cache explanation from keyboard focus and returns focus on Escape', async () => {
   await renderStats({ quota: 0, rpm: 0, tpm: 0 }, { mobile: true })
   const user = userEvent.setup()
-  const cache = screen.getByRole('button', { name: 'Cache Hit Rate -' })
+  const cache = screen.getByRole('button', { name: 'Cache Hit Rate —' })
 
   await user.tab()
   expect(cache).toHaveFocus()

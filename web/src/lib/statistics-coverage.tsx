@@ -1,31 +1,8 @@
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useTranslation } from 'react-i18next'
 
-export type StatisticsCoverageState =
-  | 'unknown'
-  | 'partial'
-  | 'retained_verified'
-  | 'complete'
-
-export const UNKNOWN_STATISTICS_COVERAGE: StatisticsCoverage = {
-  complete: false,
-  coverage: 'unknown',
-  historical_coverage: 'unknown',
-  live_coverage: 'unknown',
-  legacy_baseline_included: false,
-  start_timestamp: 0,
-  end_timestamp: 0,
-}
-
-export interface StatisticsCoverage {
-  complete: boolean
-  coverage: StatisticsCoverageState
-  historical_coverage: StatisticsCoverageState
-  live_coverage: StatisticsCoverageState
-  legacy_baseline_included: boolean
-  start_timestamp: number
-  end_timestamp: number
-}
+import type { StatisticsCoverage } from './statistics-coverage-types'
+import { UNKNOWN_STATISTICS_COVERAGE } from './statistics-coverage-types'
 
 export function StatisticsCoverageNotice(props: {
   coverage?: StatisticsCoverage

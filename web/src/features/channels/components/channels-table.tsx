@@ -91,7 +91,7 @@ import {
 } from './channel-priority-controls'
 import { ChannelPriorityDropHint } from './channel-priority-drop-hint'
 import { ChannelTypeLogo } from './channel-type-badge'
-import { ChannelUsageContext } from './channel-usage-context'
+import { ChannelUsageContext } from './channel-usage-context-value'
 import { useChannelsColumns } from './channels-columns'
 import { useChannels } from './channels-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'

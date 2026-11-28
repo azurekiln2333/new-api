@@ -38,10 +38,11 @@ import {
 } from '../../components/channel-row-actions-context'
 import {
   ChannelUsageContext,
-  ChannelUsedTokens,
-} from '../../components/channel-usage-context'
+} from '../../components/channel-usage-context-value'
+import { ChannelUsedTokens } from '../../components/channel-usage-context'
 import { channelsQueryKeys } from '../../lib/channel-actions'
 import type { ChannelUsageSummary } from '../../types'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
 import { useChannelUsageSummaries } from '../use-channel-usage'
 
 const i18n = createInstance()
@@ -177,11 +178,12 @@ test('summaries hook requests the new id set when the page changes', async () =>
 function renderUsedTokens(
   map: Record<number, ChannelUsageSummary>,
   tooltipOpen = false,
-  layout: ChannelRowActionsLayout = 'table'
+  layout: ChannelRowActionsLayout = 'table',
+  coverage?: StatisticsCoverage
 ) {
   render(
     <I18nextProvider i18n={i18n}>
-      <ChannelUsageContext.Provider value={{ usageByChannel: map }}>
+      <ChannelUsageContext.Provider value={{ usageByChannel: map, coverage }}>
         <ChannelRowActionsLayoutContext.Provider value={layout}>
           <ChannelUsedTokens channelId={1} tooltipOpen={tooltipOpen} />
         </ChannelRowActionsLayoutContext.Provider>
@@ -268,6 +270,20 @@ test('used tokens updates the card abbreviation when the interface language chan
 
 test('used tokens shows a dash when the channel has no usage entry', () => {
   renderUsedTokens({})
+
+  expect(screen.getByText('—')).toBeVisible()
+})
+
+test('used tokens shows a dash when missing usage is verified complete', () => {
+  renderUsedTokens({}, false, 'table', {
+    complete: true,
+    coverage: 'complete',
+    historical_coverage: 'complete',
+    live_coverage: 'complete',
+    legacy_baseline_included: true,
+    start_timestamp: 1,
+    end_timestamp: 2,
+  })
 
   expect(screen.getByText('-')).toBeVisible()
 })

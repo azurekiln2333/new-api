@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createContext, useContext } from 'react'
+import { useContext } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -33,19 +33,9 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import type { ChannelUsageSummary, StatisticsCoverage } from '../types'
+import type { ChannelUsageSummary } from '../types'
+import { ChannelUsageContext } from './channel-usage-context-value'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
-
-// eslint-disable-next-line react-refresh/only-export-components
-export interface ChannelUsageContextValue {
-  usageByChannel: Record<number, ChannelUsageSummary>
-  coverage?: StatisticsCoverage
-}
-
-export const ChannelUsageContext = createContext<ChannelUsageContextValue>({
-  usageByChannel: {},
-})
-
 type ChannelUsedTokensProps = {
   channelId: number
   /**

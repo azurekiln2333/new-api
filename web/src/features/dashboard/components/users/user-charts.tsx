@@ -19,7 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { VChart } from '@visactor/react-vchart'
 import { Users, Loader2 } from 'lucide-react'
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useCallback,
+  type ReactNode,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -43,6 +50,7 @@ import {
 } from '@/features/dashboard/lib'
 import type {
   ProcessedUserChartData,
+  QuotaDataItem,
   UserChartsFilters,
 } from '@/features/dashboard/types'
 import { toIntlLocale } from '@/i18n/languages'
@@ -74,6 +82,7 @@ const USER_CHARTS: {
 ]
 
 const TOP_USER_LIMIT_OPTIONS = [5, 10, 20, 50]
+const EMPTY_USER_CHART_DATA: QuotaDataItem[] = []
 
 interface UserChartsProps {
   filters: UserChartsFilters
@@ -177,17 +186,18 @@ export function UserCharts(props: UserChartsProps) {
     enabled: isAdmin,
     staleTime: 60_000,
   })
-  const userData = userQuery.data?.data ?? []
   const isLoading = userQuery.isLoading
   const hasUnverifiedEmptyData =
     !isLoading &&
-    userData.length === 0 &&
+    (userQuery.data?.data.length ?? 0) === 0 &&
     userQuery.data?.coverage?.complete !== true
 
   const chartData = useMemo(
     () =>
       processUserChartData(
-        !isAdmin || isLoading ? [] : (userData ?? []),
+        !isAdmin || isLoading
+          ? EMPTY_USER_CHART_DATA
+          : (userQuery.data?.data ?? EMPTY_USER_CHART_DATA),
         timeGranularity,
         t,
         topUserLimit,
@@ -195,7 +205,7 @@ export function UserCharts(props: UserChartsProps) {
         locale
       ),
     [
-      userData,
+      userQuery.data,
       isAdmin,
       isLoading,
       timeGranularity,
@@ -290,6 +300,31 @@ export function UserCharts(props: UserChartsProps) {
       <div className='grid gap-3'>
         {USER_CHARTS.map((chart) => {
           const spec = chartData[chart.specKey]
+          let content: ReactNode = null
+          if (isLoading) {
+            content = <Skeleton className='h-full w-full' />
+          } else if (hasUnverifiedEmptyData) {
+            content = (
+              <div
+                role='status'
+                className='text-muted-foreground flex h-full items-center justify-center px-4 text-center text-sm'
+              >
+                {t('No verified usage data available')}
+              </div>
+            )
+          } else if (themeReady && spec) {
+            content = (
+              <VChart
+                key={`user-${chart.value}-${topUserLimit}-${metric}-${resolvedTheme}`}
+                spec={{
+                  ...spec,
+                  theme: resolvedTheme === 'dark' ? 'dark' : 'light',
+                  background: 'transparent',
+                }}
+                option={VCHART_OPTION}
+              />
+            )
+          }
 
           return (
             <div
@@ -304,29 +339,7 @@ export function UserCharts(props: UserChartsProps) {
               </div>
 
               <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
-                {isLoading ? (
-                  <Skeleton className='h-full w-full' />
-                ) : hasUnverifiedEmptyData ? (
-                  <div
-                    role='status'
-                    className='text-muted-foreground flex h-full items-center justify-center px-4 text-center text-sm'
-                  >
-                    {t('No verified usage data available')}
-                  </div>
-                ) : (
-                  themeReady &&
-                  spec && (
-                    <VChart
-                      key={`user-${chart.value}-${topUserLimit}-${metric}-${resolvedTheme}`}
-                      spec={{
-                        ...spec,
-                        theme: resolvedTheme === 'dark' ? 'dark' : 'light',
-                        background: 'transparent',
-                      }}
-                      option={VCHART_OPTION}
-                    />
-                  )
-                )}
+                {content}
               </div>
             </div>
           )

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
-import type { StatisticsCoverage } from '@/lib/statistics-coverage'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
 
 export type { StatisticsCoverage }
 

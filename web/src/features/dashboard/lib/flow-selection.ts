@@ -20,7 +20,7 @@ import type {
   FlowQuotaDataItem,
   FlowUserFilterOption,
 } from '@/features/dashboard/types'
-import type { StatisticsCoverage } from '@/lib/statistics-coverage'
+import type { StatisticsCoverage } from '@/lib/statistics-coverage-types'
 import { createServerError } from '@/lib/server-error-message'
 
 export type FlowDisplayState = 'loading' | 'error' | 'empty' | 'chart'

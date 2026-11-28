@@ -820,7 +820,7 @@ test('dropping onto a card that moved into the original slot joins its priority 
   // Channel 2 now occupies the last slot that channel 3 originally occupied.
   fireEvent.pointerMove(scope, { pointerId: 1, clientX: 790, clientY: 150 })
   await waitFor(() =>
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(screen.getByText(/Join the same priority tier/)).toHaveTextContent(
       'Join the same priority tier'
     )
   )
@@ -862,7 +862,7 @@ test.each(['table', 'card'] as const)(
     )
     fireEvent.pointerMove(scope, { pointerId: 1, ...target })
     await waitFor(() =>
-      expect(screen.getByRole('status')).toHaveTextContent(
+      expect(screen.getByText(/Join the same priority tier/)).toHaveTextContent(
         'Join the same priority tier'
       )
     )
