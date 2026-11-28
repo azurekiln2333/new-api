@@ -36,6 +36,7 @@ type MultiKeyTableRowActionsProps = {
   quotaAvailable: boolean
   onAction: (action: MultiKeyConfirmAction) => void
   onEditModels: (keyStatus: KeyStatus) => void
+  onEditMapping?: (keyStatus: KeyStatus) => void
   onEditUser: (keyStatus: KeyStatus) => void
   onUnbind: (keyStatus: KeyStatus) => void
   onEditQuota: (keyStatus: KeyStatus) => void
@@ -115,6 +116,20 @@ export function MultiKeyTableRowActions(props: MultiKeyTableRowActionsProps) {
       >
         {t('Set Models')}
       </Button>
+      {props.onEditMapping && (
+        <Button
+          variant='outline'
+          size='sm'
+          disabled={!props.canManage || !keyStatus.id || !keyStatus.rev}
+          title={noPermissionTitle}
+          onClick={() => {
+            if (!props.canManage || !keyStatus.id || !keyStatus.rev) return
+            props.onEditMapping?.(keyStatus)
+          }}
+        >
+          {t('Model Mapping')}
+        </Button>
+      )}
       <Button
         variant='outline'
         size='sm'

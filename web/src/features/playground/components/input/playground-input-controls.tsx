@@ -34,6 +34,7 @@ type PlaygroundInputControlsProps = {
   groups: GroupOption[]
   groupValue: string
   channels?: ModelGroupSelectorProps['channels']
+  channelOptions?: ModelGroupSelectorProps['channelOptions']
   channelValue?: number
   onChannelChange?: ModelGroupSelectorProps['onChannelChange']
   canSend?: boolean
@@ -53,6 +54,7 @@ export function PlaygroundInputControls({
   groups,
   groupValue,
   channels,
+  channelOptions,
   channelValue,
   onChannelChange,
   canSend = true,
@@ -81,6 +83,7 @@ export function PlaygroundInputControls({
   const renderSelector = () => (
     <ModelGroupSelector
       channels={channels}
+      channelOptions={channelOptions}
       selectedChannel={channelValue}
       onChannelChange={onChannelChange}
       selectedModel={modelValue}

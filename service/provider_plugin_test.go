@@ -792,17 +792,55 @@ func TestDropPluginCredentials(t *testing.T) {
 	assert.Equal(t, common.ChannelStatusAutoDisabled, single.Status)
 	assert.Equal(t, model.ChannelStatusReasonPluginLoginRequired, single.GetOtherInfo()["status_reason"])
 
-	multi := &model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: "sk-1\n" + line + "\nsk-2", Status: common.ChannelStatusEnabled, ChannelInfo: model.ChannelInfo{
-		IsMultiKey: true, MultiKeySize: 3, MultiKeyPollingIndex: 2, MultiKeyStatusList: map[int]int{2: common.ChannelStatusAutoDisabled},
-		MultiKeyDisabledReason: map[int]string{2: "quota"}, MultiKeyDisabledTime: map[int]int64{2: 7},
-	}}
-	DropPluginCredentials(multi)
-	assert.Equal(t, "sk-1\nsk-2", multi.Key)
-	assert.Equal(t, common.ChannelStatusEnabled, multi.Status)
-	assert.Equal(t, 2, multi.ChannelInfo.MultiKeySize)
-	assert.Equal(t, map[int]int{1: common.ChannelStatusAutoDisabled}, multi.ChannelInfo.MultiKeyStatusList)
-	assert.Equal(t, map[int]string{1: "quota"}, multi.ChannelInfo.MultiKeyDisabledReason)
-	assert.Zero(t, multi.ChannelInfo.MultiKeyPollingIndex)
+	channelMapping := `{"alias":"channel-upstream","shared":"channel-shared"}`
+	keyMapping := `{"alias":"key-upstream"}`
+	removedMapping := `{"alias":"removed-upstream"}`
+	for _, tc := range []struct {
+		name          string
+		keys          []string
+		removedIndex  int
+		overrideIndex int
+	}{
+		{name: "leading credential", keys: []string{line, "sk-inherit", "sk-override"}, removedIndex: 0, overrideIndex: 2},
+		{name: "middle credential", keys: []string{"sk-inherit", line, "sk-override"}, removedIndex: 1, overrideIndex: 2},
+		{name: "trailing credential", keys: []string{"sk-inherit", "sk-override", line}, removedIndex: 2, overrideIndex: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			info := model.ChannelInfo{
+				IsMultiKey: true, MultiKeySize: 3, MultiKeyPollingIndex: 2,
+				MultiKeyStatusList:     map[int]int{tc.overrideIndex: common.ChannelStatusAutoDisabled},
+				MultiKeyDisabledReason: map[int]string{tc.overrideIndex: "quota"},
+				MultiKeyDisabledTime:   map[int]int64{tc.overrideIndex: 7},
+				MultiKeyModels:         map[int][]string{tc.overrideIndex: {"key-upstream"}},
+				MultiKeyScopeModes:     map[int]string{tc.overrideIndex: "allowlist"},
+				MultiKeyUsers:          map[int]int{tc.overrideIndex: 42},
+				MultiKeyModelMappings:  map[int]string{tc.removedIndex: removedMapping, tc.overrideIndex: keyMapping},
+			}
+			multi := &model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: strings.Join(tc.keys, "\n"),
+				Status: common.ChannelStatusEnabled, Models: "alias,shared", ModelMapping: &channelMapping, ChannelInfo: info}
+			DropPluginCredentials(multi)
+			assert.Equal(t, "sk-inherit\nsk-override", multi.Key)
+			assert.Equal(t, common.ChannelStatusEnabled, multi.Status)
+			assert.Equal(t, 2, multi.ChannelInfo.MultiKeySize)
+			assert.Equal(t, map[int]int{1: common.ChannelStatusAutoDisabled}, multi.ChannelInfo.MultiKeyStatusList)
+			assert.Equal(t, map[int]string{1: "quota"}, multi.ChannelInfo.MultiKeyDisabledReason)
+			assert.Equal(t, map[int]int64{1: 7}, multi.ChannelInfo.MultiKeyDisabledTime)
+			assert.Equal(t, map[int][]string{1: {"key-upstream"}}, multi.ChannelInfo.MultiKeyModels)
+			assert.Equal(t, map[int]string{1: "allowlist"}, multi.ChannelInfo.MultiKeyScopeModes)
+			assert.Equal(t, map[int]int{1: 42}, multi.ChannelInfo.MultiKeyUsers)
+			assert.Equal(t, map[int]string{1: keyMapping}, multi.ChannelInfo.MultiKeyModelMappings)
+			assert.Zero(t, multi.ChannelInfo.MultiKeyPollingIndex)
+			inherited, ok := multi.RoutingUpstreamModelNameForKey(0, "alias")
+			require.True(t, ok)
+			assert.Equal(t, "channel-upstream", inherited, "a removed credential cannot donate its mapping to an inheriting key")
+			overridden, ok := multi.RoutingUpstreamModelNameForKey(1, "alias")
+			require.True(t, ok)
+			assert.Equal(t, "key-upstream", overridden)
+			assert.True(t, multi.KeyServesModel(1, "alias"), "the moved mapping still resolves its upstream-only scope")
+			assert.Equal(t, map[int]string{tc.removedIndex: removedMapping, tc.overrideIndex: keyMapping}, info.MultiKeyModelMappings,
+				"copy filtering must not change the source channel's map")
+		})
+	}
 
 	static := &model.Channel{Type: constant.ChannelTypeTaskPlugin, Key: "sk-1", Status: common.ChannelStatusEnabled}
 	DropPluginCredentials(static)

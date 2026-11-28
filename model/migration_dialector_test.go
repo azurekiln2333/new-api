@@ -57,6 +57,27 @@ type migrationDecimalV3 struct {
 	Price float64 `gorm:"type:decimal(12,6);not null;default:1.25"`
 }
 
+type migrationChannelKeyEntryV1 struct {
+	Id             int64  `gorm:"primaryKey;autoIncrement"`
+	ChannelId      int    `gorm:"not null;index:idx_channel_key_entries_order,priority:1"`
+	Position       int    `gorm:"not null;index:idx_channel_key_entries_order,priority:2"`
+	Key            string `gorm:"type:text;not null"`
+	CredentialRef  string `gorm:"type:varchar(255);not null;default:''"`
+	BoundUserId    int    `gorm:"not null;default:0"`
+	ScopeMode      string `gorm:"type:varchar(16);not null;default:'all'"`
+	Models         string `gorm:"type:text;not null"`
+	Status         int    `gorm:"not null;default:1"`
+	DisabledReason string `gorm:"type:text"`
+	DisabledTime   int64  `gorm:"not null;default:0"`
+	ConfigRevision int64  `gorm:"not null;default:1"`
+	RetiredAt      int64  `gorm:"not null;default:0"`
+	MergedIntoId   int64  `gorm:"not null;default:0"`
+	CreatedTime    int64  `gorm:"not null;default:0"`
+	UpdatedTime    int64  `gorm:"not null;default:0"`
+}
+
+func (migrationChannelKeyEntryV1) TableName() string { return "channel_key_entries" }
+
 func TestMigrationSchemaStability(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
@@ -83,6 +104,65 @@ func TestMigrationSchemaStability(t *testing.T) {
 			t.Cleanup(func() { _ = sqlDB.Close() })
 			recorder := &migrationSQLRecorder{}
 			db = db.Session(&gorm.Session{Logger: recorder})
+			var version string
+			versionQuery := "SELECT version()"
+			if dialect == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("engine=%s version=%s", dialect, version)
+
+			t.Run("channel_key_model_mapping", func(t *testing.T) {
+				for _, mode := range []string{"fresh", "legacy_upgrade"} {
+					t.Run(mode, func(t *testing.T) {
+						require.NoError(t, db.Migrator().DropTable(&ChannelKeyEntry{}))
+						t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&ChannelKeyEntry{})) })
+						rows := []ChannelKeyEntry{
+							{ChannelId: 17, Position: 0, Key: "same-key", ScopeMode: "all", Models: "[]", Status: common.ChannelStatusEnabled, ConfigRevision: 3, CreatedTime: 11, UpdatedTime: 12},
+							{ChannelId: 17, Position: 1, Key: "same-key", BoundUserId: 41, ScopeMode: "allowlist", Models: "[]", Status: common.ChannelStatusManuallyDisabled, DisabledReason: "manual", DisabledTime: 13, ConfigRevision: 7, CreatedTime: 10, UpdatedTime: 14},
+							{ChannelId: 17, Position: 2, Key: "retired-key", CredentialRef: "vendor:account", ScopeMode: "allowlist", Models: `["DeepSeek-R1"]`, Status: common.ChannelStatusAutoDisabled, ConfigRevision: 9, RetiredAt: 15, CreatedTime: 9, UpdatedTime: 15},
+						}
+						var legacyIndexes map[string]codeOperationIndex
+						if mode == "legacy_upgrade" {
+							// Reconstruct the pre-column allocation shape, not a fresh
+							// current table. The hosted released-binary probe remains a
+							// separate requirement for full startup compatibility.
+							require.NoError(t, db.AutoMigrate(&migrationChannelKeyEntryV1{}))
+							require.False(t, db.Migrator().HasColumn(&ChannelKeyEntry{}, "model_mapping"))
+							require.NoError(t, db.Omit("ModelMapping").Create(&rows).Error)
+							legacyIndexes = codeOperationIndexSnapshot(t, db, &migrationChannelKeyEntryV1{})
+						}
+						for pass := range 2 {
+							recorder.reset()
+							require.NoError(t, db.AutoMigrate(&ChannelKeyEntry{}))
+							if pass == 1 {
+								assert.Empty(t, recorder.schemaMutations(), "the second migration must not repeat DDL")
+							}
+							require.True(t, db.Migrator().HasColumn(&ChannelKeyEntry{}, "model_mapping"))
+							if pass == 0 {
+								if mode == "fresh" {
+									require.NoError(t, db.Create(&rows).Error)
+								}
+								var inherited []ChannelKeyEntry
+								require.NoError(t, db.Order("position, id").Find(&inherited).Error)
+								assert.Equal(t, rows, inherited, "an absent column upgrades to inheritance without changing allocations")
+								// A payload wider than VARCHAR(255) proves the new column
+								// stores the complete mapping and retains target casing.
+								rows[1].ModelMapping = `{"` + strings.Repeat("s", 200) + `":"` + strings.Repeat("T", 200) + `"}`
+								require.NoError(t, db.Model(&ChannelKeyEntry{}).Where("id = ?", rows[1].Id).Update("model_mapping", rows[1].ModelMapping).Error)
+							}
+							var saved []ChannelKeyEntry
+							require.NoError(t, db.Order("position, id").Find(&saved).Error)
+							assert.Equal(t, rows, saved, "mapping and all stable identities, scopes, revisions and history survive restart migration")
+							if mode == "legacy_upgrade" {
+								assert.Equal(t, legacyIndexes, codeOperationIndexSnapshot(t, db, &ChannelKeyEntry{}), "allocation indexes must survive the additive migration")
+							}
+						}
+						err := db.Transaction(func(tx *gorm.DB) error { return tx.Create(&rows[0]).Error })
+						assert.Error(t, err, "migration must retain primary-key uniqueness")
+					})
+				}
+			})
 
 			t.Run("identity_and_indexes", func(t *testing.T) {
 				const table = "migration_identity_test"
