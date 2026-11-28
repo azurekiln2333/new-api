@@ -694,7 +694,7 @@ func TestAnnouncementPublicationOrderingDatabaseMatrix(t *testing.T) {
 						// An unchanged Passkey domain value exercises the specialized path.
 						firstResult <- UpdateOptionsBulk(map[string]string{
 							"ServerAddress":                         serverAddressBefore,
-							key:                                      first,
+							key:                                     first,
 							"console_setting.announcements_enabled": "false",
 						})
 					}

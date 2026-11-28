@@ -148,10 +148,9 @@ test('incoming cache data updates a clean list but preserves unsaved announcemen
   await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
   expect(api.put).toHaveBeenCalledWith('/api/option/', {
     key: announcementKey,
-    value:
-      JSON.stringify([
-        { ...original[0], content: 'Unsaved announcement' },
-      ]),
+    value: JSON.stringify([
+      { ...original[0], content: 'Unsaved announcement' },
+    ]),
   })
 })
 
