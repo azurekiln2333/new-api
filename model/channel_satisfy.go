@@ -119,13 +119,13 @@ func ListAvailableChannelModels(ctx context.Context, groups []string, userID int
 				if !matches {
 					continue
 				}
-				upstream, _ := channel.RoutingUpstreamModelName(name)
 				for i := range keys {
 					id := channel.ChannelKeyEntryID(i)
 					if active && (id <= 0 || keyExhausted[id]) {
 						continue
 					}
-					if !channel.keyEnabled(i) || !channel.KeyServesModel(i, name) || channel.keyModelUnavailable(i, upstream) {
+					upstream, ok := channel.RoutingUpstreamModelNameForKey(i, name)
+					if !ok || !channel.keyEnabled(i) || !channel.KeyServesModel(i, name) || channel.keyModelUnavailable(i, upstream) {
 						continue
 					}
 					owner := channel.ChannelInfo.MultiKeyUsers[i]

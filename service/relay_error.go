@@ -187,7 +187,18 @@ func RecordUpstreamModelUnavailability(c *gin.Context, channelError types.Channe
 		}
 		attemptMapping = c.GetString("model_mapping")
 	}
-	if _, recordErr := model.RecordChannelModelUnavailability(channelError.ChannelId, originModel, channelError.UsingKey, attemptMapping, relayInfo.UpstreamModelName, err.StatusCode, string(evidence)); recordErr != nil {
+	var selected []model.ChannelAllocation
+	allocationID, allocationRevision := selectedChannelAllocation(c)
+	if allocationID != 0 || allocationRevision != 0 {
+		// Pass only non-secret identity metadata. The recorder revalidates the
+		// row and its effective mapping under the owning channel lock.
+		selected = []model.ChannelAllocation{{
+			ChannelID: channelError.ChannelId,
+			EntryID:   allocationID,
+			Revision:  allocationRevision,
+		}}
+	}
+	if _, recordErr := model.RecordChannelModelUnavailability(channelError.ChannelId, originModel, channelError.UsingKey, attemptMapping, relayInfo.UpstreamModelName, err.StatusCode, string(evidence), selected...); recordErr != nil {
 		logger.LogError(c, common.LogText("failed to record model unavailability (channel #%d): %v", channelError.ChannelId, recordErr))
 	}
 }

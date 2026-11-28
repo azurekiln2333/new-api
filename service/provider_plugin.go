@@ -671,7 +671,7 @@ func DropPluginCredentials(channel *model.Channel) {
 		kept := make([]string, 0, len(keys))
 		statusList, reasons, times := map[int]int{}, map[int]string{}, map[int]int64{}
 		models, users := map[int][]string{}, map[int]int{}
-		modes := map[int]string{}
+		modes, mappings := map[int]string{}, map[int]string{}
 		for index, key := range keys {
 			if _, ok := jsplugin.ParseCredential(key); ok {
 				continue
@@ -695,6 +695,9 @@ func DropPluginCredentials(channel *model.Channel) {
 			if scope, ok := info.MultiKeyModels[index]; ok {
 				models[next] = slices.Clone(scope)
 			}
+			if mapping, ok := info.MultiKeyModelMappings[index]; ok {
+				mappings[next] = mapping
+			}
 			if userID, ok := info.MultiKeyUsers[index]; ok {
 				users[next] = userID
 			}
@@ -712,6 +715,7 @@ func DropPluginCredentials(channel *model.Channel) {
 		// above: a stale entry for a dropped index would otherwise qualify the
 		// key that moved into that position.
 		info.MultiKeyScopeModes = modes
+		info.MultiKeyModelMappings = mappings
 		info.MultiKeyPollingIndex = 0
 		channel.ChannelInfo = info
 	}

@@ -99,6 +99,7 @@ export const STATIC_I18N_KEYS = [
   'channel key entries are ambiguous for this edit',
   'channel key must not be empty',
   'invalid channel key model scope',
+  'Invalid key model mapping',
   'managed credential allocations must be unique',
   'Invalid channel key allocation ID',
   'Deduplication preview changed, reload and retry',

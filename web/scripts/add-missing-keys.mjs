@@ -19,6 +19,10 @@ const newKeys = {
     'Previous-period coverage is incomplete; comparisons may be affected.':
       'Previous-period coverage is incomplete; comparisons may be affected.',
     'No verified usage data available': 'No verified usage data available',
+    'Restore inheritance': 'Restore inheritance',
+    'Invalid key model mapping': 'Invalid key model mapping',
+    'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
+      'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.',
     'Deployment default': 'Deployment default',
     'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.':
       'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.',
@@ -110,6 +114,10 @@ const newKeys = {
     'Previous-period coverage is incomplete; comparisons may be affected.':
       '上一周期的统计覆盖不完整，比较结果可能受影响。',
     'No verified usage data available': '暂无已核实的用量数据',
+    'Restore inheritance': '恢复继承',
+    'Invalid key model mapping': '密钥模型映射无效',
+    'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
+      '密钥映射会覆盖渠道中相同来源模型的规则，其他规则继承渠道配置。清空此列表可恢复继承。',
     'Deployment default': '部署默认值',
     'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.':
       '留空时使用部署默认值：依次采用环境设置、构建默认值，最后使用 {{repository}}。',
@@ -191,6 +199,10 @@ const newKeys = {
     'Previous-period coverage is incomplete; comparisons may be affected.':
       '上一週期的統計涵蓋範圍不完整，比較結果可能受影響。',
     'No verified usage data available': '暫無已核實的用量資料',
+    'Restore inheritance': '恢復繼承',
+    'Invalid key model mapping': '金鑰模型對應無效',
+    'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
+      '金鑰對應會覆寫通道中相同來源模型的規則，其他規則繼承通道設定。清除此清單可恢復繼承。',
     'Deployment default': '部署預設值',
     'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.':
       '留空時使用部署預設值：依序採用環境設定、建置預設值，最後使用 {{repository}}。',
@@ -274,6 +286,10 @@ const newKeys = {
       'La couverture de la période précédente est incomplète ; les comparaisons peuvent être affectées.',
     'No verified usage data available':
       'Aucune donnée d’utilisation vérifiée disponible',
+    'Restore inheritance': 'Rétablir l’héritage',
+    'Invalid key model mapping': 'Correspondance de modèles de la clé invalide',
+    'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
+      'La correspondance de la clé remplace la règle du canal pour le même modèle source. Les autres règles sont héritées du canal. Videz cette liste pour rétablir l’héritage.',
     'Deployment default': 'Valeur du déploiement',
     'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.':
       'Laissez vide pour utiliser la valeur du déploiement : paramètre d’environnement, puis valeur de compilation, puis {{repository}}.',
@@ -369,6 +385,10 @@ const newKeys = {
     'Previous-period coverage is incomplete; comparisons may be affected.':
       '前期間の集計対象が不完全なため、比較に影響する可能性があります。',
     'No verified usage data available': '検証済みの使用量データがありません',
+    'Restore inheritance': '継承に戻す',
+    'Invalid key model mapping': 'キーのモデルマッピングが無効です',
+    'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
+      'キーのマッピングは、同じ元モデルに対するチャネルのルールを上書きします。他のルールはチャネルから継承されます。このリストを空にすると継承に戻ります。',
     'Deployment default': 'デプロイの既定値',
     'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.':
       '空欄の場合、環境設定、ビルド時の既定値、{{repository}} の順に適用します。',
@@ -465,6 +485,10 @@ const newKeys = {
       'Данные за предыдущий период неполные; это может повлиять на сравнение.',
     'No verified usage data available':
       'Нет проверенных данных об использовании',
+    'Restore inheritance': 'Восстановить наследование',
+    'Invalid key model mapping': 'Недопустимое сопоставление моделей ключа',
+    'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
+      'Сопоставление ключа заменяет правило канала для той же исходной модели. Остальные правила наследуются от канала. Очистите список, чтобы восстановить наследование.',
     'Deployment default': 'По умолчанию для установки',
     'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.':
       'Оставьте пустым для значения по умолчанию: сначала настройка окружения, затем значение сборки, затем {{repository}}.',
@@ -560,6 +584,10 @@ const newKeys = {
       'Dữ liệu của kỳ trước chưa đầy đủ; kết quả so sánh có thể bị ảnh hưởng.',
     'No verified usage data available':
       'Chưa có dữ liệu sử dụng đã được xác minh',
+    'Restore inheritance': 'Khôi phục kế thừa',
+    'Invalid key model mapping': 'Ánh xạ mô hình của khóa không hợp lệ',
+    'Key mapping overrides the same source rule on the channel. Other rules inherit from the channel. Clear this list to restore inheritance.':
+      'Ánh xạ của khóa ghi đè quy tắc của kênh cho cùng mô hình nguồn. Các quy tắc khác được kế thừa từ kênh. Xóa danh sách này để khôi phục kế thừa.',
     'Deployment default': 'Mặc định của bản triển khai',
     'Leave blank to use the deployment default: environment setting, then build default, then {{repository}}.':
       'Để trống để dùng mặc định của bản triển khai: thiết lập môi trường, rồi mặc định khi biên dịch, cuối cùng là {{repository}}.',

@@ -96,8 +96,9 @@ type ChannelInfo struct {
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
 	// 每个key可用的模型，key index -> models；缺失或空表示该key可用渠道全部模型
-	MultiKeyModels     map[int][]string `json:"multi_key_models,omitempty"`
-	MultiKeyScopeModes map[int]string   `json:"multi_key_scope_modes,omitempty"`
+	MultiKeyModels        map[int][]string `json:"multi_key_models,omitempty"`
+	MultiKeyModelMappings map[int]string   `json:"multi_key_model_mappings,omitempty"`
+	MultiKeyScopeModes    map[int]string   `json:"multi_key_scope_modes,omitempty"`
 	// 独占某个key的用户，key index -> user id；缺失或0表示公共key
 	MultiKeyUsers map[int]int `json:"multi_key_users,omitempty"`
 	// ModelUnavailable records upstream refusals that named a model as
@@ -294,7 +295,7 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int, exclu
 			return "", 0, types.NewError(errors.New("no enabled key serves this request"), types.ErrorCodeChannelKeyScopeUnsatisfied)
 		}
 		if len(channel.ChannelInfo.ModelUnavailable) > 0 {
-			if upstreamModel, ok := channel.RoutingUpstreamModelName(modelName); ok && channel.keyModelUnavailable(0, upstreamModel) {
+			if upstreamModel, ok := channel.RoutingUpstreamModelNameForKey(0, modelName); ok && channel.keyModelUnavailable(0, upstreamModel) {
 				return "", 0, types.NewError(errors.New("no enabled key serves this request"), types.ErrorCodeChannelKeyScopeUnsatisfied, types.ErrOptionWithStatusCode(http.StatusServiceUnavailable))
 			}
 		}
@@ -329,12 +330,6 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int, exclu
 	// A key recorded as unable to serve the model upstream is skipped, so a
 	// retry uses another key of the same channel instead of repeating the
 	// refusal.
-	upstreamModel := ""
-	if len(channel.ChannelInfo.ModelUnavailable) > 0 {
-		if resolved, ok := channel.RoutingUpstreamModelName(modelName); ok {
-			upstreamModel = resolved
-		}
-	}
 	enabledIdx := make([]int, 0, len(keys))
 	candidates := make([]int, 0, len(keys))
 	boundIdx := make([]int, 0, len(keys))
@@ -346,8 +341,11 @@ func (channel *Channel) GetNextEnabledKeyFor(modelName string, userId int, exclu
 		if !entryEligible(i) || !channel.KeyServesModel(i, modelName) {
 			continue
 		}
-		if channel.keyModelUnavailable(i, upstreamModel) {
-			continue
+		if len(channel.ChannelInfo.ModelUnavailable) > 0 {
+			upstreamModel, _ := channel.RoutingUpstreamModelNameForKey(i, modelName)
+			if channel.keyModelUnavailable(i, upstreamModel) {
+				continue
+			}
 		}
 		owner := channel.ChannelInfo.MultiKeyUsers[i]
 		if userId > 0 && owner != 0 && owner != userId {
@@ -433,24 +431,24 @@ func (channel *Channel) KeyServesModel(idx int, modelName string) bool {
 	scope := channel.ChannelInfo.MultiKeyModels[idx]
 	if mode := channel.ChannelInfo.MultiKeyScopeModes[idx]; mode != "" {
 		if mode == "allowlist" {
-			return channel.keyScopeServesModel(scope, modelName)
+			return channel.keyScopeServesModel(idx, scope, modelName)
 		}
 		return mode == "all"
 	}
-	return len(scope) == 0 || channel.keyScopeServesModel(scope, modelName)
+	return len(scope) == 0 || channel.keyScopeServesModel(idx, scope, modelName)
 }
 
 // keyScopeServesModel matches an allocation's upstream capability without
 // changing the request namespace used by channel, token or group authorization.
 // Direct aliases remain supported; only the final mapped target is a fallback.
-func (channel *Channel) keyScopeServesModel(scope []string, modelName string) bool {
+func (channel *Channel) keyScopeServesModel(index int, scope []string, modelName string) bool {
 	if len(scope) == 0 {
 		return false
 	}
 	if slices.Contains(scope, modelName) {
 		return true
 	}
-	upstreamModel, ok := channel.RoutingUpstreamModelName(modelName)
+	upstreamModel, ok := channel.RoutingUpstreamModelNameForKey(index, modelName)
 	return ok && upstreamModel != modelName && slices.Contains(scope, upstreamModel)
 }
 
@@ -514,6 +512,41 @@ func (channel *Channel) RoutingUpstreamModelName(modelName string) (string, bool
 	return upstream, true
 }
 
+// GetModelMappingForKey overlays only the selected allocation's source rules.
+// No override inherits the channel mapping byte-for-byte. Never mutate either
+// stored map while building an attempt snapshot.
+func (channel *Channel) GetModelMappingForKey(index int) (string, error) {
+	override := strings.TrimSpace(channel.ChannelInfo.MultiKeyModelMappings[index])
+	if override == "" || override == "{}" {
+		return channel.GetModelMapping(), nil
+	}
+	mapping := map[string]string{}
+	if inherited := strings.TrimSpace(channel.GetModelMapping()); inherited != "" {
+		if common.UnmarshalJsonStr(inherited, &mapping) != nil || mapping == nil {
+			return "", errors.New("Invalid key model mapping")
+		}
+	}
+	var keyMapping map[string]string
+	if common.UnmarshalJsonStr(override, &keyMapping) != nil || keyMapping == nil {
+		return "", errors.New("Invalid key model mapping")
+	}
+	maps.Copy(mapping, keyMapping)
+	encoded, err := common.Marshal(mapping)
+	return string(encoded), err
+}
+
+// RoutingUpstreamModelNameForKey shares the relay-compatible chain resolver,
+// but applies the selected Key's exact-source overrides first.
+func (channel *Channel) RoutingUpstreamModelNameForKey(index int, modelName string) (string, bool) {
+	mapping, err := channel.GetModelMappingForKey(index)
+	if err != nil {
+		return "", false
+	}
+	candidate := *channel
+	candidate.ModelMapping = &mapping
+	return candidate.RoutingUpstreamModelName(modelName)
+}
+
 // keyEnabled reports whether the key at idx is enabled. A single-key channel
 // carries the channel status instead of a per-key status.
 func (channel *Channel) keyEnabled(idx int) bool {
@@ -553,19 +586,6 @@ func (channel *Channel) ModelUnavailableForServingKeys(modelName string, userIDs
 	if len(channel.ChannelInfo.ModelUnavailable) == 0 || modelName == "" {
 		return false
 	}
-	upstreamModel, ok := channel.RoutingUpstreamModelName(modelName)
-	if !ok || upstreamModel == "" {
-		return false
-	}
-	marked := make(map[string]struct{}, len(channel.ChannelInfo.ModelUnavailable))
-	for _, entry := range channel.ChannelInfo.ModelUnavailable {
-		if entry.UpstreamModel == upstreamModel {
-			marked[entry.KeyFingerprint] = struct{}{}
-		}
-	}
-	if len(marked) == 0 {
-		return false
-	}
 	keys := channel.GetKeys()
 	serving := 0
 	for i := range keys {
@@ -579,7 +599,8 @@ func (channel *Channel) ModelUnavailableForServingKeys(modelName string, userIDs
 			}
 		}
 		serving++
-		if _, ok := marked[ChannelKeyFingerprint(keys[i])]; !ok {
+		upstreamModel, ok := channel.RoutingUpstreamModelNameForKey(i, modelName)
+		if !ok || !channel.keyModelUnavailable(i, upstreamModel) {
 			return false
 		}
 	}
@@ -603,12 +624,21 @@ func channelServesConfiguredModel(channel *Channel, modelName string) bool {
 // replaced or disabled key, a changed mapping, a disabled channel, a model the
 // channel no longer serves, or a mapping that now resolves a different model
 // than the attempt sent. attemptMapping is the raw model mapping the failed
-// attempt used and attemptedUpstreamModel the model that attempt sent. It
-// reports whether it wrote.
-func RecordChannelModelUnavailability(channelID int, originModel, key, attemptMapping, attemptedUpstreamModel string, statusCode int, evidence string) (bool, error) {
+// attempt used and attemptedUpstreamModel the model that attempt sent. A supplied
+// allocation identifies the selected stable row and its configuration revision;
+// credential-only legacy callers must match exactly one current allocation.
+// Reports whether it wrote.
+func RecordChannelModelUnavailability(channelID int, originModel, key, attemptMapping, attemptedUpstreamModel string, statusCode int, evidence string, selected ...ChannelAllocation) (bool, error) {
 	fingerprint := ChannelKeyFingerprint(key)
-	if channelID <= 0 || originModel == "" || fingerprint == "" {
+	if channelID <= 0 || originModel == "" || fingerprint == "" || len(selected) > 1 {
 		return false, nil
+	}
+	var allocation ChannelAllocation
+	if len(selected) == 1 {
+		allocation = selected[0]
+		if allocation.ChannelID != channelID || allocation.EntryID <= 0 || allocation.Revision <= 0 {
+			return false, nil
+		}
 	}
 	pollingLock := GetChannelPollingLock(channelID)
 	pollingLock.Lock()
@@ -616,26 +646,41 @@ func RecordChannelModelUnavailability(channelID int, originModel, key, attemptMa
 	written := false
 	_, err := UpdateChannelLocked(channelID, func(channel *Channel) error {
 		written = false
-		if channel.Status != common.ChannelStatusEnabled || channel.GetModelMapping() != attemptMapping {
+		if channel.Status != common.ChannelStatusEnabled {
 			return nil
 		}
 		if !channelServesConfiguredModel(channel, originModel) {
 			return nil
 		}
-		upstreamModel, ok := channel.RoutingUpstreamModelName(originModel)
-		if !ok || upstreamModel == "" || len(upstreamModel) > channelModelUnavailableMaxModelLength {
-			return nil
-		}
-		// A mapping that now resolves another model than the attempt sent would
-		// mark a different alias, so nothing is recorded.
-		if attemptedUpstreamModel != "" && upstreamModel != attemptedUpstreamModel {
-			return nil
-		}
 		keys := channel.GetKeys()
-		index := slices.IndexFunc(keys, func(candidate string) bool {
-			return ChannelKeyFingerprint(candidate) == fingerprint
-		})
+		index := -1
+		if len(selected) == 1 {
+			index = slices.Index(channel.KeyEntryIDs, allocation.EntryID)
+			if index < 0 || index >= len(keys) || index >= len(channel.KeyEntryRevisions) ||
+				channel.KeyEntryRevisions[index] != allocation.Revision || ChannelKeyFingerprint(keys[index]) != fingerprint {
+				return nil
+			}
+		} else {
+			for i, candidate := range keys {
+				if ChannelKeyFingerprint(candidate) != fingerprint {
+					continue
+				}
+				if index >= 0 {
+					return nil // identical credential text cannot identify an allocation
+				}
+				index = i
+			}
+		}
 		if index < 0 || !channel.keyEnabled(index) || !channel.KeyServesModel(index, originModel) {
+			return nil
+		}
+		mapping, err := channel.GetModelMappingForKey(index)
+		if err != nil || mapping != attemptMapping {
+			return nil
+		}
+		upstreamModel, ok := channel.RoutingUpstreamModelNameForKey(index, originModel)
+		if !ok || upstreamModel == "" || len(upstreamModel) > channelModelUnavailableMaxModelLength ||
+			attemptedUpstreamModel != "" && upstreamModel != attemptedUpstreamModel {
 			return nil
 		}
 		channel.ChannelInfo.ModelUnavailable = appendChannelModelUnavailability(channel.ChannelInfo.ModelUnavailable, ChannelModelUnavailability{
@@ -784,8 +829,8 @@ func (channel *Channel) UserBoundModels(userId int) []string {
 	}
 	var models []string
 	for _, modelName := range channel.GetModels() {
-		upstreamModel, _ := channel.RoutingUpstreamModelName(modelName)
 		for _, index := range bound {
+			upstreamModel, _ := channel.RoutingUpstreamModelNameForKey(index, modelName)
 			if channel.KeyServesModel(index, modelName) && !channel.keyModelUnavailable(index, upstreamModel) {
 				models = append(models, modelName)
 				break

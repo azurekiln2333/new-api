@@ -199,3 +199,112 @@ Independent source review accepted the frozen mapped capability predicate, exist
 Public request identity, bound-user rules and empty allowlist denial remain intact while Key capability matching accepts the exact configured upstream mapping target. Startup repairs only affected derived ability rows for existing channels, including cache-disabled routing, and the new regression executes the actual migration twice. The existing three-database CI selector now includes `TestMultiKeyStatusRead*`; a dedicated SQLite/MySQL/PostgreSQL loop covers `TestRepairChannelMappedKeyAbilitiesUpgrade`. No local validation ran; database compatibility and runtime acceptance remain pending this exact captured tree's hosted checks. The reviewer noted that cancellation coverage currently targets the snapshot helper rather than the complete HTTP enrichment phase; source propagation was accepted.
 
 The separate UI hotfix PR #5 run `45873282970` has successful backend and frontend jobs at `2fd6fb27a`; integration remains running. R40 exact13 is now frozen and independently reviewing. R33 and R5 production remain with their owners until final freezes; no partial source is included in this hotfix.
+
+## R37 per-Key mapping implementation — 2026-11-27
+
+Owner w6E:p3 works only in this isolated checkout based on PR6 head9cb7f168f.
+Each stable allocation has an independent mapping list. Exact per-Key source
+rules override the same channel source; absent overrides inherit the channel
+mapping, and clearing overrides restores inheritance. Preserve public auth and
+billing identity, target spelling, revision conflict behavior, ordinary routing,
+manual diagnostic consistency and cross-node publication. Reuse the existing
+mapping editor and suitable suites. Source/schema/API boundary must be announced
+before edits; root integrates R36/R39/discovery overlaps after independent review.
+Same-key add coupling and per-Key discovered-model selection are separately owned.
+No local validation or Git/locale generation; hosted checks only.
+
+### Mapping takeover source freeze
+
+The later user requirement explicitly authorizes `ChannelKeyEntry.ModelMapping`
+TEXT; it supersedes the old no-column design. The native writer is stopped/frozen.
+This continuation uses only `D:/My2KProjects/new-api-key-mapping-20261127` for
+production/source reads and writes. The original `.agents/skills` was read only
+under the user's skills-only exception. No task creation or peer reset occurred.
+Full plugin API v1 and billing rules were read before the host copy fix.
+
+Saved fixes in this continuation:
+- `service/provider_plugin.go`: reindex and replace `MultiKeyModelMappings` while
+  filtering plugin credentials, beside the existing scopes/owners/status maps.
+- `model/channel_key_entry.go`: assign the normalized mapping before persistence;
+  validating and discarding the returned canonical value was insufficient.
+- `controller/channel-test.go`: the selected-Key unavailable-evidence resolver
+  also maps the single-Key diagnostic sentinel `-1` to allocation position `0`.
+- Existing suites extend plugin removal at leading/middle/trailing positions,
+  canonical stored mapping, shared diagnostic/automatic DTO mapping without
+  public-identity rewriting, invalid/cyclic rules, stable reorder/delete/clear,
+  discovery clone independence and mapping UI stable-ID Save/clear/late conflict.
+- `model/migration_dialector_test.go` adds fresh and reconstructed pre-column
+  upgrade coverage under the existing real SQLite/MySQL/PostgreSQL matrix,
+  twice each, preserving rows/indexes/PK and a mapping wider than 255 bytes.
+
+Exact production/test freeze paths (relative to the exclusive tree):
+
+```text
+model/channel.go
+model/channel_key_entry.go
+model/channel_budget.go
+model/migration_dialector_test.go
+controller/channel.go
+controller/channel_key_allocations.go
+controller/channel_upstream_update.go
+controller/channel-test.go
+controller/channel_multi_key_test.go
+controller/channel_upstream_update_test.go
+middleware/distributor.go
+relay/responses_websocket.go
+service/provider_plugin.go
+service/provider_plugin_test.go
+web/src/features/channels/api.ts
+web/src/features/channels/types.ts
+web/src/features/channels/components/dialogs/multi-key-manage-dialog.tsx
+web/src/features/channels/components/dialogs/multi-key-model-mapping-editor.tsx
+web/src/features/channels/components/dialogs/multi-key-table-row-actions.tsx
+web/src/features/channels/components/__tests__/multi-key-manage-dialog.test.tsx
+```
+
+Bookkeeping: this task addendum and
+`.trellis/spec/backend/database-guidelines.md`'s per-Key overlay/copy contract.
+Other saved native deltas are preserved, not rewritten from another tree.
+
+Hosted selectors for root (not executed here):
+- `go test -p 1 -count=1 -v ./service -run '^TestDropPluginCredentials$'`
+- `TEST_CHANNEL_SQL_DSN=<engine DSN> go test -p 1 -count=1 -v ./controller -run
+  '^(TestMultiKeyModelMappingFollowsStableKeyAndInheritsChannelRules|TestPinnedChannelTestKeyUsesKeyMappingForUnavailableEvidence|TestSingleKeyDiscoveryKeepsSelectedMappingAndChannelInheritance)$'`
+- `TEST_MYSQL_DSN=<DSN> TEST_POSTGRES_DSN=<DSN> go test -p 1 -count=1 -v ./model
+  -run '^TestMigrationSchemaStability$'`
+- Existing frontend multi-key-manage-dialog suite; mapping tests are named
+  `mapping Save targets only the selected stable Key; restore inheritance is explicit`
+  and `switching channels discards a mapping draft and ignores its late conflict`.
+- Full backend/frontend formatter, type/lint/build/test gates and merged
+  Responses WebSocket routing/revision cases still required in hosted CI.
+
+Integration blockers / limits:
+- The reconstructed old model is not actual latest-release startup evidence.
+  Root owns extending the released-binary probe to seed allocations and verify
+  fresh/released-upgrade/current-startup twice, recording exact engine versions.
+  The probe in this exclusive baseline still only seeds/verifies redemptions.
+- This mapping baseline lacks R36's `upstream_protocol` field. Root must merge
+  both additive columns and preserve protocol inheritance, stable IDs/revisions
+  and frozen URL at the same selected attempt. Never replace shared files whole.
+- `GetModelMappingForKey(index) (string,error)` is the public model contract.
+  There is no exported `SetSelectedChannelKeyContext`; the saved mapping hunk
+  belongs in private `middleware.setSelectedChannelKey`. WebSocket restoration
+  already uses the validated allocation position's mapping in this tree.
+- Fingerprint and discovery/manual-test owners received the contract over Herdr;
+  neither their source nor runtime worktrees were read or written. Root composes
+  shared channel/test/discovery/editor/API/types hunks, including the single-Key
+  sentinel correction. No fingerprint file changed here.
+- Three known keys remain root's hosted-only seven-locale responsibility:
+  `Restore inheritance`, `Invalid key model mapping`, and the complete existing
+  explanation beginning `Key mapping overrides the same source rule on the channel.`
+- Authentication/Session Management Cheat Sheets and ASVS 5.0.0 V8 authorization
+  guidance informed source review: server sensitive permission, stable allocation
+  checks, unchanged public identity and value-free audit stay authoritative.
+  Login/refresh/OAuth/session policy and plugin metadata were not changed; no
+  full ASVS compliance claim is made.
+
+**SOURCE FROZEN, not independently accepted or tested.** No local tests, builds,
+formatters, installs, database probes, Git/index/commit/push or locale writes ran.
+No exact database version/result, deployed feature or runtime compatibility is
+claimed. Root owns independent review, integration, hosted validation and release.
+

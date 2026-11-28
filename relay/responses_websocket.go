@@ -829,7 +829,11 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 	common.SetContextKey(c, appconstant.ContextKeyChannelSetting, channel.GetSetting())
 	common.SetContextKey(c, appconstant.ContextKeyChannelOtherSetting, otherSettings)
 	common.SetContextKey(c, appconstant.ContextKeyChannelParamOverride, channel.GetParamOverride())
-	common.SetContextKey(c, appconstant.ContextKeyChannelModelMapping, channel.GetModelMapping())
+	mapping, mappingErr := channel.GetModelMappingForKey(keyIndex)
+	if mappingErr != nil {
+		return types.NewError(mappingErr, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
+	}
+	common.SetContextKey(c, appconstant.ContextKeyChannelModelMapping, mapping)
 	common.SetContextKey(c, appconstant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 	policy := service.RequestPolicy(c)
 	policy.BeginAttempt(channel, s.lockedGroup)

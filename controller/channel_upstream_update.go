@@ -552,7 +552,7 @@ func acquireDiscoverySnapshot(ctx context.Context, channel *model.Channel, admis
 				lease.Release()
 				return nil, nil, fmt.Errorf("channel credential changed during model discovery")
 			}
-			fresh = newSingleKeyChannel(fresh, key)
+			fresh = newSingleKeyChannel(fresh, key, index)
 		}
 		fresh, err = applyChannelModelPreview(fresh, options.Preview)
 		if err != nil {
@@ -658,7 +658,7 @@ func fetchChannelUpstreamModelIDsWithAdmission(ctx context.Context, channel *mod
 			}
 			return normalizeModelNames(plugin.Meta.Models), nil
 		}
-		return fetchChannelUpstreamModelIDsSnapshot(ctx, newSingleKeyChannel(current, current.GetKeys()[*options.KeyIndex]), nil)
+		return fetchChannelUpstreamModelIDsSnapshot(ctx, newSingleKeyChannel(current, current.GetKeys()[*options.KeyIndex], *options.KeyIndex), nil)
 	}
 	if channel.ChannelInfo.IsMultiKey {
 		return fetchEnabledMultiKeyModelUnion(ctx, channel, admission, options)
@@ -821,7 +821,7 @@ func fetchEnabledMultiKeyModelUnion(ctx context.Context, channel *model.Channel,
 			}
 		} else {
 			key := current.GetKeys()[keyIndex]
-			models, err = fetchChannelUpstreamModelIDsSnapshot(requestCtx, newSingleKeyChannel(current, key), nil)
+			models, err = fetchChannelUpstreamModelIDsSnapshot(requestCtx, newSingleKeyChannel(current, key, keyIndex), nil)
 		}
 		if lease != nil {
 			lease.Release()

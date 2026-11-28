@@ -43,6 +43,8 @@ const STATUS_RELATED_KEYS = new Set([
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'console_setting.sidebar_personal_settings_enabled',
+  'console_setting.announcements',
+  'console_setting.announcements_enabled',
   'Notice',
   'RegisterEnabled',
   'InviteRegisterEnabled',

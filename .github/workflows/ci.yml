@@ -268,7 +268,7 @@ jobs:
             fi
           done
 
-      - name: Verify fresh and latest-release startup twice with separate log stores
+      - name: Verify fresh and released statistics and allocation startup twice
         env:
           GH_TOKEN: ${{ github.token }}
           NODE_TYPE: master
@@ -397,7 +397,7 @@ jobs:
           actual = [tuple(line.split("\t")) for line in (output / "completed.tsv").read_text().splitlines()]
           if len(actual) != len(expected) or set(actual) != expected:
               raise SystemExit(f"Incomplete startup matrix: missing={expected - set(actual)}, unexpected={set(actual) - expected}")
-          report = {"scope": "usage event/projection/lineage/coverage/backfill physical schema; behavioral and end-to-end gates remain separate", "current_sha": current_sha, "released_sha": released_sha, "completed": sorted(actual)}
+          report = {"scope": "usage physical schema across all topologies and stable allocation/mapping/ledger/audit preservation on shared relational stores; behavioral gates remain separate", "current_sha": current_sha, "released_sha": released_sha, "completed": sorted(actual)}
           (output / "matrix-report.json").write_text(json.dumps(report, indent=2) + "\n")
           print(f"Verified {len(actual)} startup invocations, including both current startups in every fresh/upgrade topology")
           PY
@@ -498,7 +498,15 @@ jobs:
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
           for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
-            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^TestPlaygroundChannelNavigation(AuthorizationAndRouting|Projection)$'
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^TestPlaygroundChannelNavigation'
+          done
+
+      - name: Verify selected Key mapping on SQLite, MySQL and PostgreSQL
+        if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
+        run: |
+          go test -p 1 -count=1 -v ./service -run '^TestDropPluginCredentials$'
+          for CHANNEL_TEST_DSN in "" "$TEST_MYSQL_DSN" "$TEST_POSTGRES_DSN"; do
+            TEST_CHANNEL_SQL_DSN="$CHANNEL_TEST_DSN" go test -p 1 -count=1 -v ./controller -run '^(TestMultiKeyModelMappingFollowsStableKeyAndInheritsChannelRules|TestPinnedChannelTestKeyUsesKeyMappingForUnavailableEvidence|TestSingleKeyDiscoveryKeepsSelectedMappingAndChannelInheritance|TestDuplicateKeyModelUnavailabilityUsesSelectedAllocation|TestSingleKeyDiagnosticBusyRetryPreservesMappingAndAllocation)$'
           done
 
       - name: Verify console management credentials and policy reloads on MySQL and PostgreSQL
@@ -752,7 +760,7 @@ jobs:
       - name: Verify option batch writes and management settings on SQLite, MySQL and PostgreSQL
         if: ${{ !cancelled() && steps.integration_checkout.outcome == 'success' && steps.integration_setup_go.outcome == 'success' }}
         run: |
-          go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch'
+          go test -p 1 -count=1 -v ./model -run 'TestUpdateOptionPersistsAcrossDialects|TestUpdateOptionReportsWriteFailure|TestUpdateOptionsBulkIsAtomic|TestOrdinaryOptionsBatch|TestAnnouncement'
           for DIALECT in sqlite mysql postgres; do
             TEST_SECURITY_DIALECT=$DIALECT go test -p 1 -count=1 -v ./controller -run 'TestUpdateOptionRejectsNegativeClaudeDefaultMaxTokens|TestUpdateOptionRejectsInvalidGeminiSafetyThreshold|TestUpdateOptionsBatch|TestUpdateOptionAnnouncement'
           done
