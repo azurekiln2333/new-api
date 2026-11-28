@@ -388,10 +388,10 @@ func TestPlaygroundChannelNavigationProjectionUsesPerKeyMapping(t *testing.T) {
 		Models: "alias",
 		Key:    "pg-mapping-a\npg-mapping-b\npg-mapping-other\npg-mapping-empty",
 		ChannelInfo: model.ChannelInfo{
-			IsMultiKey:            true,
-			MultiKeySize:          4,
-			MultiKeyUsers:         map[int]int{2: rootID + 1},
-			MultiKeyScopeModes:    map[int]string{3: "allowlist"},
+			IsMultiKey:         true,
+			MultiKeySize:       4,
+			MultiKeyUsers:      map[int]int{2: rootID + 1},
+			MultiKeyScopeModes: map[int]string{3: "allowlist"},
 			MultiKeyModelMappings: map[int]string{
 				0: `{"alias":"upstream-a"}`,
 				1: `{"alias":"upstream-b"}`,
@@ -429,23 +429,13 @@ func TestPlaygroundChannelNavigationProjectionUsesPerKeyMapping(t *testing.T) {
 	}
 
 	markUnavailable(allocationA, mappingA, "upstream-a")
-	options, err := model.ListAvailableChannelModels(
-		t.Context(),
-		[]string{"default"},
-		rootID,
-		[]dto.ChannelFilter{{Kind: dto.FilterRequestPath, RequestPath: "/pg/chat/completions"}},
-	)
+	options, err := service.ListPlaygroundChannels(t.Context(), rootID, "default", "default")
 	require.NoError(t, err)
 	require.Len(t, options, 1)
 	assert.Equal(t, []string{"alias"}, options[0].Models, "Key B keeps the public alias after only Key A becomes unavailable")
 
 	markUnavailable(allocationB, mappingB, "upstream-b")
-	options, err = model.ListAvailableChannelModels(
-		t.Context(),
-		[]string{"default"},
-		rootID,
-		[]dto.ChannelFilter{{Kind: dto.FilterRequestPath, RequestPath: "/pg/chat/completions"}},
-	)
+	options, err = service.ListPlaygroundChannels(t.Context(), rootID, "default", "default")
 	require.NoError(t, err)
 	assert.Empty(t, options, "another user's Key and an explicit empty allowlist cannot rescue unavailable public Keys")
 }
