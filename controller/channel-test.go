@@ -452,7 +452,7 @@ func (key *pinnedChannelTestKey) stillServes(channel *model.Channel, testModel s
 	if explicit {
 		return true // named recovery tests deliberately bypass key health observations
 	}
-	upstreamModel, _ := channel.RoutingUpstreamModelName(testModel)
+	upstreamModel, _ := channel.RoutingUpstreamModelNameForKey(max(key.index, 0), testModel)
 	fingerprint := model.ChannelKeyFingerprint(key.value)
 	return !slices.ContainsFunc(channel.ChannelInfo.ModelUnavailable, func(entry model.ChannelModelUnavailability) bool {
 		return entry.KeyFingerprint == fingerprint && entry.UpstreamModel == upstreamModel

@@ -38,6 +38,8 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -575,6 +577,12 @@ export interface ModelGroupSelectorProps {
   groups: GroupOption[]
   onGroupChange: (value: string) => void
   channels?: { label: string; value: number }[]
+  channelOptions?: {
+    channels: { label: string; value: number }[]
+    isPending: boolean
+    error?: string
+    onRetry: () => void
+  }
   selectedChannel?: number
   onChannelChange?: (value: number | undefined) => void
   // Common props
@@ -594,6 +602,7 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
   groups,
   onGroupChange,
   channels,
+  channelOptions,
   selectedChannel,
   onChannelChange,
   className,
@@ -605,8 +614,10 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
   const [navigation, setNavigation] = useState<'groups' | 'channels'>(
     selectedChannel ? 'channels' : 'groups'
   )
-  const showChannels = channels !== undefined && navigation === 'channels'
-  const currentChannel = channels?.find(
+  const availableChannels = channelOptions?.channels ?? channels
+  const showChannels =
+    availableChannels !== undefined && navigation === 'channels'
+  const currentChannel = availableChannels?.find(
     (channel) => channel.value === selectedChannel
   )
   const isMobile = useIsMobile()
@@ -718,7 +729,7 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
         !isMobile && modelGroupSelectorLayoutClasses.groupColumn
       )}
     >
-      {channels !== undefined && onChannelChange ? (
+      {availableChannels !== undefined && onChannelChange ? (
         <ToggleGroup
           aria-label={t('Model navigation')}
           className='w-full'
@@ -752,7 +763,7 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
         ref={groupScrollContainerRef}
       >
         {showChannels
-          ? channels.map((channel) => (
+          ? availableChannels.map((channel) => (
               <Button
                 aria-pressed={selectedChannel === channel.value}
                 className='h-auto min-w-0 justify-between px-2.5 py-2 text-left text-xs'
@@ -809,11 +820,30 @@ export const ModelGroupSelector: React.FC<ModelGroupSelectorProps> = ({
                 </button>
               )
             })}
-        {showChannels && channels.length === 0 && (
-          <p className='text-muted-foreground px-2 py-3 text-xs'>
-            {t('No channels available')}
-          </p>
+        {showChannels && channelOptions?.isPending && (
+          <div className='px-2 py-3' role='status'>
+            <LoadingState inline message={t('Loading...')} size='sm' />
+          </div>
         )}
+        {showChannels &&
+          !channelOptions?.isPending &&
+          channelOptions?.error !== undefined && (
+            <div role='alert'>
+              <ErrorState
+                className='min-h-0 gap-2 p-2'
+                title={channelOptions.error}
+                onRetry={channelOptions.onRetry}
+              />
+            </div>
+          )}
+        {showChannels &&
+          !channelOptions?.isPending &&
+          channelOptions?.error === undefined &&
+          availableChannels.length === 0 && (
+            <p className='text-muted-foreground px-2 py-3 text-xs'>
+              {t('No channels available')}
+            </p>
+          )}
       </div>
     </div>
   )

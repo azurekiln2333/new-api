@@ -51,17 +51,25 @@ func ReadChannelBudget(ctx context.Context, scope ChannelBudgetScopeType, scopeI
 }
 
 func ReadChannelBudgetViews(ctx context.Context, scope ChannelBudgetScopeType, ids []int64) (map[int64]*ChannelBudgetView, error) {
+	views, _, err := ReadChannelBudgetViewsWithActivation(ctx, scope, ids)
+	return views, err
+}
+
+// ReadChannelBudgetViewsWithActivation returns the same activation observation
+// used by every view, including an empty page. Callers must propagate its error
+// instead of treating failed activation reads as a disabled or unlimited ledger.
+func ReadChannelBudgetViewsWithActivation(ctx context.Context, scope ChannelBudgetScopeType, ids []int64) (map[int64]*ChannelBudgetView, bool, error) {
 	if _, err := normalizeBudgetScope(scope); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	active, err := channelBudgetActivation(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	views := make(map[int64]*ChannelBudgetView, len(ids))
 	for _, id := range ids {
 		if id <= 0 {
-			return nil, ErrBudgetConfigInvalid
+			return nil, false, ErrBudgetConfigInvalid
 		}
 		views[id] = &ChannelBudgetView{ScopeType: scope, ScopeId: id, LedgerEnabled: active}
 		if scope == BudgetScopeChannel {
@@ -69,16 +77,16 @@ func ReadChannelBudgetViews(ctx context.Context, scope ChannelBudgetScopeType, i
 		}
 	}
 	if len(ids) == 0 {
-		return views, nil
+		return views, active, nil
 	}
 	var accounts []ChannelBudgetAccount
 	if err := dbWithContext(ctx).Where("scope_type = ? AND scope_id IN ?", scope, ids).Find(&accounts).Error; err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for i := range accounts {
 		views[accounts[i].ScopeId] = newBudgetView(&accounts[i], active)
 	}
-	return views, nil
+	return views, active, nil
 }
 
 func ListChannelBudgetViews(ctx context.Context, channelIDs []int) (map[int]*ChannelBudgetView, error) {

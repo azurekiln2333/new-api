@@ -51,6 +51,7 @@ interface PlaygroundInputProps {
   groupValue: string
   onGroupChange: (value: string) => void
   channels?: ModelGroupSelectorProps['channels']
+  channelOptions?: ModelGroupSelectorProps['channelOptions']
   channelValue?: number
   onChannelChange?: ModelGroupSelectorProps['onChannelChange']
   canSend?: boolean
@@ -82,6 +83,7 @@ export function PlaygroundInput({
   groupValue,
   onGroupChange,
   channels,
+  channelOptions,
   channelValue,
   onChannelChange,
   canSend = true,
@@ -135,6 +137,7 @@ export function PlaygroundInput({
         <PromptInputFooter className='border-border/60 bg-muted/20 dark:bg-muted/10 border-t px-3 py-2.5 backdrop-blur'>
           <PlaygroundInputControls
             channels={channels}
+            channelOptions={channelOptions}
             channelValue={channelValue}
             onChannelChange={onChannelChange}
             canSend={canSend}

@@ -177,7 +177,7 @@ func TestChannelBoundIndexNoCacheReloadRejectsStaleSnapshot(t *testing.T) {
 	}
 	require.NoError(t, channel.Insert())
 	t.Cleanup(func() { _, _ = model.BatchDeleteChannels([]int{channel.Id}) })
-	model.InitChannelCache()
+	require.NoError(t, model.ReloadChannelCache(t.Context()))
 	// Positive control: the binding is indexed before the interleaving, so the
 	// assertion below fails for the right reason rather than because the probe
 	// never observed anything.
@@ -194,12 +194,14 @@ func TestChannelBoundIndexNoCacheReloadRejectsStaleSnapshot(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, model.UserBoundChannelIDs(boundUser), "the committed write removes the binding before the stale reload resumes")
-	resumeReload()
+	require.EqualError(t, resumeReload(), "discarded a stale user bound index refresh")
 
 	// The reload was stale: the removed binding must not come back. Reading the
 	// index directly is the precise probe; a stale publish would restore the id.
 	assert.Empty(t, model.UserBoundChannelIDs(boundUser),
 		"a stale reload must not republish bindings that a newer write removed")
+	require.NoError(t, model.ReloadChannelCache(t.Context()), "a fresh retry can be acknowledged")
+	assert.Empty(t, model.UserBoundChannelIDs(boundUser))
 }
 
 // TestChannelCacheReloadRejectsStaleSnapshot pins the stale-reload guard: a full
@@ -226,7 +228,7 @@ func TestChannelCacheReloadRejectsStaleSnapshot(t *testing.T) {
 	t.Cleanup(func() { _, _ = model.BatchDeleteChannels([]int{channel.Id}) })
 
 	// Establish the pre-interleaving routing snapshot.
-	model.InitChannelCache()
+	require.NoError(t, model.ReloadChannelCache(t.Context()))
 	initial, err := model.GetRandomSatisfiedChannel("default", staleModel, 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, initial, "the initial routing snapshot must contain the channel")
@@ -246,7 +248,7 @@ func TestChannelCacheReloadRejectsStaleSnapshot(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	resumeReload()
+	require.EqualError(t, resumeReload(), "discarded a stale channel cache reload")
 
 	// The resumed reload held an older snapshot and must have discarded it, so the
 	// replaced model stays unroutable and the newer committed routing survives.
@@ -257,13 +259,14 @@ func TestChannelCacheReloadRejectsStaleSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, fresh, "the newer committed routing must survive the stale reload")
 	assert.Equal(t, channel.Id, fresh.Id)
+	require.NoError(t, model.ReloadChannelCache(t.Context()), "a fresh retry can be acknowledged")
 }
 
 // pauseChannelCacheReload holds a real reload after both its channel rows and
 // authoritative allocations have been read. Pausing only the channel query lets
 // the resumed projection read newer bindings, which would hide a stale publish.
 // Cleanup always releases and joins the reload, including after a fatal assertion.
-func pauseChannelCacheReload(t *testing.T, channelID int) func() {
+func pauseChannelCacheReload(t *testing.T, channelID int) func() error {
 	t.Helper()
 	const callback = "test:channel-cache-allocation-snapshot"
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -271,6 +274,7 @@ func pauseChannelCacheReload(t *testing.T, channelID int) func() {
 	loaded := make(chan struct{})
 	release := make(chan struct{})
 	reloadDone := make(chan struct{})
+	var reloadErr error
 	var interceptOnce, releaseOnce sync.Once
 	database := model.DB
 	require.NoError(t, database.Callback().Query().After("gorm:after_query").Register(callback, func(tx *gorm.DB) {
@@ -299,7 +303,7 @@ func pauseChannelCacheReload(t *testing.T, channelID int) func() {
 		case <-ctx.Done():
 		}
 	}))
-	resume := func() {
+	resume := func() error {
 		t.Helper()
 		releaseOnce.Do(func() { close(release) })
 		select {
@@ -307,14 +311,15 @@ func pauseChannelCacheReload(t *testing.T, channelID int) func() {
 		case <-time.After(10 * time.Second):
 			t.Fatal("channel cache reload did not finish after releasing its snapshot")
 		}
+		return reloadErr
 	}
 	t.Cleanup(func() {
 		defer func() { assert.NoError(t, database.Callback().Query().Remove(callback)) }()
-		resume()
+		_ = resume()
 	})
 	go func() {
 		defer close(reloadDone)
-		model.InitChannelCache()
+		reloadErr = model.ReloadChannelCache(ctx)
 	}()
 	select {
 	case <-loaded:

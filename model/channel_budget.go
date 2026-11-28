@@ -275,6 +275,7 @@ type BudgetMergeRequest struct {
 type budgetKeyAllocation struct {
 	Id             int64  `gorm:"column:id;primaryKey"`
 	ChannelId      int    `gorm:"column:channel_id"`
+	Position       int    `gorm:"column:position"`
 	BoundUserId    int    `gorm:"column:bound_user_id"`
 	Status         int    `gorm:"column:status"`
 	ConfigRevision int64  `gorm:"column:config_revision"`
@@ -432,7 +433,14 @@ func budgetLookupAllocation(tx *gorm.DB, selection BudgetSelection) (*budgetKeyA
 	case "all", "":
 	case "allowlist":
 		var models []string
-		if common.UnmarshalJsonStr(allocation.Models, &models) != nil || !budgetScopeServesModel(models, selection.ModelName, selection.CatalogModelName) {
+		if common.UnmarshalJsonStr(allocation.Models, &models) != nil {
+			return nil, ErrBudgetAllocationInvalid
+		}
+		// Catalog identity remains exact after request/canonical admission above.
+		// A stable Key may additionally authorize its effective upstream mapping;
+		// that capability does not widen channel, token or group identity.
+		if !budgetScopeServesModel(models, selection.ModelName, selection.CatalogModelName) &&
+			!channel.keyScopeServesModel(allocation.Position, models, selection.ModelName) {
 			return nil, ErrBudgetAllocationInvalid
 		}
 	default:

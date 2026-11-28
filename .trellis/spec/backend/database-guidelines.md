@@ -402,6 +402,181 @@ then retain the existing validated transaction and cache publication.
 
 ---
 
+## Multi-Key status reads and mapped capabilities
+
+### 1. Scope / Trigger
+
+Key-list performance changes must preserve a coherent configuration/allocation
+snapshot. Mapping fixes must also repair persisted routing for existing channels
+when in-memory routing is disabled.
+
+### 2. Signatures
+
+- `ReadChannelKeyEntriesSnapshot(ctx, channelID)` reads authoritative allocations.
+- `ReadChannelBudgetViewsWithActivation(ctx, scope, ids)` returns views and the
+  same activation observation used to construct them.
+- `RepairChannelMappedKeyAbilities(ctx)` runs after `MigrateChannelKeyEntries`.
+- `POST /api/channel/multi_key/manage` with `action=get_key_status` caps
+  `page_size` at 100 and enriches only the selected page.
+
+### 3. Contracts
+
+Read channel and allocation rows in one short transaction, using the owning row
+lock on MySQL/PostgreSQL and a read snapshot on SQLite. Keep the transaction out
+of budget and username enrichment, and do not hold the process polling mutex
+over those reads. Only an unmigrated channel may trigger allocation migration.
+Read page budgets once and bound usernames in one batch. Activation/account
+errors remain errors; username display lookup remains best-effort. Cancellation
+must propagate through database reads and must not return a successful list.
+
+The request model remains the public authorization identity. A Key allowlist
+may match that exact identity or its final configured upstream mapping target;
+mapping does not add the upstream-only name to the public catalog or relax
+token/group rules. Empty explicit allowlists deny all. Budget admission must use
+the same capability rule. Preserve exact spelling through the mapping chain.
+
+Startup repair scans mapped channel IDs in bounded batches, locks/reloads each
+affected channel with authoritative allocations, and updates only its derived
+abilities if they differ. Retain configuration, allocation IDs/revisions,
+budgets and unrelated channels. A second startup must perform no extra ability
+rewrite. Do not use a global abilities-table wipe for this upgrade.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Migrated status read | No allocation reconciliation or publication |
+| Requested page exceeds 100 rows | Return a page of at most 100 |
+| Activation/account read fails | Error, never invented unlimited quota |
+| Username lookup fails | Keep authoritative row with empty display name |
+| Key allows `DeepSeek-R1`, channel maps `deepseek-r1` to it | Public alias is eligible |
+| Key allowlist is empty, unrelated, or bound to another user | Preserve denial |
+| Existing uncached channel lacks its mapped alias ability | Repair on startup |
+
+### 5. Good / Base / Bad Cases
+
+Good: derive the Key preview and quota for the requested page while retaining
+whole-channel status counts. Base: an unscoped Key still serves the channel's
+authorized catalog. Bad: iterate username reads per row, or repair only the
+in-memory map and leave uncached upgraded installations unable to route.
+
+### 6. Tests Required
+
+`TestMultiKeyStatusRead*` covers query amplification, page/filter bounds, stable
+identity, stale compatibility JSON, activation/account failures, legacy migration
+and cancellation. `TestChannelAllocationsMappedModelScope` covers request identity,
+exact upstream spelling, cached/uncached routing and budget admission.
+`TestRepairChannelMappedKeyAbilitiesUpgrade` seeds a missing old alias, executes
+the real migration twice and checks routing plus unchanged configuration/budgets.
+Run each affected database contract on real SQLite, MySQL and PostgreSQL in CI.
+Source query counts are not production latency measurements.
+
+### 7. Wrong vs Correct
+
+Wrong: match Key scope only against the public alias, then require the user to
+resave every old channel to restore database-backed routing.
+
+Correct: share the mapped capability predicate with budget admission and repair
+only affected derived abilities during the existing startup migration.
+
+---
+
+## Per-Key mapping overlays and allocation copies
+
+### 1. Scope / Trigger
+
+Apply to allocation mapping persistence, management actions, copied/discovery
+channels, routing capability checks and diagnostic or reusable-socket attempts.
+
+### 2. Signatures
+
+- `ChannelKeyEntry.ModelMapping string` is nullable `TEXT`; an empty legacy or
+  NULL value means inheritance. `channel_info.multi_key_model_mappings` is a
+  row-derived compatibility projection, never an independent mutation store.
+- `Channel.GetModelMappingForKey(index int) (string, error)` returns the effective
+  exact-source channel + selected-Key overlay.
+- `Channel.RoutingUpstreamModelNameForKey(index int, modelName string) (string, bool)`
+  resolves the same exact-spelling chain used by capability checks.
+- `POST /api/channel/multi_key/manage`, action `set_key_model_mapping`, requires
+  `channel_id`, canonical string `key_entry_id`, positive current `expected_rev`
+  and present string `model_mapping`. Response data is
+  `{revision, key_entry_id, rev, model_mapping}`. `get_key_status` returns each
+  row's override only, not the merged channel map.
+
+### 3. Contracts
+
+The later explicit per-Key requirement authorizes the additive column and
+supersedes an earlier no-column design. Empty string or empty object clears only
+that allocation's override. Exact Key source rules replace the corresponding
+channel rules; every other channel rule inherits. Preserve source/target case,
+public authorization/billing identity, scope mode, owner and stable ID/revision.
+Do not infer identity from credential text or preview.
+
+Normalize before writing: the persistence boundary must assign the normalized
+return value, not only check its error. Nonempty overrides are bounded to 64 KiB,
+256 rules and 256 bytes per nonempty source/target; reject invalid objects and
+cycles through the effective inherited mapping on the management action.
+
+`DropPluginCredentials` must reindex `MultiKeyModelMappings` together with models,
+explicit scope modes, owners and status metadata. Replace the mapping map even
+when no remaining Key overrides anything, so a removed credential's old index
+cannot become another Key's rule. A discovery-only single-Key clone remaps only
+the selected allocation's override to index zero; ad-hoc credentials inherit.
+Do not share a mutable projection map with the source.
+
+Bind the effective mapping only after selecting/validating the allocation. On
+WebSocket restoration, recover its current position by ID and verify revision
+before reading that position's mapping. A diagnostic single-Key pin uses index
+`-1` as a sentinel; the allocation projection still uses index `0`. Keep R36
+protocol inheritance and frozen attempt URL independent of mapping semantics.
+
+### 4. Validation & Error Matrix
+
+| Input / event | Required result |
+| --- | --- |
+| Override missing, cleared or legacy NULL | Inherit current channel rules |
+| Exact source override | Only that source rule changes; target spelling survives |
+| Invalid mapping / inherited cycle | Reject without revision or partial write |
+| Stale allocation revision | Conflict; do not save to its new neighbor |
+| Reorder/delete/plugin-credential filtering | Mapping stays with its stable allocation |
+| Late mapping Save/conflict after editor channel changes | Ignore it; never reload or overwrite the new editor |
+
+### 5. Good / Base / Bad Cases
+
+Good: a selected Key maps `alias` to `Key-Upstream`, while `shared` inherits the
+channel's target. Base: an old allocation without the new column inherits.
+Bad: removing index zero leaves its mapping on the static Key moved into zero.
+
+### 6. Tests Required
+
+Extend existing `TestDropPluginCredentials`,
+`TestMultiKeyModelMappingFollowsStableKeyAndInheritsChannelRules`,
+`TestPinnedChannelTestKeyUsesKeyMappingForUnavailableEvidence` and
+`TestSingleKeyDiscoveryKeepsSelectedMappingAndChannelInheritance`. Cover exact
+request DTO target + unchanged public identity, canonical SQL value, stale
+revision, invalid/cyclic rules, reorder/delete/clear and cache publication.
+The existing multi-key dialog suite covers stable-ID Save, explicit Restore
+inheritance and ignored obsolete conflict results using the shared editor.
+
+`TestMigrationSchemaStability/{sqlite,mysql,postgres}/channel_key_model_mapping`
+checks fresh and reconstructed pre-column schemas twice, retained rows/indexes,
+primary-key uniqueness and mapping text wider than 255 bytes. Missing external
+DSNs are skipped gates, not compatibility evidence. This reconstructed schema
+must be complemented by hosted startup from the actual latest release, then
+current migration twice, including R36's allocation protocol column when merged.
+No mapping-specific log-store change is introduced. All execution remains
+GitHub-hosted; source review is not a test, format or database pass.
+
+### 7. Wrong vs Correct
+
+Wrong: validate `normalizeKeyModelMapping(entry.ModelMapping)` but persist the
+original string; or compact Keys without compacting their mapping projection.
+
+Correct: assign the normalized value before SQL, and move each surviving Key's
+mapping into a new index-keyed map alongside its other allocation attributes.
+
+---
+
 ## Common Mistakes
 
 <!-- Database-related mistakes your team has made -->

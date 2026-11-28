@@ -155,6 +155,10 @@ func requireAdminUserProof(c *gin.Context, scope string, context any) *model.Aut
 }
 
 func UniversalVerify(c *gin.Context) {
+	if err := c.Request.Context().Err(); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		writeAccountStatusError(c, http.StatusUnauthorized, "The current sign-in method does not support security verification")
@@ -170,6 +174,34 @@ func UniversalVerify(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	recordUserSecurityAudit(c, identity.UserID, "user.security_verify", map[string]any{"method": proof.Method, "scope": proof.Scope})
+	writeSecurityProof(c, identity.UserID, proof, "")
+}
+
+// writeSecurityProof returns a verified proof only after its secret-free audit
+// obligation is durable. Every verification transport shares this boundary.
+func writeSecurityProof(c *gin.Context, userID int, proof *service.SecurityProof, provider string) {
+	params := map[string]any{"method": proof.Method, "scope": proof.Scope}
+	if provider != "" {
+		params["provider"] = provider
+	}
+	if c.GetBool("use_access_token") {
+		params["token_ref"] = c.GetString("access_token_ref")
+	}
+	// The proof must not leave the server until its secret-free audit is
+	// durable. Use the existing bounded outbox rather than an actor lookup
+	// and synchronous remote LOG_DB delivery on the verification critical path.
+	if err := model.RecordAuditLogDurable(c, model.AuditLog{
+		UserId: userID, ActorRole: c.GetInt("role"),
+		Category: model.AuditCategorySecurity, Action: "user.security_verify",
+		Content: auditContentEN("user.security_verify", params), Status: http.StatusOK, Success: true,
+		Other: model.AuditOther{Op: &model.AuditOperation{Action: "user.security_verify", Params: params}},
+	}); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if err := c.Request.Context().Err(); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
 	common.ApiSuccess(c, proof)
 }

@@ -221,6 +221,99 @@ it('downloads the streamed logs of the current filters as CSV', async () => {
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 })
 
+it.each(['all', 'self', 'others'])(
+  'exports the administrator %s row scope with the same filters and CSV columns',
+  async (scope) => {
+    const fetchSpy = mockExportResponse([
+      {
+        id: 1,
+        user_id: 7,
+        username: 'alice',
+        created_at: 1760000000,
+        type: 2,
+        content: '',
+        token_name: 'prod',
+        model_name: 'gpt-4o',
+        channel: 42,
+        channel_name: 'Primary',
+        quota: 0,
+        other: '',
+        request_id: 'req-scope',
+      },
+      { success: true, message: '', data: { count: 1 } },
+    ])
+    const user = userEvent.setup()
+    renderExport({
+      role: ROLE.ADMIN,
+      status: { log_export_enabled: false },
+      search: {
+        ...recentRange(),
+        user_scope: scope,
+        channel: '42',
+        username: 'alice',
+        group: 'premium',
+        model: 'gpt-4o',
+        match: 'exact',
+      },
+    })
+    await user.click(await screen.findByRole('button', { name: 'Export' }))
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Export' })
+    )
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1))
+    const [url] = fetchSpy.mock.calls[0]
+    expect(String(url)).toMatch(/^\/api\/log\/export\?/)
+    const params = new URL(String(url), 'http://localhost').searchParams
+    expect(Object.fromEntries(params)).toMatchObject({
+      user_scope: scope,
+      channel: '42',
+      username: 'alice',
+      group: 'premium',
+      model_name: 'gpt-4o',
+      match_mode: 'exact',
+    })
+    expect(params.has('p')).toBe(false)
+    expect(params.has('page_size')).toBe(false)
+    const csv = await createObjectURL.mock.calls[0][0].text()
+    const header = csv.split('\r\n')[0].replace(/^\uFEFF/, '')
+    expect(header).toBe(
+      '"Time","Type","User","Token","Group","Model","Channel","Stream","Input Tokens","Output Tokens","Cache Read","Cache Write","Cost","Duration","IP","Request ID","Details"'
+    )
+    expect(csv).toContain('"alice"')
+    expect(csv).toContain('"#42 Primary"')
+  }
+)
+
+it('keeps ordinary exports self-only and excludes administrator CSV columns despite a forged URL scope', async () => {
+  const fetchSpy = mockExportResponse([
+    { success: true, message: '', data: { count: 0 } },
+  ])
+  const user = userEvent.setup()
+  renderExport({
+    role: ROLE.USER,
+    search: {
+      ...recentRange(),
+      user_scope: 'others',
+      channel: '42',
+      username: 'bob',
+    },
+  })
+  await user.click(await screen.findByRole('button', { name: 'Export' }))
+  await user.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Export' })
+  )
+  await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1))
+  const [url] = fetchSpy.mock.calls[0]
+  expect(String(url)).toMatch(/^\/api\/log\/self\/export\?/)
+  const params = new URL(String(url), 'http://localhost').searchParams
+  expect(params.has('user_scope')).toBe(false)
+  expect(params.has('channel')).toBe(false)
+  expect(params.has('username')).toBe(false)
+  const csv = await createObjectURL.mock.calls[0][0].text()
+  expect(csv).not.toContain('"User"')
+  expect(csv).not.toContain('"Channel"')
+})
+
 it('reports a server refusal and keeps the dialog open without a download', async () => {
   mockExportResponse([
     {

@@ -85,26 +85,35 @@ func main() {
 		// for compatibility with old versions
 		common.MemoryCacheEnabled = true
 	}
+	// Every node keeps user bindings, even when routing reads bypass the cache.
 	if common.MemoryCacheEnabled {
 		common.SysLog(common.LogText("memory cache enabled"))
 		common.SysLog(common.LogText("sync frequency: %d seconds", common.SyncFrequency))
 
-		// Add panic recovery and retry for InitChannelCache
-		func() {
+		// Add panic recovery and retry for InitChannelCache.
+		cacheErr := func() (loadErr error) {
 			defer func() {
 				if r := recover(); r != nil {
 					common.SysLog(common.LogText("InitChannelCache panic: %v, retrying once", r))
-					// Retry once
+					// Retry once, checking publication after the ability repair.
 					_, _, fixErr := model.FixAbility()
 					if fixErr != nil {
 						common.FatalLog(common.LogText("InitChannelCache failed: %s", fixErr.Error()))
+						loadErr = fixErr
+						return
 					}
+					loadErr = model.ReloadChannelCache(context.Background())
 				}
 			}()
-			model.InitChannelCache()
+			return model.ReloadChannelCache(context.Background())
 		}()
+		if cacheErr != nil {
+			service.SyncTopicLoadFailed(model.SyncTopicChannels, cacheErr)
+		}
 
 		go model.SyncChannelCache(common.SyncFrequency)
+	} else if err := model.ReloadChannelCache(context.Background()); err != nil {
+		service.SyncTopicLoadFailed(model.SyncTopicChannels, err)
 	}
 	wsmanager.StartSubscriber(context.Background())
 
@@ -119,14 +128,15 @@ func main() {
 	// Every node reloads a topic within seconds of a write to it on any node.
 	// The periodic reloads below stay for writes that do not bump a topic.
 	service.RegisterSyncTopic(model.SyncTopicOptions, func(context.Context) error { return model.LoadOptionsFromDatabase() })
-	if common.MemoryCacheEnabled || common.IsMasterNode {
-		service.RegisterSyncTopic(model.SyncTopicChannels, func(ctx context.Context) error {
-			if common.MemoryCacheEnabled {
-				model.InitChannelCache()
-			}
+	service.RegisterSyncTopic(model.SyncTopicChannels, func(ctx context.Context) error {
+		if err := model.ReloadChannelCache(ctx); err != nil {
+			return err
+		}
+		if common.IsMasterNode {
 			return service.ScanScheduledPlugins(ctx)
-		})
-	}
+		}
+		return nil
+	})
 	service.RegisterSyncTopic(model.SyncTopicAuthz, func(context.Context) error { return authz.ReloadPolicy() })
 	service.RegisterSyncTopic(model.SyncTopicPlugins, controller.SyncTaskPluginsOnceContext)
 	service.RegisterSyncTopic(model.SyncTopicOAuthProviders, func(context.Context) error { return oauth.LoadCustomProviders() })

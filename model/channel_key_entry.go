@@ -87,6 +87,7 @@ type ChannelKeyEntry struct {
 	BoundUserId    int    `json:"bound_user_id" gorm:"not null;default:0"`
 	ScopeMode      string `json:"scope_mode" gorm:"type:varchar(16);not null;default:'all'"`
 	Models         string `json:"-" gorm:"type:text;not null"`
+	ModelMapping   string `json:"-" gorm:"type:text"`
 	Status         int    `json:"status" gorm:"not null;default:1"`
 	DisabledReason string `json:"disabled_reason,omitempty" gorm:"type:text"`
 	DisabledTime   int64  `json:"disabled_time,omitempty" gorm:"not null;default:0"`
@@ -135,6 +136,62 @@ func (entry *ChannelKeyEntry) SetKeyModels(models []string) error {
 	}
 	return nil
 }
+
+// Key mappings overlay exact source rules on the channel mapping. Empty input
+// clears the override; bounded JSON objects retain exact model-ID spelling.
+func normalizeKeyModelMapping(raw string) (string, error) {
+	invalid := errors.New("Invalid key model mapping")
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if len(raw) > 65536 || !strings.HasPrefix(raw, "{") {
+		return "", invalid
+	}
+	var mapping map[string]string
+	if common.UnmarshalJsonStr(raw, &mapping) != nil || mapping == nil || len(mapping) > 256 {
+		return "", invalid
+	}
+	for source, target := range mapping {
+		if source == "" || target == "" || len(source) > 256 || len(target) > 256 ||
+			source != strings.TrimSpace(source) || target != strings.TrimSpace(target) ||
+			strings.ContainsAny(source+target, "\x00\r\n") {
+			return "", invalid
+		}
+	}
+	if len(mapping) == 0 {
+		return "", nil
+	}
+	encoded, err := common.Marshal(mapping)
+	return string(encoded), err
+}
+
+// SetModelMapping rejects cycles introduced by the override plus inherited
+// rules before anything is persisted. Runtime resolution uses the same overlay.
+func (entry *ChannelKeyEntry) SetModelMapping(raw string, channel *Channel) error {
+	normalized, err := normalizeKeyModelMapping(raw)
+	if err != nil {
+		return err
+	}
+	candidate := *channel
+	candidate.ChannelInfo.MultiKeyModelMappings = map[int]string{0: normalized}
+	merged, err := candidate.GetModelMappingForKey(0)
+	if err != nil {
+		return errors.New("Invalid key model mapping")
+	}
+	var mapping map[string]string
+	if merged != "" && common.UnmarshalJsonStr(merged, &mapping) != nil {
+		return errors.New("Invalid key model mapping")
+	}
+	for source := range mapping {
+		if _, ok := candidate.RoutingUpstreamModelNameForKey(0, source); !ok {
+			return errors.New("Invalid key model mapping")
+		}
+	}
+	entry.ModelMapping = normalized
+	return nil
+}
+
 func credentialRefFor(key string) string {
 	if credential, ok := jsplugin.ParseCredential(strings.TrimSpace(key)); ok && credential.AccountID != "" {
 		return credential.Plugin + ":" + credential.AccountID
@@ -218,6 +275,7 @@ func (channel *Channel) applyKeyEntryProjection(entries []ChannelKeyEntry) error
 	keys := make([]string, 0, len(entries))
 	info := &channel.ChannelInfo
 	info.MultiKeyModels = nil
+	info.MultiKeyModelMappings = nil
 	info.MultiKeyScopeModes = nil
 	info.MultiKeyUsers = nil
 	info.MultiKeyStatusList = nil
@@ -226,6 +284,12 @@ func (channel *Channel) applyKeyEntryProjection(entries []ChannelKeyEntry) error
 	for i := range entries {
 		entry := &entries[i]
 		keys = append(keys, entry.Key)
+		if entry.ModelMapping != "" {
+			if info.MultiKeyModelMappings == nil {
+				info.MultiKeyModelMappings = map[int]string{}
+			}
+			info.MultiKeyModelMappings[i] = entry.ModelMapping
+		}
 		if entry.ScopeMode == "allowlist" {
 			if info.MultiKeyScopeModes == nil {
 				info.MultiKeyScopeModes = map[int]string{}
@@ -363,6 +427,11 @@ func persistKeyEntries(tx *gorm.DB, channel *Channel, entries, retired []Channel
 		if strings.TrimSpace(entry.Key) == "" && channel.ChannelInfo.IsMultiKey {
 			entry.Status = common.ChannelStatusManuallyDisabled
 		}
+		normalizedMapping, err := normalizeKeyModelMapping(entry.ModelMapping)
+		if err != nil {
+			return err
+		}
+		entry.ModelMapping = normalizedMapping
 		entry.CredentialRef = credentialRefFor(entry.Key)
 		if entry.CredentialRef != "" {
 			if managed[entry.CredentialRef] {
@@ -380,7 +449,7 @@ func persistKeyEntries(tx *gorm.DB, channel *Channel, entries, retired []Channel
 				return err
 			}
 		} else {
-			if err := tx.Model(&ChannelKeyEntry{}).Where("id = ? AND channel_id = ? AND retired_at = 0", entry.Id, channel.Id).Select("position", "key", "credential_ref", "bound_user_id", "scope_mode", "models", "status", "disabled_reason", "disabled_time", "config_revision", "updated_time").Updates(entry).Error; err != nil {
+			if err := tx.Model(&ChannelKeyEntry{}).Where("id = ? AND channel_id = ? AND retired_at = 0", entry.Id, channel.Id).Select("position", "key", "credential_ref", "bound_user_id", "scope_mode", "models", "model_mapping", "status", "disabled_reason", "disabled_time", "config_revision", "updated_time").Updates(entry).Error; err != nil {
 				return err
 			}
 		}
@@ -504,7 +573,7 @@ func CreateChannelKeyEntries(tx *gorm.DB, channel *Channel) error {
 		if value, ok := channel.ChannelInfo.MultiKeyStatusList[i]; ok {
 			status = value
 		}
-		entry := ChannelKeyEntry{Key: key, BoundUserId: channel.ChannelInfo.MultiKeyUsers[i], Status: status, DisabledReason: channel.ChannelInfo.MultiKeyDisabledReason[i], DisabledTime: channel.ChannelInfo.MultiKeyDisabledTime[i]}
+		entry := ChannelKeyEntry{Key: key, BoundUserId: channel.ChannelInfo.MultiKeyUsers[i], ModelMapping: channel.ChannelInfo.MultiKeyModelMappings[i], Status: status, DisabledReason: channel.ChannelInfo.MultiKeyDisabledReason[i], DisabledTime: channel.ChannelInfo.MultiKeyDisabledTime[i]}
 		if err := entry.SetKeyModels(channel.ChannelInfo.MultiKeyModels[i]); err != nil {
 			return err
 		}
@@ -515,12 +584,53 @@ func CreateChannelKeyEntries(tx *gorm.DB, channel *Channel) error {
 	}
 	return persistKeyEntries(tx, channel, entries, nil)
 }
+
+// ReadChannelKeyEntriesSnapshot reads current channel configuration and its
+// authoritative allocations together. The owning row lock fences allocation
+// writers on MySQL/PostgreSQL; SQLite keeps one read snapshot in the transaction.
+// Migrated reads never run reconciliation or publish routing/cache state.
+func ReadChannelKeyEntriesSnapshot(ctx context.Context, channelID int) (*Channel, error) {
+	if channelID <= 0 {
+		return nil, ErrChannelKeyEntryNotFound
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var channel Channel
+	err := dbWithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		projectionContext := WithBatchedChannelKeyEntries(ctx)
+		scope := tx.Session(&gorm.Session{Context: projectionContext, Logger: logger.Discard})
+		if err := lockForUpdate(scope).Where("id = ?", channelID).First(&channel).Error; err != nil {
+			return err
+		}
+		if !channel.ChannelInfo.IsMultiKey || channel.ChannelInfo.KeyEntryRevision == 0 {
+			return nil
+		}
+		return ProjectChannelKeyEntries(scope, projectionContext, []*Channel{&channel}, false)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Only a legacy row needs the existing migration transaction, which reloads
+	// under its own lock before creating entries. Never migrate a stale snapshot.
+	if channel.ChannelInfo.IsMultiKey && channel.ChannelInfo.KeyEntryRevision == 0 {
+		if err := ensureChannelKeyEntries(ctx, &channel); err != nil {
+			return nil, err
+		}
+	}
+	return &channel, nil
+}
+
 func EnsureChannelKeyEntries(channel *Channel) error {
+	return ensureChannelKeyEntries(context.Background(), channel)
+}
+
+func ensureChannelKeyEntries(ctx context.Context, channel *Channel) error {
 	if channel == nil || channel.Id <= 0 {
 		return ErrChannelKeyEntryNotFound
 	}
 	var updated Channel
-	err := ChannelBudgetTransaction(context.Background(), channel.Id, func(tx *gorm.DB) error {
+	err := ChannelBudgetTransaction(ctx, channel.Id, func(tx *gorm.DB) error {
 		if err := tx.First(&updated, channel.Id).Error; err != nil {
 			return err
 		}
@@ -547,7 +657,7 @@ func MigrateChannelKeyEntries() error {
 			return fmt.Errorf("migrate allocations for channel %d: %w", channel.Id, err)
 		}
 	}
-	return nil
+	return RepairChannelMappedKeyAbilities(context.Background())
 }
 func RetireChannelKeyEntries(tx *gorm.DB, channelID int) error {
 	if !tx.Migrator().HasTable(&ChannelKeyEntry{}) {
@@ -702,7 +812,7 @@ func ModelsAvailableToUserGroups(ctx context.Context, groups []string, userID in
 				if !channel.KeyServesModel(i, name) {
 					continue
 				}
-				upstream, _ := channel.RoutingUpstreamModelName(name)
+				upstream, _ := channel.RoutingUpstreamModelNameForKey(i, name)
 				if channel.keyModelUnavailable(i, upstream) {
 					continue
 				}

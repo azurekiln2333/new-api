@@ -15,11 +15,15 @@ This directory contains guidelines for backend development. Fill in each file wi
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
+| [Database Guidelines](./database-guidelines.md) | Allocation snapshots, mapped capabilities, migrations and cache boundaries | Partially defined |
+| [Model identity](./model-identity.md) | Exact catalog identity, optional case matching, selected-Key mapping and passthrough | Defined |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Async quota fixture boundaries; other conventions pending | Partially defined |
 | [Logging Guidelines](./logging-guidelines.md) | Original relay request capture, protected stores, privileged reads and retention | Defined |
+| [Log user scopes](./log-user-scopes.md) | Shared administrator row predicates, immutable self access and viewer projections | Defined |
 | [CORS Origins](./cors-origins.md) | Exact credentialed browser origins and preflight behavior | Defined |
+| [Secure verification](./secure-verification.md) | Durable audit before proof, bounded waits and non-replayable factors | Defined |
+| [Node coordination](./node-coordination.md) | Redis retry ownership and successful channel publication before sync acknowledgement | Defined |
 | [Merge and Release Contract](./merge-release-contract.md) | Preserve both merge parents and verify actual release artifacts | Defined |
 
 ---

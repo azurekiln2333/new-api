@@ -42,6 +42,42 @@ func newAdvancedCustomModelListChannel(baseURL string, key string, upstreamPath 
 	return channel
 }
 
+func TestSingleKeyDiscoveryKeepsSelectedMappingAndChannelInheritance(t *testing.T) {
+	channelMapping := `{"alias":"channel-upstream","shared":"channel-shared"}`
+	firstMapping := `{"alias":"first-upstream"}`
+	lastMapping := `{"alias":"Last-Upstream"}`
+	channel := &model.Channel{Key: "first\ninherit\nlast", Models: "alias,shared", ModelMapping: &channelMapping,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 3,
+			MultiKeyModelMappings: map[int]string{0: firstMapping, 2: lastMapping}}}
+	for _, tc := range []struct {
+		name   string
+		key    string
+		index  []int
+		mapped string
+	}{
+		{name: "ad hoc credential inherits", key: "typed", mapped: "channel-upstream"},
+		{name: "selected inheriting key", key: "inherit", index: []int{1}, mapped: "channel-upstream"},
+		{name: "selected nonzero key", key: "last", index: []int{2}, mapped: "Last-Upstream"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			discovery := newSingleKeyChannel(channel, tc.key, tc.index...)
+			assert.Equal(t, tc.key, discovery.Key)
+			resolved, ok := discovery.RoutingUpstreamModelNameForKey(0, "alias")
+			require.True(t, ok)
+			assert.Equal(t, tc.mapped, resolved, "discovery must not inherit another allocation's position-zero override")
+			resolved, ok = discovery.RoutingUpstreamModelNameForKey(0, "shared")
+			require.True(t, ok)
+			assert.Equal(t, "channel-shared", resolved)
+			if discovery.ChannelInfo.MultiKeyModelMappings != nil {
+				discovery.ChannelInfo.MultiKeyModelMappings[0] = `{"alias":"draft"}`
+			}
+			assert.Equal(t, map[int]string{0: firstMapping, 2: lastMapping}, channel.ChannelInfo.MultiKeyModelMappings)
+			assert.Equal(t, "first\ninherit\nlast", channel.Key)
+			assert.True(t, channel.ChannelInfo.IsMultiKey)
+		})
+	}
+}
+
 func TestParseOpenAIModelIDsStrictResponseContract(t *testing.T) {
 	tests := []struct {
 		name      string

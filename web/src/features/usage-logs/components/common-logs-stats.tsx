@@ -28,11 +28,12 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatLogQuota, formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
 import { formatCacheHitRate } from '../lib/format'
-import { buildApiParams } from '../lib/utils'
+import { buildLogStatsParams } from '../lib/utils'
 import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -59,19 +60,19 @@ export function CommonLogsStats() {
   const { t, i18n } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
-  const { isAdminView: isAdmin } = useLogsViewScope()
+  const { isAdminView: isAdmin, userScope } = useLogsViewScope()
+  const userId = useAuthStore((state) => state.auth.user?.id)
   const searchParams = route.useSearch()
   const { sensitiveVisible } = useUsageLogsContext()
 
   const { data: stats, isLoading } = useQuery({
-    queryKey: ['usage-logs-stats', isAdmin, searchParams],
+    queryKey: ['usage-logs-stats', isAdmin, userScope, userId, searchParams],
     queryFn: async () => {
-      const params = buildApiParams({
-        page: 1,
-        pageSize: 1,
+      const params = buildLogStatsParams({
         searchParams,
         columnFilters: [],
         isAdmin,
+        userScope,
       })
 
       const result = isAdmin
@@ -82,7 +83,12 @@ export function CommonLogsStats() {
         ? result.data || DEFAULT_LOG_STATS
         : DEFAULT_LOG_STATS
     },
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === isAdmin &&
+      previousQuery.queryKey[2] === userScope &&
+      previousQuery.queryKey[3] === userId
+        ? previousData
+        : undefined,
   })
 
   const rowClassName =

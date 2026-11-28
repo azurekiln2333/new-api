@@ -576,11 +576,25 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
+// LogUserScope chooses which users' rows are visible in an administrator log view.
+type LogUserScope string
+
+const (
+	LogUserScopeAll    LogUserScope = "all"
+	LogUserScopeSelf   LogUserScope = "self"
+	LogUserScopeOthers LogUserScope = "others"
+)
+
+var errInvalidLogUserScope = errors.New("invalid usage log user scope")
+
 // LogFilter is the usage-log search shared by the log list, the log export and
 // the log statistics. Username and Channel are administrator filters. UserId
-// scopes the search to a single user and stays zero for every user.
+// scopes a self endpoint to its authenticated owner. UserScope/ScopeUserId are
+// only populated by an administrator handler from that authenticated context.
 type LogFilter struct {
 	UserId            int
+	UserScope         LogUserScope
+	ScopeUserId       int
 	Type              int
 	StartTimestamp    int64
 	EndTimestamp      int64
@@ -616,8 +630,29 @@ func (f LogFilter) textFilters() []logTextFilter {
 
 func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	var err error
+	if f.UserScope != "" {
+		switch f.UserScope {
+		case LogUserScopeAll:
+		case LogUserScopeSelf, LogUserScopeOthers:
+			if f.ScopeUserId <= 0 {
+				return nil, errInvalidLogUserScope
+			}
+		default:
+			return nil, errInvalidLogUserScope
+		}
+	} else if f.ScopeUserId != 0 {
+		return nil, errInvalidLogUserScope
+	}
 	if f.UserId != 0 {
 		tx = tx.Where("logs.user_id = ?", f.UserId)
+	}
+	if f.ScopeUserId > 0 {
+		switch f.UserScope {
+		case LogUserScopeSelf:
+			tx = tx.Where("logs.user_id = ?", f.ScopeUserId)
+		case LogUserScopeOthers:
+			tx = tx.Where("logs.user_id <> ?", f.ScopeUserId)
+		}
 	}
 	if f.Type != LogTypeUnknown {
 		tx = tx.Where("logs.type = ?", f.Type)
